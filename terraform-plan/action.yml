@@ -1,0 +1,155 @@
+name: "Run terraform plan in directory"
+description: |
+  Given a working directory this will run 'terraform plan' within it.
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: From what directory to run TFLint.
+    required: true
+  environment-name:
+    description: |
+      Name of the current deployment environment. This is used when naming the plan output files.
+    required: false
+    default: ""
+  extra-global-args:
+    description: |
+      String with more args to pass to terraform as 'global options', those in front of the plan command.
+    required: false
+    default: ""
+  extra-plan-args:
+    description: |
+      String with more args to pass to terraform as 'options' to the plan command, these are the ones coming after the plan command.
+    required: false
+    default: ""
+  fail-on-failed-plan:
+    description: |
+      Boolean as tring, if 'true' the action will exit with a non-zero exit code.
+    required: false
+    default: "true"
+outputs:
+  exitcode:
+    description: |
+      The exit code from the terraform plan command.
+      Note that 'terraform plan' exits with exit code 2 upon success when changes are present,
+      ref. https://www.terraform.io/docs/commands/plan.html#detailed-exitcode
+    value: ${{ steps.outputs.tf-plan-exitcode }}
+  console-output-file:
+    description: "The console output captured during execution of 'terraform plan'."
+    value: ${{ steps.plan.outputs.tf-plan-console-output-file }}
+  terraform-plan-file:
+    description: "The plan file created by the 'terraform plan' command."
+    value: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
+  txt-output-file:
+    description: "The output of the terraform plan in plain txt format, ie. processed by the 'terraform show' command."
+    value: ${{ steps.plan-show.outputs.tf-plan-txt-output-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: check-prereqs
+      shell: bash
+      run: |
+        # Make sure 'working-directory' exists and that terraform is available
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "check prerequisite: working-directory"
+        given_dir='${{ inputs.working-directory }}'
+        log-info "configured 'working-directory' is '${given_dir}'"
+        if [ ! -d "${given_dir}" ]; then
+          log-error "the configured 'working-directory' does not exists, unable to perform linting!"
+          exit 1
+        else
+          log-info "the configured 'working-directory' exists."
+        fi
+        end-group
+
+        start-group "check prerequisite: terraform binary"
+        if ! command -v terraform version &>/dev/null; then
+          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
+          exit 1
+        else
+          log-info "using $(terraform version)"
+        fi
+        end-group
+
+    - id: plan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # run terraform plan
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        PLAN_CONSOLE_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-console-output-${{ inputs.environment-name }}.txt"
+        PLAN_TF_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.plan"
+        echo "tf-plan-console-output-file=${PLAN_CONSOLE_OUT_FILE}" >> $GITHUB_OUTPUT
+        echo "tf-plan-tf-output-file=${PLAN_TF_OUT_FILE}" >> $GITHUB_OUTPUT
+
+        REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
+        PLAN_CMD="terraform ${{ inputs.extra-global-args }} plan -detailed-exitcode -input=false -no-color -out=${PLAN_TF_OUT_FILE} ${{ inputs.extra-plan-args }}"
+        log-info "command string is '${PLAN_CMD}'"
+        start-group "'terraform plan' in '${REL_PATH}'"
+
+        # Need this to properly catch terraform exit code
+        set -o pipefail
+
+        # Github runner gets confused by set commands, make sure 'continue-on-error: true' still applies after 'set -o pipefail'
+        set +e
+        ${PLAN_CMD} 2>&1 | tee ${PLAN_CONSOLE_OUT_FILE}
+        PLAN_EXIT_CODE=${?}
+
+        echo "tf-plan-exitcode=${PLAN_EXIT_CODE}" >> $GITHUB_OUTPUT
+
+        # make sure '2' is consider 'success'
+        # 'terraform plan' exits with exit code 2 upon success when changes are present
+        #   https://www.terraform.io/docs/commands/plan.html#detailed-exitcode
+        if [ "${PLAN_EXIT_CODE}" == "0" ]; then
+          log-info 'successfully planned Terraform configuration, no changes indicated.'
+        elif [ "${PLAN_EXIT_CODE}" == "2" ]; then
+          PLAN_EXIT_CODE=0
+          log-info 'successfully planned Terraform configuration, changes indicated!'
+        else
+          log-error "failed to plan Terraform configuration, exit code: ${PLAN_EXIT_CODE}"
+          PLAN_EXIT_CODE=-1
+        fi
+        end-group
+
+        exit ${PLAN_EXIT_CODE}
+      continue-on-error: true # allow job to continue, execution status is evaluated later
+
+    - # save output as artifact
+      id: plan-upload
+      if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ inputs.environment-name }}-terraform-plan-console-output
+        path: ${{ steps.plan.outputs.tf-plan-console-output-file }}
+      continue-on-error: true # allow job to continue, execution status is evaluated later
+
+    - # create plan.txt file
+      id: plan-show
+      if: steps.plan.outcome == 'success'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # create plan.txt file
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "output the plan as txt"
+        PLAN_TF_OUT_FILE="${{ steps.plan.outputs.tf-plan-tf-output-file }}"
+        PLAN_TXT_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.txt"
+        echo "tf-plan-txt-output-file=${PLAN_TXT_OUT_FILE}" >> $GITHUB_OUTPUT
+        terraform show -no-color ${PLAN_TF_OUT_FILE} 2>&1 | tee ${PLAN_TXT_OUT_FILE}
+        end-group
+      continue-on-error: true # allow job to continue, execution status is evaluated later
+
+    - # evaluate exit code and fail if configured to
+      id: plan-status
+      if: |
+        inputs.fail-on-failed-plan == 'true'
+        && ( steps.plan.outcome == 'failure' || steps.plan.outcome == 'cancelled' )
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: exit 1

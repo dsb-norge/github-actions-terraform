@@ -1,0 +1,95 @@
+name: "Export environment variables for use in subsequent action steps"
+description: |
+  This action makes environment variables available to subsequent action steps in workflow.
+author: "Peder Schmedling"
+inputs:
+  extra-envs:
+    description: |
+      Key value pairs of environment variables to make available to all stages og all environments.
+
+      JSON object with environment variables to export.
+        key:    env name
+        value:  value of env
+
+    required: true
+  extra-envs-from-secrets:
+    description: |
+      Key value pairs of environment variables to make available to all stages og all environments.
+      The value of the environment variables will be retrieved from github secrets.
+
+      JSON object with environment variables to export from secrets.
+        Key   : env name
+        Value : name of secret to export
+    required: true
+  secrets-json:
+    description: |
+      All secrets available to the ci/cd workflow.
+
+      Example (replace '?' with '$'):
+        - uses: ./.github/export-env-vars
+          with:
+            secrets-json: ?{{ toJSON(secrets) }}
+            ...
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: export-envs
+      shell: bash
+      run: |
+        # Make env vars and secrets available to subsequent actions
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # Read inputs
+        EXTRA_ENVS_JSON=$(cat <<'EOF'
+        ${{ inputs.extra-envs }}
+        EOF
+        )
+        log-json "input 'extra-envs'" "${EXTRA_ENVS_JSON}"
+
+        EXTRA_SECRETS_JSON=$(cat <<'EOF'
+        ${{ inputs.extra-envs-from-secrets }}
+        EOF
+        )
+        log-json "input 'extra-envs-from-secrets'" "${EXTRA_SECRETS_JSON}"
+
+        SECRETS_JSON=$(cat <<'EOF'
+        ${{ inputs.secrets-json }}
+        EOF
+        )
+
+        # regular env vars
+        if [ ! -z "$EXTRA_ENVS_JSON" ]; then
+          start-group "Making environment variables available to subsequent actions"
+          REGULAR_ENVS=$(echo ${EXTRA_ENVS_JSON} | jq -r '[keys[]] | join(" ")')
+          for ENV_KEY in ${REGULAR_ENVS}; do
+              ENV_VALUE=$(echo "${EXTRA_ENVS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
+
+              log-info "Setting environment variable '${ENV_KEY}' -> '${ENV_VALUE}'"
+              # supports multiline strings:
+              echo "${ENV_KEY}<<\"${{ github.run_id }}\"" >> $GITHUB_ENV
+              echo "${ENV_VALUE}" >> $GITHUB_ENV
+              echo '"${{ github.run_id }}"' >> $GITHUB_ENV
+          done
+          end-group
+        fi
+
+        # env vars from secrets
+        if [ ! -z "$EXTRA_SECRETS_JSON" ]; then
+          start-group "Making environment variables with secrets available to subsequent actions"
+          ENVS_FROM_SECRETS=$(echo ${EXTRA_SECRETS_JSON} | jq -r '[keys[]] | join(" ")')
+          for ENV_KEY in ${ENVS_FROM_SECRETS}; do
+              log-info "Get secret name for '${ENV_KEY}' ..."
+              ENV_SECRET_NAME=$(echo "${EXTRA_SECRETS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
+              log-info "Secret is named '${ENV_SECRET_NAME}', reading value ..."
+              ENV_SECRET_VALUE=$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" -r '.[$key]')
+
+              log-info "Setting environment variable '${ENV_KEY}'"
+              # supports multiline strings:
+              echo "${ENV_KEY}<<\"${{ github.run_id }}\"" >> $GITHUB_ENV
+              echo "${ENV_SECRET_VALUE}" >> $GITHUB_ENV
+              echo '"${{ github.run_id }}"' >> $GITHUB_ENV
+          done
+          end-group
+        fi

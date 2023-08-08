@@ -1,0 +1,154 @@
+name: "Install a given version of TFLint and make available to subsequent action steps"
+description: |
+  Downloads TFLint, installs it into the actions runners tool cache and adds it's path to the systems `PATH` environment variable.
+author: "Peder Schmedling"
+inputs:
+  tflint-version:
+    description: |
+      What version of tflint to use.
+      See https://github.com/terraform-linters/tflint/releases
+    required: false
+    default: latest
+outputs:
+  installed-version:
+    description: Actual version that was installed. can be interesting when using 'latest' as input.
+    value: ${{ steps.get-url-and-tag.outputs.tag-name }}
+  bin-path:
+    description: Path to binary file that was installed.
+    value: ${{ steps.exists-check.outputs.install-bin-path }}
+runs:
+  using: "composite"
+  steps:
+    - id: get-url-and-tag
+      shell: bash
+      run: |
+        # determine download url and tag
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        if [ "latest" == "${{ inputs.tflint-version }}" ]; then
+          RELEASE_URL='https://api.github.com/repos/terraform-linters/tflint/releases/latest'
+          log-info "get 'latest' release json from '${RELEASE_URL}' ..."
+          RELEASE_JSON=$(
+            curl -s --request GET \
+            --url "${RELEASE_URL}" \
+            --header "Accept: application/json"
+          )
+          #log-json "release json" "${RELEASE_JSON}"
+        else
+          RELEASE_URL='https://api.github.com/repos/terraform-linters/tflint/releases?per_page=100'
+          log-info "get '${{ inputs.tflint-version }}' release json from '${RELEASE_URL}' ..."
+          ALL_RELEASES_JSON=$(
+            curl -s --request GET \
+            --url "${RELEASE_URL}" \
+            --header "Accept: application/json"
+          )
+          # log-json "all release json" "${ALL_RELEASES_JSON}"
+          RELEASE_JSON=$(echo "$ALL_RELEASES_JSON" | jq 'first(.[] | select(.tag_name == "${{ inputs.tflint-version }}" ) )') || (
+            log-error "jq failed to parse locate 'tag_name' = '${{ inputs.tflint-version }}' in release json!"
+            log-json "release json" "${RELEASE_JSON}"
+            exit 1
+          )
+
+          if [ -z "${RELEASE_JSON}" ]; then
+            log-error "unable to parse latest release from response of '${RELEASE_URL}'!"
+            exit 1
+          fi
+
+        fi
+
+        TAG_NAME=$(echo "$RELEASE_JSON" | jq -r '.tag_name') || (
+          log-error "jq failed to find 'tag_name' in release json!"
+          log-json "release json" "${RELEASE_JSON}"
+          exit 1
+        )
+        log-info "found release tag '${TAG_NAME}'"
+
+        ASSET_JSON=$(echo "$RELEASE_JSON" | jq '.assets[] | select(.name | contains("_linux_amd64.zip") )') || (
+          log-error "jq failed to find an asset containing '_linux_amd64.zip' in release json!"
+          log-json "release json" "${RELEASE_JSON}"
+          exit 1
+        )
+
+        if [ -z "${ASSET_JSON}" ]; then
+          log-error "unable to find correct asset to download from release JSON!"
+          log-json "release json" "${RELEASE_JSON}"
+          exit 1
+        fi
+
+        DL_URL=$(echo "${ASSET_JSON}" | jq -r '.browser_download_url') || (
+          log-error "jq failed to find 'browser_download_url' in asset json!"
+          log-json "asset json" "${ASSET_JSON}"
+          exit 1
+        )
+
+        if [ -z "${DL_URL}" ]; then
+          log-error "unable to get download url from asset json!"
+          log-json "release json" "${ASSET_JSON}"
+          exit 1
+        fi
+
+        log-info "found release download url '${DL_URL}'"
+
+        # outputs
+        echo "tag-name=${TAG_NAME}" >> $GITHUB_OUTPUT
+        echo "download-url=${DL_URL}" >> $GITHUB_OUTPUT
+
+    - id: exists-check
+      shell: bash
+      run: |
+        # check if tflint binary already exists in tool cache on actions runner
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        INSTALL_DIR="${RUNNER_TOOL_CACHE}/tflint_${{ steps.get-url-and-tag.outputs.tag-name }}"
+        ALREADY_INSTALLED=true
+        if [ -d "${INSTALL_DIR}" ]; then
+          log-info "found tflint install dir at '${INSTALL_DIR}'"
+        else
+          log-info "could not locate tflint install dir at '${INSTALL_DIR}'"
+          ALREADY_INSTALLED=false
+          mkdir -p "${INSTALL_DIR}"
+        fi
+
+        INSTALL_BIN_PATH="${INSTALL_DIR}/tflint"
+        if [ -f "${INSTALL_BIN_PATH}" ]; then
+          log-info "found tflint binary at '${INSTALL_BIN_PATH}'"
+        else
+          log-info "could not locate tflint binary '${INSTALL_BIN_PATH}'"
+          ALREADY_INSTALLED=false
+        fi
+
+        # outputs
+        echo "install-dir=${INSTALL_DIR}" >> $GITHUB_OUTPUT
+        echo "install-bin-path=${INSTALL_BIN_PATH}" >> $GITHUB_OUTPUT
+        echo "already-installed=${ALREADY_INSTALLED}" >> $GITHUB_OUTPUT
+
+    - id: install
+      if: steps.exists-check.outputs.already-installed != 'true'
+      shell: bash
+      run: |
+        # install tflint if needed
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        log-info "download tflint from: ${{ steps.get-url-and-tag.outputs.download-url }}"
+        log-info "install tflint to   : ${{ steps.exists-check.outputs.install-dir }}"
+        curl -L "${{ steps.get-url-and-tag.outputs.download-url }}" -o tflint.zip \
+          && unzip tflint.zip -d "${{ steps.exists-check.outputs.install-dir }}" \
+          && rm tflint.zip
+
+        if [ ! -f "${{ steps.exists-check.outputs.install-bin-path }}" ]; then
+          log-error "binary not found at '${{ steps.exists-check.outputs.install-bin-path }}' after installation!"
+          exit 1
+        fi
+
+    - id: add-to-path
+      shell: bash
+      run: |
+        # add tflint to path, available to subsequent actions
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-info "add binary to PATH at '${{ steps.exists-check.outputs.install-dir }}'"
+        echo '${{ steps.exists-check.outputs.install-dir }}' >> $GITHUB_PATH
+        echo "$(tflint --version) successfully installed and added to path 🥳" || :

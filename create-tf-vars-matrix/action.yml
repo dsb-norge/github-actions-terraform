@@ -1,0 +1,308 @@
+name: "Create common DSB terraform CI/CD variables"
+description: |
+  Given the required input this action returns common DSB terraform environment variables with values.
+  Common DSB terraform environment variables are the values needed to successfully init, plan and apply terraform projects in DSB's infrastructure.
+author: "Peder Schmedling"
+inputs:
+  inputs-json:
+    description: "All inputs given to the ci/cd workflow"
+    required: true
+outputs:
+  matrix-json:
+    description: "All terraform ci/cd variables as json"
+    value: ${{ steps.make-matrix-compatible.outputs.matrix-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: create-vars
+      shell: bash
+      run: |
+        # Define variables needed for terraform ci/cd
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # Read inputs
+        INPUTS_JSON=$(cat <<'EOF'
+        ${{ inputs.inputs-json }}
+        EOF
+        )
+        log-json "input 'inputs-json'" "${INPUTS_JSON}"
+
+        YML_INPUTS=(
+          environments-yml
+          goals-yml
+          terraform-init-additional-dirs-yml
+          extra-envs-from-secrets-yml
+          extra-envs-yml
+        )
+
+        # Calling repo branches information
+        REPO_DEFAULT_BRANCH=$(curl -s https://api.github.com/repos/${{ github.repository }} -H "Authorization: bearer ${{ github.token }}" | jq -r .default_branch)
+        REPO_CURRENT_BRANCH_IS_DEFAULT=false
+        if [ "${{ github.ref_name }}" == "${REPO_DEFAULT_BRANCH}" ]; then
+          REPO_CURRENT_BRANCH_IS_DEFAULT=true
+        fi
+
+        # loop yaml fields and parse as yaml
+        declare -A YML_INPUTS_AS_JSON
+        for YML_INPUT_NAME in ${YML_INPUTS[*]}; do
+          start-group "yaml input '${YML_INPUT_NAME}'"
+          YML_INPUT=$(get-input-val "${YML_INPUT_NAME}")
+          echo "${YML_INPUT}"
+          end-group
+
+          # Test if valid yaml
+          if ! echo "${YML_INPUT}" | yq e 2>/dev/null 1>&2 ; then
+            log-error "The specification for input '${YML_INPUT_NAME}' is not valid yaml!"
+            exit 1
+          fi
+
+          # Convert yaml to JSON
+          JSON_INPUT=$(echo "${YML_INPUT}" | yq e -o=json -)
+          log-json "yaml input '${YML_INPUT_NAME}' converted to JSON" "${JSON_INPUT}"
+          YML_INPUTS_AS_JSON+=( ["${YML_INPUT_NAME}"]="${JSON_INPUT}" )
+          # log-info "out of array: ${YML_INPUTS_AS_JSON[${YML_INPUT_NAME}]}"
+          # log-info "out of array: $(get-yaml-input-as-json ${YML_INPUT_NAME})"
+        done
+
+        # Loop all specified environments
+        OUT_JSON='[]'
+        INPUT_ENVIRONMENTS=$(get-yaml-input-as-json 'environments-yml' | jq -r '.[] | @base64')
+        for INPUT_ENVIRONMENT in ${INPUT_ENVIRONMENTS}; do
+          ENVIRONMENT_OBJ="$(_jq '.')"
+          if ! has-field 'environment'; then
+            log-error "Missing property 'environment' in environments-yml specification!"
+            log-info "${ENVIRONMENT_OBJ}"
+            exit 1
+          fi
+          ENVIRONMENT_NAME=$(get-val 'environment')
+
+          start-group "Processing environment '${ENVIRONMENT_NAME}' ..."
+
+          if ! has-field 'project-dir'; then
+            log-info "'project-dir' not specified for environment, using default."
+            set-field 'project-dir' "${GITHUB_WORKSPACE}/envs/$(get-val 'environment')" # modifies $ENVIRONMENT_OBJ
+          fi
+
+          # Loop over all inputs to this action:
+          #  - If the field is yaml, do nothing, handle further down
+          #  - If field was not specified explicitly for the environment, use the "global" value
+          # This enables the possibility to override all fields pr environment.
+          INPUT_NAMES=($(echo "${INPUTS_JSON}" | jq -r '.|keys|.[]'))
+          for INPUT_NAME in ${INPUT_NAMES[*]}; do
+            if ! has-field "${INPUT_NAME}" && ! is-yml-input "${INPUT_NAME}"; then
+              log-info "'${INPUT_NAME}' not specified for environment, using global value"
+              set-field "${INPUT_NAME}" "$(get-input-val "${INPUT_NAME}")" # modifies $ENVIRONMENT_OBJ
+            fi
+          done
+
+          if ! has-field 'github-environment'; then
+            log-info "'github-environment' not specified for environment, using value from 'environment'"
+            set-field 'github-environment' "${ENVIRONMENT_NAME}" # modifies $ENVIRONMENT_OBJ
+          fi
+
+          if ! has-field 'url'; then
+            log-info "'url' not specified for environment, using blank value"
+            set-field 'url' "" # modifies $ENVIRONMENT_OBJ
+          fi
+
+          # goals-yml and terraform-init-additional-dirs-yml
+          #   - use global value if not defined
+          #   - 'field-yml' becomes 'field'
+          DEFAULT_INPUT_YML_FIELDS=(
+            goals-yml
+            terraform-init-additional-dirs-yml
+          )
+          log-info "Processing yml fields with potential global defaults ..."
+          for DEFAULT_INPUT in ${DEFAULT_INPUT_YML_FIELDS[*]}; do
+            log-info "Processing yml field '${DEFAULT_INPUT}' ..."
+            if ! has-field "${DEFAULT_INPUT}"; then
+              log-info "'${DEFAULT_INPUT}' not specified for environment"
+              GLOBAL_FIELD_JSON=$(get-yaml-input-as-json "${DEFAULT_INPUT}")
+
+              if [ ! "${GLOBAL_FIELD_JSON}" == "null" ]; then
+                log-info "'${DEFAULT_INPUT}' using global value"
+
+                # 'field-yml -> 'field'
+                set-field-from-json "${DEFAULT_INPUT//-yml/}" "${GLOBAL_FIELD_JSON}" # modifies $ENVIRONMENT_OBJ
+              else
+                log-info "'${DEFAULT_INPUT}' using value of empty list"
+
+                # 'field-yml -> 'field'
+                set-field-from-json "${DEFAULT_INPUT//-yml/}" '[]' # modifies $ENVIRONMENT_OBJ
+              fi
+            else
+              log-info "'${DEFAULT_INPUT}' specified for environment, using it"
+              ENV_FIELD_JSON=$(get-val "${DEFAULT_INPUT}")
+
+              # 'field-yml -> 'field'
+              set-field-from-json "${DEFAULT_INPUT//-yml/}" "${ENV_FIELD_JSON}" # modifies $ENVIRONMENT_OBJ
+            fi
+          done
+
+          # extra-envs-yml and extra-envs-from-secrets-yml
+          #   - if defined merge with global value, otherwise use global
+          #   - '*-yml' becomes '*'
+          MERGE_INPUT_YML_FIELDS=(
+            extra-envs-yml
+            extra-envs-from-secrets-yml
+          )
+          log-info "Processing 'extra-envs-*' yml fields ..."
+          for MERGE_FIELD in ${MERGE_INPUT_YML_FIELDS[*]}; do
+            # global value
+            GLOBAL_ENVS_JSON=$(get-yaml-input-as-json "${MERGE_FIELD}")
+
+            if ! has-field "${MERGE_FIELD}"; then
+              log-info "'${MERGE_FIELD}' not specified for environment, using global value"
+              set-field-from-json "${MERGE_FIELD//-yml/}" "${GLOBAL_ENVS_JSON}" # modifies $ENVIRONMENT_OBJ
+            else
+              # merge env with global, env wins in cases where defined both places
+              log-info "'${MERGE_FIELD}' was specified for environment, merging with global value"
+              ENV_JSON=$(get-val "${MERGE_FIELD}" | yq e -o=json -)
+              MERGED_JSON=$(echo "${GLOBAL_ENVS_JSON} ${ENV_JSON}" | jq -s 'add')
+              set-field-from-json "${MERGE_FIELD//-yml/}" "${MERGED_JSON}" # modifies $ENVIRONMENT_OBJ
+            fi
+          done
+
+          # yml fields should not exist in output
+          for YML_INPUT_NAME in ${YML_INPUTS[*]}; do
+            log-info "removing yml field '${YML_INPUT_NAME}' from output ..."
+            rm-field "${YML_INPUT_NAME}" # modifies $ENVIRONMENT_OBJ
+          done
+
+          # Add calling repo branches information
+          set-field "caller-repo-default-branch"        "${REPO_DEFAULT_BRANCH}"
+          set-field "caller-repo-calling-branch"        "${{ github.ref_name }}"
+          set-field "caller-repo-is-on-default-branch"  "${REPO_CURRENT_BRANCH_IS_DEFAULT}"
+
+          # Add JSON object to output JSON
+          OUT_JSON=$(echo "${OUT_JSON}" | jq '. += '["${ENVIRONMENT_OBJ}"']')
+
+          end-group
+        done
+
+        log-json "Final JSON output" "$OUT_JSON"
+
+        echo 'json<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+        echo "${OUT_JSON}" >> $GITHUB_OUTPUT
+        echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+    - id: validate
+      shell: bash
+      run: |
+        # Some field's must exist for github actions not to go bonkers
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # Load and log app vars
+        JSON_CONFIG=$(cat <<'EOF'
+        ${{ steps.create-vars.outputs.json }}
+        EOF
+        )
+        log-json "vars JSON" "${JSON_CONFIG}"
+
+        # Required fields
+        REQ_FIELDS=(
+          add-pr-comment
+          caller-repo-calling-branch
+          caller-repo-default-branch
+          caller-repo-is-on-default-branch
+          environment
+          extra-envs
+          extra-envs-from-secrets
+          github-environment
+          goals
+          project-dir
+          terraform-init-additional-dirs
+          terraform-version
+          tflint-version
+          url
+        )
+
+        NOT_EMPTY_FIELDS=(
+          add-pr-comment
+          caller-repo-calling-branch
+          caller-repo-default-branch
+          caller-repo-is-on-default-branch
+          environment
+          extra-envs
+          extra-envs-from-secrets
+          github-environment
+          goals
+          project-dir
+          terraform-version
+          tflint-version
+        )
+
+        # Check that environment vars is of type array
+        if [ ! "$( echo "${JSON_CONFIG}" | jq -r '. | type' )" == 'array' ]; then
+          log-error "The specification is not an array!"
+          exit 1
+        else
+          log-info "[OK] The specification is an array."
+        fi
+
+        # Make sure at least one environment specification is given
+        NUM_ENVS=$( echo "${JSON_CONFIG}" | jq -r '. | length' )
+        if [ ${NUM_ENVS} -le 0 ]; then
+          log-error "The specification is an empty array!"
+          exit 1
+        else
+          log-info "[OK] The specification is not an empty array."
+        fi
+
+        DO_EXIT=0
+        for ENV_VARS in $(echo "${JSON_CONFIG}" | jq -r '.[] | @base64'); do
+
+          # must exist fields
+          for FIELD in ${REQ_FIELDS[*]}; do
+            if [ "$(_jjq 'has("'${FIELD}'")')" == 'false' ]; then
+              fail-field "Missing property '${FIELD}' in environment specification!"
+            fi
+          done
+
+          # must not be empty fields
+          for FIELD in ${NOT_EMPTY_FIELDS[*]}; do
+            if [ ! "$(_jjq 'has("'${FIELD}'")')" == 'false' ]; then
+              if [ -z "$(_jjq '."'${FIELD}'"')" ]; then
+                fail-field "Property '${FIELD}' is empty in environment specification!"
+              fi
+            fi
+          done
+
+          # project-dir must be an existing directory
+          if [ ! -d "$(_jjq '."project-dir"')" ]; then
+            fail-field "The directory '$(_jjq '."project-dir"')' does not exist, make sure 'project-dir' points to an existing directory!"
+          fi
+        done
+        [ ${DO_EXIT} -eq 1 ] && exit 1 || log-info "[OK] All required fields were found in the specification."
+    - shell: bash
+      id: make-matrix-compatible
+      run: |
+        # Create env vars matrix
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # Load and log app vars
+        IN_JSON=$(cat <<'EOF'
+        ${{ steps.create-vars.outputs.json }}
+        EOF
+        )
+        log-json "JSON input received" "${IN_JSON}"
+
+        # Reshape JSON to conform to github matrix format:
+        #{
+        #  "environment":["name"],
+        #  "include":[
+        #    {"environment":"name","vars":{}}
+        #  ]
+        #}
+        log-info "Reshaping JSON for $(echo ${IN_JSON} | jq 'length') environments ..."
+        # Each element in the array will have one field 'vars' containing all vars for a given environment
+        OUT_MATRIX_JSON=$(echo "${IN_JSON}" | jq '{ "environment": map( .["environment"]), "include": map({ "environment": .["environment"], "vars": . }) }')
+
+        log-json "Final matrix JSON output" "$OUT_MATRIX_JSON"
+
+        echo 'matrix-json<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+        echo "${OUT_MATRIX_JSON}" >> $GITHUB_OUTPUT
+        echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT

@@ -1,0 +1,11 @@
+{
+  "environments-yml": "- environment: \"my-first-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  format-check-in-root-dir: false\n  terraform-init-additional-dirs-yml:\n    - \"./main\"\n    - \"./modules\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-plan-on-pr, destroy-on-pr]\n- environment: \"my-second-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n- environment: \"also an env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  goals-yml: [init, format, validate, lint]\n",
+  "goals-yml": "[all, dummy, apple]",
+  "extra-envs-from-secrets-yml": "ARM_CLIENT_ID: ARM_CLIENT_ID_secret\nARM_SUBSCRIPTION_ID: ARM_SUBSCRIPTION_ID_secret\nARM_TENANT_ID: ARM_TENANT_ID_secret\nTF_VAR_my_custom: TF_VAR_my_custom_secret\n",
+  "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true\nANOTHER_ENV: \"1 2 3\"",
+  "terraform-version": "1.4.4",
+  "tflint-version": "v0.46.1",
+  "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./module/1\"\n- \"./module/2\"\n",
+  "format-check-in-root-dir": "true",
+  "add-pr-comment": "true"
+}

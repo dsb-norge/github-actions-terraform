@@ -1,0 +1,9 @@
+{
+  "environments-yml": "- environment: \"my-tf-env\"\n",
+  "goals-yml": "[all]",
+  "extra-envs-from-secrets-yml": "| invalid yaml!",
+  "extra-envs-yml": "{}",
+  "terraform-version": "latest",
+  "tflint-version": "latest",
+  "add-pr-comment": "true"
+}
