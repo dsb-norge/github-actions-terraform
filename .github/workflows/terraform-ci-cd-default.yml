@@ -1,0 +1,555 @@
+name: "DSB terraform CI/CD workflow"
+#
+# A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
+#   permissions:
+#     id-token: write       # required for Azure password-less auth
+#     contents: read        # required for actions/checkout
+#     pull-requests: write  # required for commenting on PRs
+#
+# Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
+# all secrets available to the calling workflow must be passe down to this one by:
+#   secrets: inherit
+#
+on:
+  workflow_call:
+    inputs:
+      environments-yml:
+        type: string
+        description: |
+          Specification of environments to run this terraform workflow and it's stages for. Minimum 1 environment must be specified.
+
+          Type: YAML list (as string) with specifications of environments to execute stages for.
+          Example:
+            environments-yml: |
+              - environment: "dsb-digiros"
+              - environment: "dsb-norge"
+                url: "https://github.com/dsb-norge"
+
+          Required fields are:
+            - environment
+                string, name of environment to run terraform for.
+
+          Optional fields are:
+            - project-dir
+                string, path to a directory to run terraform commands within, the path should be relative to the calling repos root, ex. './envs/dev'.
+                note: if this is omitted the workflow will default to use the directory '[repo root]/envs/[workflow input 'environment']'.
+            - github-environment
+                string, name of the deployment environment in github to run the workflow in context of.
+                note: if this is omitted the workflow will default to using deployment environment with name  specified by workflow input 'environment'.
+            - url
+                string, a url to display in github's deployment environment UI.
+            - goals-yml
+                YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - terraform-init-additional-dirs-yml
+                YAML array (as string), additional directories for 'terraform init', see the workflow input 'goals-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - extra-envs-yml
+                YAML objects, make environment variables available, see the workflow input 'goals-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - extra-envs-from-secrets-yml
+                YAML objects, make environment variables with secrets available, see the workflow input 'goals-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+        required: true
+      goals-yml:
+        type: string
+        description: |
+          The Terraform "goals", these specify what steps/stages of the workflow that will be performed.
+          The goals specified in 'goals-yml' will be used for all environments defined in 'environments-yml' if not explicitly overridden for a given environment specification.
+
+          Available goals are (in order of execution):
+            standard goals
+              - init
+              - format
+              - validate
+              - lint
+              - plan, this causes the 'plan' stage to run. Additional requirements for 'plan' stage to run:
+                - The 'init' goal was specified and the 'init' stage was successful.
+              - apply, this causes the 'apply' stage to run, deploying the plan from the 'plan' stage. Additional requirements for 'apply' stage to run:
+                - The 'plan' goal was specified and the 'plan' stage was successful (which also implies 'init').
+                - AND workflow was not called from a pull request. This behavior can be overridden adding the goal 'apply-on-pr'.
+                - AND workflow was called from the default branch of the calling repo.
+            special goals
+              - all, this is the default, a shorthand version for all standard goals.
+              - apply-on-pr, specify this to make the 'apply' goal have effect also when the workflow was called from a pull request.
+              - destroy-plan, this causes an additional 'plan' stage to run with the terraform flag '-destroy'. Additional requirements for 'plan' stage to run:
+                - The 'init' goal was specified and the 'init' stage was successful.
+              - destroy, this causes an additional 'apply' stage to run, deploying the plan created as a result of the 'destroy-plan' goal. Additional requirements for 'destroy' stage to run:
+                - The 'destroy-plan' goal was specified and the 'plan' stage with the terraform flag '-destroy' was successful (which also implies 'init').
+                - AND workflow was not called from a pull request. This behavior can be overridden adding the goal 'destroy-on-pr'.
+                - AND workflow was called from the default branch of the calling repo.
+              - destroy-on-pr, specify this to make the 'destroy' goal have effect also when the workflow was called from a pull request.
+
+          Type: YAML array (as string).
+          Example:
+            goals-yml: "[init, format, validate]"
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: "[all]"
+      terraform-init-additional-dirs-yml:
+        type: string
+        description: |
+          Additional directories to include during the 'init' stage. 'terraform init' will be executed within each of these.
+          The path should be relative to the calling repos root, ex. './modules/my-module'.
+
+          Type: YAML array (as string).
+          Example:
+            terraform-init-additional-dirs-yml: |
+              - "./main"
+              - "./modules/my-module"
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: ""
+      extra-envs-yml:
+        type: string
+        description: |
+          Key value pairs of environment variables to make available to all stages og all environments.
+
+          Type: YAML object:
+            key:    env name
+            value:  value of env
+          Example:
+            extra-envs-yml: |
+              ARM_USE_OIDC: true
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: "{}" # empty object
+      extra-envs-from-secrets-yml:
+        type: string
+        description: |
+          Key value pairs of environment variables to make available to all stages og all environments.
+          The value of the environment variables will be retrieved from github secrets.
+
+          Type: YAML object:
+            key:    env name
+            value:  secret name to get value from
+          Example:
+            extra-envs-from-secrets-yml: |
+              ARM_CLIENT_ID: NAME_OF_GITHUB_SECRET_WITH_SERVICE_PRINCIPAL_CLIENT_ID
+              ARM_SUBSCRIPTION_ID: NAME_OF_GITHUB_SECRET_WITH_AZURE_SUBSCRIPTION_ID
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: "{}" # empty object
+      terraform-version:
+        type: string
+        description: |
+          What version of terraform to use for terraform operations.
+          The default is to use the 'latest' release, see https://github.com/hashicorp/terraform/releases
+          This is passed to the 'hashicorp/setup-terraform' action and thus wildcards and Semver ranges are supported, see https://github.com/hashicorp/setup-terraform#inputs.
+        required: false
+        default: latest
+      tflint-version:
+        type: string
+        description: |
+          What version of TFLint to use during the 'lint' stage.
+          The default is to use the 'latest' release, see https://github.com/terraform-linters/tflint/releases
+          Wildcards and patterns not supported. Must be 'latest' or explicit version.
+        required: false
+        default: latest
+      format-check-in-root-dir:
+        type: boolean
+        description: |
+          The default behavior is to perform format check using directories:
+            1.  Either supplied by terraform, given by the file '[project-dir]/.terraform/modules/modules.json' created during the 'init' stage.
+                The advantage to this approach is that any modules declared will implicitly also be checked.
+            2.  Or if no 'module.json' was found run format check within '[project-dir]'.
+          This behavior can be altered to perform format check recursively from the root of the repo by setting this to 'true'.
+        required: false
+        default: false
+      add-pr-comment:
+        type: boolean
+        description: |
+          The default is to add validation summary as comment on PR if the workflow triggerd by a pull request event.
+          Set this to false to avoid a comment being added.
+        required: false
+        default: true
+
+jobs:
+  create-matrix:
+    name: Create job matrix
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      matrix-json: ${{ steps.create-matrix.outputs.matrix-json }}
+    steps:
+      - name: "🧹 Clean workspace"
+        uses: dsb-norge/github-actions/directory-recreate@v2
+      - name: "⬇ Checkout working branch"
+        uses: actions/checkout@v3
+      - name: "🎰 Create env matrix"
+        id: create-matrix
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v0
+        with:
+          inputs-json: ${{ toJSON(inputs) }}
+
+  terraform-ci-cd:
+    name: "Terraform"
+    needs: create-matrix
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    strategy:
+      fail-fast: false # Allow jobs to continue even though one more env(s) fail
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
+    environment:
+      name: ${{ matrix.vars.github-environment }}
+      url: ${{ matrix.vars.url }}
+    concurrency: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.vars.project-dir }}
+    steps:
+      - name: "⬇ Checkout"
+        uses: actions/checkout@v3
+
+      - name: "🎰 Export environment variables and secrets"
+        uses: dsb-norge/github-actions-terraform/export-env-vars@v0
+        with:
+          extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
+          extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
+          secrets-json: ${{ toJSON(secrets) }}
+
+      - name: "📥 Setup Terraform"
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ matrix.vars.terraform-version }}
+
+      - name: "📥 Setup TFLint"
+        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
+        with:
+          tflint-version: ${{ matrix.vars.tflint-version }}
+
+      - name: ⚙️ Terraform Init
+        id: init
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
+        run: |
+          _step_name='init'
+          function _log { echo "${1}${_step_name}: ${2}"; }
+          function log-info { _log "" "${*}"; }
+          function log-error { _log "ERROR: " "${*}"; }
+          function start-group { echo "::group::${_step_name}: ${*}"; }
+          function end-group { echo "::endgroup::"; }
+
+          # keep track of exit codes
+          declare -A TF_INIT_RESULTS
+
+          # project init
+          start-group "running 'terraform init' in 'project-dir' '$(pwd)' ..."
+          set +e
+          terraform init -reconfigure
+          TF_INIT_EXITCODE=${?}
+          set -e
+          TF_INIT_RESULTS["$(pwd)"]="${TF_INIT_EXITCODE}"
+          if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
+            log-error "init exited with code '${TF_INIT_EXITCODE}'!"
+          fi
+          end-group
+
+          # additional init
+          more_dirs_json=$(cat <<'EOF'
+          ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
+          EOF
+          )
+          if [ ! -z "$more_dirs_json" ]; then
+            log-info "additional directories to init specified"
+            more_dirs=$(echo ${more_dirs_json} | jq -cr '.[]')
+            for extra_dir in ${more_dirs}; do
+              start-group "additional init directory '${extra_dir}'"
+              log-info "looking for directory ..."
+              if [ -d "${GITHUB_WORKSPACE}/${extra_dir}" ]; then
+                log-info "found it. Running terraform init now ..."
+                set +e
+                terraform -chdir="${GITHUB_WORKSPACE}/${extra_dir}" init -reconfigure
+                TF_INIT_EXITCODE=${?}
+                set -e
+                TF_INIT_RESULTS["${GITHUB_WORKSPACE}/${extra_dir}"]="${TF_INIT_EXITCODE}"
+                if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
+                  log-error "init exited with code '${TF_INIT_EXITCODE}'!"
+                fi
+              else
+                log-error "additional init directory '${extra_dir}' does not exist!"
+                exit 1
+              fi
+              end-group
+            done
+          fi
+
+          # exit code
+          TF_INIT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_INIT_RESULTS[*]}))")
+          exit ${TF_INIT_SUM_EXIT_CODES}
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      - name: 🖌 Terraform Format
+        id: fmt
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
+        run: |
+          _step_name='format-check'
+          function _log { echo "${1}${_step_name}: ${2}"; }
+          function log-info { _log "" "${*}"; }
+          function log-error { _log "ERROR: " "${*}"; }
+
+          # where to check?
+          MODULES_FILE="$(pwd)/.terraform/modules/modules.json"
+          if [ "${{ matrix.vars.format-check-in-root-dir }}" == 'true' ]; then
+            log-info "check will run from root directory."
+            TF_FMT_DIRS="${GITHUB_WORKSPACE}"
+          elif [ -f "${MODULES_FILE}" ]; then
+            log-info "check will run in directories from terraform modules file '${MODULES_FILE}'"
+            TF_FMT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
+          else
+            log-info "check will run in 'project-dir' '$(pwd)'"
+            TF_FMT_DIRS="$(pwd)"
+          fi
+
+          # run check
+          declare -A TF_FMT_RESULTS
+          for TF_FMT_DIR in ${TF_FMT_DIRS[*]}; do
+            REL_PATH=$(realpath --relative-to="$(pwd)" "${TF_FMT_DIR}")
+            log-info "running in: '${REL_PATH}'"
+            set +e
+            terraform -chdir="${TF_FMT_DIR}" fmt -check -recursive
+            TF_FMT_EXITCODE=${?}
+            set -e
+            TF_FMT_RESULTS["./${TF_FMT_DIR}"]="${TF_FMT_EXITCODE}"
+            if [ ! "${TF_FMT_EXITCODE}" == "0" ];then
+              log-error "fmt exited with code '${TF_FMT_EXITCODE}'!"
+            fi
+          done
+
+          # exit code
+          TF_FMT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_FMT_RESULTS[*]}))")
+          exit ${TF_FMT_SUM_EXIT_CODES}
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      - name: ✔ Terraform Validate
+        id: validate
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
+        run: |
+          echo "running 'terraform validate' in 'project-dir' '$(pwd)'"
+          terraform validate
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      - name: 🧹 Lint with TFLint
+        id: lint
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      - name: 📖 Terraform Plan
+        id: plan
+        if: steps.init.outcome == 'success' && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
+        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      # Create comment to be added to pull request with summary of validation results and last 65k characters
+      # of terraform plan output (maximum comment length is 65536 characters).
+      - name: 📝 Create validation summary
+        id: validation-summary
+        if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
+        env:
+          PLAN_OUT_FILE: ${{ steps.plan.outputs.txt-output-file }}
+          STATUS_INIT: ${{ steps.init.outcome }}
+          STATUS_FMT: ${{ steps.fmt.outcome }}
+          STATUS_VALIDATE: ${{ steps.validate.outcome }}
+          STATUS_LINT: ${{ steps.lint.outcome }}
+          STATUS_PLAN: ${{ steps.plan.outcome }}
+        run: |
+          # Build pull request comment
+
+          # Determine pull request comment url
+          COMMENT_URL="$(jq -r .pull_request.comments_url "${GITHUB_EVENT_PATH}")"
+
+          if [ "$COMMENT_URL" = "null" ]; then
+            # Non pull request event payloads lack this property
+            echo "validation-summary: info: unable to determine COMMENT_URL. pull request comment will not be added!"
+          else
+            echo "validation-summary: info: creating pull request comment"
+            COMMENT_PREFIX='### Terraform validation summary for environment: `${{ matrix.vars.github-environment }}`'
+            COMMENT_CONTENT="${COMMENT_PREFIX}
+            |  | Step | Result |
+            |:---:|---|---|
+            | ⚙️ | Initialization | $([ "${STATUS_INIT}" == 'success' ] && echo "\`${STATUS_INIT}\`" || echo "<kbd>${STATUS_INIT}</kbd>") |
+            | 🖌 | Format and Style | $([ "${STATUS_FMT}" == 'success' ] && echo "\`${STATUS_FMT}\`" || echo "<kbd>${STATUS_FMT}</kbd>") |
+            | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
+            | 🧹 | TFLint | $([ "${STATUS_LINT}" == 'success' ] && echo "\`${STATUS_LINT}\`" || echo "<kbd>${STATUS_LINT}</kbd>") |
+            | 📖 | Plan | $([ "${STATUS_PLAN}" == 'success' ] && echo "\`${STATUS_PLAN}\`" || echo "<kbd>${STATUS_PLAN}</kbd>") |"
+
+            # add plan output if exists
+            if [ -f "${PLAN_OUT_FILE}" ]; then
+              # Cap plan output at 65k characters
+              PLAN_OUT=$(cat "${PLAN_OUT_FILE}" | tail -c 65000 )
+
+              # don't touch the indenting here
+              COMMENT_CONTENT="${COMMENT_CONTENT}
+
+            <details><summary>Show Plan (last 65k characters)</summary>
+
+            \`\`\`terraform
+            ${PLAN_OUT}
+            \`\`\`
+            </details>"
+            else
+              # don't touch the indenting here
+              COMMENT_CONTENT="${COMMENT_CONTENT}
+
+            Plan not available 🤷‍♀️"
+            fi
+
+            COMMENT_CONTENT="${COMMENT_CONTENT}
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${GITHUB_WORKFLOW}\`*"
+
+            echo "prefix=${COMMENT_PREFIX}" >> $GITHUB_OUTPUT
+
+            echo 'comment<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+            echo "${COMMENT_CONTENT}" >> $GITHUB_OUTPUT
+            echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      - name: 🏷️ Add validation summary as pull request comment
+        id: validation-summary-on-pr
+        if: steps.validation-summary.outcome == 'success'
+        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        with:
+          pr-comment-text: ${{ steps.validation-summary.outputs.comment }}
+          delete-comments-starting-with: ${{ steps.validation-summary.outputs.prefix }}
+        continue-on-error: true # allow job to continue, execution status is evaluated later
+
+      # Terminate the job with 'failure' if any validation check did not succeed
+      # steps.<step id>.outcome:
+      #   The result of a completed step before continue-on-error is applied.
+      #   Possible values are success, failure, cancelled, or skipped.
+      #   When a continue-on-error step fails, the outcome is failure, but the final conclusion is success.
+      - name: "Terraform validation status: Init"
+        if: |
+          steps.init.outcome != 'success'
+          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init') )
+        run: exit 1
+      - name: "Terraform validation status: Format"
+        if: |
+          steps.fmt.outcome != 'success'
+          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format') )
+        run: exit 1
+      - name: "Terraform validation status: Validate"
+        if: |
+          steps.validate.outcome != 'success'
+          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate') )
+        run: exit 1
+      - name: "Terraform validation status: TFLint"
+        if: |
+          steps.lint.outcome != 'success'
+          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint') )
+        run: exit 1
+      - name: "Terraform validation status: Plan"
+        if: |
+          steps.plan.outcome != 'success'
+          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
+        run: exit 1
+
+      - name: 🐙 Terraform Apply
+        id: apply
+        # Run step when:
+        #   - plan succeeded AND:
+        #     1. one of the goals [all, apply]
+        #        AND push or manual on default branch
+        #     2. goal 'apply-on-pr'
+        #        AND pull request to default branch
+        if: |
+          steps.plan.outcome == 'success' && (
+            ( ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') )
+              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
+              && matrix.vars.caller-repo-is-on-default-branch == 'true'
+            ) || (
+              contains(matrix.vars.goals, 'apply-on-pr')
+              && github.event_name == 'pull_request'
+              && github.base_ref == matrix.vars.caller-repo-default-branch
+          ) )
+        run: |
+          # apply the plan from a previous step
+
+          _step_name='apply'
+          function _log { echo "${1}${_step_name}: ${2}"; }
+          function log-info { _log "" "${*}"; }
+          function start-group { echo "::group::${_step_name}: ${*}"; }
+          function end-group { echo "::endgroup::"; }
+
+          REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
+          APPLY_CMD="terraform apply -input=false -auto-approve ${{ steps.plan.outputs.terraform-plan-file }}"
+          log-info "command string is '${APPLY_CMD}'"
+          start-group "'terraform apply' in '${REL_PATH}'"
+          ${APPLY_CMD}
+          end-group
+
+      - name: ☠📖 Terraform Destroy Plan
+        id: destroy-plan
+        if: steps.init.outcome == 'success' && contains(matrix.vars.goals, 'destroy-plan')
+        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          environment-name: "${{ matrix.vars.github-environment }}-destroy"
+          extra-plan-args: -destroy
+
+      - name: ☠ Terraform Destroy
+        id: destroy
+        # Run step when:
+        #   - destroy plan succeeded AND:
+        #     1. goal 'destroy'
+        #        AND push or manual on default branch
+        #     2. goal 'destroy-on-pr'
+        #        AND pull request to default branch
+        if: |
+          steps.destroy-plan.outcome == 'success' && (
+            ( contains(matrix.vars.goals, 'destroy')
+              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
+              && matrix.vars.caller-repo-is-on-default-branch == 'true'
+            ) || (
+              contains(matrix.vars.goals, 'destroy-on-pr')
+              && github.event_name == 'pull_request'
+              && github.base_ref == matrix.vars.caller-repo-default-branch
+          ) )
+        run: |
+          # perform destroy using a destroy plan from a previous step
+
+          _step_name='destroy'
+          function _log { echo "${1}${_step_name}: ${2}"; }
+          function log-info { _log "" "${*}"; }
+          function start-group { echo "::group::${_step_name}: ${*}"; }
+          function end-group { echo "::endgroup::"; }
+
+          REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
+          DESTROY_CMD="terraform apply -input=false -auto-approve ${{ steps.destroy-plan.outputs.terraform-plan-file }}"
+          log-info "command string is '${DESTROY_CMD}'"
+          start-group "'terraform apply' in '${REL_PATH}'"
+          ${DESTROY_CMD}
+          end-group
+
+  # create a global result indicating if workflow steps succeeded or not,
+  # handy for branch protection rules
+  conclusion:
+    if: always()
+    name: "Terraform conclusion"
+    needs: [create-matrix, terraform-ci-cd]
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: exit 1
+        # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
+        # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
+        if: >-
+          ${{
+               contains(needs.*.result, 'failure')
+            || contains(needs.*.result, 'cancelled')
+          }}
