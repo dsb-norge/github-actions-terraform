@@ -1,0 +1,87 @@
+name: "Run terraform init in directory"
+description: |
+  Given a working directory this will run 'terraform init' within it.
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: From what directory to invoke terraform.
+    required: true
+  additional-dirs-json:
+    description: |
+      Name of the current deployment environment. This is used when naming the plan output files.
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: check-prereqs
+      shell: bash
+      run: |
+        # Make sure terraform is available
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "check prerequisite: terraform binary"
+        if ! command -v terraform version &>/dev/null; then
+          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
+          exit 1
+        else
+          log-info "using $(terraform version)"
+        fi
+        end-group
+    - id: init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # run terraform init
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # keep track of exit codes
+        declare -A TF_INIT_RESULTS
+
+        # project init
+        start-group "running 'terraform init' in 'project-dir' '$(ws-path $(pwd))' ..."
+        set +e
+        terraform init -reconfigure
+        TF_INIT_EXITCODE=${?}
+        set -e
+        TF_INIT_RESULTS["$(pwd)"]="${TF_INIT_EXITCODE}"
+        if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
+          log-error "init exited with code '${TF_INIT_EXITCODE}'!"
+        fi
+        end-group
+
+        # additional init
+        more_dirs_json=$(cat <<'EOF'
+        ${{ inputs.additional-dirs-json }}
+        EOF
+        )
+        more_dirs=$(echo ${more_dirs_json} | jq -cr '.[]')
+        if [ -z "$more_dirs" ]; then
+          log-info "no additional directories to init specified"
+        else
+          log-info "additional directories to init specified"
+          for extra_dir in ${more_dirs}; do
+            start-group "additional init directory '${extra_dir}'"
+            log-info "looking for directory ..."
+            if [ -d "${GITHUB_WORKSPACE}/${extra_dir}" ]; then
+              log-info "found it. Running terraform init now ..."
+              set +e
+              terraform -chdir="${GITHUB_WORKSPACE}/${extra_dir}" init -reconfigure
+              TF_INIT_EXITCODE=${?}
+              set -e
+              TF_INIT_RESULTS["${GITHUB_WORKSPACE}/${extra_dir}"]="${TF_INIT_EXITCODE}"
+              if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
+                log-error "init exited with code '${TF_INIT_EXITCODE}'!"
+              fi
+            else
+              log-error "additional init directory '${extra_dir}' does not exist!"
+              exit 1
+            fi
+            end-group
+          done
+        fi
+
+        # exit code
+        TF_INIT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_INIT_RESULTS[*]}))")
+        exit ${TF_INIT_SUM_EXIT_CODES}

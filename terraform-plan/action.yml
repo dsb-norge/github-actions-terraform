@@ -4,7 +4,7 @@ description: |
 author: "Peder Schmedling"
 inputs:
   working-directory:
-    description: From what directory to run TFLint.
+    description: From what directory to invoke terraform.
     required: true
   environment-name:
     description: |
@@ -42,27 +42,15 @@ outputs:
   txt-output-file:
     description: "The output of the terraform plan in plain txt format, ie. processed by the 'terraform show' command."
     value: ${{ steps.plan-show.outputs.tf-plan-txt-output-file }}
-
 runs:
   using: "composite"
   steps:
     - id: check-prereqs
       shell: bash
       run: |
-        # Make sure 'working-directory' exists and that terraform is available
+        # Make sure terraform is available
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        start-group "check prerequisite: working-directory"
-        given_dir='${{ inputs.working-directory }}'
-        log-info "configured 'working-directory' is '${given_dir}'"
-        if [ ! -d "${given_dir}" ]; then
-          log-error "the configured 'working-directory' does not exists, unable to perform linting!"
-          exit 1
-        else
-          log-info "the configured 'working-directory' exists."
-        fi
-        end-group
 
         start-group "check prerequisite: terraform binary"
         if ! command -v terraform version &>/dev/null; then
@@ -72,7 +60,6 @@ runs:
           log-info "using $(terraform version)"
         fi
         end-group
-
     - id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -83,13 +70,12 @@ runs:
 
         PLAN_CONSOLE_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-console-output-${{ inputs.environment-name }}.txt"
         PLAN_TF_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.plan"
-        echo "tf-plan-console-output-file=${PLAN_CONSOLE_OUT_FILE}" >> $GITHUB_OUTPUT
-        echo "tf-plan-tf-output-file=${PLAN_TF_OUT_FILE}" >> $GITHUB_OUTPUT
+        set-output 'tf-plan-console-output-file' "${PLAN_CONSOLE_OUT_FILE}"
+        set-output 'tf-plan-tf-output-file' "${PLAN_TF_OUT_FILE}"
 
-        REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
         PLAN_CMD="terraform ${{ inputs.extra-global-args }} plan -detailed-exitcode -input=false -no-color -out=${PLAN_TF_OUT_FILE} ${{ inputs.extra-plan-args }}"
         log-info "command string is '${PLAN_CMD}'"
-        start-group "'terraform plan' in '${REL_PATH}'"
+        start-group "'terraform plan' in '$(ws-path $(pwd))'"
 
         # Need this to properly catch terraform exit code
         set -o pipefail
@@ -99,7 +85,7 @@ runs:
         ${PLAN_CMD} 2>&1 | tee ${PLAN_CONSOLE_OUT_FILE}
         PLAN_EXIT_CODE=${?}
 
-        echo "tf-plan-exitcode=${PLAN_EXIT_CODE}" >> $GITHUB_OUTPUT
+        set-output 'tf-plan-exitcode' "${PLAN_EXIT_CODE}"
 
         # make sure '2' is consider 'success'
         # 'terraform plan' exits with exit code 2 upon success when changes are present
@@ -116,19 +102,15 @@ runs:
         end-group
 
         exit ${PLAN_EXIT_CODE}
-      continue-on-error: true # allow job to continue, execution status is evaluated later
-
-    - # save output as artifact
-      id: plan-upload
+      continue-on-error: true # allow action to continue, execution status is returned by the last step
+    - id: plan-upload
       if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
       uses: actions/upload-artifact@v3
       with:
         name: ${{ inputs.environment-name }}-terraform-plan-console-output
         path: ${{ steps.plan.outputs.tf-plan-console-output-file }}
-      continue-on-error: true # allow job to continue, execution status is evaluated later
-
-    - # create plan.txt file
-      id: plan-show
+      continue-on-error: true # allow action to continue, execution status is returned by the last step
+    - id: plan-show
       if: steps.plan.outcome == 'success'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -140,16 +122,13 @@ runs:
         start-group "output the plan as txt"
         PLAN_TF_OUT_FILE="${{ steps.plan.outputs.tf-plan-tf-output-file }}"
         PLAN_TXT_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.txt"
-        echo "tf-plan-txt-output-file=${PLAN_TXT_OUT_FILE}" >> $GITHUB_OUTPUT
+        set-output 'tf-plan-txt-output-file' "${PLAN_TXT_OUT_FILE}"
         terraform show -no-color ${PLAN_TF_OUT_FILE} 2>&1 | tee ${PLAN_TXT_OUT_FILE}
         end-group
-      continue-on-error: true # allow job to continue, execution status is evaluated later
-
-    - # evaluate exit code and fail if configured to
-      id: plan-status
+      continue-on-error: true # allow action to continue, execution status is returned by the last step
+    - id: plan-status
       if: |
         inputs.fail-on-failed-plan == 'true'
         && ( steps.plan.outcome == 'failure' || steps.plan.outcome == 'cancelled' )
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       run: exit 1

@@ -11,7 +11,6 @@ outputs:
   matrix-json:
     description: "All terraform ci/cd variables as json"
     value: ${{ steps.make-matrix-compatible.outputs.matrix-json }}
-
 runs:
   using: "composite"
   steps:
@@ -27,7 +26,7 @@ runs:
         ${{ inputs.inputs-json }}
         EOF
         )
-        log-json "input 'inputs-json'" "${INPUTS_JSON}"
+        log-multiline "input 'inputs-json'" "${INPUTS_JSON}"
 
         YML_INPUTS=(
           environments-yml
@@ -47,10 +46,8 @@ runs:
         # loop yaml fields and parse as yaml
         declare -A YML_INPUTS_AS_JSON
         for YML_INPUT_NAME in ${YML_INPUTS[*]}; do
-          start-group "yaml input '${YML_INPUT_NAME}'"
           YML_INPUT=$(get-input-val "${YML_INPUT_NAME}")
-          echo "${YML_INPUT}"
-          end-group
+          log-multiline "yaml input '${YML_INPUT_NAME}'" "${YML_INPUT}"
 
           # Test if valid yaml
           if ! echo "${YML_INPUT}" | yq e 2>/dev/null 1>&2 ; then
@@ -60,7 +57,7 @@ runs:
 
           # Convert yaml to JSON
           JSON_INPUT=$(echo "${YML_INPUT}" | yq e -o=json -)
-          log-json "yaml input '${YML_INPUT_NAME}' converted to JSON" "${JSON_INPUT}"
+          log-multiline "yaml input '${YML_INPUT_NAME}' converted to JSON" "${JSON_INPUT}"
           YML_INPUTS_AS_JSON+=( ["${YML_INPUT_NAME}"]="${JSON_INPUT}" )
           # log-info "out of array: ${YML_INPUTS_AS_JSON[${YML_INPUT_NAME}]}"
           # log-info "out of array: $(get-yaml-input-as-json ${YML_INPUT_NAME})"
@@ -182,11 +179,9 @@ runs:
           end-group
         done
 
-        log-json "Final JSON output" "$OUT_JSON"
+        log-multiline "Final JSON output" "$OUT_JSON"
 
-        echo 'json<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
-        echo "${OUT_JSON}" >> $GITHUB_OUTPUT
-        echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+        set-multiline-output 'json' "${OUT_JSON}"
     - id: validate
       shell: bash
       run: |
@@ -199,7 +194,7 @@ runs:
         ${{ steps.create-vars.outputs.json }}
         EOF
         )
-        log-json "vars JSON" "${JSON_CONFIG}"
+        log-multiline "vars JSON" "${JSON_CONFIG}"
 
         # Required fields
         REQ_FIELDS=(
@@ -251,6 +246,7 @@ runs:
           log-info "[OK] The specification is not an empty array."
         fi
 
+        # check fields
         DO_EXIT=0
         for ENV_VARS in $(echo "${JSON_CONFIG}" | jq -r '.[] | @base64'); do
 
@@ -269,13 +265,16 @@ runs:
               fi
             fi
           done
+        done
+        [ ${DO_EXIT} -eq 1 ] && exit 1 || log-info "[OK] All required fields were found in the specification."
 
-          # project-dir must be an existing directory
+        # project-dir must be an existing directory
+        for ENV_VARS in $(echo "${JSON_CONFIG}" | jq -r '.[] | @base64'); do
           if [ ! -d "$(_jjq '."project-dir"')" ]; then
             fail-field "The directory '$(_jjq '."project-dir"')' does not exist, make sure 'project-dir' points to an existing directory!"
           fi
         done
-        [ ${DO_EXIT} -eq 1 ] && exit 1 || log-info "[OK] All required fields were found in the specification."
+        [ ${DO_EXIT} -eq 1 ] && exit 1 || log-info "[OK] All project directories in the specification exists."
     - shell: bash
       id: make-matrix-compatible
       run: |
@@ -288,7 +287,7 @@ runs:
         ${{ steps.create-vars.outputs.json }}
         EOF
         )
-        log-json "JSON input received" "${IN_JSON}"
+        log-multiline "JSON input received" "${IN_JSON}"
 
         # Reshape JSON to conform to github matrix format:
         #{
@@ -301,8 +300,6 @@ runs:
         # Each element in the array will have one field 'vars' containing all vars for a given environment
         OUT_MATRIX_JSON=$(echo "${IN_JSON}" | jq '{ "environment": map( .["environment"]), "include": map({ "environment": .["environment"], "vars": . }) }')
 
-        log-json "Final matrix JSON output" "$OUT_MATRIX_JSON"
+        log-multiline "Final matrix JSON output" "$OUT_MATRIX_JSON"
 
-        echo 'matrix-json<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
-        echo "${OUT_MATRIX_JSON}" >> $GITHUB_OUTPUT
-        echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT
+        set-multiline-output 'matrix-json' "${OUT_MATRIX_JSON}"

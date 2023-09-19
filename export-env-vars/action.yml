@@ -10,7 +10,6 @@ inputs:
       JSON object with environment variables to export.
         key:    env name
         value:  value of env
-
     required: true
   extra-envs-from-secrets:
     description: |
@@ -46,13 +45,13 @@ runs:
         ${{ inputs.extra-envs }}
         EOF
         )
-        log-json "input 'extra-envs'" "${EXTRA_ENVS_JSON}"
+        log-multiline "input 'extra-envs'" "${EXTRA_ENVS_JSON}"
 
         EXTRA_SECRETS_JSON=$(cat <<'EOF'
         ${{ inputs.extra-envs-from-secrets }}
         EOF
         )
-        log-json "input 'extra-envs-from-secrets'" "${EXTRA_SECRETS_JSON}"
+        log-multiline "input 'extra-envs-from-secrets'" "${EXTRA_SECRETS_JSON}"
 
         SECRETS_JSON=$(cat <<'EOF'
         ${{ inputs.secrets-json }}
@@ -65,12 +64,7 @@ runs:
           REGULAR_ENVS=$(echo ${EXTRA_ENVS_JSON} | jq -r '[keys[]] | join(" ")')
           for ENV_KEY in ${REGULAR_ENVS}; do
               ENV_VALUE=$(echo "${EXTRA_ENVS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
-
-              log-info "Setting environment variable '${ENV_KEY}' -> '${ENV_VALUE}'"
-              # supports multiline strings:
-              echo "${ENV_KEY}<<\"${{ github.run_id }}\"" >> $GITHUB_ENV
-              echo "${ENV_VALUE}" >> $GITHUB_ENV
-              echo '"${{ github.run_id }}"' >> $GITHUB_ENV
+              export-environment-variable "${ENV_KEY}" "${ENV_VALUE}"
           done
           end-group
         fi
@@ -82,14 +76,10 @@ runs:
           for ENV_KEY in ${ENVS_FROM_SECRETS}; do
               log-info "Get secret name for '${ENV_KEY}' ..."
               ENV_SECRET_NAME=$(echo "${EXTRA_SECRETS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
+
               log-info "Secret is named '${ENV_SECRET_NAME}', reading value ..."
               ENV_SECRET_VALUE=$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" -r '.[$key]')
-
-              log-info "Setting environment variable '${ENV_KEY}'"
-              # supports multiline strings:
-              echo "${ENV_KEY}<<\"${{ github.run_id }}\"" >> $GITHUB_ENV
-              echo "${ENV_SECRET_VALUE}" >> $GITHUB_ENV
-              echo '"${{ github.run_id }}"' >> $GITHUB_ENV
+              export-secret-environment-variable "${ENV_KEY}" "${ENV_SECRET_VALUE}"
           done
           end-group
         fi

@@ -1,0 +1,91 @@
+name: "Create terraform validation summary"
+description: |
+  Create comment to be added to pull request with summary of validation results and last 65k characters
+  of terraform plan output (maximum comment length is 65536 characters).
+author: "Peder Schmedling"
+inputs:
+  environment-name:
+    description: Name of the current deployment environment.
+  plan-txt-output-file:
+    description: Path of file with plan output in txt format.
+    required: true
+  status-init:
+    description: Outcome of init step.
+    required: true
+  status-fmt:
+    description: Outcome of fmt step.
+    required: true
+  status-validate:
+    description: Outcome of validate step.
+    required: true
+  status-lint:
+    description: Outcome of lint step.
+    required: true
+  status-plan:
+    description: Outcome of plan step.
+    required: true
+outputs:
+  prefix:
+    description: Validation summary prefix string.
+    value: ${{ steps.create-validation-summary.outputs.prefix }}
+  summary:
+    description: Validation summary content string.
+    value: ${{ steps.create-validation-summary.outputs.summary }}
+runs:
+  using: "composite"
+  steps:
+    - id: create-validation-summary
+      shell: bash
+      env:
+        PLAN_OUT_FILE: ${{ inputs.plan-txt-output-file }}
+        STATUS_INIT: ${{ inputs.status-init }}
+        STATUS_FMT: ${{ inputs.status-fmt }}
+        STATUS_VALIDATE: ${{ inputs.status-validate }}
+        STATUS_LINT: ${{ inputs.status-lint }}
+        STATUS_PLAN: ${{ inputs.status-plan }}
+      run: |
+        # Build pull request comment
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        log-info "creating pull request comment ..."
+        COMMENT_PREFIX='### Terraform validation summary for environment: `${{ inputs.environment-name }}`'
+        COMMENT_CONTENT="${COMMENT_PREFIX}
+        |  | Step | Result |
+        |:---:|---|---|
+        | ⚙️ | Initialization | $([ "${STATUS_INIT}" == 'success' ] && echo "\`${STATUS_INIT}\`" || echo "<kbd>${STATUS_INIT}</kbd>") |
+        | 🖌 | Format and Style | $([ "${STATUS_FMT}" == 'success' ] && echo "\`${STATUS_FMT}\`" || echo "<kbd>${STATUS_FMT}</kbd>") |
+        | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
+        | 🧹 | TFLint | $([ "${STATUS_LINT}" == 'success' ] && echo "\`${STATUS_LINT}\`" || echo "<kbd>${STATUS_LINT}</kbd>") |
+        | 📖 | Plan | $([ "${STATUS_PLAN}" == 'success' ] && echo "\`${STATUS_PLAN}\`" || echo "<kbd>${STATUS_PLAN}</kbd>") |"
+
+        # add plan output if exists
+        if [ -f "${PLAN_OUT_FILE}" ]; then
+          # Cap plan output at 65k characters
+          PLAN_OUT=$(cat "${PLAN_OUT_FILE}" | tail -c 65000 )
+
+          # don't touch the indenting here
+          COMMENT_CONTENT="${COMMENT_CONTENT}
+
+        <details><summary>Show Plan (last 65k characters)</summary>
+
+        \`\`\`terraform
+        ${PLAN_OUT}
+        \`\`\`
+        </details>"
+        else
+          # don't touch the indenting here
+          COMMENT_CONTENT="${COMMENT_CONTENT}
+
+        Plan not available 🤷‍♀️"
+        fi
+
+        COMMENT_CONTENT="${COMMENT_CONTENT}
+
+        *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${GITHUB_WORKFLOW}\`*"
+
+        log-info "Final validation summary prefix: ${COMMENT_PREFIX}"
+        log-multiline "Final validation summary " "${COMMENT_CONTENT}"
+
+        set-output 'prefix' "${COMMENT_PREFIX}"
+        set-multiline-output 'summary' "${COMMENT_CONTENT}"
