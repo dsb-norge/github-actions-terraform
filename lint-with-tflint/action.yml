@@ -18,26 +18,18 @@ runs:
     - id: check-prereqs
       shell: bash
       run: |
-        # Make sure 'working-directory' exists and that TFLint is available
+        # Make sure TFLint is available
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
-        given_dir='${{ inputs.working-directory }}'
-        log-info "configured 'working-directory' is '${given_dir}'"
-        if [ ! -d "${given_dir}" ]; then
-          log-error "the configured 'working-directory' does not exists, unable to perform linting!"
-          exit 1
-        else
-          log-info "the configured 'working-directory' exists."
-        fi
-
+        start-group "check prerequisite: TFLint binary"
         if ! command -v tflint --version &>/dev/null; then
           log-error "TFLint is not available on path, please install using the 'setup-tflint' action!"
           exit 1
         else
           log-info "using $(tflint --version)"
         fi
-
+        end-group
     - id: get-config
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -72,9 +64,8 @@ runs:
             exit 1
           fi
         fi
-        log-info "using TFLint config file located at '${path_to_use}'"
-        echo "file=${path_to_use}" >> $GITHUB_OUTPUT
-
+        log-info "using TFLint config file located at '$(ws-path ${path_to_use})'"
+        set-output 'file' "${path_to_use}"
     - id: lint
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -88,20 +79,19 @@ runs:
 
         # dirs
         MODULES_FILE="$(pwd)/.terraform/modules/modules.json"
-        log-info "looking for terraform modules file at '${MODULES_FILE}'"
+        log-info "looking for terraform modules file at '$(ws-path ${MODULES_FILE})'"
         if [ -f "${MODULES_FILE}" ]; then
           log-info "found it, parsing directories to lint"
           TFLINT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
         else
-          log-info "no modules file found, linting will only be performed in '$(pwd)'"
+          log-info "no modules file found, linting will only be performed in '$(ws-path $(pwd))'"
           TFLINT_DIRS="$(pwd)"
         fi
 
         # lint
         declare -A TFLINT_RESULTS
         for TFLINT_DIR in ${TFLINT_DIRS[*]}; do
-          REL_PATH=$(realpath --relative-to="$(pwd)" "${TFLINT_DIR}")
-          start-group "directory '${REL_PATH}'"
+          start-group "directory '$(ws-path ${TFLINT_DIR})'"
           log-info "TFLint init ..."
           tflint --init --config="${{ steps.get-config.outputs.file }}" --chdir="${TFLINT_DIR}"
           log-info "linting ..."
@@ -115,8 +105,7 @@ runs:
         # summary
         log-info "summary:"
         for TFLINT_DIR in ${TFLINT_DIRS[*]}; do
-          REL_PATH=$(realpath --relative-to="$(pwd)" "${TFLINT_DIR}")
-          log-info "  - $([[ ${TFLINT_RESULTS["./${TFLINT_DIR}"]} -ne 0 ]] && echo 'failure ->' || echo 'success ->') ./${REL_PATH}"
+          log-info "  - $([[ ${TFLINT_RESULTS["./${TFLINT_DIR}"]} -ne 0 ]] && echo 'failure ->' || echo 'success ->') ./$(ws-path ${TFLINT_DIR})"
         done
 
         # exit code

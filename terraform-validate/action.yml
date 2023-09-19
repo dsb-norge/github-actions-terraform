@@ -1,0 +1,37 @@
+name: "Run terraform validate in directory"
+description: |
+  Runs 'terraform validate' in a given directory.
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: From what directory to invoke terraform.
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: check-prereqs
+      shell: bash
+      run: |
+        # Make sure terraform is available
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "check prerequisite: terraform binary"
+        if ! command -v terraform version &>/dev/null; then
+          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
+          exit 1
+        else
+          log-info "using $(terraform version)"
+        fi
+        end-group
+    - id: validate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # run terraform validate in a given directory
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "running 'terraform validate' in '$(ws-path $(pwd))'"
+        terraform validate
+        end-group

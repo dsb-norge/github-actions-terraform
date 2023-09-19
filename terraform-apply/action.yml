@@ -1,0 +1,53 @@
+name: "Run terraform apply in directory"
+description: |
+  Runs 'terraform apply' for a given a terraform plan file.
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: From what directory to invoke terraform.
+    required: true
+  terraform-plan-file:
+    description: Path of terraform plan output file to apply.
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: check-prereqs
+      shell: bash
+      run: |
+        # Make sure terraform is available
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "check prerequisite: plan file"
+        given_path='${{ inputs.terraform-plan-file }}'
+        log-info "configured plan file path is '${given_path}'"
+        if [ ! -f "${given_path}" ]; then
+          log-error "the configured plan file does not exists, unable to perform plan!"
+          exit 1
+        else
+          log-info "the configured plan file exists."
+        fi
+        end-group
+
+        start-group "check prerequisite: terraform binary"
+        if ! command -v terraform version &>/dev/null; then
+          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
+          exit 1
+        else
+          log-info "using $(terraform version)"
+        fi
+        end-group
+    - id: apply
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # run terraform apply of a given plan
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        APPLY_CMD="terraform apply -input=false -auto-approve ${{ inputs.terraform-plan-file }}"
+        log-info "apply command string is '${APPLY_CMD}'"
+        start-group "'terraform apply' in '$(ws-path $(pwd))'"
+        ${APPLY_CMD}
+        end-group

@@ -1,0 +1,68 @@
+name: "Run terraform fmt"
+description: |
+  Run 'terraform fmt', optionally from repository root.
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: From what directory to invoke terraform.
+    required: true
+  format-check-in-root-dir:
+    description: |
+      If 'true' the command invocation will be performed in the root directory of the repository.
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: check-prereqs
+      shell: bash
+      run: |
+        # Make sure terraform is available
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "check prerequisite: terraform binary"
+        if ! command -v terraform version &>/dev/null; then
+          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
+          exit 1
+        else
+          log-info "using $(terraform version)"
+        fi
+        end-group
+    - id: fmt
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # run terraform fmt
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # where to check?
+        MODULES_FILE="$(pwd)/.terraform/modules/modules.json"
+        if [ "${{ inputs.format-check-in-root-dir }}" == 'true' ]; then
+          log-info "check will run from root directory."
+          TF_FMT_DIRS="${GITHUB_WORKSPACE}"
+        elif [ -f "${MODULES_FILE}" ]; then
+          log-info "check will run in directories from terraform modules file '$(ws-path ${MODULES_FILE})'"
+          TF_FMT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
+        else
+          log-info "check will run in 'project-dir' '$(pwd)'"
+          TF_FMT_DIRS="$(pwd)"
+        fi
+
+        # run check
+        declare -A TF_FMT_RESULTS
+        for TF_FMT_DIR in ${TF_FMT_DIRS[*]}; do
+          log-info "running in: '$(ws-path ${TF_FMT_DIR})'"
+          set +e
+          terraform -chdir="${TF_FMT_DIR}" fmt -check -recursive
+          TF_FMT_EXITCODE=${?}
+          set -e
+          TF_FMT_RESULTS["./${TF_FMT_DIR}"]="${TF_FMT_EXITCODE}"
+          if [ ! "${TF_FMT_EXITCODE}" == "0" ];then
+            log-error "fmt exited with code '${TF_FMT_EXITCODE}'!"
+          fi
+        done
+
+        # exit code
+        TF_FMT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_FMT_RESULTS[*]}))")
+        exit ${TF_FMT_SUM_EXIT_CODES}

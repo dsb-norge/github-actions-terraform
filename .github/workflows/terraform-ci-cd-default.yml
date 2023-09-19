@@ -202,7 +202,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: ${{ matrix.vars.project-dir }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v3
@@ -227,111 +226,27 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        run: |
-          _step_name='init'
-          function _log { echo "${1}${_step_name}: ${2}"; }
-          function log-info { _log "" "${*}"; }
-          function log-error { _log "ERROR: " "${*}"; }
-          function start-group { echo "::group::${_step_name}: ${*}"; }
-          function end-group { echo "::endgroup::"; }
-
-          # keep track of exit codes
-          declare -A TF_INIT_RESULTS
-
-          # project init
-          start-group "running 'terraform init' in 'project-dir' '$(pwd)' ..."
-          set +e
-          terraform init -reconfigure
-          TF_INIT_EXITCODE=${?}
-          set -e
-          TF_INIT_RESULTS["$(pwd)"]="${TF_INIT_EXITCODE}"
-          if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
-            log-error "init exited with code '${TF_INIT_EXITCODE}'!"
-          fi
-          end-group
-
-          # additional init
-          more_dirs_json=$(cat <<'EOF'
-          ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
-          EOF
-          )
-          if [ ! -z "$more_dirs_json" ]; then
-            log-info "additional directories to init specified"
-            more_dirs=$(echo ${more_dirs_json} | jq -cr '.[]')
-            for extra_dir in ${more_dirs}; do
-              start-group "additional init directory '${extra_dir}'"
-              log-info "looking for directory ..."
-              if [ -d "${GITHUB_WORKSPACE}/${extra_dir}" ]; then
-                log-info "found it. Running terraform init now ..."
-                set +e
-                terraform -chdir="${GITHUB_WORKSPACE}/${extra_dir}" init -reconfigure
-                TF_INIT_EXITCODE=${?}
-                set -e
-                TF_INIT_RESULTS["${GITHUB_WORKSPACE}/${extra_dir}"]="${TF_INIT_EXITCODE}"
-                if [ ! "${TF_INIT_EXITCODE}" == "0" ];then
-                  log-error "init exited with code '${TF_INIT_EXITCODE}'!"
-                fi
-              else
-                log-error "additional init directory '${extra_dir}' does not exist!"
-                exit 1
-              fi
-              end-group
-            done
-          fi
-
-          # exit code
-          TF_INIT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_INIT_RESULTS[*]}))")
-          exit ${TF_INIT_SUM_EXIT_CODES}
+        uses: dsb-norge/github-actions-terraform/terraform-init@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
-        run: |
-          _step_name='format-check'
-          function _log { echo "${1}${_step_name}: ${2}"; }
-          function log-info { _log "" "${*}"; }
-          function log-error { _log "ERROR: " "${*}"; }
-
-          # where to check?
-          MODULES_FILE="$(pwd)/.terraform/modules/modules.json"
-          if [ "${{ matrix.vars.format-check-in-root-dir }}" == 'true' ]; then
-            log-info "check will run from root directory."
-            TF_FMT_DIRS="${GITHUB_WORKSPACE}"
-          elif [ -f "${MODULES_FILE}" ]; then
-            log-info "check will run in directories from terraform modules file '${MODULES_FILE}'"
-            TF_FMT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
-          else
-            log-info "check will run in 'project-dir' '$(pwd)'"
-            TF_FMT_DIRS="$(pwd)"
-          fi
-
-          # run check
-          declare -A TF_FMT_RESULTS
-          for TF_FMT_DIR in ${TF_FMT_DIRS[*]}; do
-            REL_PATH=$(realpath --relative-to="$(pwd)" "${TF_FMT_DIR}")
-            log-info "running in: '${REL_PATH}'"
-            set +e
-            terraform -chdir="${TF_FMT_DIR}" fmt -check -recursive
-            TF_FMT_EXITCODE=${?}
-            set -e
-            TF_FMT_RESULTS["./${TF_FMT_DIR}"]="${TF_FMT_EXITCODE}"
-            if [ ! "${TF_FMT_EXITCODE}" == "0" ];then
-              log-error "fmt exited with code '${TF_FMT_EXITCODE}'!"
-            fi
-          done
-
-          # exit code
-          TF_FMT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TF_FMT_RESULTS[*]}))")
-          exit ${TF_FMT_SUM_EXIT_CODES}
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
       - name: ✔ Terraform Validate
         id: validate
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
-        run: |
-          echo "running 'terraform validate' in 'project-dir' '$(pwd)'"
-          terraform validate
+        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
       - name: 🧹 Lint with TFLint
@@ -351,79 +266,27 @@ jobs:
           environment-name: ${{ matrix.vars.github-environment }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
-      # Create comment to be added to pull request with summary of validation results and last 65k characters
-      # of terraform plan output (maximum comment length is 65536 characters).
       - name: 📝 Create validation summary
-        id: validation-summary
+        id: create-validation-summary
         if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
-        env:
-          PLAN_OUT_FILE: ${{ steps.plan.outputs.txt-output-file }}
-          STATUS_INIT: ${{ steps.init.outcome }}
-          STATUS_FMT: ${{ steps.fmt.outcome }}
-          STATUS_VALIDATE: ${{ steps.validate.outcome }}
-          STATUS_LINT: ${{ steps.lint.outcome }}
-          STATUS_PLAN: ${{ steps.plan.outcome }}
-        run: |
-          # Build pull request comment
-
-          # Determine pull request comment url
-          COMMENT_URL="$(jq -r .pull_request.comments_url "${GITHUB_EVENT_PATH}")"
-
-          if [ "$COMMENT_URL" = "null" ]; then
-            # Non pull request event payloads lack this property
-            echo "validation-summary: info: unable to determine COMMENT_URL. pull request comment will not be added!"
-          else
-            echo "validation-summary: info: creating pull request comment"
-            COMMENT_PREFIX='### Terraform validation summary for environment: `${{ matrix.vars.github-environment }}`'
-            COMMENT_CONTENT="${COMMENT_PREFIX}
-            |  | Step | Result |
-            |:---:|---|---|
-            | ⚙️ | Initialization | $([ "${STATUS_INIT}" == 'success' ] && echo "\`${STATUS_INIT}\`" || echo "<kbd>${STATUS_INIT}</kbd>") |
-            | 🖌 | Format and Style | $([ "${STATUS_FMT}" == 'success' ] && echo "\`${STATUS_FMT}\`" || echo "<kbd>${STATUS_FMT}</kbd>") |
-            | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
-            | 🧹 | TFLint | $([ "${STATUS_LINT}" == 'success' ] && echo "\`${STATUS_LINT}\`" || echo "<kbd>${STATUS_LINT}</kbd>") |
-            | 📖 | Plan | $([ "${STATUS_PLAN}" == 'success' ] && echo "\`${STATUS_PLAN}\`" || echo "<kbd>${STATUS_PLAN}</kbd>") |"
-
-            # add plan output if exists
-            if [ -f "${PLAN_OUT_FILE}" ]; then
-              # Cap plan output at 65k characters
-              PLAN_OUT=$(cat "${PLAN_OUT_FILE}" | tail -c 65000 )
-
-              # don't touch the indenting here
-              COMMENT_CONTENT="${COMMENT_CONTENT}
-
-            <details><summary>Show Plan (last 65k characters)</summary>
-
-            \`\`\`terraform
-            ${PLAN_OUT}
-            \`\`\`
-            </details>"
-            else
-              # don't touch the indenting here
-              COMMENT_CONTENT="${COMMENT_CONTENT}
-
-            Plan not available 🤷‍♀️"
-            fi
-
-            COMMENT_CONTENT="${COMMENT_CONTENT}
-
-            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${GITHUB_WORKFLOW}\`*"
-
-            echo "prefix=${COMMENT_PREFIX}" >> $GITHUB_OUTPUT
-
-            echo 'comment<<"${{ github.run_id }}"' >> $GITHUB_OUTPUT
-            echo "${COMMENT_CONTENT}" >> $GITHUB_OUTPUT
-            echo '"${{ github.run_id }}"' >> $GITHUB_OUTPUT
-          fi
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
       - name: 🏷️ Add validation summary as pull request comment
         id: validation-summary-on-pr
-        if: steps.validation-summary.outcome == 'success'
+        if: steps.create-validation-summary.outcome == 'success'
         uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
         with:
-          pr-comment-text: ${{ steps.validation-summary.outputs.comment }}
-          delete-comments-starting-with: ${{ steps.validation-summary.outputs.prefix }}
+          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
+          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
         continue-on-error: true # allow job to continue, execution status is evaluated later
 
       # Terminate the job with 'failure' if any validation check did not succeed
@@ -475,21 +338,10 @@ jobs:
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        run: |
-          # apply the plan from a previous step
-
-          _step_name='apply'
-          function _log { echo "${1}${_step_name}: ${2}"; }
-          function log-info { _log "" "${*}"; }
-          function start-group { echo "::group::${_step_name}: ${*}"; }
-          function end-group { echo "::endgroup::"; }
-
-          REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
-          APPLY_CMD="terraform apply -input=false -auto-approve ${{ steps.plan.outputs.terraform-plan-file }}"
-          log-info "command string is '${APPLY_CMD}'"
-          start-group "'terraform apply' in '${REL_PATH}'"
-          ${APPLY_CMD}
-          end-group
+        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
 
       - name: ☠📖 Terraform Destroy Plan
         id: destroy-plan
@@ -518,21 +370,10 @@ jobs:
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        run: |
-          # perform destroy using a destroy plan from a previous step
-
-          _step_name='destroy'
-          function _log { echo "${1}${_step_name}: ${2}"; }
-          function log-info { _log "" "${*}"; }
-          function start-group { echo "::group::${_step_name}: ${*}"; }
-          function end-group { echo "::endgroup::"; }
-
-          REL_PATH=$(realpath --relative-to="${GITHUB_WORKSPACE}" "$(pwd)")
-          DESTROY_CMD="terraform apply -input=false -auto-approve ${{ steps.destroy-plan.outputs.terraform-plan-file }}"
-          log-info "command string is '${DESTROY_CMD}'"
-          start-group "'terraform apply' in '${REL_PATH}'"
-          ${DESTROY_CMD}
-          end-group
+        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+          terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
 
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
