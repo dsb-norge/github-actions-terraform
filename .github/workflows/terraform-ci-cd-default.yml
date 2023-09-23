@@ -217,6 +217,8 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ${{ matrix.vars.terraform-version }}
+          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
+          terraform_wrapper: false
 
       - name: "📥 Setup TFLint"
         uses: dsb-norge/github-actions-terraform/setup-tflint@v0
