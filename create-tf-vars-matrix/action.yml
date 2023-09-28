@@ -99,6 +99,20 @@ runs:
             set-field 'github-environment' "${ENVIRONMENT_NAME}" # modifies $ENVIRONMENT_OBJ
           fi
 
+          # this field is used by the workflow directly and _must_ be a boolean
+          if ! has-field 'allow-failing-terraform-operations'; then
+            log-info "'allow-failing-terraform-operations' not specified for environment, defaulting to 'false'"
+            set-bool-field-false 'allow-failing-terraform-operations' # modifies $ENVIRONMENT_OBJ
+          else
+            log-info "'allow-failing-terraform-operations' specified as '$(get-val 'allow-failing-terraform-operations')'"
+            log-info "making sure 'allow-failing-terraform-operations' is a boolean ..."
+            if [ "true" == "$(get-val 'allow-failing-terraform-operations')" ]; then
+              set-bool-field-true 'allow-failing-terraform-operations' # modifies $ENVIRONMENT_OBJ
+            else
+              set-bool-field-false 'allow-failing-terraform-operations' # modifies $ENVIRONMENT_OBJ
+            fi
+          fi
+
           if ! has-field 'url'; then
             log-info "'url' not specified for environment, using blank value"
             set-field 'url' "" # modifies $ENVIRONMENT_OBJ
@@ -207,6 +221,7 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
+          allow-failing-terraform-operations
           project-dir
           terraform-init-additional-dirs
           terraform-version
@@ -224,6 +239,7 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
+          allow-failing-terraform-operations
           project-dir
           terraform-version
           tflint-version
