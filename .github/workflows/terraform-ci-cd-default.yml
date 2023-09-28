@@ -38,6 +38,9 @@ on:
                 note: if this is omitted the workflow will default to using deployment environment with name  specified by workflow input 'environment'.
             - url
                 string, a url to display in github's deployment environment UI.
+            - allow-failing-terraform-operations
+                bool, defaults to false, if true: the workflow will not terminate with failure even if job steps fails.
+                This parameter allows for ignoring failing results of terraform operations for select environments.
             - goals-yml
                 YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
@@ -232,7 +235,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🖌 Terraform Format
         id: fmt
@@ -241,7 +244,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: ✔ Terraform Validate
         id: validate
@@ -249,7 +252,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-validate@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧹 Lint with TFLint
         id: lint
@@ -257,7 +260,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 📖 Terraform Plan
         id: plan
@@ -266,7 +269,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 📝 Create validation summary
         id: create-validation-summary
@@ -280,7 +283,7 @@ jobs:
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
           status-plan: ${{ steps.plan.outcome }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 🏷️ Add validation summary as pull request comment
         id: validation-summary-on-pr
@@ -289,38 +292,56 @@ jobs:
         with:
           pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
           delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
-        continue-on-error: true # allow job to continue, execution status is evaluated later
+        continue-on-error: true # allow job to continue, step outcome is ignored
 
-      # Terminate the job with 'failure' if any validation check did not succeed
-      # steps.<step id>.outcome:
-      #   The result of a completed step before continue-on-error is applied.
-      #   Possible values are success, failure, cancelled, or skipped.
-      #   When a continue-on-error step fails, the outcome is failure, but the final conclusion is success.
-      - name: "Terraform validation status: Init"
-        if: |
-          steps.init.outcome != 'success'
-          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init') )
-        run: exit 1
-      - name: "Terraform validation status: Format"
-        if: |
-          steps.fmt.outcome != 'success'
-          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format') )
-        run: exit 1
-      - name: "Terraform validation status: Validate"
-        if: |
-          steps.validate.outcome != 'success'
-          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate') )
-        run: exit 1
-      - name: "Terraform validation status: TFLint"
-        if: |
-          steps.lint.outcome != 'success'
-          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint') )
-        run: exit 1
-      - name: "Terraform validation status: Plan"
-        if: |
-          steps.plan.outcome != 'success'
-          && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
-        run: exit 1
+      # Terminate the job with 'failure' if any validation check did not succeed.
+      # If 'allow-failing-terraform-operations' is 'true' for the environment the job will not terminate.
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
+        run: |
+          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
+            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: 🖌 Format"
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
+        run: |
+          if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
+            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: ✔ Validate"
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
+        run: |
+          if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
+            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: 🧹 TFLint"
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
+        run: |
+          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
+            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: 📖 Plan"
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan')
+        run: |
+          if [ ! "${{ steps.plan.outcome }}" == 'success' ]; then
+            echo "::error title=Plan failed::Outcome of terraform plan step was '${{ steps.plan.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       - name: 🐙 Terraform Apply
         id: apply
@@ -331,7 +352,8 @@ jobs:
         #     2. goal 'apply-on-pr'
         #        AND pull request to default branch
         if: |
-          steps.plan.outcome == 'success' && (
+          steps.plan.outcome == 'success'
+          && (
             ( ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') )
               && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
@@ -344,15 +366,21 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       - name: ☠📖 Terraform Destroy Plan
         id: destroy-plan
-        if: steps.init.outcome == 'success' && contains(matrix.vars.goals, 'destroy-plan')
+        if: |
+          steps.init.outcome == 'success'
+          && contains(matrix.vars.goals, 'destroy-plan')
         uses: dsb-norge/github-actions-terraform/terraform-plan@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
           extra-plan-args: -destroy
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       - name: ☠ Terraform Destroy
         id: destroy
@@ -363,7 +391,8 @@ jobs:
         #     2. goal 'destroy-on-pr'
         #        AND pull request to default branch
         if: |
-          steps.destroy-plan.outcome == 'success' && (
+          steps.destroy-plan.outcome == 'success'
+          && (
             ( contains(matrix.vars.goals, 'destroy')
               && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
@@ -376,6 +405,8 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
