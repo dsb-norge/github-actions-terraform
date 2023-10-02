@@ -224,6 +224,8 @@ jobs:
           terraform_wrapper: false
 
       - name: "📥 Setup TFLint"
+        id: setup-tflint
+        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
         uses: dsb-norge/github-actions-terraform/setup-tflint@v0
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
