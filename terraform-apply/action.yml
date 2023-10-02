@@ -50,4 +50,5 @@ runs:
         log-info "apply command string is '${APPLY_CMD}'"
         start-group "'terraform apply' in '$(ws-path $(pwd))'"
         ${APPLY_CMD}
+        echo '' # avoid control characters left behind by apply, messes up the end-group cmd
         end-group
