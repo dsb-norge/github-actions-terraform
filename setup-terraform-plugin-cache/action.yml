@@ -1,0 +1,37 @@
+name: "Configure terraform plugin cache directory"
+description: |
+  Configures terraform plugin cache directory using ~/.terraformrc.
+author: "Peder Schmedling"
+outputs:
+  plugin-cache-directory:
+    description: The path to the plugin cache directory.
+    value: ${{ steps.configure.outputs.plugin-cache-directory }}
+runs:
+  using: "composite"
+  steps:
+    - id: configure
+      shell: bash
+      run: |
+        # configure terraform plugin cache directory
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        PLUGIN_CACHE_DIR="${HOME}/.terraform.d/plugin-cache"
+        CLI_CFG_FILE_PATH="${HOME}/.terraformrc"
+
+        log-info "creating plugin cache directory '${PLUGIN_CACHE_DIR}' ..."
+        if [ -d "${PLUGIN_CACHE_DIR}" ]; then
+          log-info "nothing to do, plugin cache directory already exists."
+        else
+          mkdir -p "${PLUGIN_CACHE_DIR}"
+        fi
+
+        log-info "creating Terraform CLI Configuration file '${CLI_CFG_FILE_PATH}' ..."
+        if [ -f "${CLI_CFG_FILE_PATH}" ]; then
+          log-warn "Overwriting existing Terraform CLI Configuration file!"
+          log-multiline "contents of .terraformrc before overwrite" "$(cat ${CLI_CFG_FILE_PATH})"
+        fi
+        echo "plugin_cache_dir = \"${PLUGIN_CACHE_DIR}\"" > "${CLI_CFG_FILE_PATH}"
+        log-multiline "contents of .terraformrc is" "$(cat ${CLI_CFG_FILE_PATH})"
+
+        set-output 'plugin-cache-directory' "${PLUGIN_CACHE_DIR}"
