@@ -63,6 +63,8 @@ runs:
     - id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TF_IN_AUTOMATION: "true"
       run: |
         # run terraform plan
 

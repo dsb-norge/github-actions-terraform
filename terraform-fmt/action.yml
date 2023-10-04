@@ -31,6 +31,8 @@ runs:
     - id: fmt
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TF_IN_AUTOMATION: "true"
       run: |
         # run terraform fmt
 
