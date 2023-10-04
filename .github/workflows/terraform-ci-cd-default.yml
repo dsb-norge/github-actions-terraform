@@ -249,6 +249,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
+          plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🖌 Terraform Format
