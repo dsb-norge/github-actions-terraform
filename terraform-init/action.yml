@@ -10,6 +10,9 @@ inputs:
     description: |
       Name of the current deployment environment. This is used when naming the plan output files.
     required: true
+  plugin-cache-directory:
+    description: |
+      Optional: path to the terraform providers plugin cache directory.
 runs:
   using: "composite"
   steps:
@@ -28,9 +31,27 @@ runs:
           log-info "using $(terraform version)"
         fi
         end-group
+
+        start-group "check prerequisite: terraform providers plugin cache directory"
+        PLUGIN_CACHE_DIR="${{ inputs.plugin-cache-directory }}"
+        if [ "" == "${PLUGIN_CACHE_DIR}" ]; then
+          log-info "input 'plugin-cache-directory' not configured."
+        else
+          log-info "input 'plugin-cache-directory' is '${PLUGIN_CACHE_DIR}'"
+          if [ -d "${PLUGIN_CACHE_DIR}" ]; then
+            log-info "'plugin-cache-directory' exists."
+          else
+            log-error "'plugin-dir' configured but does not exists!"
+            exit 1
+          fi
+        fi
+        end-group
+
     - id: init
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TF_IN_AUTOMATION: "true"
       run: |
         # run terraform init
 
@@ -42,7 +63,7 @@ runs:
         # project init
         start-group "running 'terraform init' in 'project-dir' '$(ws-path $(pwd))' ..."
         set +e
-        terraform init -reconfigure
+        terraform init -input=false -reconfigure
         TF_INIT_EXITCODE=${?}
         set -e
         TF_INIT_RESULTS["$(pwd)"]="${TF_INIT_EXITCODE}"
@@ -61,13 +82,19 @@ runs:
           log-info "no additional directories to init specified"
         else
           log-info "additional directories to init specified"
+
+          export TF_PLUGIN_CACHE_DIR="${{ inputs.plugin-cache-directory }}"
+
+          # ref. https://developer.hashicorp.com/terraform/cli/config/config-file#allowing-the-provider-plugin-cache-to-break-the-dependency-lock-file
+          export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="true"
+
           for extra_dir in ${more_dirs}; do
             start-group "additional init directory '${extra_dir}'"
             log-info "looking for directory ..."
             if [ -d "${GITHUB_WORKSPACE}/${extra_dir}" ]; then
               log-info "found it. Running terraform init now ..."
               set +e
-              terraform -chdir="${GITHUB_WORKSPACE}/${extra_dir}" init -reconfigure
+              terraform -chdir="${GITHUB_WORKSPACE}/${extra_dir}" init -input=false -reconfigure
               TF_INIT_EXITCODE=${?}
               set -e
               TF_INIT_RESULTS["${GITHUB_WORKSPACE}/${extra_dir}"]="${TF_INIT_EXITCODE}"
