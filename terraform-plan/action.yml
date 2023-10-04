@@ -32,7 +32,7 @@ outputs:
       The exit code from the terraform plan command.
       Note that 'terraform plan' exits with exit code 2 upon success when changes are present,
       ref. https://www.terraform.io/docs/commands/plan.html#detailed-exitcode
-    value: ${{ steps.outputs.tf-plan-exitcode }}
+    value: ${{ steps.plan.outputs.tf-plan-exitcode }}
   console-output-file:
     description: "The console output captured during execution of 'terraform plan'."
     value: ${{ steps.plan.outputs.tf-plan-console-output-file }}
