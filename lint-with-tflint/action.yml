@@ -82,7 +82,7 @@ runs:
         log-info "looking for terraform modules file at '$(ws-path ${MODULES_FILE})'"
         if [ -f "${MODULES_FILE}" ]; then
           log-info "found it, parsing directories to lint"
-          TFLINT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
+          TFLINT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
         else
           log-info "no modules file found, linting will only be performed in '$(ws-path $(pwd))'"
           TFLINT_DIRS="$(pwd)"
