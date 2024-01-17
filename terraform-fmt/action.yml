@@ -45,7 +45,7 @@ runs:
           TF_FMT_DIRS="${GITHUB_WORKSPACE}"
         elif [ -f "${MODULES_FILE}" ]; then
           log-info "check will run in directories from terraform modules file '$(ws-path ${MODULES_FILE})'"
-          TF_FMT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
+          TF_FMT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
         else
           log-info "check will run in 'project-dir' '$(pwd)'"
           TF_FMT_DIRS="$(pwd)"
