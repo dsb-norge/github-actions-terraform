@@ -184,7 +184,7 @@ jobs:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/github-actions/directory-recreate@v2
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: "🎰 Create env matrix"
         id: create-matrix
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v0
@@ -207,7 +207,7 @@ jobs:
         shell: bash
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: "🎰 Export environment variables and secrets"
         uses: dsb-norge/github-actions-terraform/export-env-vars@v0
@@ -217,7 +217,7 @@ jobs:
           secrets-json: ${{ toJSON(secrets) }}
 
       - name: "📥 Setup Terraform"
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ matrix.vars.terraform-version }}
           # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
@@ -236,7 +236,7 @@ jobs:
 
       - name: "🚀 Cache Terraform provider plugins"
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.vars.project-dir)) }}"

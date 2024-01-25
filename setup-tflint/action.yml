@@ -101,7 +101,7 @@ runs:
     # attempt to retrieve tflint binary from GitHub cache
     # note: this will also save the binary to GitHub cache in cases where the binary must be downloaded and installed
     - id: cache-tflint
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ steps.get-meta.outputs.install-dir }}
         key: ${{ steps.get-meta.outputs.cache-key }}
