@@ -12,6 +12,12 @@ inputs:
       If not specified, the action will attempt to locate a config file to use.
     required: false
     default: ""
+  github-token:
+    description: |
+      GitHub token to use for downloading tflint plugins from GitHub during init.
+      See https://github.com/terraform-linters/tflint/blob/master/docs/user-guide/plugins.md#avoiding-rate-limiting
+    required: false
+    default: ${{ github.token }}
 runs:
   using: "composite"
   steps:
@@ -69,6 +75,8 @@ runs:
     - id: lint
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         # determine directories to lint in and go
 
