@@ -9,6 +9,12 @@ inputs:
       See https://github.com/terraform-linters/tflint/releases
     required: false
     default: latest
+  github-token:
+    description: |
+      GitHub token to use for downloading tflint plugins from GitHub during init.
+      See https://github.com/terraform-linters/tflint/blob/master/docs/user-guide/plugins.md#avoiding-rate-limiting
+    required: false
+    default: ${{ github.token }}
 outputs:
   installed-version:
     description: Actual version that was installed. can be interesting when using 'latest' as input.
@@ -32,7 +38,8 @@ runs:
           RELEASE_JSON=$(
             curl -s --request GET \
             --url "${RELEASE_URL}" \
-            --header "Accept: application/json"
+            --header "Accept: application/json" \
+            --header 'authorization: Bearer ${{ inputs.github-token }}'
           )
           #log-json "release json" "${RELEASE_JSON}"
         else
@@ -41,7 +48,8 @@ runs:
           ALL_RELEASES_JSON=$(
             curl -s --request GET \
             --url "${RELEASE_URL}" \
-            --header "Accept: application/json"
+            --header "Accept: application/json" \
+            --header 'authorization: Bearer ${{ inputs.github-token }}'
           )
           # log-multiline "all release json" "${ALL_RELEASES_JSON}"
           RELEASE_JSON=$(echo "$ALL_RELEASES_JSON" | jq 'first(.[] | select(.tag_name == "${{ inputs.tflint-version }}" ) )') || (
