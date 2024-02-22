@@ -240,7 +240,6 @@ jobs:
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.vars.project-dir)) }}"
-          restore-keys: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}"
 
       - name: ⚙️ Terraform Init
         id: init
