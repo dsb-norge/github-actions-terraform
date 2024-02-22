@@ -233,6 +233,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/setup-tflint@v0
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
+          working-directory: ${{ matrix.vars.project-dir }}
 
       - name: "🚀 Cache Terraform provider plugins"
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')

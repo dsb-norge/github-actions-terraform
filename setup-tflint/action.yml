@@ -9,12 +9,21 @@ inputs:
       See https://github.com/terraform-linters/tflint/releases
     required: false
     default: latest
+  config-file-path:
+    description: |
+      The path to a TFLint config file to use.
+      If not specified, the action will attempt to locate a config file to use.
+    required: false
+    default: ""
   github-token:
     description: |
       GitHub token to use for downloading tflint plugins from GitHub during init.
       See https://github.com/terraform-linters/tflint/blob/master/docs/user-guide/plugins.md#avoiding-rate-limiting
     required: false
     default: ${{ github.token }}
+  working-directory:
+    description: From what directory to run TFLint, this path is used to locate a TFLint config file.
+    required: true
 outputs:
   installed-version:
     description: Actual version that was installed. can be interesting when using 'latest' as input.
@@ -106,6 +115,42 @@ runs:
         set-output 'install-dir' "${INSTALL_DIR}"
         set-output 'install-bin-path' "${INSTALL_DIR}/tflint"
         set-output 'cache-key' "tflint-binary-${TAG_NAME}-${{ runner.os }}-${{ runner.arch }}"
+    - id: get-config
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # attempt to locate TFLint config file
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        configured_path='${{ inputs.config-file-path }}'
+        possible_paths=(
+          "$(pwd)/.tflint.hcl"
+          "${GITHUB_WORKSPACE}/.tflint.hcl"
+        )
+
+        # allow output to be empty, worst case output of hashfiles in cache key further down will be empty
+        path_to_use=""
+        if [ ! -z "${configured_path}" ]; then
+          log-info "using configured TFLint config file path"
+          if [ -f "${configured_path}" ]; then
+            path_to_use="${configured_path}"
+          elif [ -f "$(pwd)/${configured_path}" ]; then
+            path_to_use="$(pwd)/${configured_path}"
+          else
+            log-warn "the configured path '${configured_path}' does not exist, unable to conform to configuration!"
+          fi
+        else
+          log-info "TFLint config file path was not configured, attempting to locate one ..."
+          for path_to_use in ${possible_paths[*]}; do
+            [ -f "${path_to_use}" ] && break || :
+          done
+          if [ ! -f "${path_to_use}" ]; then
+            log-warn "could not find a TFLint config file to use, unable to conform to configuration!"
+          fi
+        fi
+        log-info "using TFLint config file path '${path_to_use}'"
+        set-output 'config-file' "${path_to_use}"
     # attempt to retrieve tflint binary from GitHub cache
     # note: this will also save the binary to GitHub cache in cases where the binary must be downloaded and installed
     - id: cache-tflint
@@ -113,6 +158,13 @@ runs:
       with:
         path: ${{ steps.get-meta.outputs.install-dir }}
         key: ${{ steps.get-meta.outputs.cache-key }}
+    # attempt to retrieve tflint plugins from GitHub cache
+    # note: this will also save the plugins to GitHub cache in cases where the plugins must be downloaded and installed
+    - id: cache-tflint-plugins
+      uses: actions/cache@v4
+      with:
+        path: "~/.tflint.d/plugins"
+        key: "tflint-plugins-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(steps.get-config.outputs.config-file) }}"
     - id: exists-check
       shell: bash
       env:
