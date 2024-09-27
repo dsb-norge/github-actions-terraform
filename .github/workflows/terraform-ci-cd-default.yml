@@ -182,7 +182,7 @@ jobs:
       matrix-json: ${{ steps.create-matrix.outputs.matrix-json }}
     steps:
       - name: "🧹 Clean workspace"
-        uses: dsb-norge/github-actions/directory-recreate@v2
+        uses: dsb-norge/directory-recreate@v2
       - name: "⬇ Checkout working branch"
         uses: actions/checkout@v4
       - name: "🎰 Create env matrix"
