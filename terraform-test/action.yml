@@ -55,8 +55,6 @@ runs:
         TEST_RESULT_JSON="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-results.json"
         TEST_REPORT_FILE="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-report.txt"
         #Outputs definition
-        set-multiline-output 'report' "${TEST_REPORT_FILE}"
-        set-multiline-output 'json' "${TEST_RESULT_JSON}"
 
         TEST_CMD="terraform test --filter=tests/${{ inputs.test-file}} -json"
 
@@ -75,6 +73,7 @@ runs:
         fi
         log-multiline "Final JSON output" "$TEST_RESULT_JSON"
         set-output "exit-code" "${TEST_EXIT_CODE}"
+        set-multiline-output 'json' "${TEST_RESULT_JSON}"
         
 
         TEST_SUMMARY=$(jq '. | select(.type == "test_summary") | .["@message"]' "${TEST_RESULT_JSON}")
@@ -128,6 +127,8 @@ runs:
         done
 
         printSection "Test summary for file: ${TEST_SUMMARY}" >> ${TEST_REPORT_FILE}
+
+        set-multiline-output 'report' "${TEST_REPORT_FILE}"
           
         end-group
     
