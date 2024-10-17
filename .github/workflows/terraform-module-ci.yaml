@@ -79,12 +79,11 @@ jobs:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
-      - name: 🧪 Terraform Tes
+      - name: 🧪 Terraform Test
         id: test
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/terraform-test@tf-test
         with:
-          working-directory: ${{ github.workspace }}
           test-file: ${{ matrix.files }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 

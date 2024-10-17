@@ -61,17 +61,24 @@ runs:
         | ⚙️ | Initialization | $([ "${STATUS_INIT}" == 'success' ] && echo "\`${STATUS_INIT}\`" || echo "<kbd>${STATUS_INIT}</kbd>") |
         | 🖌 | Format and Style | $([ "${STATUS_FMT}" == 'success' ] && echo "\`${STATUS_FMT}\`" || echo "<kbd>${STATUS_FMT}</kbd>") |
         | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
-        | 📖 | Tests | $([ "${STATUS_TEST}" == 'success' ] && echo "\`${STATUS_TEST}\`" || echo "<kbd>${STATUS_TEST}</kbd>") |"      
+        | 🧪 | Tests | $([ "${STATUS_TEST}" == 'success' ] && echo "\`${STATUS_TEST}\`" || echo "<kbd>${STATUS_TEST}</kbd>") |"      
 
-        # add plan output if exists
+        # add icon depending on the status in test_summary contains word "success" or "failure"
+        if [[ "${TEST_SUMMARY}" == *"Success!"* ]]; then
+          COMMENT_SUMMARY="✅ ${TEST_SUMMARY}"
+        else
+          COMMENT_SUMMARY="❌ ${TEST_SUMMARY}"
+        fi
+
+        # add test output if exists
         if [ -f "${TEST_REPORT}" ]; then
-          # Cap plan output at 65k characters
+          # Cap test output at 65k characters
           TEST_OUT=$(cat "${TEST_REPORT}" | tail -c 65000 )
   
           # don't touch the indenting here
           COMMENT_CONTENT="${COMMENT_CONTENT}
 
-        <b>Test summary: "${TEST_SUMMARY}"</b>
+        <b>Test summary: "${COMMENT_SUMMARY}"</b>
         <details><summary>Show Test Report</summary>
   
         \`\`\`terraform
