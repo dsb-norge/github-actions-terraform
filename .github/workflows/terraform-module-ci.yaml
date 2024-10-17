@@ -133,7 +133,7 @@ jobs:
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: true
+        continue-on-error: false
       - name: "🧐 Validation outcome: 🖌 Format"
         run: |
           if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
@@ -141,7 +141,7 @@ jobs:
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: true
+        continue-on-error: false
       - name: "🧐 Validation outcome: ✔ Validate"
         run: |
           if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
@@ -149,7 +149,7 @@ jobs:
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: true
+        continue-on-error: false
       - name: "🧐 Validation outcome: 🧪 Test"
         run: |
           if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
@@ -157,7 +157,7 @@ jobs:
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: true
+        continue-on-error: false
 
     # create a global result indicating if workflow steps succeeded or not,
     # handy for branch protection rules
