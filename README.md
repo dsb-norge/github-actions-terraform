@@ -107,7 +107,8 @@ on:
 
 jobs:
   tf:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-test
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -125,7 +126,8 @@ Example of how to add terraform CI/CD with default operations to a github repo c
 # snip, 'name:' and 'on:' fields removed
 jobs:
   tf:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-test
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -148,7 +150,8 @@ jobs:
 
   # you can achieve passwordless auth to Azure
   tf-1:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-test
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       id-token: write # required for Azure password-less auth
@@ -175,7 +178,8 @@ jobs:
 
   # hardcoded versions and modify what steps are executed
   tf-2:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-test
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
