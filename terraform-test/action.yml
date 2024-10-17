@@ -7,6 +7,15 @@ inputs:
   test-file:
     description: Test file to run.
     required: true
+  tenant-id:
+    description: Azure tenant ID.
+    required: true
+  subscription-id:
+    description: Azure subscription ID.
+    required: true
+  client-id:
+    description: Azure client ID.
+    required: true
 
 outputs:
   exit-code:
@@ -45,9 +54,9 @@ runs:
     - id: azure-login
       uses: azure/login@v2
       with:
-         tenant-id: ${{ env.ARM_TENANT_ID }}
-         subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
-         client-id: ${{ env.ARM_CLIENT_ID }} 
+         tenant-id: ${{ inputs.tenant-id }}
+         subscription-id: ${{ inputs.subscription-id }}
+         client-id: ${{ inputs.client-id }} 
 
     - id: run-tests
       working-directory: ${{ github.workspace }}

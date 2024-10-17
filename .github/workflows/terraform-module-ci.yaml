@@ -12,6 +12,19 @@ name: "DSB Terraform Module CI"
 #
 on:
   workflow_call:
+    inputs:
+      tenant-id:
+        description: "Azure tenant ID."
+        type: string
+        required: true
+      subscription-id:
+        description: "Azure subscription ID."
+        type: string
+        required: true
+      client-id:
+        description: "Azure client ID."
+        type: string
+        required: true
 
 jobs:
   create-matrix:
@@ -85,6 +98,9 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-test@tf-test
         with:
           test-file: ${{ matrix.files }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+          client-id: ${{ inputs.client-id }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 📝 Create test report
