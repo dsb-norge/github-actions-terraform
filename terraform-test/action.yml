@@ -73,9 +73,9 @@ runs:
         TEST_EXIT_CODE=${?}
           
         # remove last line that contains gha debug in when failed.
-        if [ "${TEST_EXIT_CODE}" != "0" ]; then
-          sed -i '$d' ${TEST_RESULT_JSON}
-        fi
+        #if [ "${TEST_EXIT_CODE}" != "0" ]; then
+        #  sed -i '$d' ${TEST_RESULT_JSON}
+        #fi
         log-multiline "Final JSON output" "$TEST_RESULT_JSON"
         set-output "exit-code" "${TEST_EXIT_CODE}"
         set-multiline-output 'json' "${TEST_RESULT_JSON}"
