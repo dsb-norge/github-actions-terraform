@@ -20,7 +20,7 @@ env:
   ARM_USE_OIDC: true
   ARM_USE_AZUREAD: true
   TF_IN_AUTOMATION: true
-  
+
 jobs:
   create-matrix:
     name: Create job matrix
@@ -100,13 +100,13 @@ jobs:
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/create-test-report@tf-test
         with:
-          test-out-file: ${{ steps.test.outputs.test-out-file }}
+          test-out-file: ${{ steps.test.outputs.json }}
           status-init: ${{ steps.init.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-test: ${{ steps.test.outcome }}
-          test-summary: ${{ steps.test.outputs.test-summary }}
-          test-report: ${{ steps.test.outputs.test-report }}
+          test-summary: ${{ steps.test.outputs.summary }}
+          test-report: ${{ steps.test.outputs.report }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🏷️ Add validation summary as pull request comment
