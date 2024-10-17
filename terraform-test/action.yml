@@ -77,10 +77,10 @@ runs:
         set-output "exit-code" "${TEST_EXIT_CODE}"
         
 
-        TEST_SUMMARY=$(jq '. | select(.type == "test_summary") | .["@message"]' ${TEST_RESULT_JSON})
+        TEST_SUMMARY=$(jq '. | select(.type == "test_summary") | .["@message"]' "${TEST_RESULT_JSON}")
 
-        log info ""
-        log-info "Test summary: ${TEST_SUMMARY}"
+        echo "DEBUG: TEST_SUMMARY: ${TEST_SUMMARY}"
+        log-info "Test summary: "${TEST_SUMMARY}""
         set-output "summary" "${TEST_SUMMARY}"
 
         if [ "${TEST_EXIT_CODE}" == "0" ]; then
