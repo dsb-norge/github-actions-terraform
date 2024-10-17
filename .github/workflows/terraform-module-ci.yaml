@@ -12,6 +12,11 @@ name: "DSB Terraform Module CI"
 #
 on:
   workflow_call:
+    inputs:
+      terraform-version:
+        description: "Terraform version to use for the tests."
+        required: true
+        type : string
 
 env:
   ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
@@ -58,7 +63,7 @@ jobs:
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.7
+          terraform_version: ${{ inputs.terraform-version }}
           terraform_wrapper: false
     
       - name: ⚙️ Terraform Init

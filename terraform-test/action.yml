@@ -16,7 +16,7 @@ outputs:
     description: Summary of the test run.
     value: ${{ steps.run-tests.outputs.summary }}
   report:
-    description: Report of the test run.
+    description: Report file of the test run.
     value: ${{ steps.run-tests.outputs.report }}
   json:
     description: JSON output of the test run.
@@ -71,11 +71,7 @@ runs:
         set +e
         ${TEST_CMD} | tee ${TEST_RESULT_JSON}
         TEST_EXIT_CODE=${?}
-          
-        # remove last line that contains gha debug in when failed.
-        #if [ "${TEST_EXIT_CODE}" != "0" ]; then
-        #  sed -i '$d' ${TEST_RESULT_JSON}
-        #fi
+
         log-multiline "Final JSON output" "$TEST_RESULT_JSON"
         set-output "exit-code" "${TEST_EXIT_CODE}"
         set-multiline-output 'json' "${TEST_RESULT_JSON}"
@@ -83,7 +79,6 @@ runs:
 
         TEST_SUMMARY=$(jq '. | select(.type == "test_summary") | .["@message"]' ${TEST_RESULT_JSON})
 
-        echo "DEBUG: TEST_SUMMARY: ${TEST_SUMMARY}"
         log-info "Test summary: "${TEST_SUMMARY}""
         set-output "summary" "${TEST_SUMMARY}"
 
