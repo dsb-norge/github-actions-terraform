@@ -1,0 +1,52 @@
+name: "Create common DSB terraform module testing matrix"
+description: |
+  Create a matrix of jobs to test the DSB terraform modules
+author: "Artjoms Laivins"
+
+outputs:
+  all_tests:
+    description: "JSON matrix of all tests to run"
+    value: ${{ steps.create-job-matrix.outputs.all_tests }}
+
+runs:
+  using: composite
+  steps:
+    - id: create-job-matrix
+      working-directory: ${{ github.workspace }}
+      shell: bash
+      run: |
+        # Create a matrix of jobs to test the DSB terraform modules
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        declare -a unitTestFiles=()
+        declare -a integrationTestFiles=()
+        declare -a otherTestFiles=()
+
+        readarray -t testFilePaths < <(find . -type f -name '*.tftest.hcl'| sed 's|^./||')
+
+        for testFilePath in "${testFilePaths[@]}"; do
+          testFile=$(basename "$testFilePath")
+          allTestFiles+=("$testFile")
+          if [[ $testFile == "unit"* ]]; then
+            unitTestFiles+=("$testFilePath")
+          elif [[ $testFile == "integration"* ]]; then
+            integrationTestFiles+=("$testFilePath")
+          else
+            otherTestFiles+=("$testFilePath")
+          fi
+        done
+
+        echo "Total number of tests: ${#allTestFiles[@]}" 
+        echo "- unit tests: ${#unitTestFiles[@]}"
+        echo "- integration tests: ${#integrationTestFiles[@]}"
+        echo "- other tests: ${#otherTestFiles[@]}"
+
+        json_string=$(printf '%s\n' "${allTestFiles[@]}" | jq -R . | jq -s .)
+        final_out=$(jq -n --argjson files "$json_string" '{files: $files}')
+
+        log-multiline "JSON matrix output" "$final_out"
+
+        # Ensure no extra whitespaces or new lines
+        final_out=$(echo "$final_out" | jq -c .)
+
+        set-output "all_tests" "$final_out"
