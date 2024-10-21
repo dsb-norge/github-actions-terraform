@@ -57,6 +57,12 @@ jobs:
           terraform_version: ${{ inputs.terraform-version }}
           terraform_wrapper: false
 
+      - name: "🗄️ Setup Terraform provider plugin cache"
+        id: setup-terraform-cache
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@tf-test
+  
+
       - name: "📥 Setup TFLint"
         id: setup-tflint
         # TODO revert to @v0
@@ -64,6 +70,12 @@ jobs:
         with:
           tflint-version: ${{ inputs.tflint-version }}
           working-directory: ${{ github.workspace }}
+
+      - name: "🚀 Cache Terraform provider plugins"
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./.terraform.lock.hcl') }}"
 
       - name: ⚙️ Terraform Init
         id: init
