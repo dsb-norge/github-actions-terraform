@@ -45,7 +45,7 @@ runs:
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
   
         log-info "creating pull request comment ..."
-        COMMENT_PREFIX='### Terraform CI run summary for file: `${{ matrix.files }}`'
+        COMMENT_PREFIX='### Terraform test summary for file: `${{ matrix.files }}`'
         COMMENT_CONTENT="${COMMENT_PREFIX}
         |  | Step | Result |
         |:---:|---|---|
