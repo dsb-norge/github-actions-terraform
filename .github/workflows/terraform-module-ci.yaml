@@ -17,6 +17,10 @@ on:
         description: "Terraform version to use for the tests."
         required: true
         type : string
+      tflint-version:
+        description: "TFLint version to use for the tests."
+        required: true
+        type : string
 
 env:
   ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
@@ -65,6 +69,14 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform-version }}
           terraform_wrapper: false
+
+      - name: "📥 Setup TFLint"
+        id: setup-tflint
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-tflint@tf-test
+        with:
+          tflint-version: ${{ inputs.tflint-version }}
+          working-directory: ${{ github.workspace }}
     
       - name: ⚙️ Terraform Init
         id: init
@@ -88,6 +100,14 @@ jobs:
         id: validate
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/terraform-validate@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 🧹 Lint with TFLint
+        id: lint
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@tf-test
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -132,7 +152,6 @@ jobs:
             echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
             exit 1
           fi
-        # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: false
       - name: "🧐 Validation outcome: 🖌 Format"
         run: |
@@ -140,7 +159,6 @@ jobs:
             echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}'!"
             exit 1
           fi
-        # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: false
       - name: "🧐 Validation outcome: ✔ Validate"
         run: |
@@ -148,7 +166,13 @@ jobs:
             echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' !"
             exit 1
           fi
-        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: false
+      - name: "🧐 Validation outcome: 🧹 TFLint"
+        run: |
+          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
+            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}'!"
+            exit 1
+          fi
         continue-on-error: false
       - name: "🧐 Validation outcome: 🧪 Test"
         run: |
@@ -156,7 +180,6 @@ jobs:
             echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${{ matrix.files }}'!"
             exit 1
           fi
-        # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: false
 
     # create a global result indicating if workflow steps succeeded or not,
