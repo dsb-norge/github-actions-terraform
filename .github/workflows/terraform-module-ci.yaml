@@ -42,28 +42,15 @@ jobs:
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
+
       - name: "⬇ Checkout working branch"
         uses: actions/checkout@v4
+
       - name: "🎰 Create env matrix"
         id: create-matrix
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/create-tftest-matrix@tf-test
 
-  terraform-module-ci:
-    name: "Terraform"
-    needs: create-matrix
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
-    strategy:
-      fail-fast: false # Allow jobs to continue even though one more env(s) fail
-      matrix: 
-        files: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: "⬇ Checkout"
-        uses: actions/checkout@v4
-    
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
         with:
@@ -77,7 +64,7 @@ jobs:
         with:
           tflint-version: ${{ inputs.tflint-version }}
           working-directory: ${{ github.workspace }}
-    
+
       - name: ⚙️ Terraform Init
         id: init
         # TODO revert to @v0
@@ -86,7 +73,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
         continue-on-error: true # allow job to continue, step outcome is evaluated later
-    
+
       - name: 🖌 Terraform Format
         id: fmt
         # TODO revert to @v0
@@ -112,6 +99,90 @@ jobs:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
+      - name: 📝 Create validation summary
+        id: create-validation-summary
+        if: github.event_name == 'pull_request'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@tf-test
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: 🏷️ Add validation summary as pull request comment
+        id: validation-summary-on-pr
+        if: steps.create-validation-summary.outcome == 'success'
+        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        with:
+          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
+          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        run: |
+          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
+            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: 🖌 Format"
+        run: |
+          if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
+            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: ✔ Validate"
+        run: |
+          if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
+            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' !"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: 🧹 TFLint"
+        run: |
+          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
+            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      
+
+  terraform-module-ci:
+    name: "Terraform"
+    needs: create-matrix
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    strategy:
+      fail-fast: false # Allow jobs to continue even though one more env(s) fail
+      matrix: 
+        files: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "⬇ Checkout"
+        uses: actions/checkout@v4
+    
+      - name: "📥 Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+    
+      - name: ⚙️ Terraform Init
+        id: init
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+          additional-dirs-json: null
+        continue-on-error: true # allow job to continue, step outcome is evaluated later    
+
       - name: 🧪 Terraform Test
         id: test
         # TODO revert to @v0
@@ -122,6 +193,7 @@ jobs:
 
       - name: 📝 Create test report
         id: create-test-report
+        if: github.event_name == 'pull_request'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/create-test-report@tf-test
         with:
@@ -154,27 +226,7 @@ jobs:
             exit 1
           fi
         continue-on-error: false
-      - name: "🧐 Validation outcome: 🖌 Format"
-        run: |
-          if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
-            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
-      - name: "🧐 Validation outcome: ✔ Validate"
-        run: |
-          if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
-            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' !"
-            exit 1
-          fi
-        continue-on-error: false
-      - name: "🧐 Validation outcome: 🧹 TFLint"
-        run: |
-          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
-            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
+
       - name: "🧐 Validation outcome: 🧪 Test"
         run: |
           if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
