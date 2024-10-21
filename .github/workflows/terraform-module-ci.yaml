@@ -216,7 +216,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-test-report@tf-test
         with:
           test-out-file: ${{ steps.test.outputs.json }}
-          status-init: ${{ steps.init.outcome }}come }}
+          status-init: ${{ steps.init.outcome }}
           status-test: ${{ steps.test.outcome }}
           test-summary: ${{ steps.test.outputs.summary }}
           test-report: ${{ steps.test.outputs.report }}
