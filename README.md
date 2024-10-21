@@ -237,19 +237,25 @@ Jobs:
       - Clean workspace
       - Checkout working branch
       - Create job matrix that contains list of test files to run ( for parallelism ).
+      - Setup Terraform
+      - install tfflint
+      - Setup terraform  provider plugin cache
+      - Terraform Init
+      - Terraform Format
+      - Terraform Validate
+      - tflint
+      - Create init report
+      - Add validation summary as pull request comment
+      - Validate outcomes of init, validate, format and tflint steps
 
  2. terraform-module-ci:
     - Steps:
       - Checkout working branch
       - Setup Terraform
-      - Terraform Init
-      - Terraform Format
-      - Terraform Validate
-      - tflint
       - Terraform Test
       - Create test report
       - Add validation summary as pull request comment
-      - Validate outcomes of Init, Format, Validate, and Test steps
+      - Validate outcomes of init and test
 
  3. conclusion:
     - Steps:
