@@ -47,6 +47,10 @@ runs:
         # Build pull request comment
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        #if variable $STATUS_PLAN is empty set it to "N/A"
+        if [ -z "${STATUS_PLAN}" ]; then
+          STATUS_PLAN="N/A"
+        fi
 
         log-info "creating pull request comment ..."
         COMMENT_PREFIX='### Terraform validation summary for environment: `${{ inputs.environment-name }}`'
