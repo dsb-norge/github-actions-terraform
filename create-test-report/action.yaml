@@ -25,6 +25,9 @@ inputs:
   test-report: 
     description: Report of test results.
     required: true
+  status-lint:
+    description: Outcome of lint step.
+    required: true
 
 
 outputs:
@@ -48,6 +51,7 @@ runs:
         STATUS_TEST: ${{ inputs.status-test }}
         TEST_SUMMARY: ${{ inputs.test-summary }}
         TEST_REPORT: ${{ inputs.test-report }}
+        STATUS_LINT: ${{ inputs.status-lint }}
       run: |
         # Build pull request comment
   
@@ -61,6 +65,7 @@ runs:
         | ⚙️ | Initialization | $([ "${STATUS_INIT}" == 'success' ] && echo "\`${STATUS_INIT}\`" || echo "<kbd>${STATUS_INIT}</kbd>") |
         | 🖌 | Format and Style | $([ "${STATUS_FMT}" == 'success' ] && echo "\`${STATUS_FMT}\`" || echo "<kbd>${STATUS_FMT}</kbd>") |
         | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
+        | 🧹 | TFLint | $([ "${STATUS_LINT}" == 'success' ] && echo "\`${STATUS_LINT}\`" || echo "<kbd>${STATUS_LINT}</kbd>") |
         | 🧪 | Tests | $([ "${STATUS_TEST}" == 'success' ] && echo "\`${STATUS_TEST}\`" || echo "<kbd>${STATUS_TEST}</kbd>") |"      
 
         # add icon depending on the status in test_summary contains word "success" or "failure"
