@@ -105,7 +105,7 @@ jobs:
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/create-validation-summary@tf-test
         with:
-          environment-name: ${{ matrix.vars.github-environment }}
+          environment-name: ${{ github.repository }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
           status-init: ${{ steps.init.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
