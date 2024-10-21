@@ -216,13 +216,10 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-test-report@tf-test
         with:
           test-out-file: ${{ steps.test.outputs.json }}
-          status-init: ${{ steps.init.outcome }}
-          status-fmt: ${{ steps.fmt.outcome }}
-          status-validate: ${{ steps.validate.outcome }}
+          status-init: ${{ steps.init.outcome }}come }}
           status-test: ${{ steps.test.outcome }}
           test-summary: ${{ steps.test.outputs.summary }}
           test-report: ${{ steps.test.outputs.report }}
-          status-lint: ${{ steps.lint.outcome }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🏷️ Add validation summary as pull request comment
