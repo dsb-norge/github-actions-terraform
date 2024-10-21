@@ -219,6 +219,7 @@ jobs:
  Inputs:
 
 - terraform-version: The version of Terraform to use for the tests (required).
+- tflint-version: The version of tflint (required)
 
  Environment Variables:
 
@@ -244,6 +245,7 @@ Jobs:
       - Terraform Init
       - Terraform Format
       - Terraform Validate
+      - tflint
       - Terraform Test
       - Create test report
       - Add validation summary as pull request comment
@@ -286,6 +288,7 @@ jobs:
         pull-requests: write # required for commenting on PR
     with:
       terraform-version: "1.9.x"
+      tflint-version: "v0.53.0"
 ```
 
 ## Maintenance

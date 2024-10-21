@@ -132,6 +132,7 @@ jobs:
           status-test: ${{ steps.test.outcome }}
           test-summary: ${{ steps.test.outputs.summary }}
           test-report: ${{ steps.test.outputs.report }}
+          status-lint: ${{ steps.lint.outcome }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🏷️ Add validation summary as pull request comment
