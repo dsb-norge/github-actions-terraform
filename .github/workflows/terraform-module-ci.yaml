@@ -1,0 +1,271 @@
+name: "DSB Terraform Module CI"
+#
+# A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
+#   permissions:
+#     id-token: write       # required for Azure password-less auth
+#     contents: read        # required for actions/checkout
+#     pull-requests: write  # required for commenting on PRs
+#
+# Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
+# all secrets available to the calling workflow must be passe down to this one by:
+#   secrets: inherit
+#
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: "Terraform version to use for the tests."
+        required: true
+        type : string
+      tflint-version:
+        description: "TFLint version to use for the tests."
+        required: true
+        type : string
+
+env:
+  ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL }}
+  ARM_USE_OIDC: true
+  ARM_USE_AZUREAD: true
+  TF_IN_AUTOMATION: true
+
+jobs:
+  create-matrix:
+    name: Create job matrix
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      all_tests: ${{ steps.create-matrix.outputs.all_tests }}
+      plugin_cache_directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+    steps:
+      - name: "🧹 Clean workspace"
+        uses: dsb-norge/directory-recreate@v1
+
+      - name: "⬇ Checkout working branch"
+        uses: actions/checkout@v4
+
+      - name: "🎰 Create env matrix"
+        id: create-matrix
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@tf-test
+
+      - name: "📥 Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "🗄️ Setup Terraform provider plugin cache"
+        id: setup-terraform-cache
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@tf-test
+
+      - name: "📥 Setup TFLint"
+        id: setup-tflint
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-tflint@tf-test
+        with:
+          tflint-version: ${{ inputs.tflint-version }}
+          working-directory: ${{ github.workspace }}
+
+      - name: "🚀 Cache Terraform provider plugins"
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./.terraform.lock.hcl') }}"
+
+      - name: ⚙️ Terraform Init
+        id: init
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+          additional-dirs-json: null
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 🖌 Terraform Format
+        id: fmt
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+          format-check-in-root-dir: true
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+    
+      - name: ✔ Terraform Validate
+        id: validate
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-validate@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 🧹 Lint with TFLint
+        id: lint
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 📝 Create validation summary
+        id: create-validation-summary
+        if: github.event_name == 'pull_request'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@tf-test
+        with:
+          environment-name: "module"
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: 🏷️ Add validation summary as pull request comment
+        id: validation-summary-on-pr
+        if: steps.create-validation-summary.outcome == 'success'
+        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        with:
+          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
+          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        run: |
+          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
+            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: 🖌 Format"
+        run: |
+          if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
+            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: ✔ Validate"
+        run: |
+          if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
+            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' !"
+            exit 1
+          fi
+        continue-on-error: false
+      - name: "🧐 Validation outcome: 🧹 TFLint"
+        run: |
+          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
+            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+      
+
+  terraform-module-ci:
+    name: "Terraform"
+    needs: create-matrix
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    strategy:
+      fail-fast: false # Allow jobs to continue even though one more env(s) fail
+      matrix: 
+        files: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "⬇ Checkout"
+        uses: actions/checkout@v4
+    
+      - name: "📥 Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "🚀 Cache Terraform provider plugins"
+        uses: actions/cache@v4
+        with:
+          path: ${{ needs.create-matrix.outputs.plugin_cache_directory }}
+          key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('./.terraform.lock.hcl') }}"
+    
+      - name: ⚙️ Terraform Init
+        id: init
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@tf-test
+        with:
+          working-directory: ${{ github.workspace }}
+          additional-dirs-json: null
+        continue-on-error: true # allow job to continue, step outcome is evaluated later    
+
+      - name: 🧪 Terraform Test
+        id: test
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-test@tf-test
+        with:
+          test-file: ${{ matrix.files }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 📝 Create test report
+        id: create-test-report
+        if: github.event_name == 'pull_request'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-test-report@tf-test
+        with:
+          test-out-file: ${{ steps.test.outputs.json }}
+          status-init: ${{ steps.init.outcome }}
+          status-test: ${{ steps.test.outcome }}
+          test-summary: ${{ steps.test.outputs.summary }}
+          test-report: ${{ steps.test.outputs.report }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
+      - name: 🏷️ Add validation summary as pull request comment
+        id: validation-summary-on-pr
+        if: steps.create-test-report.outcome == 'success'
+        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        with:
+          pr-comment-text: ${{ steps.create-test-report.outputs.summary }}
+          delete-comments-starting-with: ${{ steps.create-test-report.outputs.prefix }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      # Terminate the job with 'failure' if any validation check did not succeed.
+      # If 'allow-failing-terraform-operations' is 'true' for the environment the job will not terminate.
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        run: |
+          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
+            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+
+      - name: "🧐 Validation outcome: 🧪 Test"
+        run: |
+          if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
+            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${{ matrix.files }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+
+    # create a global result indicating if workflow steps succeeded or not,
+    # handy for branch protection rules
+  conclusion:
+    if: always()
+    name: "Terraform conclusion"
+    needs: [create-matrix, terraform-module-ci]
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: exit 1
+        # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
+        # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
+        if: >-
+          ${{
+               contains(needs.*.result, 'failure')
+            || contains(needs.*.result, 'cancelled')
+          }}
