@@ -57,7 +57,6 @@ runs:
         TF_IN_AUTOMATION: true
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-        set -o allexport; source "${{ github.action_path }}/helpers_additional.sh"; set +o allexport;
 
         TEST_RESULT_JSON="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-results.json"
         TEST_REPORT_FILE="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-report.txt"
