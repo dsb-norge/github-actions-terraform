@@ -183,7 +183,7 @@ jobs:
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix: 
-        files: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
+        test-file: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
     defaults:
       run:
         shell: bash
