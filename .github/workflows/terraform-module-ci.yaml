@@ -212,6 +212,7 @@ jobs:
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
+          plugin-cache-directory: ${{ needs.create-matrix.outputs.plugin_cache_directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later    
 
       - name: 🧪 Terraform Test
