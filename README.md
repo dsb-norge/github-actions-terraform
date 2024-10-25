@@ -276,14 +276,6 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch: # allows manual build
 
-env: 
-    ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
-    ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
-    ARM_CLIENT_ID: ${{ secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL }}
-    ARM_USE_OIDC: true
-    ARM_USE_AZUREAD: true
-    TF_IN_AUTOMATION: true
-
 jobs:
   tf:
     uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-ci.yaml@tf-test
