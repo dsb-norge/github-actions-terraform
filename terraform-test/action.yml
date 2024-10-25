@@ -60,7 +60,7 @@ runs:
 
         TEST_RESULT_JSON="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-results.json"
         TEST_REPORT_FILE="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-report.txt"
-        TEST_CMD="terraform test --filter=tests/${{ inputs.test-file}} -json"
+        TEST_CMD="terraform test -filter=tests/${{ inputs.test-file}} -json"
 
         log-info "Running test command: ${TEST_CMD}"
         start-group "'terraform test' "
