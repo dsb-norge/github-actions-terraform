@@ -134,7 +134,7 @@ jobs:
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
-          status-plan: ${{ steps.plan.outcome }}
+          status-plan: "N/A"
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 🏷️ Add validation summary as pull request comment
@@ -183,7 +183,7 @@ jobs:
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix: 
-        test-file: ${{ fromJSON(needs.create-matrix.outputs.all_tests).files }}
+        test-file: ${{ fromJSON(needs.create-matrix.outputs.all-tests).files }}
     defaults:
       run:
         shell: bash

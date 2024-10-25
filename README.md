@@ -221,11 +221,17 @@ jobs:
 - terraform-version: The version of Terraform to use for the tests (required).
 - tflint-version: The version of tflint (required)
 
- Environment Variables:
+#### Secrets
+
+There are two possibilities to pass secrets to this action. 
+Either use of ```secrets: inherit``` or through environment variables:
 
 - ARM_TENANT_ID: Azure Tenant ID (from REPO secrets)
 - ARM_SUBSCRIPTION_ID: Azure Subscription ID (from REPO secrets)
-- ARM_CLIENT_ID: Azure Service Principal Client ID (from REPO secrets)
+- ARM_CLIENT_ID: Azure Service Principal Client ID (from REPO secrets)  
+
+Env variables below are required.  
+
 - ARM_USE_OIDC: Enable OIDC for Azure authentication
 - ARM_USE_AZUREAD: Enable Azure AD for authentication
 - TF_IN_AUTOMATION: Set to true to indicate Terraform is running in automation

@@ -49,4 +49,4 @@ runs:
         # Ensure no extra whitespaces or new lines
         final_out=$(echo "$final_out" | jq -c .)
 
-        set-output "all_tests" "$final_out"
+        set-output "all-tests" "$final_out"
