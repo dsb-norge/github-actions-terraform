@@ -95,6 +95,7 @@ jobs:
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
+          plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🖌 Terraform Format
