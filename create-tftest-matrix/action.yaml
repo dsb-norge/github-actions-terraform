@@ -4,9 +4,9 @@ description: |
 author: "Artjoms Laivins"
 
 outputs:
-  all_tests:
+  all-tests:
     description: "JSON matrix of all tests to run"
-    value: ${{ steps.create-job-matrix.outputs.all_tests }}
+    value: ${{ steps.create-job-matrix.outputs.all-tests }}
 
 runs:
   using: composite
