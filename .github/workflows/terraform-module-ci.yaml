@@ -268,7 +268,7 @@ jobs:
     if: always()
     name: "Terraform conclusion"
     needs: [create-matrix, terraform-module-ci]
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    runs-on: ubuntu-latest # no need to schedule this on our own runners
     defaults:
       run:
         shell: bash
