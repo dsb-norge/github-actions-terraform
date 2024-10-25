@@ -195,6 +195,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ inputs.terraform-version }}
+          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
           terraform_wrapper: false
 
       - name: "🚀 Cache Terraform provider plugins"
