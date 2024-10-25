@@ -6,6 +6,9 @@ outputs:
   plugin-cache-directory:
     description: The path to the plugin cache directory.
     value: ${{ steps.configure.outputs.plugin-cache-directory }}
+  plugin-cache-key-monthly-rolling:
+    description: A cache key to use for a monthly rolling cache.
+    value: ${{ steps.cache-key.outputs.monthly-rolling }}
 runs:
   using: "composite"
   steps:
@@ -35,3 +38,14 @@ runs:
         log-multiline "contents of .terraformrc is" "$(cat ${CLI_CFG_FILE_PATH})"
 
         set-output 'plugin-cache-directory' "${PLUGIN_CACHE_DIR}"
+    - id: cache-key
+      shell: bash
+      run: |
+        # generate a cache key for a monthly rolling cache
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        log-info "Monthly rolling cache key format is: terraform-provider-plugin-cache-[os]-[arch]-[month num]-[year num]"
+        CACHE_KEY_MONTHLY_ROLLING="terraform-provider-plugin-cache-${RUNNER_OS,,}-${RUNNER_ARCH,,}-$(date +%b)-$(date +%y)"
+        log-info "Monthly rolling cache key is: ${CACHE_KEY_MONTHLY_ROLLING}"
+        set-output 'monthly-rolling' "${CACHE_KEY_MONTHLY_ROLLING}"

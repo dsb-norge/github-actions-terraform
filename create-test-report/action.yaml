@@ -4,6 +4,9 @@ description: |
 author: "Artjoms Laivins"
 
 inputs:
+  test-file: 
+    description: File name of the test file.
+    required: true
   test-out-file:
     description: Path of file with test output in json format.
     required: true
@@ -45,7 +48,7 @@ runs:
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
   
         log-info "creating pull request comment ..."
-        COMMENT_PREFIX='### Terraform test summary for file: `${{ matrix.files }}`'
+        COMMENT_PREFIX='### Terraform test summary for file: `${{ inputs.test-file }}`'
         COMMENT_CONTENT="${COMMENT_PREFIX}
         |  | Step | Result |
         |:---:|---|---|
