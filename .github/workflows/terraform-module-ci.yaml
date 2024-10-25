@@ -177,7 +177,7 @@ jobs:
       
 
   terraform-module-ci:
-    name: "Terraform"
+    name: "Terraform Test"
     needs: create-matrix
     runs-on: [self-hosted, dsb-terraformer, linux, x64]
     strategy:
