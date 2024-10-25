@@ -47,8 +47,9 @@ jobs:
       run:
         shell: bash
     outputs:
-      all_tests: ${{ steps.create-matrix.outputs.all_tests }}
-      plugin_cache_directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+      all-tests: ${{ steps.create-matrix.outputs.all-tests }}
+      plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+      plugin-cache-key-monthly-rolling: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
