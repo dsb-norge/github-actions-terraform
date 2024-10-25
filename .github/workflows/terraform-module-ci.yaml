@@ -6,9 +6,18 @@ name: "DSB Terraform Module CI"
 #     contents: read        # required for actions/checkout
 #     pull-requests: write  # required for commenting on PRs
 #
-# Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
-# all secrets available to the calling workflow must be passe down to this one by:
+# The following secrets must be available in the github 'secrets' context:
+#   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
+#   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
+#   - secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL <-- ID of the Entra ID service principal with access to the Azure subscription
+#
+# From the calling workflow this can be achieved by either handing over all secrets:
 #   secrets: inherit
+# or by handing over just the required secrets from the calling workflow:
+#   secrets:
+#     REPO_AZURE_DSB_TENANT_ID: "secret value"
+#     REPO_AZURE_SUBSCRIPTION_ID: "secret value"
+#     REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL: "secret value"
 #
 on:
   workflow_call:
