@@ -212,7 +212,7 @@ jobs:
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
-          plugin-cache-directory: ${{ needs.create-matrix.outputs.plugin_cache_directory }}
+          plugin-cache-directory: ${{ needs.create-matrix.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later    
 
       - name: 🧪 Terraform Test
@@ -260,7 +260,7 @@ jobs:
       - name: "🧐 Validation outcome: 🧪 Test"
         run: |
           if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
-            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${{ matrix.files }}'!"
+            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${{ matrix.test-file }}'!"
             exit 1
           fi
         continue-on-error: false
