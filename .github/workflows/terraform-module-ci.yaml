@@ -218,7 +218,7 @@ jobs:
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/terraform-test@tf-test
         with:
-          test-file: ${{ matrix.files }}
+          test-file: ${{ matrix.test-file }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 📝 Create test report
