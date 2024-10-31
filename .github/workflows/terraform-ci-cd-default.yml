@@ -187,8 +187,7 @@ jobs:
         uses: actions/checkout@v4
       - name: "🎰 Create env matrix"
         id: create-matrix
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@feat-schedule
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v0
         with:
           inputs-json: ${{ toJSON(inputs) }}
 
@@ -211,8 +210,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "🎰 Export environment variables and secrets"
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/export-env-vars@feat-schedule
+        uses: dsb-norge/github-actions-terraform/export-env-vars@v0
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
@@ -227,14 +225,12 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@feat-schedule
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v0
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-tflint@feat-schedule
+        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
           working-directory: ${{ matrix.vars.project-dir }}
@@ -249,8 +245,7 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-init@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-init@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
@@ -260,8 +255,7 @@ jobs:
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
@@ -270,8 +264,7 @@ jobs:
       - name: ✔ Terraform Validate
         id: validate
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-validate@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -279,8 +272,7 @@ jobs:
       - name: 🧹 Lint with TFLint
         id: lint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@feat-schedule
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -288,8 +280,7 @@ jobs:
       - name: 📖 Terraform Plan
         id: plan
         if: steps.init.outcome == 'success' && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-plan@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
@@ -298,8 +289,7 @@ jobs:
       - name: 📝 Create validation summary
         id: create-validation-summary
         if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@feat-schedule
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
@@ -387,8 +377,7 @@ jobs:
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-apply@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
@@ -400,8 +389,7 @@ jobs:
         if: |
           steps.init.outcome == 'success'
           && contains(matrix.vars.goals, 'destroy-plan')
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-plan@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
@@ -428,8 +416,7 @@ jobs:
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-apply@feat-schedule
+        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
