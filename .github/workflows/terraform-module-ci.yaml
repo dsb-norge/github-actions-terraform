@@ -273,7 +273,7 @@ jobs:
     name: Update README.md
     needs: terraform-module-ci
     runs-on: ubuntu-latest
-    if: github.job.terraform-module-ci.result == 'success'
+    if: needs.terraform-module-ci.result == 'success'
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
