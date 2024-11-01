@@ -1,0 +1,60 @@
+name: "Run terraform docs"
+description: "Inject terraform docs for modules into README.md"
+author: "Artjoms Laivins"
+
+inputs:
+  readme-file-path:
+    description: |
+      "README.md file path to inject terraform docs into. Default is the root of the repository.
+      Path consider default name of README.md.
+      If README.md is in repo root then use ```${{ github-workspace }}``` as path."
+
+runs:
+  using: "composite"
+  steps:
+    - id: validate-readme
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        # enable debug
+        # set -x
+
+        README_FILE="${{ inputs.readme-file-path }}/README.md"
+
+        if [ -f "${README_FILE}" ]; then
+            log-info "Checking if delimiters exist in ${README_FILE}"
+            if grep -q '<!-- BEGIN_TF_DOCS -->' "${README_FILE}" && grep -q '<!-- END_TF_DOCS -->' "${README_FILE}" ; then
+                log-info "Delimiters exist in ${README_FILE}"
+                log-info "Checking if delimiters are in the correct order"
+                START_LINE=$(grep -n '<!-- BEGIN_TF_DOCS -->' "${README_FILE}" | cut -d: -f1)
+                log-info "BEGIN_TF_DOCS found on line: $START_LINE"
+                END_LINE=$(grep -n '<!-- END_TF_DOCS -->' "${README_FILE}" | cut -d: -f1)
+                log-info "END_TF_DOCS found on line: $END_LINE"
+                if [ "$START_LINE" -lt "$END_LINE" ]; then
+                    log-info "Delimiters are in the correct order"
+                else
+                    log-error "Delimiters are not in the correct order, verify ${README_FILE}"
+                fi
+            else
+                log-info "Delimiters do not exist in ${README_FILE}"
+                log-info "Adding delimiters to ${README_FILE}"
+                printf "\nBelow is a placeholder for Terraform-docs generated documentation. Do not edit between the delimiters." >> "${README_FILE}"
+                {
+                    echo "<!-- BEGIN_TF_DOCS -->"
+                    echo " "
+                    echo "<!-- END_TF_DOCS -->"
+                } >> "${README_FILE}"
+                log-info "Delimiters added to ${README_FILE}"
+            fi
+
+        else
+            log-info "File ${README_FILE} does not exist. Terraform-docs will create new README.md file."
+        fi
+      continue-on-error: true
+    - id: run-terraform-docs
+      uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
+      with:
+        working-dir: ${{ inputs.readme-file-path }}
+        output-file: README.md
+        output-method: inject
+        git-push: "true"
