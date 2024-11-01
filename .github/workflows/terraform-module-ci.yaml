@@ -30,6 +30,12 @@ on:
         description: "TFLint version to use for the tests."
         required: true
         type : string
+      readme-file-path:
+        description: |
+          "README.md file path to inject terraform docs into. Default is the root of the repository."
+        required: true
+        type : string
+        default: "${{ github.workspace }}"
 
 env:
   ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
@@ -167,7 +173,6 @@ jobs:
             exit 1
           fi
         continue-on-error: false
-      
 
   terraform-module-ci:
     name: "Terraform Test"
@@ -254,12 +259,28 @@ jobs:
           fi
         continue-on-error: false
 
+  generate-docs:
+    name: Update README.md
+    needs: terraform-module-ci
+    runs-on: ubuntu-latest
+    if: github.job.terraform-module-ci.result == 'success'
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "📝 Validate and update README.md"
+        uses: dsb-norge/github-actions-terraform/terraform-docs@v0
+        with:
+          readme-file-path: ${{ inputs.readme-file-path }}
+        continue-on-error: true
+
+
     # create a global result indicating if workflow steps succeeded or not,
     # handy for branch protection rules
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [create-matrix, terraform-module-ci]
+    needs: [create-matrix, terraform-module-ci, generate-docs]
     runs-on: ubuntu-latest # no need to schedule this on our own runners
     defaults:
       run:
