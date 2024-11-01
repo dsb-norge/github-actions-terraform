@@ -262,17 +262,26 @@ jobs:
   generate-docs:
     name: Update README.md
     needs: terraform-module-ci
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
     if: github.job.terraform-module-ci.result == 'success'
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
 
       - name: "📝 Validate and update README.md"
+        id: update-readme
         uses: dsb-norge/github-actions-terraform/terraform-docs@v0
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
         continue-on-error: true
+
+      - name: "🧐 Validation outcome: 📝 Update docs"
+        run: |
+          if [ ! "${{ steps.update-readme.outcome }}" == 'success' ]; then
+            echo "::error title=Update README.md failed::Outcome of update README.md step was '${{ steps.update-readme.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
 
 
     # create a global result indicating if workflow steps succeeded or not,

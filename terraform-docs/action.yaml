@@ -34,6 +34,7 @@ runs:
                     log-info "Delimiters are in the correct order"
                 else
                     log-error "Delimiters are not in the correct order, verify ${README_FILE}"
+                    exit 1
                 fi
             else
                 log-info "Delimiters do not exist in ${README_FILE}"
@@ -52,9 +53,15 @@ runs:
         fi
       continue-on-error: true
     - id: run-terraform-docs
+      if: steps.validate-readme.outcome == 'success'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
         working-dir: ${{ inputs.readme-file-path }}
         output-file: README.md
         output-method: inject
         git-push: "true"
+
+    - id: tf-docs-status
+      if: ( steps.validate-readme.outcome == 'failure' || steps.validate-readme.outcome == 'cancelled' )
+      shell: bash
+      run: exit 1
