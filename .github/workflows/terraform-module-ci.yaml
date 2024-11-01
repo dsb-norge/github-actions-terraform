@@ -33,7 +33,6 @@ on:
       readme-file-path:
         description: |
           "README.md file path to inject terraform docs into. Default is the root of the repository."
-        required: true
         type : string
         default: "${{ github.workspace }}"
 
