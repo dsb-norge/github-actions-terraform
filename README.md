@@ -112,7 +112,8 @@ on:
 
 jobs:
   tf:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-docs
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -130,7 +131,8 @@ Example of how to add terraform CI/CD with default operations to a github repo c
 # snip, 'name:' and 'on:' fields removed
 jobs:
   tf:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-docs
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -153,7 +155,8 @@ jobs:
 
   # you can achieve passwordless auth to Azure
   tf-1:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-docs
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       id-token: write # required for Azure password-less auth
@@ -180,7 +183,8 @@ jobs:
 
   # hardcoded versions and modify what steps are executed
   tf-2:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@tf-docs
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -208,7 +212,7 @@ jobs:
 ```text
    permissions:
      id-token: write       # Required for Azure password-less authentication
-     contents: read        # Required for actions/checkout
+     contents: write        # Required for actions/checkout and to update readme by PR.
      pull-requests: write  # Required for commenting on PRs
 ```
 
@@ -216,6 +220,7 @@ jobs:
 
 - terraform-version: The version of Terraform to use for the tests (required).
 - tflint-version: The version of tflint (required)
+- readme-file-path: path to README.md file. By default repo root used.
 
 #### Secrets
 
@@ -259,7 +264,13 @@ Jobs:
       - Add validation summary as pull request comment
       - Validate outcomes of init and test
 
- 3. conclusion:
+ 3. generate-docs:
+    - Steps:
+      - Checkout working branch
+      - Terraform-docs
+      - Validate outcome of terraform-docs
+
+ 4. conclusion:
     - Steps:
       - Exit with status 1 if any of the previous jobs failed or were cancelled
 
@@ -289,6 +300,7 @@ jobs:
     with:
       terraform-version: "1.9.x"
       tflint-version: "v0.53.0"
+      readme-file-path: '.'
 ```
 
 ## Maintenance
