@@ -262,7 +262,7 @@ jobs:
   generate-docs:
     name: Update README.md
     needs: terraform-module-ci
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    runs-on: ubuntu-latest
     if: github.job.terraform-module-ci.result == 'success'
     steps:
       - name: "📥 Checkout"
