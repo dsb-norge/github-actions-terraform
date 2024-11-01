@@ -34,7 +34,7 @@ on:
         description: |
           "README.md file path to inject terraform docs into. Default is the root of the repository."
         type : string
-        default: "${{ github.workspace }}"
+        default: ${{ github.workspace }}
 
 env:
   ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
