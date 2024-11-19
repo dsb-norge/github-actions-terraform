@@ -305,7 +305,7 @@ jobs:
 
 Usually runs on merge to main branch.  
 Action will create release plan PR based on conventional commit messages.  
-Tag and release based on pinned version of [google release-please-action](https://github.com/googleapis/release-please-action).
+Tag and release based on pinned version of [google release-please-action](https://github.com/googleapis/release-please-action).  
 IMPORTANT: ```chore:``` will not generate release.  Refer to [release-please documentation](https://github.com/googleapis/release-please?tab=readme-ov-file#release-please) for more information about it's behavior.
 
 When merged action create tag + release in github.  
