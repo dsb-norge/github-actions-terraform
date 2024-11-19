@@ -1,0 +1,25 @@
+name: DSB Terraform module release
+#
+# A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
+#   permissions:
+#     id-token: write       
+#     contents: write       
+#     pull-requests: write  
+on:
+  workflow_call:
+    inputs:
+       github-token:
+         description: 'GitHub Token'
+         required: true
+         type: string
+         default: '${{ github.token }}'
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@7987652d64b4581673a76e33ad5e98e3dd56832f # v4.1.3
+        id: release-please
+        with:
+          token: ${{ inputs.github-token }}
+          release-type: terraform-module
