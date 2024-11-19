@@ -1,10 +1,9 @@
 name: DSB Terraform module release
 #
 # A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
-#   permissions:
-#     id-token: write       
-#     contents: write       
-#     pull-requests: write  
+#   permissions:    
+#     contents: write  # required for release-please to create a release PR     
+#     pull-requests: write   # required for release-please to create a release PR
 on:
   workflow_call:
 
