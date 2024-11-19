@@ -14,6 +14,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── export-env-vars       --> export environment variables for use in subsequent action steps
 ├── lint-with-tflint      --> run linting of terraform code with TFLint
 ├── setup-tflint          --> install TFLint and make available to subsequent action steps
+├── terraform-docs        --> inject terraform module documentation into README.md
 ├── terraform-plan        --> run terraform plan in directory
 └── terraform-test        --> run terraform test in directory
 ```
@@ -24,6 +25,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 .
 └── .github/workflows                           --> directory for reusable workflows
     ├── terraform-terraform-ci-cd-default.yml   --> default ci/cd workflow for DSB's 
+    ├── terraform-module-release                --> tag and release module. Creates release plan PR. 
     └── terraform-module-ci                     --> default ci workflow for module testing
     terraform projects
 ```
@@ -301,6 +303,52 @@ jobs:
       terraform-version: "1.9.x"
       tflint-version: "v0.53.0"
       readme-file-path: '.'
+```
+
+### Workflow [`terraform-module-release`](.github/workflows/terraform-module-release.yaml)
+
+Usually runs on merge to main branch.  
+Action will create release plan PR based on conventional commit messages.  
+Tag and release based on pinned version of [google release-please-action](https://github.com/googleapis/release-please-action).
+IMPORTANT: ```chore:``` will not generate release.  Refer to [release-please documentation](https://github.com/googleapis/release-please?tab=readme-ov-file#release-please) for more information about it's behavior.
+
+When merged action create tag + release in github.  
+
+#### Permissions
+
+```text
+   permissions:    
+     contents: write  # required for release-please to create a release PR     
+     pull-requests: write   # required for release-please to create a release PR
+```
+
+#### Secrets
+
+Action is using GITHUB_TOKEN that is passed in workflow already.
+
+#### Jobs
+
+  1. release-pr  
+    - Steps:  
+      - release-please
+
+#### Examples
+
+```yaml
+name: Release please workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-plan:
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
+    secrets: inherit
+    permissions:
+        contents: write  # required for checkout action. 
+        id-token: write # required for checkout action
 ```
 
 ## Maintenance
