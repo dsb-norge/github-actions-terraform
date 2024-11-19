@@ -343,8 +343,8 @@ jobs:
     uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
     secrets: inherit
     permissions:
-        contents: write  # required for checkout action. 
-        id-token: write # required for checkout action
+      contents: write  # required for release-please to create a release PR     
+      pull-requests: write   # required for release-please to create a release PR
 ```
 
 ## Maintenance
