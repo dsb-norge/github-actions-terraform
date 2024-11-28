@@ -29,7 +29,7 @@ runs:
         # check if repo has examples folder
         if [ -d "examples" ]; then
             log-info "examples folder found in the repo root. Nothing to do."
-            set-output examples-folder-exists=true
+            set-output "examples-folder-exists" "true"
             # check if .terraform-docs.yml config is present in the examples folder
             if [ -f "examples/.terraform-docs.yml" ]; then
               log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
