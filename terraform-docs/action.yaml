@@ -24,19 +24,19 @@ runs:
             log-info ".terraform-docs.yml found in the repo root. Nothing to do."
         else
             log-info ".terraform-docs.yml not found in the repo root. Creating default config."
-            cat "${{ github.action_path }}/terraform-docs-module-root.yaml" > .terraform-docs.yml
+            #cat "${{ github.action_path }}/terraform-docs-module-root.yaml" > .terraform-docs.yml
         fi
         # check if repo has examples folder
         if [ -d "examples" ]; then
-            log-info "examples folder found in the repo root. Nothing to do."
+            log-info "examples folder found in the repo root."
             set-output "examples-folder-exists" "true"
             # check if .terraform-docs.yml config is present in the examples folder
-            if [ -f "examples/.terraform-docs.yml" ]; then
-              log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
-            else
-              log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
-              cat "${{ github.action_path }}/terraform-docs-module-examples.yaml" > examples/.terraform-docs.yml
-            fi
+            #if [ -f "examples/.terraform-docs.yml" ]; then
+            #  log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
+            #else
+            #  log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
+            #  cat "${{ github.action_path }}/terraform-docs-module-examples.yaml" > examples/.terraform-docs.yml
+            #fi
 
         else
             log-info "examples folder not found in the repo root. Examples docs will not be generated."
@@ -88,6 +88,7 @@ runs:
         working-dir: ${{ inputs.readme-file-path }}
         output-method: inject
         git-push: "true"
+        args: --config "${{ github.action_path }}/terraform-docs-module-root.yaml"
 
     - id: generate-example-docs
       if: steps.configure-repo.outputs.examples-folder-exists == 'true'
@@ -97,7 +98,8 @@ runs:
         output-method: inject
         git-push: "true"
         recursive: true
-        recursive-path: "."
+        recursive-path: "./"
+        args: --config "${{ github.action_path }}/terraform-docs-module-root.yaml"
 
 
     - id: tf-docs-status
