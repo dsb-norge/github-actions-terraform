@@ -25,7 +25,7 @@ runs:
         else
             log-info ".terraform-docs.yml not found in the repo root. Creating default config."
             ls "${{ github.action_path }}"
-            #cat "${{ github.action_path }}/terraform-docs-module-root.yaml" > .terraform-docs.yml
+            cat "${{ github.action_path }}/terraform-docs-module-root.yaml" > .terraform-docs.yml
             log-info ".terraform-docs.yml created in the repo root."
             log-info "DEBUG: listing files in the repo root"
             ls -la
