@@ -88,7 +88,7 @@ runs:
         working-dir: ${{ inputs.readme-file-path }}
         output-method: inject
         git-push: "true"
-        args: -c "${{ github.action_path }}/terraform-docs-module-root.yml"
+        args: -c ${{ github.action_path }}/terraform-docs-module-root.yml
 
     - id: generate-example-docs
       if: steps.configure-repo.outputs.examples-folder-exists == 'true'
@@ -99,8 +99,7 @@ runs:
         git-push: "true"
         recursive: true
         recursive-path: "."
-        args: -c "${{ github.action_path }}/terraform-docs-module-examples.yml"
-
+        args: -c ${{ github.action_path }}/terraform-docs-module-examples.yml
 
     - id: tf-docs-status
       if: ( steps.validate-root-readme.outcome == 'failure' || steps.validate-root-readme.outcome == 'cancelled' )
