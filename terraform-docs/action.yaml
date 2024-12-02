@@ -109,7 +109,7 @@ runs:
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
-        if [ -f "${{ github.workspace }}/examples/README.md ]; then
+        if [ -f "${{ github.workspace }}/examples/README.md" ]; then
             log-info "Removing README.md from examples folder" 
             rm "${{ github.workspace }}/examples/README.md"
         fi
