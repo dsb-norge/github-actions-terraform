@@ -14,7 +14,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── export-env-vars       --> export environment variables for use in subsequent action steps
 ├── lint-with-tflint      --> run linting of terraform code with TFLint
 ├── setup-tflint          --> install TFLint and make available to subsequent action steps
-├── terraform-docs        --> inject terraform module documentation into README.md
+├── terraform-docs        --> inject terraform-docs config and terraform module documentation into README.md
 ├── terraform-plan        --> run terraform plan in directory
 └── terraform-test        --> run terraform test in directory
 ```
