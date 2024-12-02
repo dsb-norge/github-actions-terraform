@@ -64,8 +64,7 @@ jobs:
 
       - name: "🎰 Create env matrix"
         id: create-matrix
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@docs
+        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@v0
 
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
@@ -76,13 +75,11 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@docs
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v0
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-tflint@docs
+        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
         with:
           tflint-version: ${{ inputs.tflint-version }}
           working-directory: ${{ github.workspace }}
@@ -95,8 +92,7 @@ jobs:
 
       - name: ⚙️ Terraform Init
         id: init
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-init@docs
+        uses: dsb-norge/github-actions-terraform/terraform-init@v0
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -105,8 +101,7 @@ jobs:
 
       - name: 🖌 Terraform Format
         id: fmt
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@docs
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
         with:
           working-directory: ${{ github.workspace }}
           format-check-in-root-dir: true
@@ -114,16 +109,14 @@ jobs:
     
       - name: ✔ Terraform Validate
         id: validate
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-validate@docs
+        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧹 Lint with TFLint
         id: lint
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@docs
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -131,8 +124,7 @@ jobs:
       - name: 📝 Create validation summary
         id: create-validation-summary
         if: github.event_name == 'pull_request'
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@docs
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: "module"
           plan-txt-output-file: ""
@@ -211,8 +203,7 @@ jobs:
     
       - name: ⚙️ Terraform Init
         id: init
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-init@docs
+        uses: dsb-norge/github-actions-terraform/terraform-init@v0
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -221,8 +212,7 @@ jobs:
 
       - name: 🧪 Terraform Test
         id: test
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-test@docs
+        uses: dsb-norge/github-actions-terraform/terraform-test@v0
         with:
           test-file: ${{ matrix.test-file }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -230,8 +220,7 @@ jobs:
       - name: 📝 Create test report
         id: create-test-report
         if: github.event_name == 'pull_request'
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-test-report@docs
+        uses: dsb-norge/github-actions-terraform/create-test-report@v0
         with:
           test-out-file: ${{ steps.test.outputs.json }}
           status-init: ${{ steps.init.outcome }}
@@ -282,8 +271,7 @@ jobs:
 
       - name: "📝 Validate and update README.md"
         id: update-readme
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-docs@docs
+        uses: dsb-norge/github-actions-terraform/terraform-docs@v0
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
         continue-on-error: true    
