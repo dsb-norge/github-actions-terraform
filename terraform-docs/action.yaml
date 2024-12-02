@@ -85,7 +85,7 @@ runs:
       continue-on-error: true
 
     - id: generate-project-docs
-      if: steps.validate-readme.outcome == 'success'
+      if: steps.validate-root-readme.outcome == 'success'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
         working-dir: ${{ inputs.readme-file-path }}
@@ -94,7 +94,7 @@ runs:
         config-file: .terraform-docs.yml
 
     - id: generate-example-docs
-      if: steps.configure-repo.outputs.examples-folder-exists == 'true'
+      if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
         working-dir: examples
