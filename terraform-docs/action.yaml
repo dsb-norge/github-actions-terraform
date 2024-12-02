@@ -24,8 +24,12 @@ runs:
             log-info ".terraform-docs.yml found in the repo root. Nothing to do."
         else
             log-info ".terraform-docs.yml not found in the repo root. Creating default config."
+            log-info "DEBUG: listing files in the action path"
             ls "${{ github.action_path }}"
-            cp "${{ github.action_path }}/terraform-docs-module-root.yaml" .terraform-docs.yml
+            log-info "DEBUG: listing files in the repo root"
+            ls -la
+            log-info "DEBUG: copying default config to the repo root"
+            cp "${{ github.action_path }}/terraform-docs-module-root.yml" .terraform-docs.yml
             log-info ".terraform-docs.yml created in the repo root."
             log-info "DEBUG: listing files in the repo root"
             ls -la
@@ -40,7 +44,7 @@ runs:
               log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
             else
               log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
-              cp "${{ github.action_path }}/terraform-docs-module-examples.yaml" > examples/.terraform-docs.yml
+              cp "${{ github.action_path }}/terraform-docs-module-examples.yml" > examples/.terraform-docs.yml
               log-info ".terraform-docs.yml created in the examples folder."
               log-info "DEBUG: listing files in the examples folder"
               ls -la examples
