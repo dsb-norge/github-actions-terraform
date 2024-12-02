@@ -97,7 +97,6 @@ runs:
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
-        working-dir: "examples"
         output-method: inject
         git-push: "true"
         recursive: true
