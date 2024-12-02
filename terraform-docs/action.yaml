@@ -97,22 +97,11 @@ runs:
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
-        #working-dir: examples
         output-method: inject
         git-push: "true"
         recursive: true
         recursive-path: "examples"
         config-file: .terraform-docs.yml
-
-    - id: cleanup-unneeded-files
-      shell: bash
-      run: |
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        if [ -f "${{ github.workspace }}/examples/README.md" ]; then
-            log-info "Removing README.md from examples folder" 
-            rm "${{ github.workspace }}/examples/README.md"
-        fi
 
     - id: tf-docs-status
       if: ( steps.validate-root-readme.outcome == 'failure' || steps.validate-root-readme.outcome == 'cancelled' )
