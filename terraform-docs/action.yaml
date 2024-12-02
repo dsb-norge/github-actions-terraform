@@ -44,7 +44,7 @@ runs:
               log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
             else
               log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
-              cp "${{ github.action_path }}/terraform-docs-module-examples.yml" > "${{ github.workspace }}/examples/.terraform-docs.yml"
+              cp "${{ github.action_path }}/terraform-docs-module-examples.yml" "${{ github.workspace }}/examples/.terraform-docs.yml"
               log-info ".terraform-docs.yml created in the examples folder."
               log-info "DEBUG: listing files in the examples folder"
               ls -la examples
