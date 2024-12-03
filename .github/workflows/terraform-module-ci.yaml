@@ -274,7 +274,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-docs@v0
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
-        continue-on-error: true    
+        continue-on-error: true
 
       - name: "🧐 Validation outcome: 📝 Update docs"
         run: |
