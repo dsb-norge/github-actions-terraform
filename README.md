@@ -114,7 +114,7 @@ on:
 
 jobs:
   tf:
-2uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -132,7 +132,7 @@ Example of how to add terraform CI/CD with default operations to a github repo c
 # snip, 'name:' and 'on:' fields removed
 jobs:
   tf:
-2uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -155,7 +155,7 @@ jobs:
 
   # you can achieve passwordless auth to Azure
   tf-1:
-2uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       id-token: write # required for Azure password-less auth
@@ -182,7 +182,7 @@ jobs:
 
   # hardcoded versions and modify what steps are executed
   tf-2:
-2uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@v0
     secrets: inherit # pass all secrets, ok since we trust our own workflow
     permissions:
       contents: read # required for actions/checkout
@@ -340,7 +340,7 @@ on:
 
 jobs:
   release-plan:
-2uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
     secrets: inherit
     permissions:
       contents: write  # required for release-please to create a release PR     
