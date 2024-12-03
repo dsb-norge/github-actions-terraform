@@ -94,7 +94,6 @@ runs:
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
-        output-method: "inject" # set in config file
         git-push: "true"
         recursive: true
         recursive-path: "examples"
@@ -105,7 +104,6 @@ runs:
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
         working-dir: ${{ inputs.readme-file-path }}
-        output-method: "inject" # set in config file
         git-push: "true"
         config-file: .terraform-docs.yml
 
