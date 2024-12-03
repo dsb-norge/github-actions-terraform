@@ -44,6 +44,7 @@ runs:
             log-multiline "example directory content" "$(ls -la)"
         else
             log-info "examples folder not found in the repo root. Examples docs will not be generated."
+            set-output "examples-folder-exists" "false"
         fi
 
     - id: validate-root-readme
