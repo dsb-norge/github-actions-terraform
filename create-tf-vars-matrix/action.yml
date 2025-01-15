@@ -79,7 +79,7 @@ runs:
 
           if ! has-field 'project-dir'; then
             log-info "'project-dir' not specified for environment, using default."
-            set-field 'project-dir' "${GITHUB_WORKSPACE}/envs/$(get-val 'environment')" # modifies $ENVIRONMENT_OBJ
+            set-field 'project-dir' "./envs/$(get-val 'environment')" # modifies $ENVIRONMENT_OBJ
           fi
 
           # Loop over all inputs to this action:
