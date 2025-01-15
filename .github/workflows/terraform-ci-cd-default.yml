@@ -199,7 +199,7 @@ jobs:
   terraform-ci-cd:
     name: "Terraform"
     needs: create-matrix
-    runs-on: ${{ fromJSON(needs.create-matrix.outputs.matrix-json).vars.runner-group }}
+    runs-on: ${{ matrix.vars.runner-group }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
