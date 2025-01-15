@@ -227,7 +227,6 @@ runs:
           terraform-version
           tflint-version
           url
-          runner-group
         )
 
         NOT_EMPTY_FIELDS=(
