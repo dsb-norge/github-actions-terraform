@@ -173,11 +173,6 @@ on:
           Set this to false to avoid a comment being added.
         required: false
         default: true
-      runner-group : 
-        type: string
-        description: |
-          Name of the runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
-        required: true
         
 
 jobs:
@@ -204,7 +199,7 @@ jobs:
   terraform-ci-cd:
     name: "Terraform"
     needs: create-matrix
-    runs-on: ${{ inputs.runner-group }}
+    runs-on: ${{ fromJSON(needs.create-matrix.outputs.matrix-json.vars.runner-group) }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
