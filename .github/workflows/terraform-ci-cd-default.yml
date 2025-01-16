@@ -178,7 +178,7 @@ on:
 jobs:
   create-matrix:
     name: Create job matrix
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
