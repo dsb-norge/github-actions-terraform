@@ -53,7 +53,7 @@ on:
             - extra-envs-from-secrets-yml
                 YAML objects, make environment variables with secrets available, see the workflow input 'goals-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
-            - runner-group
+            - runs-on
                 string, name of the runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
         required: true
@@ -199,7 +199,7 @@ jobs:
   terraform-ci-cd:
     name: "Terraform"
     needs: create-matrix
-    runs-on: ${{ matrix.vars.runner-group }}
+    runs-on: ${{ matrix.vars.runs-on }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
