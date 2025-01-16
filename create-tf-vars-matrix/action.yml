@@ -122,7 +122,7 @@ runs:
           #TODO: need to change default runner when self-hosted terraformer is shut down
           if ! has-field 'runs-on'; then
             log-info "'runs-on' not specified for environment, using 'self-hosted, dsb-terraformer, linux, x64"
-            set-field 'runs-on' "[self-hosted, dsb-terraformer, linux, x64]" # modifies $ENVIRONMENT_OBJ
+            set-field 'runs-on' "dsb-terraformer" # modifies $ENVIRONMENT_OBJ
           fi
 
           # goals-yml and terraform-init-additional-dirs-yml
