@@ -143,7 +143,7 @@ jobs:
         ARM_CLIENT_ID: GITHUB_SECRETS_CLIENT_ID
         ARM_TENANT_ID: GITHUB_SECRETS_TENANT_ID
       # observe how each env can target different Azure subscriptions. 
-      #You can also override default runner ('terraformer') via "runs-on" variable per environment
+      #You can also override default runner ('dsb-terraformer') via "runs-on" variable per environment
       environments-yml: |
         - environment: "my-oidc-env-for-sub-1"
           extra-envs-from-secrets-yml:
