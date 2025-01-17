@@ -119,7 +119,7 @@ runs:
           fi
 
           # Set default runner if runs-on is not specified
-          #TODO: need to change default runner when self-hosted terraformer is shut down
+          #TODO: need to change default runner when self-hosted dsb-terraformer is shut down
           if ! has-field 'runs-on'; then
             log-info "'runs-on' not specified for environment, using 'self-hosted, dsb-terraformer, linux, x64"
             set-field 'runs-on' "dsb-terraformer" # modifies $ENVIRONMENT_OBJ
