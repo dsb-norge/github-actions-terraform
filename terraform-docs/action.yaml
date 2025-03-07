@@ -97,8 +97,8 @@ runs:
         working-dir: examples
         git-push: "true"
         recursive: true
-        recursive-path: examples
-        config-file: examples/.terraform-docs.yml
+        recursive-path: ./
+        config-file: .terraform-docs.yml
 
     - id: generate-project-docs
       if: steps.validate-root-readme.outcome == 'success'
