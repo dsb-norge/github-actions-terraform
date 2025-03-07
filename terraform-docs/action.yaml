@@ -36,7 +36,7 @@ runs:
             log-info "examples folder found in the repo root."
             set-output "examples-folder-exists" "true"
             # check if .terraform-docs.yml config is present in the examples folder
-            if [ -f "examples/terraform-docs.yml" ]; then
+            if [ -f "${{ github.workspace }}/examples/terraform-docs.yml" ]; then
               log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
             else
               log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
@@ -45,7 +45,7 @@ runs:
               log-info "Adding .terraform-docs.yml to git commit."
               git add examples/.terraform-docs.yml
             fi
-            log-multiline "example directory content" "$(ls -la)"
+            log-multiline "examples directory content" "$(ls -la examples/)"
         else
             log-info "examples folder not found in the repo root. Examples docs will not be generated."
             set-output "examples-folder-exists" "false"
