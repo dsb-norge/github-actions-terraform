@@ -36,7 +36,7 @@ runs:
             log-info "examples folder found in the repo root."
             set-output "examples-folder-exists" "true"
             # check if .terraform-docs.yml config is present in the examples folder
-            if [ -f "${{ github.workspace }}/examples/terraform-docs.yml" ]; then
+            if [ -f "${{ github.workspace }}/examples/.terraform-docs.yml" ]; then
               log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
             else
               log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
@@ -98,7 +98,7 @@ runs:
         git-push: "true"
         recursive: true
         recursive-path: ./
-        config-file: .terraform-docs.yml
+        config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
 
     - id: generate-project-docs
       if: steps.validate-root-readme.outcome == 'success'
