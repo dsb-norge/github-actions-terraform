@@ -47,7 +47,7 @@ runs:
             fi
             log-multiline "examples directory content" "$(ls -la examples/)"
             # set output with coma separated list of directory names in examples folder
-            set-output "examples-subfolders" "$(ls -d examples/* | tr '\n' ',')"
+            set-output "examples-subfolders" "$(ls -d examples/*/ | tr '\n' ',')"
         else
             log-info "examples folder not found in the repo root. Examples docs will not be generated."
             set-output "examples-folder-exists" "false"
