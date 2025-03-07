@@ -296,6 +296,30 @@ jobs:
           fi
         continue-on-error: false
 
+        - name: "🔄 Check for changes"
+        id: check-changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changes=true" >> $GITHUB_ENV
+          else
+            echo "changes=false" >> $GITHUB_ENV
+          fi
+  
+      - name: "🔄 Push changes"
+        if: env.changes == 'true'
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add .
+          git commit -m "Update README.md with Terraform docs"
+          git push origin ${{ github.event.pull_request.head.ref }}
+  
+      - name: "🔄 Update local branch"
+        if: env.changes == 'true'
+        run: |
+          git fetch origin
+          git reset --hard origin/${{ github.event.pull_request.head.ref }}
+
 
     # create a global result indicating if workflow steps succeeded or not,
     # handy for branch protection rules
