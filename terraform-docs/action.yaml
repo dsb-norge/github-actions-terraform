@@ -94,7 +94,7 @@ runs:
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
-        working-dir: examples/
+        recursive-path: examples
         git-push: "true"
         recursive: true
         config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
