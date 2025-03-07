@@ -41,7 +41,8 @@ on:
 
 jobs:
   release-plan:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
+    # TODO revert to @v0
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@tfdocs-fix
     secrets: inherit
     permissions:
       contents: write  # required for release-please to create a release PR     
