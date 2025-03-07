@@ -46,6 +46,8 @@ runs:
               git add examples/.terraform-docs.yml
             fi
             log-multiline "examples directory content" "$(ls -la examples/)"
+            # set output with coma separated list of directory names in examples folder
+            set-output "examples-subfolders" "$(ls -d examples/* | tr '\n' ',')"
         else
             log-info "examples folder not found in the repo root. Examples docs will not be generated."
             set-output "examples-folder-exists" "false"
@@ -94,9 +96,8 @@ runs:
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
       with:
-        recursive-path: examples
+        working-dir: ${{ steps.inject-config-files.outputs.examples-subfolders }}
         git-push: "true"
-        recursive: true
         config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
 
     - id: generate-project-docs
