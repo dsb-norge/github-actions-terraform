@@ -299,7 +299,7 @@ jobs:
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [create-matrix, terraform-module-ci, generate-docs]
+    needs: [create-matrix, terraform-module-ci]
     runs-on: ubuntu-latest # no need to schedule this on our own runners
     defaults:
       run:
