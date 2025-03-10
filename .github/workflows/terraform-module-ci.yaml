@@ -47,9 +47,7 @@ env:
 jobs:
   generate-docs:
     name: Update README.md
-    needs: terraform-module-ci
     runs-on: ubuntu-latest
-    if: needs.terraform-module-ci.result == 'success'
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v4
@@ -71,7 +69,7 @@ jobs:
             exit 1
           fi
         continue-on-error: false
-        
+
   create-matrix:
     name: Create job matrix
     runs-on: [self-hosted, dsb-terraformer, linux, x64]
