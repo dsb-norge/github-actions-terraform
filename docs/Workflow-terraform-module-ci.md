@@ -1,6 +1,6 @@
 # Workflow [`terraform-module-ci`](../.github/workflows/terraform-module-ci.yaml)
 
-This GitHub Actions workflow is designed for Continuous Integration (CI) of Terraform modules.  
+This GitHub Actions workflow is designed for Continuous Integration (CI) of Terraform modules.
 
 ## Requirements
 
@@ -13,6 +13,14 @@ This GitHub Actions workflow is designed for Continuous Integration (CI) of Terr
      pull-requests: write  # Required for commenting on PRs
 ```
 
+- Additionally an app must be installed in the GitHub organization with read+write access to the calling repository. Metadata for this app is expected as follows:
+  - Action variables:
+    - vars.ORG_TF_CICD_APP_IDSTALLATION_ID
+  - Action secrets:
+    - secrets.ORG_TF_CICD_APP_PRIVATE_KEY
+
+**Note:** for more details about the app see [workflows/terraform-module-ci.yaml](../.github/workflows/terraform-module-ci.yaml)
+
 ### Inputs
 
 - terraform-version: The version of Terraform to use for the tests (required).
@@ -21,14 +29,14 @@ This GitHub Actions workflow is designed for Continuous Integration (CI) of Terr
 
 ### Secrets
 
-There are two possibilities to pass secrets to this action. 
+There are two possibilities to pass secrets to this action.
 Either use of ```secrets: inherit``` or through environment variables:
 
 - ARM_TENANT_ID: Azure Tenant ID (from REPO secrets)
 - ARM_SUBSCRIPTION_ID: Azure Subscription ID (from REPO secrets)
-- ARM_CLIENT_ID: Azure Service Principal Client ID (from REPO secrets)  
+- ARM_CLIENT_ID: Azure Service Principal Client ID (from REPO secrets)
 
-Env variables below are required.  
+Env variables below are required.
 
 - ARM_USE_OIDC: Enable OIDC for Azure authentication
 - ARM_USE_AZUREAD: Enable Azure AD for authentication
@@ -74,12 +82,9 @@ Env variables below are required.
 ### Example
 
 ```yaml
-name: "tf"
+name: "Terraform module CI"
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
@@ -88,14 +93,13 @@ on:
 
 jobs:
   tf:
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-ci.yaml@tf-test
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-ci.yaml@v0
     secrets: inherit
     permissions:
-        contents: read  # required for checkout action. 
-        id-token: write # required for Azre passwodless login
-        pull-requests: write # required for commenting on PR
+      contents: write # required for checkout action.
+      id-token: write # required for Azure password-less login
+      pull-requests: write # required for commenting on PR
     with:
-      terraform-version: "1.9.x"
-      tflint-version: "v0.53.0"
-      readme-file-path: '.'
+      terraform-version: "1.11.x"
+      tflint-version: "v0.55.1"
 ```
