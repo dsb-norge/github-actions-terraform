@@ -8,8 +8,14 @@ inputs:
       "README.md file path to inject terraform docs into. Default is the root of the repository.
       Path consider default name of README.md.
       If README.md is in repo root then use github-workspace as path.
-      This variable support multiple paths separated by comma." 
+      This variable support multiple paths separated by comma."
 
+outputs:
+  number-of-files-changed:
+    description: |
+      Total number of files changed by this action.
+      ref. https://github.com/terraform-docs/gh-actions?tab=readme-ov-file#outputs
+    value: ${{ steps.count.outputs.num-files-changed }}
 
 runs:
   using: "composite"
@@ -94,7 +100,7 @@ runs:
 
     - id: generate-example-docs
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
-      uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
+      uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25 # v1.3.0
       with:
         working-dir: ${{ steps.inject-config-files.outputs.examples-subfolders }}
         git-push: "true"
@@ -102,11 +108,34 @@ runs:
 
     - id: generate-project-docs
       if: steps.validate-root-readme.outcome == 'success'
-      uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25
+      uses: terraform-docs/gh-actions@aeae0038ed47a547e0c0fca5c059d3335f48fb25 # v1.3.0
       with:
         working-dir: ${{ inputs.readme-file-path }}
         git-push: "true"
         config-file: .terraform-docs.yml
+
+    - id: count
+      if: always()
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # count number of files changed by the action
+        PROJECT_FILES_CHANGED=0
+        if [ '${{ steps.generate-project-docs.outcome }}' == 'success' ]; then
+          PROJECT_FILES_CHANGED=${{ steps.generate-project-docs.outputs.num_changed }}
+        fi
+        log-info "Project files changed: ${PROJECT_FILES_CHANGED}"
+
+        EXAMPLE_FILES_CHANGED=0
+        if [ '${{ steps.generate-example-docs.outcome }}' == 'success' ]; then
+          EXAMPLE_FILES_CHANGED=${{ steps.generate-example-docs.outputs.num_changed }}
+        fi
+        log-info "Example files changed: ${EXAMPLE_FILES_CHANGED}"
+
+        TOTAL_FILES_CHANGED=$((${PROJECT_FILES_CHANGED} + ${EXAMPLE_FILES_CHANGED}))
+        log-info "Total files changed: ${TOTAL_FILES_CHANGED}"
+        set-output 'num-files-changed' "${TOTAL_FILES_CHANGED}"
 
     - id: tf-docs-status
       if: ( steps.validate-root-readme.outcome == 'failure' || steps.validate-root-readme.outcome == 'cancelled' )

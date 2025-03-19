@@ -84,6 +84,12 @@ Env variables below are required.
 ```yaml
 name: "Terraform module CI"
 
+# note:
+#   for this workflow to work from a new repo in the organization the following must be done:
+#     - allow the repo access to the organization secret ORG_TF_CICD_APP_PRIVATE_KEY here: https://github.com/organizations/dsb-norge/settings/secrets/actions
+#     - allow the repo access to the organization variables ORG_TF_CICD_APP_ID and ORG_TF_CICD_APP_INSTALLATION_ID here: https://github.com/organizations/dsb-norge/settings/variables/actions
+#     - allow the app 'dsb-norge-terraform-cicd-access' access to this repo by "configuring" the app from here: https://github.com/organizations/dsb-norge/settings/installations
+
 on:
   pull_request:
     branches:

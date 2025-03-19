@@ -41,6 +41,10 @@ on:
         type: string
         default: "."
 
+# only run one workflow at a time for the same branch or tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
 env:
   ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
@@ -50,14 +54,78 @@ env:
   TF_IN_AUTOMATION: true
 
 jobs:
-  create-matrix:
-    name: Create job matrix
+  generate-docs:
+    name: Update documentation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      number-of-files-changed: ${{ steps.update-readme.outputs.number-of-files-changed }}
+    steps:
+      # need a token that will re-trigger the workflow if changes are pushed to the pr branch
+      - name: "🔑 Obtain GitHub app installation access token for the terraform CI/CD app"
+        id: auth
+        uses: dsb-norge/github-actions/get-github-app-installation-token@v2
+        with:
+          github-app-id: ${{ vars.ORG_TF_CICD_APP_ID }}
+          github-app-installation-id: ${{ vars.ORG_TF_CICD_APP_INSTALLATION_ID }}
+          github-app-private-key: "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}"
+
+      - name: "📥 Checkout"
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
+          ref: ${{ github.event.pull_request.head.ref }}
+          # using the token that will re-trigger the workflow if changes are pushed to the pr branch
+          token: ${{ steps.auth.outputs.github-token }}
+
+      - name: "📝 Validate and update README.md"
+        id: update-readme
+        uses: dsb-norge/github-actions-terraform/terraform-docs@v0
+        with:
+          readme-file-path: ${{ inputs.readme-file-path }}
+        continue-on-error: true
+
+      - name: "🧐 Validation outcome: 📝 Update docs"
+        run: |
+          if [ ! "${{ steps.update-readme.outcome }}" == 'success' ]; then
+            echo "::error title=Update README.md failed::Outcome of update README.md step was '${{ steps.update-readme.outcome }}'!"
+            exit 1
+          fi
+        continue-on-error: false
+
+  create-test-matrix:
+    name: Enumerate tests
     runs-on: [self-hosted, dsb-terraformer, linux, x64]
     defaults:
       run:
         shell: bash
     outputs:
-      all-tests: ${{ steps.create-matrix.outputs.all-tests }}
+      all-tests: ${{ steps.create-test-matrix.outputs.all-tests }}
+    steps:
+      - name: "🧹 Clean workspace"
+        uses: dsb-norge/directory-recreate@v1
+
+      - name: "⬇ Checkout working branch"
+        uses: actions/checkout@v4
+
+      - name: "🎰 Create the matrix"
+        id: create-test-matrix
+        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@v0
+
+  # runs all validation steps but also builds up the terraform provider plugin cache
+  validate-project:
+    name: Validate project
+    # this step is time consuming, don't bother running it if the workflow will be re-triggered by an update to the docs anyway
+    needs: generate-docs
+    if: (needs.generate-docs.result == 'success' && needs.generate-docs.outputs.number-of-files-changed || -1) == 0
+    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    defaults:
+      run:
+        shell: bash
+    outputs:
       plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
       plugin-cache-key-monthly-rolling: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
     steps:
@@ -66,10 +134,6 @@ jobs:
 
       - name: "⬇ Checkout working branch"
         uses: actions/checkout@v4
-
-      - name: "🎰 Create env matrix"
-        id: create-matrix
-        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@v0
 
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
@@ -156,6 +220,7 @@ jobs:
             exit 1
           fi
         continue-on-error: false
+
       - name: "🧐 Validation outcome: 🖌 Format"
         run: |
           if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
@@ -163,6 +228,7 @@ jobs:
             exit 1
           fi
         continue-on-error: false
+
       - name: "🧐 Validation outcome: ✔ Validate"
         run: |
           if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
@@ -170,6 +236,7 @@ jobs:
             exit 1
           fi
         continue-on-error: false
+
       - name: "🧐 Validation outcome: 🧹 TFLint"
         run: |
           if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
@@ -178,14 +245,18 @@ jobs:
           fi
         continue-on-error: false
 
-  terraform-module-ci:
-    name: "Terraform Test"
-    needs: create-matrix
+  module-tests:
+    name: "Test"
+    # requires the tests to be ran, from create-test-matrix
+    # wait for provider cache to be created by validate-project
+    # only run tests if all dependent jobs are successful
+    #   does not run if ex validation failed or was skipped because of an update to the docs
+    needs: [create-test-matrix, validate-project]
     runs-on: [self-hosted, dsb-terraformer, linux, x64]
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix:
-        test-file: ${{ fromJSON(needs.create-matrix.outputs.all-tests).files }}
+        test-file: ${{ fromJSON(needs.create-test-matrix.outputs.all-tests).files }}
     defaults:
       run:
         shell: bash
@@ -203,8 +274,8 @@ jobs:
       - name: "🚀 Cache Terraform provider plugins"
         uses: actions/cache@v4
         with:
-          path: ${{ needs.create-matrix.outputs.plugin-cache-directory }}
-          key: ${{ needs.create-matrix.outputs.plugin-cache-key-monthly-rolling }}
+          path: ${{ needs.validate-project.outputs.plugin-cache-directory }}
+          key: ${{ needs.validate-project.outputs.plugin-cache-key-monthly-rolling }}
 
       - name: ⚙️ Terraform Init
         id: init
@@ -212,7 +283,7 @@ jobs:
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
-          plugin-cache-directory: ${{ needs.create-matrix.outputs.plugin-cache-directory }}
+          plugin-cache-directory: ${{ needs.validate-project.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧪 Terraform Test
@@ -244,9 +315,6 @@ jobs:
           delete-comments-starting-with: ${{ steps.create-test-report.outputs.prefix }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      # Terminate the job with 'failure' if any validation check did not succeed.
-      # If 'allow-failing-terraform-operations' is 'true' for the environment the job will not terminate.
-
       - name: "🧐 Validation outcome: ⚙️ Init"
         run: |
           if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
@@ -263,56 +331,18 @@ jobs:
           fi
         continue-on-error: false
 
-  generate-docs:
-    name: Update README.md
-    needs: terraform-module-ci
-    runs-on: ubuntu-latest
-    if: needs.terraform-module-ci.result == 'success'
-    steps:
-      # need a token that will re-trigger the workflow if changes are pushed to the pr branch
-      - name: "🔑 Obtain GitHub app installation access token for the terraform CI/CD app"
-        id: auth
-        uses: dsb-norge/github-actions/get-github-app-installation-token@v2
-        with:
-          github-app-id: ${{ vars.ORG_TF_CICD_APP_ID }}
-          github-app-installation-id: ${{ vars.ORG_TF_CICD_APP_INSTALLATION_ID }}
-          github-app-private-key: "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}"
-
-      - name: "📥 Checkout"
-        id: checkout
-        uses: actions/checkout@v4
-        with:
-          # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
-          ref: ${{ github.event.pull_request.head.ref }}
-          # using the token that will re-trigger the workflow if changes are pushed to the pr branch
-          token: ${{ steps.auth.outputs.github-token }}
-
-      - name: "📝 Validate and update README.md"
-        id: update-readme
-        uses: dsb-norge/github-actions-terraform/terraform-docs@v0
-        with:
-          readme-file-path: ${{ inputs.readme-file-path }}
-        continue-on-error: true
-
-      - name: "🧐 Validation outcome: 📝 Update docs"
-        run: |
-          if [ ! "${{ steps.update-readme.outcome }}" == 'success' ]; then
-            echo "::error title=Update README.md failed::Outcome of update README.md step was '${{ steps.update-readme.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
-
-    # create a global result indicating if workflow steps succeeded or not,
-    # handy for branch protection rules
+  # create a global result indicating if workflow steps succeeded or not, handy for branch protection rules
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [create-matrix, terraform-module-ci, generate-docs]
+    needs: [generate-docs, validate-project, module-tests]
     runs-on: ubuntu-latest # no need to schedule this on our own runners
     defaults:
       run:
         shell: bash
     steps:
+      # fail the workflow if any of the job was failed or cancelled
+      # also fail if module-tests was skipped, ex because of an update to the docs
       - run: exit 1
         # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
         # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
@@ -320,4 +350,5 @@ jobs:
           ${{
                contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
+            || needs.module-tests.result == 'skipped'
           }}
