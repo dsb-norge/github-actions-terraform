@@ -10,6 +10,11 @@ name: "DSB Terraform Module CI"
 #   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
 #   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
 #   - secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL <-- ID of the Entra ID service principal with access to the Azure subscription
+#   - vars.ORG_TF_CICD_APP_ID                             <-- app id from here: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
+#   - vars.ORG_TF_CICD_APP_INSTALLATION_ID                <-- app installation id found in url if you "configure" the app 'dsb-norge-terraform-cicd-access' from here: https://github.com/organizations/dsb-norge/settings/installations
+#
+# The following secrets must be available in the github 'secrets' context:
+#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY                 <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
 #
 # From the calling workflow this can be achieved by either handing over all secrets:
 #   secrets: inherit
@@ -25,15 +30,15 @@ on:
       terraform-version:
         description: "Terraform version to use for the tests."
         required: true
-        type : string
+        type: string
       tflint-version:
         description: "TFLint version to use for the tests."
         required: true
-        type : string
+        type: string
       readme-file-path:
         description: |
           "README.md file path to inject terraform docs into. Default is the root of the repository."
-        type : string
+        type: string
         default: "."
 
 env:
@@ -106,7 +111,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           format-check-in-root-dir: true
         continue-on-error: true # allow job to continue, step outcome is evaluated later
-    
+
       - name: ✔ Terraform Validate
         id: validate
         uses: dsb-norge/github-actions-terraform/terraform-validate@v0
@@ -179,7 +184,7 @@ jobs:
     runs-on: [self-hosted, dsb-terraformer, linux, x64]
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
-      matrix: 
+      matrix:
         test-file: ${{ fromJSON(needs.create-matrix.outputs.all-tests).files }}
     defaults:
       run:
@@ -187,7 +192,7 @@ jobs:
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v4
-    
+
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
         with:
@@ -200,7 +205,7 @@ jobs:
         with:
           path: ${{ needs.create-matrix.outputs.plugin-cache-directory }}
           key: ${{ needs.create-matrix.outputs.plugin-cache-key-monthly-rolling }}
-    
+
       - name: ⚙️ Terraform Init
         id: init
         uses: dsb-norge/github-actions-terraform/terraform-init@v0
@@ -208,7 +213,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
           plugin-cache-directory: ${{ needs.create-matrix.outputs.plugin-cache-directory }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later    
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧪 Terraform Test
         id: test
@@ -264,10 +269,23 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.terraform-module-ci.result == 'success'
     steps:
+      # need a token that will re-trigger the workflow if changes are pushed to the pr branch
+      - name: "🔑 Obtain GitHub app installation access token for the terraform CI/CD app"
+        id: auth
+        uses: dsb-norge/github-actions/get-github-app-installation-token@v2
+        with:
+          github-app-id: ${{ vars.ORG_TF_CICD_APP_ID }}
+          github-app-installation-id: ${{ vars.ORG_TF_CICD_APP_INSTALLATION_ID }}
+          github-app-private-key: "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}"
+
       - name: "📥 Checkout"
+        id: checkout
         uses: actions/checkout@v4
         with:
+          # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
           ref: ${{ github.event.pull_request.head.ref }}
+          # using the token that will re-trigger the workflow if changes are pushed to the pr branch
+          token: ${{ steps.auth.outputs.github-token }}
 
       - name: "📝 Validate and update README.md"
         id: update-readme
@@ -283,7 +301,6 @@ jobs:
             exit 1
           fi
         continue-on-error: false
-
 
     # create a global result indicating if workflow steps succeeded or not,
     # handy for branch protection rules
