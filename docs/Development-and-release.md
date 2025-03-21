@@ -1,6 +1,6 @@
-# Development and release  
+# Development and release
 
-Section below describes development, testing and release process for actions and workflows.  
+Section below describes development, testing and release process for actions and workflows.
 
 ## Development and testing
 
@@ -50,17 +50,21 @@ After merge to main use tags to release.
 
 Ex. for smaller backwards compatible changes. Add a new minor version tag ex `v1.0` with a description of the changes and amend the description to the major version tag.
 
-Example for release `v1.1`:
+Example for release `v0.9`:
 
 ```bash
 git checkout origin/main
 git pull origin main
-git tag -a 'v1.1'
+# review latest release tag to determine which is the next one
+git tag --sort=-creatordate | head -n 5
+# output changes since last release
+git log v0..HEAD --pretty=format:"%s"
+git tag -a 'v0.9'
 # you are prompted for the tag annotation (change description)
-git tag -f -a 'v1'
-# you are prompted for the tag annotation, amend the change description
-git push -f origin 'refs/tags/v1.1'
-git push -f origin 'refs/tags/v1'
+git tag -f -a 'v0'
+# you are prompted for the tag annotation
+git push -f origin 'refs/tags/v0.9'
+git push -f origin 'refs/tags/v0'
 ```
 
 **Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
@@ -74,12 +78,38 @@ Example for release `v1`:
 ```bash
 git checkout origin/main
 git pull origin main
+# review latest release tag to determine which is the next one
+git tag --sort=-creatordate | head -n 5
+# output changes since last release
+git log v0..HEAD --pretty=format:"%s"
 git tag -a 'v1.0'
 # you are prompted for the tag annotation (change description)
 git tag -a 'v1'
 # you are prompted for the tag annotation
 git push -f origin 'refs/tags/v1.0'
 git push -f origin 'refs/tags/v1'
+```
+
+**Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
+
+#### Un-release (move major tag back)
+
+In case of trouble where a fix takes long time to develop, this is how to rollback the major tag to the previous minor release.
+
+Example un-release `v0.9` and revert to `v0.8`:
+
+```bash
+git checkout origin/main
+git pull origin main
+
+moveTag='v0'
+moveToTag='v0.8'
+moveToHash=$(git rev-parse --verify ${moveToTag})
+
+git push origin "refs/tags/${moveTag}"      # delete the old tag remotely
+git tag -fa ${moveTag} ${moveToHash}        # move tag locally
+git push -f origin "refs/tags/${moveTag}"   # push the updated tag remotely
+
 ```
 
 **Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
