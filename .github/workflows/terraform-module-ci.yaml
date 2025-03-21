@@ -10,11 +10,11 @@ name: "DSB Terraform Module CI"
 #   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
 #   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
 #   - secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL <-- ID of the Entra ID service principal with access to the Azure subscription
+#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY                 <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
+#
+# The following variables must be available in the github 'vars' context:
 #   - vars.ORG_TF_CICD_APP_ID                             <-- app id from here: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
 #   - vars.ORG_TF_CICD_APP_INSTALLATION_ID                <-- app installation id found in url if you "configure" the app 'dsb-norge-terraform-cicd-access' from here: https://github.com/organizations/dsb-norge/settings/installations
-#
-# The following secrets must be available in the github 'secrets' context:
-#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY                 <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
 #
 # From the calling workflow this can be achieved by either handing over all secrets:
 #   secrets: inherit
