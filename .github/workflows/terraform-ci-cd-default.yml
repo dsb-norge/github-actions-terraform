@@ -173,7 +173,6 @@ on:
           Set this to false to avoid a comment being added.
         required: false
         default: true
-        
 
 jobs:
   create-matrix:
@@ -433,7 +432,7 @@ jobs:
     if: always()
     name: "Terraform conclusion"
     needs: [create-matrix, terraform-ci-cd]
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
