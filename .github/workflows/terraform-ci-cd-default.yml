@@ -221,6 +221,14 @@ jobs:
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
           secrets-json: ${{ toJSON(secrets) }}
 
+      - name: "🔑 Login to Azure"
+        uses: azure/login@v2
+        if: env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
+        with:
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+          client-id: ${{ env.ARM_CLIENT_ID }}
+
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v3
         with:
