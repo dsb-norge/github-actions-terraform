@@ -99,8 +99,7 @@ on:
 
 jobs:
   tf:
-    # TODO revert to @v0
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-ci.yaml@login
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-ci.yaml@v0
     secrets: inherit
     permissions:
       contents: write # required for checkout action.
