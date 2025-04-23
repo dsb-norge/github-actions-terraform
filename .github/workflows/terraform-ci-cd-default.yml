@@ -204,7 +204,9 @@ jobs:
     environment:
       name: ${{ matrix.vars.github-environment }}
       url: ${{ matrix.vars.url }}
-    concurrency: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
+    concurrency:
+      group: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
+      cancel-in-progress: false # do not cancel in progress apply
     defaults:
       run:
         shell: bash
