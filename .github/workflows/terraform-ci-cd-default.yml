@@ -299,6 +299,14 @@ jobs:
           environment-name: ${{ matrix.vars.github-environment }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
+      - name: "🔍 Parse terraform plan"
+        id: parse-plan
+        if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v0
+        with:
+          plan-console-file: ${{ steps.plan.outputs.console-output-file }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
       - name: 📝 Create validation summary
         id: create-validation-summary
         if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
@@ -311,6 +319,14 @@ jobs:
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
           status-plan: ${{ steps.plan.outcome }}
+          # include details when parse step actually returned data
+          include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 🏷️ Add validation summary as pull request comment
