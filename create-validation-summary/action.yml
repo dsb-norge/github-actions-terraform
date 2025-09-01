@@ -24,6 +24,34 @@ inputs:
   status-plan:
     description: Outcome of plan step.
     required: true
+  include-plan-details:
+    description: Whether to include plan details in the summary.
+    required: false
+    default: "false"
+  plan-count-add:
+    description: Number of resources to be added.
+    required: false
+    default: "N/A"
+  plan-count-change:
+    description: Number of resources to be changed.
+    required: false
+    default: "N/A"
+  plan-count-destroy:
+    description: Number of resources to be destroyed.
+    required: false
+    default: "N/A"
+  plan-count-import:
+    description: Number of resources to be imported.
+    required: false
+    default: "N/A"
+  plan-count-move:
+    description: Number of resources to be moved.
+    required: false
+    default: "N/A"
+  plan-count-remove:
+    description: Number of resources to be removed.
+    required: false
+    default: "N/A"
 outputs:
   prefix:
     description: Validation summary prefix string.
@@ -43,6 +71,13 @@ runs:
         STATUS_VALIDATE: ${{ inputs.status-validate }}
         STATUS_LINT: ${{ inputs.status-lint }}
         STATUS_PLAN: ${{ inputs.status-plan }}
+        PLAN_DETAILS_ENABLED: ${{ inputs.include-plan-details }}
+        COUNT_ADD: ${{ inputs.plan-count-add }}
+        COUNT_CHANGE: ${{ inputs.plan-count-change }}
+        COUNT_DESTROY: ${{ inputs.plan-count-destroy }}
+        COUNT_IMPORT: ${{ inputs.plan-count-import }}
+        COUNT_MOVE: ${{ inputs.plan-count-move }}
+        COUNT_REMOVE: ${{ inputs.plan-count-remove }}
       run: |
         # Build pull request comment
 
@@ -50,6 +85,8 @@ runs:
 
         log-info "creating pull request comment ..."
         COMMENT_PREFIX='### Terraform validation summary for environment: `${{ inputs.environment-name }}`'
+
+        # don't touch the indenting here
         COMMENT_CONTENT="${COMMENT_PREFIX}
         |  | Step | Result |
         |:---:|---|---|
@@ -58,6 +95,29 @@ runs:
         | ✔ | Validate | $([ "${STATUS_VALIDATE}" == 'success' ] && echo "\`${STATUS_VALIDATE}\`" || echo "<kbd>${STATUS_VALIDATE}</kbd>") |
         | 🧹 | TFLint | $([ "${STATUS_LINT}" == 'success' ] && echo "\`${STATUS_LINT}\`" || echo "<kbd>${STATUS_LINT}</kbd>") |
         | 📖 | Plan | $([ "${STATUS_PLAN}" == 'success' ] && echo "\`${STATUS_PLAN}\`" || echo "<kbd>${STATUS_PLAN}</kbd>") |"
+
+        # add plan details if possible
+        if [ "${PLAN_DETAILS_ENABLED}" == 'true' ]; then
+
+          # don't touch the indenting here
+          COMMENT_CONTENT="${COMMENT_CONTENT}
+        | 📊 | Plan Details | <span title=\"Resources to be added\">\`💫 ${COUNT_ADD}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${COUNT_CHANGE}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${COUNT_DESTROY}\` destroy</span>"
+
+          if [ "${COUNT_MOVE}" != '0' ]; then
+            COMMENT_CONTENT="${COMMENT_CONTENT}<br><span title=\"Resources to be moved\">\`🔀 ${COUNT_MOVE}\` move</span>"
+          fi
+
+          if [ "${COUNT_IMPORT}" != '0' ]; then
+            COMMENT_CONTENT="${COMMENT_CONTENT}<br><span title=\"Resources to be imported\">\`📥 ${COUNT_IMPORT}\` import</span>"
+          fi
+
+          if [ "${COUNT_REMOVE}" != '0' ]; then
+            COMMENT_CONTENT="${COMMENT_CONTENT}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${COUNT_REMOVE}\` remove</span>"
+          fi
+
+          # end of table row
+          COMMENT_CONTENT="${COMMENT_CONTENT} |"
+        fi
 
         # add plan output if exists
         if [ -f "${PLAN_OUT_FILE}" ]; then
