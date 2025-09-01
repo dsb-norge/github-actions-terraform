@@ -1,0 +1,118 @@
+name: "Parse terraform plan file"
+description: |
+  Parses a Terraform plan's console output file to extract resource change counts.
+  Outputs the number of resources to be added, changed, destroyed, imported, moved, and removed.
+author: "Peder Schmedling"
+inputs:
+  plan-console-file:
+    description: Path of file with plan output captured from console.
+    required: true
+outputs:
+  count-add:
+    description: Number of resources to be added.
+    value: ${{ steps.parse-plan-output.outputs.add-count }}
+  count-change:
+    description: Number of resources to be changed.
+    value: ${{ steps.parse-plan-output.outputs.change-count }}
+  count-destroy:
+    description: Number of resources to be destroyed.
+    value: ${{ steps.parse-plan-output.outputs.destroy-count }}
+  count-import:
+    description: Number of resources to be imported.
+    value: ${{ steps.parse-plan-output.outputs.import-count }}
+  count-move:
+    description: Number of resources to be moved.
+    value: ${{ steps.parse-plan-output.outputs.move-count }}
+  count-remove:
+    description: Number of resources to be removed.
+    value: ${{ steps.parse-plan-output.outputs.remove-count }}
+runs:
+  using: "composite"
+  steps:
+    - id: parse-plan-output
+      shell: bash
+      env:
+        PLAN_CONSOLE_FILE: ${{ inputs.plan-console-file }}
+      run: |
+        # Parse metrics from plan file
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # fallback output values when parsing fails
+        imports='?'
+        adds='?'
+        changes='?'
+        destroys='?'
+        moves='?'
+        removes='?'
+
+        if [ ! -z "${PLAN_CONSOLE_FILE}" ]; then
+          log-info "parsing plan output file: ${PLAN_CONSOLE_FILE}"
+
+          if [ -s "${PLAN_CONSOLE_FILE}" ]; then
+
+            content=$(cat "${PLAN_CONSOLE_FILE}")
+
+            if echo "$content" | grep -q "No changes."; then
+              imports=0
+              adds=0
+              changes=0
+              destroys=0
+            else
+              imports=0 # not always in the plan string
+              plan_line=$(echo "$content" | grep "Plan: ")
+              if [ -n "$plan_line" ]; then
+                if [[ $plan_line =~ ([0-9]+)\ to\ import ]]; then
+                  imports=${BASH_REMATCH[1]}
+                fi
+                if [[ $plan_line =~ ([0-9]+)\ to\ add ]]; then
+                  adds=${BASH_REMATCH[1]}
+                else
+                  log-error "failed to parse, unable to find the number of resources to add in the plan file"
+                fi
+                if [[ $plan_line =~ ([0-9]+)\ to\ change ]]; then
+                  changes=${BASH_REMATCH[1]}
+                else
+                  log-error "failed to parse, unable to find the number of resources that will be changed in the plan file"
+                fi
+                if [[ $plan_line =~ ([0-9]+)\ to\ destroy ]]; then
+                  destroys=${BASH_REMATCH[1]}
+                else
+                  log-error "failed to parse, unable to find the number of resources to destroy in the plan file"
+                fi
+              else
+                log-error "failed to parse, unable to find plan details in the plan file"
+              fi
+            fi
+
+            if moved_lines=$(echo "$content" | grep -c "has moved to" || true); then
+              moves=$moved_lines
+            else
+              moves=0 # not always in the plan file
+            fi
+
+            if ! echo "$content" | grep -q "Some objects will no longer be managed by Terraform"; then
+              removes=0
+            else
+              if ! removed_block=$(echo "$content" | sed -n '/following objects, but it will not delete them:/,/After applying this plan/p'); then
+                log-error "failed to parse, expected to find the list of resources to be removed in the plan file"
+              else
+                if ! removed_lines=$(echo "$removed_block" | grep -c "  - "); then
+                  log-error "failed to parse, expected to find the number of resources to be removed in the plan file"
+                else
+                  removes=$removed_lines
+                fi
+              fi
+            fi
+
+          else
+            log-error "plan console output file '${PLAN_CONSOLE_FILE}' is empty!"
+          fi
+        fi
+
+        set-output 'import-count' "${imports}"
+        set-output 'add-count' "${adds}"
+        set-output 'change-count' "${changes}"
+        set-output 'destroy-count' "${destroys}"
+        set-output 'move-count' "${moves}"
+        set-output 'remove-count' "${removes}"
