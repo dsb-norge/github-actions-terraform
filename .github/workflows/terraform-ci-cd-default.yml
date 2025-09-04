@@ -313,7 +313,8 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: ${{ matrix.vars.github-environment }}
-          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }} # created by terraform by parsing the plan file, not available when plan fails
+          plan-console-file: ${{ steps.plan.outputs.console-output-file }} # captured from console output, possibly available even if plan fails
           status-init: ${{ steps.init.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
