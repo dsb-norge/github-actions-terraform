@@ -196,7 +196,6 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: "module"
-          plan-txt-output-file: ""
           status-init: ${{ steps.init.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
