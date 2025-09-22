@@ -53,13 +53,14 @@ env:
   ARM_USE_AZUREAD: true
   TF_IN_AUTOMATION: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   generate-docs:
     name: Update documentation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
     outputs:
       number-of-files-changed: ${{ steps.update-readme.outputs.number-of-files-changed }}
     steps:
@@ -98,10 +99,7 @@ jobs:
 
   create-test-matrix:
     name: Enumerate tests
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
-    defaults:
-      run:
-        shell: bash
+    runs-on: ubuntu-latest
     outputs:
       all-tests: ${{ steps.create-test-matrix.outputs.all-tests }}
     steps:
@@ -121,10 +119,7 @@ jobs:
     # this step is time consuming, don't bother running it if the workflow will be re-triggered by an update to the docs anyway
     needs: generate-docs
     if: (needs.generate-docs.result == 'success' && needs.generate-docs.outputs.number-of-files-changed || -1) == 0
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
-    defaults:
-      run:
-        shell: bash
+    runs-on: ubuntu-latest
     outputs:
       plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
       plugin-cache-key-monthly-rolling: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
@@ -251,14 +246,11 @@ jobs:
     # only run tests if all dependent jobs are successful
     #   does not run if ex validation failed or was skipped because of an update to the docs
     needs: [create-test-matrix, validate-project]
-    runs-on: [self-hosted, dsb-terraformer, linux, x64]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
       matrix:
         test-file: ${{ fromJSON(needs.create-test-matrix.outputs.all-tests).files }}
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v4
@@ -335,10 +327,7 @@ jobs:
     if: always()
     name: "Terraform conclusion"
     needs: [generate-docs, validate-project, module-tests]
-    runs-on: ubuntu-latest # no need to schedule this on our own runners
-    defaults:
-      run:
-        shell: bash
+    runs-on: ubuntu-latest
     steps:
       # fail the workflow if any of the job was failed or cancelled
       # also fail if module-tests was skipped, ex because of an update to the docs
