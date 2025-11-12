@@ -519,14 +519,14 @@ jobs:
         # Run step when:
         #   - destroy plan succeeded AND:
         #     1. goal 'destroy'
-        #        AND push or manual on default branch
+        #        AND push or manual or scheduled on default branch
         #     2. goal 'destroy-on-pr'
         #        AND pull request to default branch
         if: |
           steps.destroy-plan.outcome == 'success'
           && (
             ( contains(matrix.vars.goals, 'destroy')
-              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
+              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
             ) || (
               contains(matrix.vars.goals, 'destroy-on-pr')
