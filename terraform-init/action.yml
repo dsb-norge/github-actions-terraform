@@ -13,6 +13,13 @@ inputs:
   plugin-cache-directory:
     description: |
       Optional: path to the terraform providers plugin cache directory.
+  lock-state:
+    description: |
+      Optional: whether to lock the state during operations.
+
+      Defaults to 'false' as init operations only actually need state locking when migrating state between backends.
+    required: false
+    default: "false"
 runs:
   using: "composite"
   steps:
@@ -63,7 +70,7 @@ runs:
         # project init
         start-group "running 'terraform init' in 'project-dir' '$(ws-path $(pwd))' ..."
         set +e
-        terraform init -input=false -reconfigure
+        terraform init -input=false -reconfigure -lock=${{ inputs.lock-state == 'false' && 'false' || 'true' }}
         TF_INIT_EXITCODE=${?}
         set -e
         TF_INIT_RESULTS["$(pwd)"]="${TF_INIT_EXITCODE}"
