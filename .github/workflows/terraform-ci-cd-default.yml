@@ -205,7 +205,41 @@ jobs:
       name: ${{ matrix.vars.github-environment }}
       url: ${{ matrix.vars.url }}
     concurrency:
-      group: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
+      # serialize jobs per environment, when actually changing infrastructure.
+      #   environment name it used as concurrency group (matrix.vars.github-environment),
+      #   when    :
+      #     push or manual or scheduled on default branch of calling repo
+      #     AND
+      #     goals include any of: [all, apply, destroy]
+      #       expression: ( ( ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ) && matrix.vars.caller-repo-is-on-default-branch == 'true' ) && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') || contains(matrix.vars.goals, 'destroy') )
+      #   or when :
+      #     workflow called from pull request to default branch of calling repo
+      #     AND
+      #     goals include any of: [apply-on-pr, destroy-on-pr]
+      #       expression: ( github.event_name == 'pull_request' && github.base_ref == matrix.vars.caller-repo-default-branch && ( contains(matrix.vars.goals, 'apply-on-pr') || contains(matrix.vars.goals, 'destroy-on-pr') ) )
+      # allow other jobs, not changing infrastructure, to run in parallel.
+      #   by using the commit sha (github.sha) as concurrency group. ie. unique group for all jobs
+      group: |-
+        ${{ (
+              (
+                ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                &&
+                matrix.vars.caller-repo-is-on-default-branch == 'true'
+                &&
+                ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') || contains(matrix.vars.goals, 'destroy') )
+              )
+              ||
+              (
+                github.event_name == 'pull_request'
+                &&
+                github.base_ref == matrix.vars.caller-repo-default-branch
+                &&
+                ( contains(matrix.vars.goals, 'apply-on-pr') || contains(matrix.vars.goals, 'destroy-on-pr') )
+              )
+            )
+            && matrix.vars.github-environment || github.sha }}
+      #     ☝️ fake ternary operation
+      #     returns matrix.vars.github-environment when the expression is true, otherwise github.sha
       cancel-in-progress: false # do not cancel in progress apply
     defaults:
       run:
@@ -297,6 +331,26 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
+          # only lock state when operations may change infrastructure, see concurrency.group for details
+          lock-state: |-
+            ${{ (
+                  (
+                    ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                    &&
+                    matrix.vars.caller-repo-is-on-default-branch == 'true'
+                    &&
+                    ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') )
+                  )
+                  ||
+                  (
+                    github.event_name == 'pull_request'
+                    &&
+                    github.base_ref == matrix.vars.caller-repo-default-branch
+                    &&
+                    contains(matrix.vars.goals, 'apply-on-pr')
+                  )
+                )
+                && 'true' || 'false' }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: "🔍 Parse terraform plan"
@@ -393,7 +447,7 @@ jobs:
         # Run step when:
         #   - plan succeeded AND:
         #     1. one of the goals [all, apply]
-        #        AND push or manual on default branch
+        #        AND push or manual or scheduled on default branch
         #     2. goal 'apply-on-pr'
         #        AND pull request to default branch
         if: |
@@ -424,6 +478,26 @@ jobs:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
           extra-plan-args: -destroy
+          # only lock state when operations may change infrastructure, see concurrency.group for details
+          lock-state: |-
+            ${{ (
+                  (
+                    ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                    &&
+                    matrix.vars.caller-repo-is-on-default-branch == 'true'
+                    &&
+                    contains(matrix.vars.goals, 'destroy')
+                  )
+                  ||
+                  (
+                    github.event_name == 'pull_request'
+                    &&
+                    github.base_ref == matrix.vars.caller-repo-default-branch
+                    &&
+                    contains(matrix.vars.goals, 'destroy-on-pr')
+                  )
+                )
+                && 'true' || 'false' }}
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
