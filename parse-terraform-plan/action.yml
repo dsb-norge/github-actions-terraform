@@ -85,10 +85,15 @@ runs:
               fi
             fi
 
-            if moved_lines=$(echo "$content" | grep -c "has moved to" || true); then
-              moves=$moved_lines
-            else
-              moves=0 # not always in the plan file
+            # Count both types of move operations:
+            # 1. "has moved to" - simple move without changes
+            # 2. "(moved from" - move with in-place update
+            moves=0
+            if has_moved_count=$(echo "$content" | grep -c "has moved to" || true); then
+              moves=$((moves + has_moved_count))
+            fi
+            if moved_from_count=$(echo "$content" | grep -c "(moved from" || true); then
+              moves=$((moves + moved_from_count))
             fi
 
             if ! echo "$content" | grep -q "Some objects will no longer be managed by Terraform"; then
