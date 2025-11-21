@@ -26,6 +26,13 @@ inputs:
       Boolean as tring, if 'true' the action will exit with a non-zero exit code.
     required: false
     default: "true"
+  lock-state:
+    description: |
+      Optional: whether to lock the state during plan operation.
+
+      Defaults to 'true'.
+    required: false
+    default: "true"
 outputs:
   exitcode:
     description: |
@@ -75,7 +82,7 @@ runs:
         set-output 'tf-plan-console-output-file' "${PLAN_CONSOLE_OUT_FILE}"
         set-output 'tf-plan-tf-output-file' "${PLAN_TF_OUT_FILE}"
 
-        PLAN_CMD="terraform ${{ inputs.extra-global-args }} plan -detailed-exitcode -input=false -no-color -out=${PLAN_TF_OUT_FILE} ${{ inputs.extra-plan-args }}"
+        PLAN_CMD="terraform ${{ inputs.extra-global-args }} plan -detailed-exitcode -input=false -no-color -out=${PLAN_TF_OUT_FILE} -lock=${{ inputs.lock-state == 'false' && 'false' || 'true' }} ${{ inputs.extra-plan-args }}"
         log-info "command string is '${PLAN_CMD}'"
         start-group "'terraform plan' in '$(ws-path $(pwd))'"
 

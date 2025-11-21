@@ -190,7 +190,8 @@ jobs:
         uses: actions/checkout@v4
       - name: "🎰 Create env matrix"
         id: create-matrix
-        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@no-lock-dev-tag
         with:
           inputs-json: ${{ toJSON(inputs) }}
 
@@ -205,7 +206,41 @@ jobs:
       name: ${{ matrix.vars.github-environment }}
       url: ${{ matrix.vars.url }}
     concurrency:
-      group: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
+      # serialize jobs per environment, when actually changing infrastructure.
+      #   environment name it used as concurrency group (matrix.vars.github-environment),
+      #   when    :
+      #     push or manual or scheduled on default branch of calling repo
+      #     AND
+      #     goals include any of: [all, apply, destroy]
+      #       expression: ( ( ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ) && matrix.vars.caller-repo-is-on-default-branch == 'true' ) && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') || contains(matrix.vars.goals, 'destroy') )
+      #   or when :
+      #     workflow called from pull request to default branch of calling repo
+      #     AND
+      #     goals include any of: [apply-on-pr, destroy-on-pr]
+      #       expression: ( github.event_name == 'pull_request' && github.base_ref == matrix.vars.caller-repo-default-branch && ( contains(matrix.vars.goals, 'apply-on-pr') || contains(matrix.vars.goals, 'destroy-on-pr') ) )
+      # allow other jobs, not changing infrastructure, to run in parallel.
+      #   by using the commit sha (github.sha) as concurrency group. ie. unique group for all jobs
+      group: |-
+        ${{ (
+              (
+                ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                &&
+                matrix.vars.caller-repo-is-on-default-branch == 'true'
+                &&
+                ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') || contains(matrix.vars.goals, 'destroy') )
+              )
+              ||
+              (
+                github.event_name == 'pull_request'
+                &&
+                github.base_ref == matrix.vars.caller-repo-default-branch
+                &&
+                ( contains(matrix.vars.goals, 'apply-on-pr') || contains(matrix.vars.goals, 'destroy-on-pr') )
+              )
+            )
+            && matrix.vars.github-environment || github.sha }}
+      #     ☝️ fake ternary operation
+      #     returns matrix.vars.github-environment when the expression is true, otherwise github.sha
       cancel-in-progress: false # do not cancel in progress apply
     defaults:
       run:
@@ -215,7 +250,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: "🎰 Export environment variables and secrets"
-        uses: dsb-norge/github-actions-terraform/export-env-vars@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/export-env-vars@no-lock-dev-tag
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
@@ -238,12 +274,14 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@no-lock-dev-tag
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-tflint@no-lock-dev-tag
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
           working-directory: ${{ matrix.vars.project-dir }}
@@ -258,7 +296,8 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        uses: dsb-norge/github-actions-terraform/terraform-init@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
@@ -268,7 +307,8 @@ jobs:
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
@@ -277,7 +317,8 @@ jobs:
       - name: ✔ Terraform Validate
         id: validate
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
-        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-validate@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -285,7 +326,8 @@ jobs:
       - name: 🧹 Lint with TFLint
         id: lint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -293,16 +335,38 @@ jobs:
       - name: 📖 Terraform Plan
         id: plan
         if: steps.init.outcome == 'success' && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-plan@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
+          # only lock state when operations may change infrastructure, see concurrency.group for details
+          lock-state: |-
+            ${{ (
+                  (
+                    ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                    &&
+                    matrix.vars.caller-repo-is-on-default-branch == 'true'
+                    &&
+                    ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') )
+                  )
+                  ||
+                  (
+                    github.event_name == 'pull_request'
+                    &&
+                    github.base_ref == matrix.vars.caller-repo-default-branch
+                    &&
+                    contains(matrix.vars.goals, 'apply-on-pr')
+                  )
+                )
+                && 'true' || 'false' }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: "🔍 Parse terraform plan"
         id: parse-plan
         if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@no-lock-dev-tag
         with:
           plan-console-file: ${{ steps.plan.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
@@ -310,7 +374,8 @@ jobs:
       - name: 📝 Create validation summary
         id: create-validation-summary
         if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@no-lock-dev-tag
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }} # created by terraform by parsing the plan file, not available when plan fails
@@ -393,7 +458,7 @@ jobs:
         # Run step when:
         #   - plan succeeded AND:
         #     1. one of the goals [all, apply]
-        #        AND push or manual on default branch
+        #        AND push or manual or scheduled on default branch
         #     2. goal 'apply-on-pr'
         #        AND pull request to default branch
         if: |
@@ -407,7 +472,8 @@ jobs:
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-apply@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
@@ -419,11 +485,32 @@ jobs:
         if: |
           steps.init.outcome == 'success'
           && contains(matrix.vars.goals, 'destroy-plan')
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-plan@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
           extra-plan-args: -destroy
+          # only lock state when operations may change infrastructure, see concurrency.group for details
+          lock-state: |-
+            ${{ (
+                  (
+                    ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+                    &&
+                    matrix.vars.caller-repo-is-on-default-branch == 'true'
+                    &&
+                    contains(matrix.vars.goals, 'destroy')
+                  )
+                  ||
+                  (
+                    github.event_name == 'pull_request'
+                    &&
+                    github.base_ref == matrix.vars.caller-repo-default-branch
+                    &&
+                    contains(matrix.vars.goals, 'destroy-on-pr')
+                  )
+                )
+                && 'true' || 'false' }}
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
@@ -432,21 +519,22 @@ jobs:
         # Run step when:
         #   - destroy plan succeeded AND:
         #     1. goal 'destroy'
-        #        AND push or manual on default branch
+        #        AND push or manual or scheduled on default branch
         #     2. goal 'destroy-on-pr'
         #        AND pull request to default branch
         if: |
           steps.destroy-plan.outcome == 'success'
           && (
             ( contains(matrix.vars.goals, 'destroy')
-              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
+              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
             ) || (
               contains(matrix.vars.goals, 'destroy-on-pr')
               && github.event_name == 'pull_request'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-apply@no-lock-dev-tag
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
