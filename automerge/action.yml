@@ -14,7 +14,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - id: automerge-pr
+    - id: automerge
       if: ${{ inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true' }}
       shell: bash
       run: |
