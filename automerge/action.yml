@@ -15,7 +15,7 @@ runs:
   using: "composite"
   steps:
     - id: automerge
-      if: ${{ inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true' }}
+      if: inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true'
       shell: bash
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
