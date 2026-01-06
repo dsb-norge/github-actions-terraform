@@ -212,7 +212,7 @@ jobs:
       run:
         shell: bash
     outputs:
-      can-automerge: ${{ steps.evaluate-automerge-condition.outputs.can-automerge }}
+      can-automerge: ${{ steps.create-validation-summary.outputs.can-automerge }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v4
