@@ -125,6 +125,16 @@ runs:
           COMMENT_CONTENT="${COMMENT_CONTENT} |"
         fi
 
+        # Check if PR can be merged based on plan outcome
+        if [ "${STATUS_PLAN}" == 'success' ]; then
+          if [ "${COUNT_DESTROY}" != '0' ] || [ "${COUNT_REMOVE}" != '0' ] || [ "${COUNT_ADD}" != '0' ] || [ "${COUNT_CHANGE}" != '0' ]  ; then
+            log-info "This PR can not be merged automatically as the Terraform plan includes destructive changes."
+            set-output 'can_automerge' "false"
+          else
+            set-output 'can_automerge' "true"
+          fi
+        fi
+
         # look for plan output
         PLAN_OUT=""
         if [ -f "${PLAN_OUT_FILE}" ]; then
