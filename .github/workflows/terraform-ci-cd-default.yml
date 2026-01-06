@@ -506,5 +506,5 @@ jobs:
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/automerge@automerge
         with:
-          can-automerge: ${{ needs.terraform-ci-cd.outputs.can-automerge }}
+          can-automerge: ${{ needs.terraform-ci-cd.outputs.can_automerge }}
           automerge-enabled: ${{ matrix.vars.extra-envs-yml.automerge_enabled }} 
