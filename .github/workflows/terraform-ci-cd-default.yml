@@ -486,3 +486,23 @@ jobs:
                contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
           }}
+
+  automerge: 
+    if: ${{ github.event_name == 'pull_request' }}
+    name: "Automerge PR"
+    needs: [terraform-ci-cd, conclusion]
+    runs-on: ${{ matrix.vars.runs-on }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "🧹 Clean workspace"
+        uses: dsb-norge/directory-recreate@v1
+      - name: "⬇ Checkout working branch"
+        uses: actions/checkout@v4
+      - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/automerge@automerge
+        with:
+          can-automerge: ${{ needs.terraform-ci-cd.outputs.can-automerge }}
+          automerge-enabled: ${{ matrix.vars.extra-envs-yml.automerge_enabled }} 

@@ -1,0 +1,29 @@
+name: "Automerge PR if no critical changes found in Terraform plan"
+description: |
+  This action receive input from the `create-validation-summary` action and automerges the pull request
+  if the Terraform plan does not include any destructive changes (i.e. resource deletions or removals) and 
+  automerge is enabled in workflow.
+author: "Artjoms Laivins"
+inputs:
+  can-automerge:
+    description: Whether the PR can be automerged based on the Terraform plan results.
+    required: true
+  automerge-enabled:
+    description: Whether automerge feature is enabled.
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - id: automerge-pr
+      if: ${{ inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true' }}
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
+        log-info "Automerge conditions met, attempting to automerge PR..."
+        # get current branch name
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        log-info "Current branch is '${CURRENT_BRANCH}'"
+        # automerge the PR using GitHub CLI
+        log-info "Merging PR using GitHub CLI..."
+        #TODO: enable when branch is verified. 
+        #gh pr merge --auto --delete-branch --rebase "$CURRENT_BRANCH"
