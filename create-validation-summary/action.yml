@@ -132,6 +132,7 @@ runs:
             set-output 'can_automerge' "false"
           else
             set-output 'can_automerge' "true"
+            log-info "This PR can be merged automatically as the Terraform plan includes no changes. Make sure that feature is enabled in variables."
           fi
         fi
 
