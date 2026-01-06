@@ -490,7 +490,7 @@ jobs:
   automerge: 
     if: ${{ github.event_name == 'pull_request' }}
     name: "Automerge PR"
-    needs: [terraform-ci-cd, conclusion]
+    needs: [create-matrix, terraform-ci-cd, conclusion]
     runs-on: ${{ matrix.vars.runs-on }}
     defaults:
       run:
