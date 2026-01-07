@@ -54,14 +54,13 @@ runs:
         PR_NUMBER="${{ github.event.number }}"
         log-info "Working with PR #${PR_NUMBER}"
         
-        # TODO: Uncomment when ready to test PR status checks
-        #PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
-        #log-info "PR state: $PR_STATE"
+        PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
+        log-info "PR state: $PR_STATE"
         
-        #if [ "$PR_STATE" != "OPEN" ]; then
-        #  log-error "PR is not in an open state (state: $PR_STATE)"
-        #  exit 1
-        #fi
+        if [ "$PR_STATE" != "OPEN" ]; then
+          log-error "PR is not in an open state (state: $PR_STATE)"
+          exit 1
+        fi
         
         # TODO: Uncomment when ready to test PR mergeable status
         # Check if PR is mergeable
