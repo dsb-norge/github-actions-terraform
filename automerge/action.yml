@@ -48,24 +48,37 @@ runs:
         log-info "Current branch is '${CURRENT_BRANCH}'"
         
         # Check if PR exists and is open
-        if ! gh pr view "$CURRENT_BRANCH" --json state,mergeable | jq -e '.state == "OPEN"' >/dev/null; then
-          log-error "PR is not in an open state"
+        PR_NUMBER="${{ github.event.number }}"
+        log-info "Working with PR #${PR_NUMBER}"
+        
+        PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
+        log-info "PR state: $PR_STATE"
+        
+        if [ "$PR_STATE" != "OPEN" ]; then
+          log-error "PR is not in an open state (state: $PR_STATE)"
           exit 1
         fi
         
         # Check if PR is mergeable
-        MERGEABLE=$(gh pr view "$CURRENT_BRANCH" --json mergeable | jq -r '.mergeable')
-        if [ "$MERGEABLE" != "MERGEABLE" ]; then
-          log-warn "PR is not currently mergeable (state: $MERGEABLE), skipping automerge"
-          exit 0
+        MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
+        log-info "PR mergeable status: $MERGEABLE"
+        
+        if [ "$MERGEABLE" = "CONFLICTING" ]; then
+          log-error "PR has merge conflicts"
+          exit 1
         fi
         
         # Attempt to automerge
         log-info "Merging PR using GitHub CLI with method: ${{ inputs.merge-method }}"
-        #TODO: uncomment after initial testing
-        #if gh pr merge --auto --delete-branch --${{ inputs.merge-method }} "$CURRENT_BRANCH"; then
-        #  log-info "Successfully enabled auto-merge for PR"
+        #TODO: Uncomment when ready to use
+        #if gh pr merge "$PR_NUMBER" --auto --delete-branch --${{ inputs.merge-method }} 2>&1; then
+        #  log-info "Successfully enabled auto-merge for PR #${PR_NUMBER}"
         #else
-        #  log-error "Failed to enable auto-merge for PR"
-        #  exit 1
+        #  EXIT_CODE=$?
+        #  log-error "Failed to enable auto-merge for PR #${PR_NUMBER} (exit code: $EXIT_CODE)"
+        #  
+        #  # Show additional PR info for debugging
+        #  log-info "PR details for debugging:"
+        #  gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup
+        #  exit $EXIT_CODE
         #fi
