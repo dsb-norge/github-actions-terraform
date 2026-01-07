@@ -87,7 +87,7 @@ runs:
         # Attempt to automerge
         log-info "Enabling auto-merge for PR #${PR_NUMBER} with method: ${{ inputs.merge-method }}"
 
-        if gh pr merge "$PR_NUMBER" --auto --delete-branch --${{ inputs.merge-method }} 2>&1; then
+        if gh pr merge "$PR_NUMBER" --merge --auto --delete-branch --${{ inputs.merge-method }} 2>&1; then
           log-info "Successfully enabled auto-merge for PR #${PR_NUMBER}"
           log-info "PR will automatically merge once all required checks pass"
         else
