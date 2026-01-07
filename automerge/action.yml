@@ -76,12 +76,20 @@ runs:
         log-info "PR Number: ${PR_NUMBER}"
         log-info "Would merge with method: ${{ inputs.merge-method }}"
         
+        # Auto-approve the PR if reviews are required (common for dependabot)
+        log-info "Auto-approving PR #${PR_NUMBER} to satisfy review requirements..."
+        if gh pr review "$PR_NUMBER" --approve --body "Auto-approved by automated workflow"; then
+          log-info "Successfully auto-approved PR #${PR_NUMBER}"
+        else
+          log-warn "Failed to auto-approve PR #${PR_NUMBER} (might not be required or already approved)"
+        fi
 
         # Attempt to automerge
-        log-info "Merging PR using GitHub CLI with method: ${{ inputs.merge-method }}"
+        log-info "Enabling auto-merge for PR #${PR_NUMBER} with method: ${{ inputs.merge-method }}"
 
         if gh pr merge "$PR_NUMBER" --auto --delete-branch --${{ inputs.merge-method }} 2>&1; then
           log-info "Successfully enabled auto-merge for PR #${PR_NUMBER}"
+          log-info "PR will automatically merge once all required checks pass"
         else
           EXIT_CODE=$?
           log-error "Failed to enable auto-merge for PR #${PR_NUMBER} (exit code: $EXIT_CODE)"
