@@ -51,25 +51,32 @@ runs:
         PR_NUMBER="${{ github.event.number }}"
         log-info "Working with PR #${PR_NUMBER}"
         
-        PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
-        log-info "PR state: $PR_STATE"
+        # TODO: Uncomment when ready to test PR status checks
+        #PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
+        #log-info "PR state: $PR_STATE"
         
-        if [ "$PR_STATE" != "OPEN" ]; then
-          log-error "PR is not in an open state (state: $PR_STATE)"
-          exit 1
-        fi
+        #if [ "$PR_STATE" != "OPEN" ]; then
+        #  log-error "PR is not in an open state (state: $PR_STATE)"
+        #  exit 1
+        #fi
         
+        # TODO: Uncomment when ready to test PR mergeable status
         # Check if PR is mergeable
-        MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
-        log-info "PR mergeable status: $MERGEABLE"
+        #MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
+        #log-info "PR mergeable status: $MERGEABLE"
         
-        if [ "$MERGEABLE" = "CONFLICTING" ]; then
-          log-error "PR has merge conflicts"
-          exit 1
-        fi
+        #if [ "$MERGEABLE" = "CONFLICTING" ]; then
+        #  log-error "PR has merge conflicts"
+        #  exit 1
+        #fi
         
+        log-info "Authentication and setup completed successfully!"
+        log-info "PR Number: ${PR_NUMBER}"
+        log-info "Would merge with method: ${{ inputs.merge-method }}"
+        
+        # TODO: Uncomment when ready to actually merge
         # Attempt to automerge
-        log-info "Merging PR using GitHub CLI with method: ${{ inputs.merge-method }}"
+        #log-info "Merging PR using GitHub CLI with method: ${{ inputs.merge-method }}"
         #TODO: Uncomment when ready to use
         #if gh pr merge "$PR_NUMBER" --auto --delete-branch --${{ inputs.merge-method }} 2>&1; then
         #  log-info "Successfully enabled auto-merge for PR #${PR_NUMBER}"
