@@ -21,18 +21,23 @@ runs:
     - id: automerge
       if: inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true'
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
 
-        # Validate we're in a PR context
-        if [ "${{ github.event_name }}" != "pull_request" ]; then
-          log-error "This action can only run in pull request context"
-          exit 1
-        fi
+        # Authenticate gh CLI with automatic token
+        echo "${{ github.token }}" | gh auth login --with-token
         
         # Check GitHub CLI authentication
         if ! gh auth status >/dev/null 2>&1; then
           log-error "GitHub CLI is not authenticated"
+          exit 1
+        fi
+
+        # Validate we're in a PR context
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          log-error "This action can only run in pull request context"
           exit 1
         fi
         
