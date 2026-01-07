@@ -26,12 +26,15 @@ runs:
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
 
-        # Authenticate gh CLI with automatic token
-        echo "${{ github.token }}" | gh auth login --with-token
+        # GitHub CLI will automatically use GITHUB_TOKEN env var - no explicit login needed
+        log-info "GitHub CLI will use GITHUB_TOKEN environment variable for authentication"
         
-        # Check GitHub CLI authentication
-        if ! gh auth status >/dev/null 2>&1; then
-          log-error "GitHub CLI is not authenticated"
+        # Check GitHub CLI authentication (this should work with GITHUB_TOKEN env var)
+        log-info "Testing GitHub CLI authentication..."
+        if gh auth status 2>&1; then
+          log-info "GitHub CLI authentication successful"
+        else
+          log-error "GitHub CLI authentication failed"
           exit 1
         fi
 
