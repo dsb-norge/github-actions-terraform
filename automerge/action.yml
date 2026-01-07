@@ -11,6 +11,10 @@ inputs:
   automerge-enabled:
     description: Whether automerge feature is enabled.
     required: true
+  merge-method:
+    description: Merge method to use (merge, squash, rebase)
+    required: false
+    default: rebase
 runs:
   using: "composite"
   steps:
@@ -19,11 +23,44 @@ runs:
       shell: bash
       run: |
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
+
+        # Validate we're in a PR context
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          log-error "This action can only run in pull request context"
+          exit 1
+        fi
+        
+        # Check GitHub CLI authentication
+        if ! gh auth status >/dev/null 2>&1; then
+          log-error "GitHub CLI is not authenticated"
+          exit 1
+        fi
+        
         log-info "Automerge conditions met, attempting to automerge PR..."
-        # get current branch name
+        
+        # Get current branch name
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         log-info "Current branch is '${CURRENT_BRANCH}'"
-        # automerge the PR using GitHub CLI
-        log-info "Merging PR using GitHub CLI..."
-        #TODO: enable when branch is verified. 
-        #gh pr merge --auto --delete-branch --rebase "$CURRENT_BRANCH"
+        
+        # Check if PR exists and is open
+        if ! gh pr view "$CURRENT_BRANCH" --json state,mergeable | jq -e '.state == "OPEN"' >/dev/null; then
+          log-error "PR is not in an open state"
+          exit 1
+        fi
+        
+        # Check if PR is mergeable
+        MERGEABLE=$(gh pr view "$CURRENT_BRANCH" --json mergeable | jq -r '.mergeable')
+        if [ "$MERGEABLE" != "MERGEABLE" ]; then
+          log-warn "PR is not currently mergeable (state: $MERGEABLE), skipping automerge"
+          exit 0
+        fi
+        
+        # Attempt to automerge
+        log-info "Merging PR using GitHub CLI with method: ${{ inputs.merge-method }}"
+        #TODO: uncomment after initial testing
+        #if gh pr merge --auto --delete-branch --${{ inputs.merge-method }} "$CURRENT_BRANCH"; then
+        #  log-info "Successfully enabled auto-merge for PR"
+        #else
+        #  log-error "Failed to enable auto-merge for PR"
+        #  exit 1
+        #fi
