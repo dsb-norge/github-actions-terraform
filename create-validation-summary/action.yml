@@ -64,6 +64,9 @@ outputs:
   summary:
     description: Validation summary content string.
     value: ${{ steps.create-validation-summary.outputs.summary }}
+  can-automerge:
+    description: Whether the PR can be automerged based on the Terraform plan results.
+    value: ${{ steps.create-validation-summary.outputs.can-automerge }}
 runs:
   using: "composite"
   steps:
@@ -129,9 +132,9 @@ runs:
         if [ "${STATUS_PLAN}" == 'success' ]; then
           if [ "${COUNT_DESTROY}" != '0' ] || [ "${COUNT_REMOVE}" != '0' ] || [ "${COUNT_ADD}" != '0' ] || [ "${COUNT_CHANGE}" != '0' ]  ; then
             log-info "This PR can not be merged automatically as the Terraform plan includes destructive changes."
-            set-output 'can_automerge' "false"
+            set-output 'can-automerge' "false"
           else
-            set-output 'can_automerge' "true"
+            set-output 'can-automerge' "true"
             log-info "This PR can be merged automatically as the Terraform plan includes no changes. Make sure that feature is enabled in variables."
           fi
         fi
