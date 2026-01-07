@@ -62,15 +62,15 @@ runs:
           exit 1
         fi
         
-        # TODO: Uncomment when ready to test PR mergeable status
+
         # Check if PR is mergeable
-        #MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
-        #log-info "PR mergeable status: $MERGEABLE"
-        
-        #if [ "$MERGEABLE" = "CONFLICTING" ]; then
-        #  log-error "PR has merge conflicts"
-        #  exit 1
-        #fi
+        MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
+        log-info "PR mergeable status: $MERGEABLE"
+      
+        if [ "$MERGEABLE" = "CONFLICTING" ]; then
+          log-error "PR has merge conflicts"
+          exit 1
+        fi
         
         log-info "Authentication and setup completed successfully!"
         log-info "PR Number: ${PR_NUMBER}"
