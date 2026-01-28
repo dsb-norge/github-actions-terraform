@@ -506,7 +506,7 @@ jobs:
         with:
           app-id: "2746453" # dsb-infra-pr-merger
           private-key: ${{ secrets.PRIVATE_KEY }}
-          permission-contents: read
+          permission-contents: write
           permission-pull-requests: write
       - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
         id: automerge
