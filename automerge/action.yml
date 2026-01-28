@@ -95,7 +95,7 @@ runs:
 
         start-group "Merge PR #${PR_NUMBER}"
 
-        if gh pr merge "$PR_NUMBER" --rebase --delete-branch --repo "$REPO_REF" 2>&1; then
+        if gh pr merge "$PR_NUMBER" --admin --rebase --delete-branch --repo "$REPO_REF" 2>&1; then
           log-info "Successfully merged PR"
         else
           EXIT_CODE=$?
