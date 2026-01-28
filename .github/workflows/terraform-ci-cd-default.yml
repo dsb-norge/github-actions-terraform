@@ -489,7 +489,7 @@ jobs:
             || contains(needs.*.result, 'cancelled')
           }}
 
-  automerge: 
+  automerge:
     if: ${{ github.event_name == 'pull_request' }}
     name: "Automerge PR"
     needs: [create-matrix, terraform-ci-cd, conclusion]
@@ -500,13 +500,19 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: "🧹 Clean workspace"
-        uses: dsb-norge/directory-recreate@v1
-      - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v4
+      - name: "🎫 Create GitHub App token"
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: "2746453" # dsb-infra-pr-merger
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
       - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
+        id: automerge
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/automerge@automerge
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           can-automerge: ${{ needs.terraform-ci-cd.outputs.can-automerge }}
-          automerge-enabled: ${{ matrix.vars.extra-envs.automerge_enabled }} 
+          automerge-enabled: ${{ matrix.vars.extra-envs.automerge_enabled }}

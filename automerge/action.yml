@@ -1,7 +1,7 @@
 name: "Automerge PR if no critical changes found in Terraform plan"
 description: |
   This action receive input from the `create-validation-summary` action and automerges the pull request
-  if the Terraform plan does not include any destructive changes (i.e. resource deletions or removals) and 
+  if the Terraform plan does not include any destructive changes (i.e. resource deletions or removals) and
   automerge is enabled in workflow.
 author: "Artjoms Laivins"
 inputs:
@@ -11,91 +11,101 @@ inputs:
   automerge-enabled:
     description: Whether automerge feature is enabled.
     required: true
-  merge-method:
-    description: Merge method to use (merge, squash, rebase)
+  github-token:
+    description: GitHub token to use for authenticating with GitHub CLI.
     required: false
-    default: rebase
+    default: ${{ github.token }}
 runs:
   using: "composite"
   steps:
+    - id: is-on-pr
+      if: ${{ github.event_name != 'pull_request' }}
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-error "This action can only run in pull request context"
+        exit 1
+    - id: cant-automerge
+      if: inputs.can-automerge != 'true' && inputs.automerge-enabled == 'true'
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-warn "Automerge conditions not met (can-automerge: ${{ inputs.can-automerge }}), skipping automerge."
+    - id: automerge-disabled
+      if: inputs.can-automerge == 'true' && inputs.automerge-enabled != 'true'
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-info "Automerge is disabled (automerge-enabled: ${{ inputs.automerge-enabled }}), skipping automerge."
     - id: automerge
       if: inputs.can-automerge == 'true' && inputs.automerge-enabled == 'true'
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;  
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
-        # GitHub CLI will automatically use GITHUB_TOKEN env var - no explicit login needed
+        start-group "GitHub CLI authentication"
+
+        # GitHub CLI will automatically use GITHUB_TOKEN environment variable for authentication
         log-info "GitHub CLI will use GITHUB_TOKEN environment variable for authentication"
-        
+
         # Check GitHub CLI authentication (this should work with GITHUB_TOKEN env var)
         log-info "Testing GitHub CLI authentication..."
         if gh auth status 2>&1; then
           log-info "GitHub CLI authentication successful"
         else
           log-error "GitHub CLI authentication failed"
+          end-group # GitHub CLI authentication
           exit 1
         fi
 
-        # Validate we're in a PR context
-        if [ "${{ github.event_name }}" != "pull_request" ]; then
-          log-error "This action can only run in pull request context"
-          exit 1
-        fi
-        
-        log-info "Automerge conditions met, attempting to automerge PR..."
-        
+        end-group # GitHub CLI authentication
+
+        start-group "Branch and PR information"
+
         # Get current branch name
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         log-info "Current branch is '${CURRENT_BRANCH}'"
-        
+
         # Check if PR exists and is open
         PR_NUMBER="${{ github.event.number }}"
         log-info "Working with PR #${PR_NUMBER}"
-        
+
         PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
         log-info "PR state: $PR_STATE"
-        
+
         if [ "$PR_STATE" != "OPEN" ]; then
           log-error "PR is not in an open state (state: $PR_STATE)"
+          end-group # Branch and PR information
           exit 1
         fi
-        
 
         # Check if PR is mergeable
         MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
         log-info "PR mergeable status: $MERGEABLE"
-      
+
         if [ "$MERGEABLE" = "CONFLICTING" ]; then
           log-error "PR has merge conflicts"
+          end-group # Branch and PR information
           exit 1
         fi
-        
-        log-info "Authentication and setup completed successfully!"
-        log-info "PR Number: ${PR_NUMBER}"
-        log-info "Would merge with method: ${{ inputs.merge-method }}"
-        
-        # Auto-approve the PR if reviews are required (common for dependabot)
-        log-info "Auto-approving PR #${PR_NUMBER} to satisfy review requirements..."
-        if gh pr review "$PR_NUMBER" --approve --body "Auto-approved by automated workflow"; then
-          log-info "Successfully auto-approved PR #${PR_NUMBER}"
-        else
-          log-warn "Failed to auto-approve PR #${PR_NUMBER} (might not be required or already approved)"
-        fi
 
-        # Attempt to automerge
-        log-info "Enabling auto-merge for PR #${PR_NUMBER} with method: ${{ inputs.merge-method }}"
+        end-group # Branch and PR information
 
-        if gh pr merge "$PR_NUMBER" --merge --auto --delete-branch 2>&1; then
-          log-info "Successfully enabled auto-merge for PR #${PR_NUMBER}"
-          log-info "PR will automatically merge once all required checks pass"
+        start-group "Merge PR #${PR_NUMBER}"
+
+        if gh pr merge "$PR_NUMBER" --rebase --delete-branch 2>&1; then
+          log-info "Successfully merged PR"
         else
           EXIT_CODE=$?
-          log-error "Failed to enable auto-merge for PR #${PR_NUMBER} (exit code: $EXIT_CODE)"
-          
+          log-error "Failed to merge PR with exit code: $EXIT_CODE"
+
           # Show additional PR info for debugging
           log-info "PR details for debugging:"
-          gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup
+          gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup | jq .
+          end-group # Merge PR
           exit $EXIT_CODE
         fi
+
+        end-group # Merge PR
