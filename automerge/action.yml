@@ -64,10 +64,6 @@ runs:
 
         start-group "Branch and PR information"
 
-        # Get current branch name
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        log-info "Current branch is '${CURRENT_BRANCH}'"
-
         # Check if PR exists and is open
         PR_NUMBER="${{ github.event.number }}"
         log-info "Working with PR #${PR_NUMBER}"
@@ -103,7 +99,7 @@ runs:
 
           # Show additional PR info for debugging
           log-info "PR details for debugging:"
-          gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup | jq .
+          gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup
           end-group # Merge PR
           exit $EXIT_CODE
         fi
