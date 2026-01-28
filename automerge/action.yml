@@ -64,11 +64,15 @@ runs:
 
         start-group "Branch and PR information"
 
+        # Owner and repo information
+        REPO_REF="${{ github.repository }}"
+        log-info "Repository: $REPO_REF"
+
         # Check if PR exists and is open
         PR_NUMBER="${{ github.event.number }}"
         log-info "Working with PR #${PR_NUMBER}"
 
-        PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state')
+        PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' --repo "$REPO_REF")
         log-info "PR state: $PR_STATE"
 
         if [ "$PR_STATE" != "OPEN" ]; then
@@ -78,7 +82,7 @@ runs:
         fi
 
         # Check if PR is mergeable
-        MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
+        MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable' --repo "$REPO_REF")
         log-info "PR mergeable status: $MERGEABLE"
 
         if [ "$MERGEABLE" = "CONFLICTING" ]; then
@@ -91,7 +95,7 @@ runs:
 
         start-group "Merge PR #${PR_NUMBER}"
 
-        if gh pr merge "$PR_NUMBER" --rebase --delete-branch 2>&1; then
+        if gh pr merge "$PR_NUMBER" --rebase --delete-branch --repo "$REPO_REF" 2>&1; then
           log-info "Successfully merged PR"
         else
           EXIT_CODE=$?
@@ -99,7 +103,7 @@ runs:
 
           # Show additional PR info for debugging
           log-info "PR details for debugging:"
-          gh pr view "$PR_NUMBER" --json title,state,mergeable,mergeStateStatus,statusCheckRollup
+          gh pr view "$PR_NUMBER" --json 'title,state,mergeable,mergeStateStatus,statusCheckRollup' --repo "$REPO_REF"
           end-group # Merge PR
           exit $EXIT_CODE
         fi
