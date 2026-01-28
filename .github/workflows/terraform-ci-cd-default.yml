@@ -41,20 +41,35 @@ on:
             - allow-failing-terraform-operations
                 bool, defaults to false, if true: the workflow will not terminate with failure even if job steps fails.
                 This parameter allows for ignoring failing results of terraform operations for select environments.
+            - runs-on
+                string, name of the runner group to run the job on, see the workflow input 'runs-on'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - terraform-version
+                string, version of terraform to use, see the workflow input 'terraform-version'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - tflint-version
+                string, version of TFLint to use, see the workflow input 'tflint-version'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - format-check-in-root-dir
+                bool, whether to perform format check from the root of the repo, see the workflow input 'format-check-in-root-dir'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - add-pr-comment
+                bool, whether to add validation summary as comment on PR, see the workflow input 'add-pr-comment'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - goals-yml
                 YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - terraform-init-additional-dirs-yml
-                YAML array (as string), additional directories for 'terraform init', see the workflow input 'goals-yml'.
+                YAML array (as string), additional directories for 'terraform init', see the workflow input 'terraform-init-additional-dirs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - extra-envs-yml
-                YAML objects, make environment variables available, see the workflow input 'goals-yml'.
+                YAML objects, make environment variables available, see the workflow input 'extra-envs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - extra-envs-from-secrets-yml
-                YAML objects, make environment variables with secrets available, see the workflow input 'goals-yml'.
+                YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
-            - runs-on
-                string, name of the runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
+            - pr-auto-merge-limits-yml
+                YAML array (as string), configuration for automatic pull request merging, see the workflow input 'pr-auto-merge-from-actors-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
         required: true
       goals-yml:
@@ -140,6 +155,70 @@ on:
           NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
         required: false
         default: "{}" # empty object
+      pr-auto-merge-enabled:
+        type: boolean
+        description: |
+          Whether to enable automatic pull request merging when the workflow is triggered by a pull request event.
+          The configuration for automatic pull request merging is further controlled by the input 'pr-auto-merge-from-actors-yml' and 'pr-auto-merge-limits-yml'
+
+          NOTE: This setting applies to all environments, there is no per environment setting for this.
+        required: false
+        default: false
+      pr-auto-merge-from-actors-yml:
+        type: string
+        description: |
+          Configuration for automatic pull request merging. Defines which actors for which automatic merging of PRs is considered.
+
+          Together with the input 'pr-auto-merge-enabled' this controls whether automatic pull request merging is considered when the workflow is triggered by a pull request event.
+
+          When automatic pull request merging is considered, the input 'pr-auto-merge-limits-yml' is used to evaluate if merging should actually be performed.
+
+          Data:
+            Type: YAML array (as string) of github actor names that are allowed to have their pull requests automatically merged.
+            Default (empty array) means that all actors are allowed.
+
+          NOTE: This setting applies to all environments, there is no per environment setting for this.
+        required: false
+        default: "[]" # empty array, means all actors allowed
+      pr-auto-merge-limits-yml:
+        type: string
+        description: |
+          Configuration for when automatic pull request merging should occur. Defines limits that must be met for automatic merging to be performed.
+
+          The various limits are evaluated against terraform plan output for each environment.
+
+          Only if limits are met for all environments automatic merging be performed. Given that, automatic merging is only considered when the workflow is triggered by a pull request event and the input 'pr-auto-merge-enabled' is set to true and the input 'pr-auto-merge-from-actors-yml' allows the actor.
+
+          Data:
+            Type: YAML object with the following fields (all optional):
+              - plan-max-count-add
+                  integer, maximum number of resources to be added allowed in the terraform plan for automatic merging to occur.
+              - plan-max-count-change
+                  integer, maximum number of resources to be changed allowed in the terraform plan for automatic merging to occur.
+              - plan-max-count-destroy
+                  integer, maximum number of resources to be destroyed allowed in the terraform plan for automatic merging to occur.
+              - plan-max-count-import
+                  integer, maximum number of resources to be imported allowed in the terraform plan for automatic merging to occur.
+              - plan-max-count-move
+                  integer, maximum number of resources to be moved allowed in the terraform plan for automatic merging to occur.
+            Default: all limits set to 0.
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: |
+          plan-max-count-add: 0
+          plan-max-count-change: 0
+          plan-max-count-destroy: 0
+          plan-max-count-import: 0
+          plan-max-count-move: 0
+      runs-on:
+        type: string
+        description: |
+          The runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: "ubuntu-latest"
       terraform-version:
         type: string
         description: |
@@ -211,8 +290,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    outputs:
-      can-automerge: ${{ steps.create-validation-summary.outputs.can-automerge }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v4
@@ -469,6 +546,20 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
+      # save evaluation to be used later by the automerge job
+      - name: "💾 Save automerge evaluation result"
+        id: save-automerge-evaluation
+        run: |
+          echo "Creating file 'auto-merge-evaluation-${{ matrix.vars.github-environment }}.txt' with content:"
+          echo "${{ steps.create-validation-summary.outputs.can-automerge }}"
+          echo ""
+      - name: "📦 Upload automerge evaluation result"
+        id: upload-automerge-evaluation
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-merge-evaluation-${{ matrix.vars.github-environment }}
+          path: auto-merge-evaluation-${{ matrix.vars.github-environment }}.txt
+
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
   conclusion:
@@ -490,29 +581,56 @@ jobs:
           }}
 
   automerge:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: |
+      needs.conclusion.result == 'success'
+      && github.event_name == 'pull_request'
+      && inputs.pr-auto-merge-enabled == 'true'
+      && (
+        contains(inputs.pr-auto-merge-from-actors-yml, github.actor)
+        ||
+        toJSON(inputs.pr-auto-merge-from-actors-yml) == '[]'
+      )
     name: "Automerge PR"
-    needs: [create-matrix, terraform-ci-cd, conclusion]
-    strategy:
-      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
-    runs-on: ${{ matrix.vars.runs-on }}
+    needs: [terraform-ci-cd, conclusion]
+    runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: auto-merge-evaluation-*
+          merge-multiple: true
+      - name: "🔍 Evaluate automerge eligibility across all environments"
+        id: evaluate-automerge
+        run: |
+          echo "📋 Automerge evaluation per environment:"
+          cat auto-merge-evaluation-*
+          echo ""
+
+          # All files must contain "true" for automerge to proceed
+          if grep -qv "^true$" auto-merge-evaluation-* 2>/dev/null; then
+            echo "can-automerge=false" >> $GITHUB_OUTPUT
+            echo "❌ At least one environment cannot be automerged"
+          else
+            echo "can-automerge=true" >> $GITHUB_OUTPUT
+            echo "✅ All environments can be automerged"
+          fi
       - name: "🎫 Create GitHub App token"
         id: app-token
+        if: steps.evaluate-automerge.outputs.can-automerge == 'true'
         uses: actions/create-github-app-token@v2
         with:
-          app-id: "2746453" # dsb-infra-pr-merger
-          private-key: ${{ secrets.PRIVATE_KEY }}
+          app-id: "2746453" # dsb-infra-pr-merger, TODO: change this to an input
+          private-key: ${{ secrets.PRIVATE_KEY }} # TODO: key vault or input
           permission-contents: write
           permission-pull-requests: write
       - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
         id: automerge
+        if: steps.evaluate-automerge.outputs.can-automerge == 'true'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/automerge@automerge
         with:
           github-token: ${{ steps.app-token.outputs.token }}
-          can-automerge: ${{ needs.terraform-ci-cd.outputs.can-automerge }}
-          automerge-enabled: ${{ matrix.vars.extra-envs.automerge_enabled }}
+          can-automerge: true # TODO change implementation
+          automerge-enabled: true # TODO change implementation

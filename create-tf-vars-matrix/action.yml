@@ -28,12 +28,16 @@ runs:
         )
         log-multiline "input 'inputs-json'" "${INPUTS_JSON}"
 
+        # deliberately left out as they should only exist as global inputs-json:
+        #  - pr-auto-merge-enabled
+        #  - pr-auto-merge-from-actors-yml
         YML_INPUTS=(
           environments-yml
           goals-yml
           terraform-init-additional-dirs-yml
           extra-envs-from-secrets-yml
           extra-envs-yml
+          pr-auto-merge-limits-yml
         )
 
         # Calling repo branches information
@@ -118,12 +122,6 @@ runs:
             set-field 'url' "" # modifies $ENVIRONMENT_OBJ
           fi
 
-          # Set default runner if runs-on is not specified
-          if ! has-field 'runs-on'; then
-            log-info "'runs-on' not specified for environment, using 'ubuntu-latest'"
-            set-field 'runs-on' 'ubuntu-latest' # modifies $ENVIRONMENT_OBJ
-          fi
-
           # goals-yml and terraform-init-additional-dirs-yml
           #   - use global value if not defined
           #   - 'field-yml' becomes 'field'
@@ -158,12 +156,13 @@ runs:
             fi
           done
 
-          # extra-envs-yml and extra-envs-from-secrets-yml
+          # extra-envs-yml and extra-envs-from-secrets-yml and pr-auto-merge-limits-yml
           #   - if defined merge with global value, otherwise use global
           #   - '*-yml' becomes '*'
           MERGE_INPUT_YML_FIELDS=(
             extra-envs-yml
             extra-envs-from-secrets-yml
+            pr-auto-merge-limits-yml
           )
           log-info "Processing 'extra-envs-*' yml fields ..."
           for MERGE_FIELD in ${MERGE_INPUT_YML_FIELDS[*]}; do
