@@ -1,0 +1,102 @@
+name: "Evaluate automerge eligibility"
+description: |
+  Evaluates whether a pull request is eligible for automatic merging based on the Terraform plan changes and configured limits.
+author: "Peder Schmedling"
+inputs:
+  environment-name:
+    description: Name of the current deployment environment.
+    required: true
+  pr-auto-merge-limits-json:
+    description: JSON object containing the limits for automerge eligibility.
+    required: true
+  pr-auto-merge-from-actors-json:
+    description: JSON array of allowed actors for automerge.
+    required: true
+  plan-shouldve-been-created:
+    description: Whether a plan should have been created.
+    required: true
+  plan-was-created:
+    description: Whether a plan was successfully created.
+    required: true
+  performing-apply-on-pr:
+    description: Whether apply is being performed on PR.
+    required: true
+  apply-on-pr-succeeded:
+    description: Whether apply on PR succeeded.
+    required: true
+  plan-count-add:
+    description: Number of resources to add in the plan.
+    required: true
+  plan-count-change:
+    description: Number of resources to change in the plan.
+    required: true
+  plan-count-destroy:
+    description: Number of resources to destroy in the plan.
+    required: true
+  plan-count-import:
+    description: Number of resources to import in the plan.
+    required: true
+  plan-count-move:
+    description: Number of resources to move in the plan.
+    required: true
+  plan-count-remove:
+    description: Number of resources to remove in the plan.
+    required: true
+  destroy-plan-shouldve-been-created:
+    description: Whether a destroy plan should have been created.
+    required: true
+  destroy-plan-was-created:
+    description: Whether a destroy plan was successfully created.
+    required: true
+  performing-destroy-on-pr:
+    description: Whether destroy is being performed on PR.
+    required: true
+  destroy-on-pr-succeeded:
+    description: Whether destroy on PR succeeded.
+    required: true
+  destroy-plan-count-add:
+    description: Number of resources to add in the destroy plan.
+    required: true
+  destroy-plan-count-change:
+    description: Number of resources to change in the destroy plan.
+    required: true
+  destroy-plan-count-destroy:
+    description: Number of resources to destroy in the destroy plan.
+    required: true
+  destroy-plan-count-import:
+    description: Number of resources to import in the destroy plan.
+    required: true
+  destroy-plan-count-move:
+    description: Number of resources to move in the destroy plan.
+    required: true
+  destroy-plan-count-remove:
+    description: Number of resources to remove in the destroy plan.
+    required: true
+outputs:
+  is-eligible:
+    description: Boolean indicating whether the PR is eligible for automerge.
+    value: ${{ steps.evaluate.outputs.is-eligible }}
+  result-txt-file:
+    description: Path to the file containing the evaluation result.
+    value: ${{ steps.save-results.outputs.result-txt-file }}
+runs:
+  using: "composite"
+  steps:
+    - id: evaluate
+      shell: bash
+      run: |
+        # Evaluate automerge eligibility
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # TODO: Add evaluation logic here
+        # TODO: return is-eligible as output
+    - id: save-results-to-file
+      shell: bash
+      run: |
+        # Save evaluation results
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        # TODO: Add save logic here, include environment name in filename
+        # TODO: return path to result file as output in 'result-txt-file'

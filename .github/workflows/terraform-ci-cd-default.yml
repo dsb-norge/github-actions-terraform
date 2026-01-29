@@ -68,9 +68,6 @@ on:
             - extra-envs-from-secrets-yml
                 YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
-            - pr-auto-merge-limits-yml
-                YAML array (as string), configuration for automatic pull request merging, see the workflow input 'pr-auto-merge-from-actors-yml'.
-                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
         required: true
       goals-yml:
         type: string
@@ -189,6 +186,11 @@ on:
 
           Only if limits are met for all environments automatic merging be performed. Given that, automatic merging is only considered when the workflow is triggered by a pull request event and the input 'pr-auto-merge-enabled' is set to true and the input 'pr-auto-merge-from-actors-yml' allows the actor.
 
+          How the limits work:
+          - For each limit, if the value is set to '-1' that limit is ignored.
+          - For each limit, if the value is set to '0' the corresponding count in the terraform plan must be zero.
+          - For each limit, if the value is set to a positive integer 'N', the corresponding count in the terraform plan must be less than or equal to 'N'.
+
           Data:
             Type: YAML object with the following fields (all optional):
               - plan-max-count-add
@@ -201,7 +203,10 @@ on:
                   integer, maximum number of resources to be imported allowed in the terraform plan for automatic merging to occur.
               - plan-max-count-move
                   integer, maximum number of resources to be moved allowed in the terraform plan for automatic merging to occur.
-            Default: all limits set to 0.
+              - plan-max-count-remove
+                  integer, maximum number of resources to be removed allowed in the terraform plan for automatic merging to occur.
+            Default:
+              Is to allow non-destructive changes. I.e. only import and move operations allowed, no add/change/destroy/remove.
 
           NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
         required: false
@@ -209,8 +214,9 @@ on:
           plan-max-count-add: 0
           plan-max-count-change: 0
           plan-max-count-destroy: 0
-          plan-max-count-import: 0
-          plan-max-count-move: 0
+          plan-max-count-import: -1
+          plan-max-count-move: -1
+          plan-max-count-remove: 0
       runs-on:
         type: string
         description: |
@@ -519,6 +525,15 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
+      - name: "☠🔍 Parse Terraform Destroy plan"
+        id: parse-destroy-plan
+        if: steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@automerge
+        with:
+          plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
       - name: ☠ Terraform Destroy
         id: destroy
         # Run step when:
@@ -547,18 +562,47 @@ jobs:
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       # save evaluation to be used later by the automerge job
-      - name: "💾 Save automerge evaluation result"
-        id: save-automerge-evaluation
-        run: |
-          echo "Creating file 'auto-merge-evaluation-${{ matrix.vars.github-environment }}.txt' with content:"
-          echo "${{ steps.create-validation-summary.outputs.can-automerge }}"
-          echo ""
-      - name: "📦 Upload automerge evaluation result"
+      - name: "⚖️ Evaluate PR automerge eligibility"
+        id: evaluate-automerge-eligibility
+        if: github.event_name == 'pull_request' && inputs.pr-auto-merge-enabled == 'true'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          pr-auto-merge-limits-json: ${{ toJSON(matrix.vars.pr-auto-merge-limits) }}
+          pr-auto-merge-from-actors-json: ${{ toJSON(matrix.vars.pr-auto-merge-from-actors) }}
+          plan-shouldve-been-created: ${{ contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') }}
+          plan-was-created: ${{ steps.plan.outcome == 'success' }}
+          performing-apply-on-pr: ${{ contains(matrix.vars.goals, 'apply-on-pr') }}
+          apply-on-pr-succeeded: ${{ steps.apply.outcome == 'success' }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          destroy-plan-shouldve-been-created: ${{ contains(matrix.vars.goals, 'destroy-plan') }}
+          destroy-plan-was-created: ${{ steps.destroy-plan.outcome == 'success' }}
+          performing-destroy-on-pr: ${{ contains(matrix.vars.goals, 'destroy-on-pr') }}
+          destroy-on-pr-succeeded: ${{ steps.destroy.outcome == 'success' }}
+          destroy-plan-count-add: ${{ steps.parse-destroy-plan.outputs.count-add }}
+          destroy-plan-count-change: ${{ steps.parse-destroy-plan.outputs.count-change }}
+          destroy-plan-count-destroy: ${{ steps.parse-destroy-plan.outputs.count-destroy }}
+          destroy-plan-count-import: ${{ steps.parse-destroy-plan.outputs.count-import }}
+          destroy-plan-count-move: ${{ steps.parse-destroy-plan.outputs.count-move }}
+          destroy-plan-count-remove: ${{ steps.parse-destroy-plan.outputs.count-remove }}
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+
+      - name: "📦 Upload PR automerge evaluation result"
         id: upload-automerge-evaluation
+        if: steps.evaluate-automerge-eligibility.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: auto-merge-evaluation-${{ matrix.vars.github-environment }}
-          path: auto-merge-evaluation-${{ matrix.vars.github-environment }}.txt
+          name: auto-merge-evaluation-result-${{ matrix.vars.github-environment }}
+          path: ${{ steps.evaluate-automerge-eligibility.outputs.result-txt-file }}
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
@@ -585,11 +629,6 @@ jobs:
       needs.conclusion.result == 'success'
       && github.event_name == 'pull_request'
       && inputs.pr-auto-merge-enabled == 'true'
-      && (
-        contains(inputs.pr-auto-merge-from-actors-yml, github.actor)
-        ||
-        toJSON(inputs.pr-auto-merge-from-actors-yml) == '[]'
-      )
     name: "Automerge PR"
     needs: [terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
@@ -599,17 +638,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: auto-merge-evaluation-*
+          pattern: auto-merge-evaluation-result-*
           merge-multiple: true
-      - name: "🔍 Evaluate automerge eligibility across all environments"
+      - name: "🔍 Evaluate PR automerge eligibility across all environments"
         id: evaluate-automerge
         run: |
           echo "📋 Automerge evaluation per environment:"
-          cat auto-merge-evaluation-*
+          cat auto-merge-evaluation-result-*
           echo ""
 
           # All files must contain "true" for automerge to proceed
-          if grep -qv "^true$" auto-merge-evaluation-* 2>/dev/null; then
+          if grep -qv "^true$" auto-merge-evaluation-result-* 2>/dev/null; then
             echo "can-automerge=false" >> $GITHUB_OUTPUT
             echo "❌ At least one environment cannot be automerged"
           else
