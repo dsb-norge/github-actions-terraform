@@ -632,7 +632,7 @@ jobs:
     if: |
       needs.conclusion.result == 'success'
       && github.event_name == 'pull_request'
-      && inputs.pr-auto-merge-enabled == 'true'
+      && inputs.pr-auto-merge-enabled == true
     name: "Automerge PR"
     needs: [terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
