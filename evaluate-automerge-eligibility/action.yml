@@ -8,19 +8,21 @@ description: |
 
   The evaluation follows this order to fail fast and provide meaningful feedback:
   1. Configuration Validation - Validates limits configuration (fails action on error)
-  2. Actor Authorization - Verifies current actor is in the allowed list (if specified)
-  3. Plan Creation Validation - Verifies expected plans were created
-  4. Operation Success Check - Verifies apply/destroy operations succeeded (if performed)
-  5. Limit Applicability - Determines which limits should be evaluated
-  6. Count Validation - Validates counts are available when needed
-  7. Count Aggregation - Combines plan and destroy-plan counts if both evaluated
-  8. Limit Evaluation - Compares aggregated counts against configured limits
-  9. Final Eligibility - All checks must pass for eligibility
+  2. PR Auto-merge Enabled Check - Verifies PR automerge is enabled for this environment
+  3. Actor Authorization - Verifies current actor is in the allowed list (if specified)
+  4. Plan Creation Validation - Verifies expected plans were created
+  5. Operation Success Check - Verifies apply/destroy operations succeeded (if performed)
+  6. Limit Applicability - Determines which limits should be evaluated
+  7. Count Validation - Validates counts are available when needed
+  8. Count Aggregation - Combines plan and destroy-plan counts if both evaluated
+  9. Limit Evaluation - Compares aggregated counts against configured limits
+  10. Final Eligibility - All checks must pass for eligibility
 
   ## Behavior Notes
 
   - Configuration errors (invalid limits JSON) will fail the action step with exit code 1
   - All other validation failures result in is-eligible=false but exit code 0
+  - If pr-auto-merge-enabled is false, the environment is marked ineligible regardless of other checks
   - Plan limits are ignored when performing-apply-on-pr is true
   - Destroy plan limits are ignored when performing-destroy-on-pr is true
   - When both plan and destroy plan limits are evaluated, counts are aggregated (summed)
@@ -31,6 +33,12 @@ inputs:
     description: |
       Name of the current deployment environment (e.g., "sandbox", "production").
       Used for logging and in the result JSON file output.
+    required: true
+  pr-auto-merge-enabled:
+    description: |
+      Boolean string ("true"/"false") indicating if PR automerge is enabled for this environment.
+      When false, the environment will be marked as ineligible regardless of other checks.
+      This allows per-environment control of automerge eligibility.
     required: true
   pr-auto-merge-limits-json:
     description: |
@@ -170,6 +178,7 @@ runs:
       shell: bash
       env:
         input_environment_name: ${{ inputs.environment-name }}
+        input_pr_auto_merge_enabled: ${{ inputs.pr-auto-merge-enabled }}
         input_plan_shouldve_been_created: ${{ inputs.plan-shouldve-been-created }}
         input_plan_was_created: ${{ inputs.plan-was-created }}
         input_performing_apply_on_pr: ${{ inputs.performing-apply-on-pr }}
