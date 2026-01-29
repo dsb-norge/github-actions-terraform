@@ -566,7 +566,7 @@ jobs:
       # save evaluation to be used later by the automerge job
       - name: "⚖️ Evaluate PR automerge eligibility"
         id: evaluate-automerge
-        if: github.event_name == 'pull_request' && inputs.pr-auto-merge-enabled == 'true'
+        if: github.event_name == 'pull_request' && matrix.vars.pr-auto-merge-enabled == 'true'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
         with:
