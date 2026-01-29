@@ -30,14 +30,14 @@ runs:
 
         # deliberately left out as they should only exist as global inputs-json:
         #  - pr-auto-merge-enabled
-        #  - pr-auto-merge-from-actors-yml
         YML_INPUTS=(
           environments-yml
-          goals-yml
-          terraform-init-additional-dirs-yml
           extra-envs-from-secrets-yml
           extra-envs-yml
+          goals-yml
+          pr-auto-merge-from-actors-yml
           pr-auto-merge-limits-yml
+          terraform-init-additional-dirs-yml
         )
 
         # Calling repo branches information
@@ -122,7 +122,7 @@ runs:
             set-field 'url' "" # modifies $ENVIRONMENT_OBJ
           fi
 
-          # goals-yml and terraform-init-additional-dirs-yml
+          # fields where we use global value if not defined:
           #   - use global value if not defined
           #   - 'field-yml' becomes 'field'
           DEFAULT_INPUT_YML_FIELDS=(
@@ -156,12 +156,13 @@ runs:
             fi
           done
 
-          # extra-envs-yml and extra-envs-from-secrets-yml and pr-auto-merge-limits-yml
+          # fields merged with global:
           #   - if defined merge with global value, otherwise use global
           #   - '*-yml' becomes '*'
           MERGE_INPUT_YML_FIELDS=(
-            extra-envs-yml
             extra-envs-from-secrets-yml
+            extra-envs-yml
+            pr-auto-merge-from-actors-yml
             pr-auto-merge-limits-yml
           )
           log-info "Processing 'extra-envs-*' yml fields ..."
@@ -218,6 +219,7 @@ runs:
         # Required fields
         REQ_FIELDS=(
           add-pr-comment
+          allow-failing-terraform-operations
           caller-repo-calling-branch
           caller-repo-default-branch
           caller-repo-is-on-default-branch
@@ -226,7 +228,9 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
-          allow-failing-terraform-operations
+          pr-auto-merge-enabled
+          pr-auto-merge-from-actors
+          pr-auto-merge-limits
           project-dir
           terraform-init-additional-dirs
           terraform-version
@@ -236,6 +240,7 @@ runs:
 
         NOT_EMPTY_FIELDS=(
           add-pr-comment
+          allow-failing-terraform-operations
           caller-repo-calling-branch
           caller-repo-default-branch
           caller-repo-is-on-default-branch
@@ -244,7 +249,9 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
-          allow-failing-terraform-operations
+          pr-auto-merge-enabled
+          pr-auto-merge-from-actors
+          pr-auto-merge-limits
           project-dir
           terraform-version
           tflint-version
