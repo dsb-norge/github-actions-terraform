@@ -220,9 +220,11 @@ on:
       runs-on:
         type: string
         description: |
-          The runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
+          The runner group to run jobs on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
 
-          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+          This applies to all environments, if you need to specify this per environment, specify this directly in the environment specification.
+
+          Note: some jobs are 'global' and thus always run on the group specified here, e.g. the 'create-matrix' job and the final 'terraform-conclusion' job.
         required: false
         default: "ubuntu-latest"
       terraform-version:
@@ -262,7 +264,7 @@ on:
 jobs:
   create-matrix:
     name: Create job matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
@@ -563,7 +565,7 @@ jobs:
 
       # save evaluation to be used later by the automerge job
       - name: "⚖️ Evaluate PR automerge eligibility"
-        id: evaluate-automerge-eligibility
+        id: evaluate-automerge
         if: github.event_name == 'pull_request' && inputs.pr-auto-merge-enabled == 'true'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
@@ -596,11 +598,11 @@ jobs:
 
       - name: "📦 Upload PR automerge evaluation result"
         id: upload-automerge-evaluation
-        if: steps.evaluate-automerge-eligibility.outcome == 'success'
+        if: steps.evaluate-automerge.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: auto-merge-evaluation-result-${{ matrix.vars.github-environment }}
-          path: ${{ steps.evaluate-automerge-eligibility.outputs.result-txt-file }}
+          path: ${{ steps.evaluate-automerge.outputs.result-json-file }}
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
@@ -610,7 +612,7 @@ jobs:
     if: always()
     name: "Terraform conclusion"
     needs: [create-matrix, terraform-ci-cd]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
@@ -636,7 +638,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/download-artifact@v4
+      - id: download-automerge-evaluations
+        name: "📥 Download PR automerge evaluation results"
+        uses: actions/download-artifact@v4
         with:
           pattern: auto-merge-evaluation-result-*
           merge-multiple: true
@@ -644,20 +648,50 @@ jobs:
         id: evaluate-automerge
         run: |
           echo "📋 Automerge evaluation per environment:"
-          cat auto-merge-evaluation-result-*
-          echo ""
 
-          # All files must contain "true" for automerge to proceed
-          if grep -qv "^true$" auto-merge-evaluation-result-* 2>/dev/null; then
-            echo "can-automerge=false" >> $GITHUB_OUTPUT
-            echo "❌ At least one environment cannot be automerged"
-          else
-            echo "can-automerge=true" >> $GITHUB_OUTPUT
-            echo "✅ All environments can be automerged"
+          # Check if any evaluation files exist
+          #   nullglob ensures that if no files match the pattern, the array is empty
+          shopt -s nullglob
+          files=(auto-merge-evaluation-result-*.json)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "❌ No automerge evaluation files found"
+            echo "should-auto-merge=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          should_auto_merge=true
+          for file in "${files[@]}"; do
+            echo "::group::Contents of $file"
+            cat "$file"
+            echo "::endgroup::"
+
+            is_eligible=$(jq -r '.is_eligible // empty' "$file")
+            environment=$(jq -r '.environment // empty' "$file")
+
+            if [[ -z "$is_eligible" ]]; then
+              should_auto_merge=false
+              echo "❌ File '$file' is missing 'is_eligible' field"
+            elif [[ -z "$environment" ]]; then
+              should_auto_merge=false
+              echo "❌ File '$file' is missing 'environment' field"
+            elif [[ "$is_eligible" != "true" ]]; then
+              should_auto_merge=false
+              echo "❌ Environment '$environment' is not eligible for automerge"
+            else
+              echo "✅ Environment '$environment' is eligible for automerge"
+            fi
+          done
+
+          echo ""
+          if [[ "$should_auto_merge" == "true" ]]; then
+            echo "✅ All environments can be automerged"
+          else
+            echo "❌ At least one environment cannot be automerged"
+          fi
+          echo "should-auto-merge=$should_auto_merge" >> $GITHUB_OUTPUT
       - name: "🎫 Create GitHub App token"
         id: app-token
-        if: steps.evaluate-automerge.outputs.can-automerge == 'true'
+        if: steps.evaluate-automerge.outputs.should-auto-merge == 'true'
         uses: actions/create-github-app-token@v2
         with:
           app-id: "2746453" # dsb-infra-pr-merger, TODO: change this to an input
@@ -666,10 +700,10 @@ jobs:
           permission-pull-requests: write
       - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
         id: automerge
-        if: steps.evaluate-automerge.outputs.can-automerge == 'true'
+        if: steps.evaluate-automerge.outputs.should-auto-merge == 'true'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/automerge@automerge
         with:
           github-token: ${{ steps.app-token.outputs.token }}
-          can-automerge: true # TODO change implementation
+          can-automerge: false # TODO change implementation, false for testing
           automerge-enabled: true # TODO change implementation

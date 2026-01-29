@@ -373,49 +373,72 @@ function evaluate_limits {
   fi
 }
 
-# Generate result file
-function generate_result_file {
+# Generate result JSON file
+function generate_result_json {
   local result_file="${1}"
   local is_eligible="${2}"
 
-  {
-    echo "Environment: ${input_environment_name}"
-    echo "Actor: ${GITHUB_ACTOR}"
-    echo "Eligible: ${is_eligible}"
-    echo ""
-    echo "Configuration Validation: ${RESULT_CONFIG_VALIDATION:-SKIPPED}"
-    echo "Actor Authorization: ${RESULT_ACTOR_AUTH:-SKIPPED}"
-    echo "Plan Creation: ${RESULT_PLAN_CREATION:-SKIPPED}"
-    echo "Destroy Plan Creation: ${RESULT_DESTROY_PLAN_CREATION:-SKIPPED}"
-    echo "Apply on PR Success: ${RESULT_APPLY_SUCCESS:-SKIPPED}"
-    echo "Destroy on PR Success: ${RESULT_DESTROY_SUCCESS:-SKIPPED}"
-    echo ""
-    echo "Limits Evaluation:"
-    echo "  Plan Limits: ${RESULT_PLAN_LIMITS_APPLICABILITY:-SKIPPED}"
-    echo "  Destroy Plan Limits: ${RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY:-SKIPPED}"
-    echo ""
+  # Build failure reasons as JSON array
+  local failure_reasons_json="[]"
+  if [[ ${#FAILURE_REASONS[@]} -gt 0 ]]; then
+    failure_reasons_json=$(printf '%s\n' "${FAILURE_REASONS[@]}" | jq -R . | jq -s .)
+  fi
 
-    if [[ "${ALL_LIMITS_IGNORED:-true}" == "false" ]]; then
-      echo "  Add: ${LIMIT_RESULTS[add]:-N/A}"
-      echo "  Change: ${LIMIT_RESULTS[change]:-N/A}"
-      echo "  Destroy: ${LIMIT_RESULTS[destroy]:-N/A}"
-      echo "  Import: ${LIMIT_RESULTS[import]:-N/A}"
-      echo "  Move: ${LIMIT_RESULTS[move]:-N/A}"
-      echo "  Remove: ${LIMIT_RESULTS[remove]:-N/A}"
-    else
-      echo "  (All limits ignored)"
-    fi
+  # Build limits results object (only if limits were evaluated)
+  local limits_results_json="null"
+  if [[ "${ALL_LIMITS_IGNORED:-true}" == "false" ]]; then
+    limits_results_json=$(jq -n \
+      --arg add "${LIMIT_RESULTS[add]:-N/A}" \
+      --arg change "${LIMIT_RESULTS[change]:-N/A}" \
+      --arg destroy "${LIMIT_RESULTS[destroy]:-N/A}" \
+      --arg import "${LIMIT_RESULTS[import]:-N/A}" \
+      --arg move "${LIMIT_RESULTS[move]:-N/A}" \
+      --arg remove "${LIMIT_RESULTS[remove]:-N/A}" \
+      '{
+        "add": $add,
+        "change": $change,
+        "destroy": $destroy,
+        "import": $import,
+        "move": $move,
+        "remove": $remove
+      }'
+    )
+  fi
 
-    echo ""
-    echo "Failure Reasons:"
-    if [[ ${#FAILURE_REASONS[@]} -eq 0 ]]; then
-      echo "  (none)"
-    else
-      for reason in "${FAILURE_REASONS[@]}"; do
-        echo "  - ${reason}"
-      done
-    fi
-  } > "${result_file}"
+  # Build the complete JSON result
+  jq -n \
+    --arg environment "${input_environment_name}" \
+    --arg actor "${GITHUB_ACTOR}" \
+    --argjson is_eligible "${is_eligible}" \
+    --arg config_validation "${RESULT_CONFIG_VALIDATION:-SKIPPED}" \
+    --arg actor_auth "${RESULT_ACTOR_AUTH:-SKIPPED}" \
+    --arg plan_creation "${RESULT_PLAN_CREATION:-SKIPPED}" \
+    --arg destroy_plan_creation "${RESULT_DESTROY_PLAN_CREATION:-SKIPPED}" \
+    --arg apply_success "${RESULT_APPLY_SUCCESS:-SKIPPED}" \
+    --arg destroy_success "${RESULT_DESTROY_SUCCESS:-SKIPPED}" \
+    --arg plan_limits_applicability "${RESULT_PLAN_LIMITS_APPLICABILITY:-SKIPPED}" \
+    --arg destroy_plan_limits_applicability "${RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY:-SKIPPED}" \
+    --argjson limits_results "${limits_results_json}" \
+    --argjson failure_reasons "${failure_reasons_json}" \
+    '{
+      "environment": $environment,
+      "actor": $actor,
+      "is_eligible": $is_eligible,
+      "checks": {
+        "configuration_validation": $config_validation,
+        "actor_authorization": $actor_auth,
+        "plan_creation": $plan_creation,
+        "destroy_plan_creation": $destroy_plan_creation,
+        "apply_on_pr_success": $apply_success,
+        "destroy_on_pr_success": $destroy_success
+      },
+      "limits_evaluation": {
+        "plan_limits": $plan_limits_applicability,
+        "destroy_plan_limits": $destroy_plan_limits_applicability,
+        "results": $limits_results
+      },
+      "failure_reasons": $failure_reasons
+    }' > "${result_file}"
 
   log-multiline "Result file contents" "$(cat "${result_file}")"
 }
@@ -557,19 +580,31 @@ function main {
   fi
   end-group
 
-  # Generate result file (note: generate_result_file uses log-multiline which creates its own group)
+  # Generate result JSON file (note: generate_result_json uses log-multiline which creates its own group)
+  #   RUNNER_TEMP is a GitHub Actions environment variable that points to a temporary directory
+  #   that is unique to the runner executing the workflow. It is automatically cleaned up after
+  #   the job completes. Falls back to /tmp if not running in GitHub Actions environment.
   local result_file
-  result_file="${RUNNER_TEMP:-/tmp}/automerge-result-${input_environment_name}.txt"
+  result_file="${RUNNER_TEMP:-/tmp}/auto-merge-evaluation-result-${input_environment_name}.json"
 
-  log-info "Generating result file: ${result_file}"
-  generate_result_file "${result_file}" "${is_eligible}"
+  log-info "Generating result JSON file: ${result_file}"
+  generate_result_json "${result_file}" "${is_eligible}"
 
   # Set outputs
   set-output "is-eligible" "${is_eligible}"
-  set-output "result-txt-file" "${result_file}"
+  set-output "result-json-file" "${result_file}"
 
   return 0
 }
 
-# Run main function
+# Run main function and propagate exit code
+# Use return when sourced (GitHub Actions), exit when executed directly (testing)
 main
+_main_exit_code=$?
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  # Script is being sourced - return to allow caller to capture exit code
+  return ${_main_exit_code}
+else
+  # Script is being executed directly - exit with the code
+  exit ${_main_exit_code}
+fi

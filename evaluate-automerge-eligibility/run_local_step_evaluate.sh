@@ -7,7 +7,8 @@ export GITHUB_OUTPUT=$(mktemp)
 
 # required system variables
 GITHUB_ACTION_PATH="${_this_script_dir}"
-GITHUB_ACTOR="renovat"
+# GITHUB_ACTOR="dependabot[bot]"
+GITHUB_ACTOR="some-user"
 
 # required input variables
 input_environment_name=sandbox
@@ -45,14 +46,15 @@ input_pr_auto_merge_limits_json=$(
 }
 EOF
 )
-input_pr_auto_merge_from_actors_json=$(
-  cat <<'EOF'
-[
-  "dependabot[bot]",
-  "Laffs2k5"
-]
-EOF
-)
+input_pr_auto_merge_from_actors_json="[]"
+# input_pr_auto_merge_from_actors_json=$(
+#   cat <<'EOF'
+# [
+#   "dependabot[bot]",
+#   "renovate[bot]"
+# ]
+# EOF
+# )
 
 set -o allexport
 source "${_this_script_dir}/step_evaluate.sh"
