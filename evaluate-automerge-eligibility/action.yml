@@ -84,13 +84,46 @@ runs:
   steps:
     - id: evaluate
       shell: bash
+      env:
+        input_environment_name: ${{ inputs.environment-name }}
+        input_plan_shouldve_been_created: ${{ inputs.plan-shouldve-been-created }}
+        input_plan_was_created: ${{ inputs.plan-was-created }}
+        input_performing_apply_on_pr: ${{ inputs.performing-apply-on-pr }}
+        input_apply_on_pr_succeeded: ${{ inputs.apply-on-pr-succeeded }}
+        input_plan_count_add: ${{ inputs.plan-count-add }}
+        input_plan_count_change: ${{ inputs.plan-count-change }}
+        input_plan_count_destroy: ${{ inputs.plan-count-destroy }}
+        input_plan_count_import: ${{ inputs.plan-count-import }}
+        input_plan_count_move: ${{ inputs.plan-count-move }}
+        input_plan_count_remove: ${{ inputs.plan-count-remove }}
+        input_destroy_plan_shouldve_been_created: ${{ inputs.destroy-plan-shouldve-been-created }}
+        input_destroy_plan_was_created: ${{ inputs.destroy-plan-was-created }}
+        input_performing_destroy_on_pr: ${{ inputs.performing-destroy-on-pr }}
+        input_destroy_on_pr_succeeded: ${{ inputs.destroy-on-pr-succeeded }}
+        input_destroy_plan_count_add: ${{ inputs.destroy-plan-count-add }}
+        input_destroy_plan_count_change: ${{ inputs.destroy-plan-count-change }}
+        input_destroy_plan_count_destroy: ${{ inputs.destroy-plan-count-destroy }}
+        input_destroy_plan_count_import: ${{ inputs.destroy-plan-count-import }}
+        input_destroy_plan_count_move: ${{ inputs.destroy-plan-count-move }}
+        input_destroy_plan_count_remove: ${{ inputs.destroy-plan-count-remove }}
       run: |
-        # Evaluate automerge eligibility
+        # json inputs requires special handling
+        input_pr_auto_merge_limits_json=$(cat <<'EOF'
+        ${{ inputs.pr-auto-merge-limits-json }}
+        EOF
+        )
+        input_pr_auto_merge_from_actors_json=$(cat <<'EOF'
+        ${{ inputs.pr-auto-merge-from-actors-json }}
+        EOF
+        )
 
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        # run step and exit with its exit code
+        set -o allexport
+        source "${{ github.action_path }}/step_evaluate.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
 
-        # TODO: Add evaluation logic here
-        # TODO: return is-eligible as output
     - id: save-results-to-file
       shell: bash
       run: |
