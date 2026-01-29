@@ -568,11 +568,18 @@ jobs:
       # save evaluation to be used later by the automerge job
       - name: "⚖️ Evaluate PR automerge eligibility"
         id: evaluate-automerge
-        if: github.event_name == 'pull_request' && matrix.vars.pr-auto-merge-enabled == 'true'
+        # note: here we use the global 'pr-auto-merge-enabled' input, the per environment setting is ignored
+        if: github.event_name == 'pull_request' && inputs.pr-auto-merge-enabled == true
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
         with:
           environment-name: ${{ matrix.vars.github-environment }}
+          # TODO: implement support for this flag as input and in the eval logic
+          #       if false, eligibility eval should conclude with 'not eligible'
+          #       rememeber to update action declaration, eval script calling (ie
+          #       passing in the input as var), logic in the script and the run
+          #       tests script in the action directory
+          pr-auto-merge-enabled: ${{ matrix.vars.pr-auto-merge-enabled }}
           pr-auto-merge-limits-json: ${{ toJSON(matrix.vars.pr-auto-merge-limits) }}
           pr-auto-merge-from-actors-json: ${{ toJSON(matrix.vars.pr-auto-merge-from-actors) }}
           plan-shouldve-been-created: ${{ contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') }}
