@@ -165,7 +165,7 @@ runs:
             pr-auto-merge-from-actors-yml
             pr-auto-merge-limits-yml
           )
-          log-info "Processing 'extra-envs-*' yml fields ..."
+          log-info "Processing yml fields that needs merge ..."
           for MERGE_FIELD in ${MERGE_INPUT_YML_FIELDS[*]}; do
             # global value
             GLOBAL_ENVS_JSON=$(get-yaml-input-as-json "${MERGE_FIELD}")

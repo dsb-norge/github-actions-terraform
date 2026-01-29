@@ -209,6 +209,8 @@ on:
               Is to allow non-destructive changes. I.e. only import and move operations allowed, no add/change/destroy/remove.
 
           NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+
+          ALSO NOTE: If you specify this input as common for all environments, you must specify all fields. Values can still be overridden per environment.
         required: false
         default: |
           plan-max-count-add: 0
