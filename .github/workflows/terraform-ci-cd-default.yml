@@ -7,7 +7,7 @@ name: "DSB terraform CI/CD workflow"
 #     pull-requests: write  # required for commenting on PRs
 #
 # Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
-# all secrets available to the calling workflow must be passe down to this one by:
+# all secrets available to the calling workflow must be passed down to this one by:
 #   secrets: inherit
 #
 on:
@@ -258,7 +258,7 @@ on:
       add-pr-comment:
         type: boolean
         description: |
-          The default is to add validation summary as comment on PR if the workflow triggerd by a pull request event.
+          The default is to add validation summary as comment on PR if the workflow triggered by a pull request event.
           Set this to false to avoid a comment being added.
         required: false
         default: true
@@ -324,7 +324,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ matrix.vars.terraform-version }}
-          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
+          # workaround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
           terraform_wrapper: false
 
       - name: "🗄️ Setup Terraform provider plugin cache"
@@ -408,7 +408,16 @@ jobs:
 
       - name: 📝 Create validation summary
         id: create-validation-summary
-        if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
+        # Run step when:
+        #   - add-pr-comment is true AND
+        #   - triggered by pull request event AND
+        #   - pull request is not being closed AND
+        #   - pull request was not converted to draft
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/create-validation-summary@automerge
         with:
@@ -496,6 +505,7 @@ jobs:
         #        AND push or manual on default branch
         #     2. goal 'apply-on-pr'
         #        AND pull request to default branch
+        #        except when PR is being closed or converted to draft
         if: |
           steps.plan.outcome == 'success'
           && (
@@ -505,6 +515,8 @@ jobs:
             ) || (
               contains(matrix.vars.goals, 'apply-on-pr')
               && github.event_name == 'pull_request'
+              && github.event.action != 'closed'
+              && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
         # TODO revert to @v0
@@ -546,6 +558,7 @@ jobs:
         #        AND push or manual on default branch
         #     2. goal 'destroy-on-pr'
         #        AND pull request to default branch
+        #        except when PR is being closed or converted to draft
         if: |
           steps.destroy-plan.outcome == 'success'
           && (
@@ -555,6 +568,8 @@ jobs:
             ) || (
               contains(matrix.vars.goals, 'destroy-on-pr')
               && github.event_name == 'pull_request'
+              && github.event.action != 'closed'
+              && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
         # TODO revert to @v0
@@ -598,10 +613,18 @@ jobs:
           }}
 
   automerge:
+    # job runs when:
+    #   - ci/cd job succeeded AND
+    #   - global setting pr-auto-merge-enabled is true AND
+    #   - workflow triggered by pull request event AND
+    #   - pull request is not being closed AND
+    #   - pull request is not being converted to draft
     if: |
       needs.conclusion.result == 'success'
-      && github.event_name == 'pull_request'
       && inputs.pr-auto-merge-enabled == true
+      && github.event_name == 'pull_request'
+      && github.event.action != 'closed'
+      && github.event.action != 'converted_to_draft'
     name: "PR auto merger"
     needs: [terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
@@ -615,7 +638,7 @@ jobs:
         with:
           pattern: matrix-job-meta-* # uploaded by capture-matrix-job-meta step in terraform-ci-cd job
           merge-multiple: true
-      - name: "🔍 Evaluate PR automerge eligibility across all environments"
+      - name: "🔍 Evaluate PR auto merge eligibility across all environments"
         id: evaluate-automerge
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
@@ -630,12 +653,11 @@ jobs:
           private-key: ${{ secrets.PRIVATE_KEY }} # TODO: key vault or input
           permission-contents: write
           permission-pull-requests: write
-      - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
-        id: automerge
+      - name: "🤖 Auto merge PR"
+        id: auto-merge-pr
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/automerge@automerge
+        uses: dsb-norge/github-actions-terraform/auto-merge-pr@automerge
         with:
           github-token: ${{ steps.app-token.outputs.token }}
-          can-automerge: false # TODO change implementation, false for testing
-          automerge-enabled: true # TODO change implementation
+          github-event-context-json: ${{ toJSON(github.event) }}
