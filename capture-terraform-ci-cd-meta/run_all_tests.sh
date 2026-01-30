@@ -1,4 +1,4 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 #
 # Comprehensive test runner for step_capture.sh
 # Tests various scenarios including edge cases and missing data handling

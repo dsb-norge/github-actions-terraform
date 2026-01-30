@@ -1,4 +1,4 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 
 # Helper consts
 _action_name="$(basename "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)")"
@@ -22,7 +22,7 @@ function set-multiline-output {
   local outputName outputValue delimiter
   outputName="${1}"
   outputValue="${2}"
-  delimiter=$(echo $RANDOM | md5sum | head -c 20)
+  delimiter=$(echo "$RANDOM" | md5sum | head -c 20)
   echo "${outputName}<<\"${delimiter}\"" >>$GITHUB_OUTPUT
   echo "${outputValue}" >>$GITHUB_OUTPUT
   echo "\"${delimiter}\"" >>$GITHUB_OUTPUT
@@ -33,7 +33,7 @@ function ws-path {
   realpath --relative-to="${GITHUB_WORKSPACE}" "${inPath}"
 }
 
-log-info "'$(basename ${BASH_SOURCE[0]})' loaded."
+log-info "'$(basename "${BASH_SOURCE[0]}")' loaded."
 
 if [ -f "${GITHUB_ACTION_PATH}/helpers_additional.sh" ]; then
   source "${GITHUB_ACTION_PATH}/helpers_additional.sh"

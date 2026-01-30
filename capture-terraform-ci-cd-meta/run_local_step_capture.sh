@@ -1,4 +1,4 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
 # Set up GITHUB_OUTPUT like GitHub Actions does
