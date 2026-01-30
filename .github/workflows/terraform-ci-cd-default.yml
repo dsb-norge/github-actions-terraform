@@ -625,6 +625,7 @@ jobs:
       && github.event_name == 'pull_request'
       && github.event.action != 'closed'
       && github.event.action != 'converted_to_draft'
+      && github.event.pull_request.draft != true
     name: "PR auto merger"
     needs: [terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
