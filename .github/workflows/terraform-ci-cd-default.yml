@@ -614,7 +614,7 @@ jobs:
         if: always()
         run: |
           steps_json=$(cat <<'EOF'
-          ${{ steps }}
+          toJSON(${{ steps }})
           EOF
           )
           echo "::group::Steps debug output"
