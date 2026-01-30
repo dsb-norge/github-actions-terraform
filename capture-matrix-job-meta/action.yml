@@ -23,20 +23,20 @@ inputs:
   matrix-context-json:
     description: |
       JSON object containing the full matrix context.
-      Pass as: ${{ toJSON(matrix) }}
+      Pass as: toJSON(matrix)
     required: true
 
   github-context-json:
     description: |
       JSON object containing github context (filtered for non-sensitive data).
-      Pass as: ${{ toJSON(github) }}
+      Pass as: toJSON(github)
     required: true
 
   steps-context-json:
     description: |
       JSON object containing the entire steps context.
       This captures all step outcomes, conclusions, and outputs automatically.
-      Pass as: ${{ toJSON(steps) }}
+      Pass as: toJSON(steps)
     required: true
 
 outputs:
