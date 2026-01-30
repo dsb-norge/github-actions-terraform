@@ -1,10 +1,10 @@
 name: "Evaluate automerge eligibility"
 description: |
   Evaluates whether a pull request is eligible for automatic merging based on Terraform plan
-  changes, configured limits, and actor restrictions. This action runs per-environment within
-  a matrix job context.
+  changes, configured limits, and actor restrictions. This action processes metadata files
+  from multiple matrix job environments and produces an aggregated eligibility decision.
 
-  ## Evaluation Order
+  ## Evaluation Order (per environment)
 
   The evaluation follows this order to fail fast and provide meaningful feedback:
   1. Configuration Validation - Validates limits configuration (fails action on error)
@@ -18,6 +18,11 @@ description: |
   9. Limit Evaluation - Compares aggregated counts against configured limits
   10. Final Eligibility - All checks must pass for eligibility
 
+  ## Multi-Environment Processing
+
+  This action processes multiple matrix-job-meta-*.json files and evaluates each environment
+  independently. The final `is-eligible` output is `true` only if ALL environments are eligible.
+
   ## Behavior Notes
 
   - Configuration errors (invalid limits JSON) will fail the action step with exit code 1
@@ -27,189 +32,32 @@ description: |
   - Destroy plan limits are ignored when performing-destroy-on-pr is true
   - When both plan and destroy plan limits are evaluated, counts are aggregated (summed)
   - Empty plan counts are acceptable only when the corresponding limits are ignored
+  - If no metadata files are found matching the pattern, is-eligible=false
 author: "Peder Schmedling"
 inputs:
-  environment-name:
+  metadata-files-pattern:
     description: |
-      Name of the current deployment environment (e.g., "sandbox", "production").
-      Used for logging and in the result JSON file output.
-    required: true
-  pr-auto-merge-enabled:
-    description: |
-      Boolean string ("true"/"false") indicating if PR automerge is enabled for this environment.
-      When false, the environment will be marked as ineligible regardless of other checks.
-      This allows per-environment control of automerge eligibility.
-    required: true
-  pr-auto-merge-limits-json:
-    description: |
-      JSON object containing count limits for each Terraform operation type.
-      Structure: {"plan-max-count-add": N, "plan-max-count-change": N, ...}
-      Required fields: plan-max-count-add, plan-max-count-change, plan-max-count-destroy,
-                       plan-max-count-import, plan-max-count-move, plan-max-count-remove
-      Values: -1 means unlimited (any count acceptable), 0 or positive integer sets a limit.
-      Missing, null, or non-numeric values are configuration errors and will fail the action.
-    required: true
-  pr-auto-merge-from-actors-json:
-    description: |
-      JSON array of GitHub usernames allowed to trigger automerge.
-      Empty array [] means PRs from all actors are eligible for evaluation.
-      Non-empty array requires the current actor (github.actor) to be in the list.
-      Actor matching is case-sensitive. Example: ["dependabot[bot]", "username"]
-    required: true
-  plan-shouldve-been-created:
-    description: |
-      Boolean string ("true"/"false") indicating if a Terraform plan should have been created
-      based on workflow goals. Used to determine if plan creation failure should affect eligibility.
-    required: true
-  plan-was-created:
-    description: |
-      Boolean string ("true"/"false") indicating if the Terraform plan was successfully created.
-      If plan-shouldve-been-created is true but this is false, the environment is ineligible.
-    required: true
-  performing-apply-on-pr:
-    description: |
-      Boolean string ("true"/"false") indicating if terraform apply is being performed on the PR
-      (goal: apply-on-pr). When true, plan limits are ignored since changes are already being applied.
-    required: true
-  apply-on-pr-succeeded:
-    description: |
-      Boolean string ("true"/"false") indicating if the apply-on-pr operation succeeded.
-      Only evaluated when performing-apply-on-pr is true. Failure makes environment ineligible.
-    required: true
-  plan-count-add:
-    description: |
-      Number of resources to be added according to the Terraform plan.
-      Can be empty if plan limits are ignored (plan not created or performing-apply-on-pr).
-      Must be a valid non-negative integer when plan limits are being evaluated.
-    required: true
-  plan-count-change:
-    description: |
-      Number of resources to be changed according to the Terraform plan.
-      Can be empty if plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  plan-count-destroy:
-    description: |
-      Number of resources to be destroyed according to the Terraform plan.
-      Can be empty if plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  plan-count-import:
-    description: |
-      Number of resources to be imported according to the Terraform plan.
-      Can be empty if plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  plan-count-move:
-    description: |
-      Number of resources to be moved according to the Terraform plan.
-      Can be empty if plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  plan-count-remove:
-    description: |
-      Number of resources to be removed from state according to the Terraform plan.
-      Can be empty if plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-shouldve-been-created:
-    description: |
-      Boolean string ("true"/"false") indicating if a destroy plan should have been created
-      based on workflow goals. Used to determine if destroy plan creation failure affects eligibility.
-    required: true
-  destroy-plan-was-created:
-    description: |
-      Boolean string ("true"/"false") indicating if the destroy plan was successfully created.
-      If destroy-plan-shouldve-been-created is true but this is false, environment is ineligible.
-    required: true
-  performing-destroy-on-pr:
-    description: |
-      Boolean string ("true"/"false") indicating if terraform destroy is being performed on the PR
-      (goal: destroy-on-pr). When true, destroy plan limits are ignored.
-    required: true
-  destroy-on-pr-succeeded:
-    description: |
-      Boolean string ("true"/"false") indicating if the destroy-on-pr operation succeeded.
-      Only evaluated when performing-destroy-on-pr is true. Failure makes environment ineligible.
-    required: true
-  destroy-plan-count-add:
-    description: |
-      Number of resources to be added according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-count-change:
-    description: |
-      Number of resources to be changed according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-count-destroy:
-    description: |
-      Number of resources to be destroyed according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-count-import:
-    description: |
-      Number of resources to be imported according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-count-move:
-    description: |
-      Number of resources to be moved according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
-    required: true
-  destroy-plan-count-remove:
-    description: |
-      Number of resources to be removed from state according to the destroy plan.
-      Can be empty if destroy plan limits are ignored. Must be valid integer when evaluated.
+      Glob pattern to find matrix-job-meta files from the capture-matrix-job-meta action.
+      The pattern is matched against files in the current working directory.
+      Each matching file should be a JSON file with the structure produced by capture-matrix-job-meta.
+      Example: "matrix-job-meta-*.json"
     required: true
 outputs:
   is-eligible:
     description: |
-      Boolean string ("true" or "false") indicating whether this environment is eligible for
-      PR automerge. Returns "true" only if all checks pass: actor authorization, plan creation
-      validation, operation success (if applicable), and all limit evaluations.
+      Boolean string ("true" or "false") indicating whether all environments are eligible for
+      PR automerge. Returns "true" only if all environments pass all checks: actor authorization,
+      plan creation validation, operation success (if applicable), and all limit evaluations.
+      Returns "false" if any environment fails or if no metadata files are found.
     value: ${{ steps.evaluate.outputs.is-eligible }}
-  result-json-file:
-    description: |
-      Absolute path to a JSON file containing detailed evaluation results for this environment.
-      Includes: environment name, actor, eligibility status, check results (PASS/FAIL/SKIPPED),
-      limit evaluation details, and failure reasons. Used for cross-environment aggregation
-      by the automerge job to determine if the PR should be merged.
-    value: ${{ steps.evaluate.outputs.result-json-file }}
 runs:
   using: "composite"
   steps:
     - id: evaluate
       shell: bash
       env:
-        input_environment_name: ${{ inputs.environment-name }}
-        input_pr_auto_merge_enabled: ${{ inputs.pr-auto-merge-enabled }}
-        input_plan_shouldve_been_created: ${{ inputs.plan-shouldve-been-created }}
-        input_plan_was_created: ${{ inputs.plan-was-created }}
-        input_performing_apply_on_pr: ${{ inputs.performing-apply-on-pr }}
-        input_apply_on_pr_succeeded: ${{ inputs.apply-on-pr-succeeded }}
-        input_plan_count_add: ${{ inputs.plan-count-add }}
-        input_plan_count_change: ${{ inputs.plan-count-change }}
-        input_plan_count_destroy: ${{ inputs.plan-count-destroy }}
-        input_plan_count_import: ${{ inputs.plan-count-import }}
-        input_plan_count_move: ${{ inputs.plan-count-move }}
-        input_plan_count_remove: ${{ inputs.plan-count-remove }}
-        input_destroy_plan_shouldve_been_created: ${{ inputs.destroy-plan-shouldve-been-created }}
-        input_destroy_plan_was_created: ${{ inputs.destroy-plan-was-created }}
-        input_performing_destroy_on_pr: ${{ inputs.performing-destroy-on-pr }}
-        input_destroy_on_pr_succeeded: ${{ inputs.destroy-on-pr-succeeded }}
-        input_destroy_plan_count_add: ${{ inputs.destroy-plan-count-add }}
-        input_destroy_plan_count_change: ${{ inputs.destroy-plan-count-change }}
-        input_destroy_plan_count_destroy: ${{ inputs.destroy-plan-count-destroy }}
-        input_destroy_plan_count_import: ${{ inputs.destroy-plan-count-import }}
-        input_destroy_plan_count_move: ${{ inputs.destroy-plan-count-move }}
-        input_destroy_plan_count_remove: ${{ inputs.destroy-plan-count-remove }}
+        input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
       run: |
-        # json inputs requires special handling
-        input_pr_auto_merge_limits_json=$(cat <<'EOF'
-        ${{ inputs.pr-auto-merge-limits-json }}
-        EOF
-        )
-        input_pr_auto_merge_from_actors_json=$(cat <<'EOF'
-        ${{ inputs.pr-auto-merge-from-actors-json }}
-        EOF
-        )
-
         # run step and exit with its exit code
         set -o allexport
         source "${{ github.action_path }}/step_evaluate.sh"

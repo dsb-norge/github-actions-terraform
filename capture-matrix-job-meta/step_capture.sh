@@ -111,10 +111,15 @@ function normalize_steps_context {
 # ============================================================================
 
 function main {
-  log-info "Starting metadata capture for environment '${input_environment_name:-unknown}'..."
+  # Generate a random fallback for environment name to ensure unique filenames
+  local env_fallback
+  env_fallback="unknown-$(head -c 100 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6)"
+  local environment_name="${input_environment_name:-${env_fallback}}"
+
+  log-info "Starting metadata capture for environment '${environment_name}'..."
 
   local result_file
-  result_file="${RUNNER_TEMP:-/tmp}/matrix-job-meta-${input_environment_name:-unknown}.json"
+  result_file="${RUNNER_TEMP:-/tmp}/matrix-job-meta-${environment_name}.json"
 
   # Start building the metadata structure
   local capture_timestamp
@@ -155,7 +160,7 @@ function main {
   start-group "Building result file"
 
   jq -n \
-    --arg environment "${input_environment_name:-unknown}" \
+    --arg environment "${environment_name}" \
     --arg captured_at "${capture_timestamp}" \
     --arg github_run_id "${GITHUB_RUN_ID:-}" \
     --arg github_run_number "${GITHUB_RUN_NUMBER:-}" \

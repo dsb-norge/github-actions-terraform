@@ -5,6 +5,9 @@
 # Evaluates whether a pull request is eligible for automatic merging based on
 # Terraform plan changes, configured limits, and actor restrictions.
 #
+# This script processes multiple metadata files from capture-matrix-job-meta
+# and produces an aggregated eligibility decision across all environments.
+#
 
 # do not allow unset variables
 set -o nounset
@@ -34,10 +37,10 @@ function parse_bool {
   [[ "${val}" == "true" ]]
 }
 
-# Add a failure reason to the list
+# Add a failure reason to the list (for current environment)
 function add_failure_reason {
   local reason="${1}"
-  FAILURE_REASONS+=("${reason}")
+  ENV_FAILURE_REASONS+=("${reason}")
   log-warn "${reason}"
 }
 
@@ -88,7 +91,7 @@ function validate_configuration {
 # 2. PR Auto-merge Enabled Check
 function check_pr_automerge_enabled {
   log-info "Checking if PR automerge is enabled for environment..."
-  
+
   if parse_bool "${input_pr_auto_merge_enabled}"; then
     log-info "PR automerge is enabled for this environment: PASS"
     RESULT_PR_AUTOMERGE_ENABLED="PASS"
@@ -389,87 +392,18 @@ function evaluate_limits {
   fi
 }
 
-# Generate result JSON file
-function generate_result_json {
-  local result_file="${1}"
-  local is_eligible="${2}"
-
-  # Build failure reasons as JSON array
-  local failure_reasons_json="[]"
-  if [[ ${#FAILURE_REASONS[@]} -gt 0 ]]; then
-    failure_reasons_json=$(printf '%s\n' "${FAILURE_REASONS[@]}" | jq -R . | jq -s .)
-  fi
-
-  # Build limits results object (only if limits were evaluated)
-  local limits_results_json="null"
-  if [[ "${ALL_LIMITS_IGNORED:-true}" == "false" ]]; then
-    limits_results_json=$(jq -n \
-      --arg add "${LIMIT_RESULTS[add]:-N/A}" \
-      --arg change "${LIMIT_RESULTS[change]:-N/A}" \
-      --arg destroy "${LIMIT_RESULTS[destroy]:-N/A}" \
-      --arg import "${LIMIT_RESULTS[import]:-N/A}" \
-      --arg move "${LIMIT_RESULTS[move]:-N/A}" \
-      --arg remove "${LIMIT_RESULTS[remove]:-N/A}" \
-      '{
-        "add": $add,
-        "change": $change,
-        "destroy": $destroy,
-        "import": $import,
-        "move": $move,
-        "remove": $remove
-      }'
-    )
-  fi
-
-  # Build the complete JSON result
-  jq -n \
-    --arg environment "${input_environment_name}" \
-    --arg actor "${GITHUB_ACTOR}" \
-    --argjson is_eligible "${is_eligible}" \
-    --arg config_validation "${RESULT_CONFIG_VALIDATION:-SKIPPED}" \
-    --arg pr_automerge_enabled "${RESULT_PR_AUTOMERGE_ENABLED:-SKIPPED}" \
-    --arg actor_auth "${RESULT_ACTOR_AUTH:-SKIPPED}" \
-    --arg plan_creation "${RESULT_PLAN_CREATION:-SKIPPED}" \
-    --arg destroy_plan_creation "${RESULT_DESTROY_PLAN_CREATION:-SKIPPED}" \
-    --arg apply_success "${RESULT_APPLY_SUCCESS:-SKIPPED}" \
-    --arg destroy_success "${RESULT_DESTROY_SUCCESS:-SKIPPED}" \
-    --arg plan_limits_applicability "${RESULT_PLAN_LIMITS_APPLICABILITY:-SKIPPED}" \
-    --arg destroy_plan_limits_applicability "${RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY:-SKIPPED}" \
-    --argjson limits_results "${limits_results_json}" \
-    --argjson failure_reasons "${failure_reasons_json}" \
-    '{
-      "environment": $environment,
-      "actor": $actor,
-      "is_eligible": $is_eligible,
-      "checks": {
-        "configuration_validation": $config_validation,
-        "pr_automerge_enabled": $pr_automerge_enabled,
-        "actor_authorization": $actor_auth,
-        "plan_creation": $plan_creation,
-        "destroy_plan_creation": $destroy_plan_creation,
-        "apply_on_pr_success": $apply_success,
-        "destroy_on_pr_success": $destroy_success
-      },
-      "limits_evaluation": {
-        "plan_limits": $plan_limits_applicability,
-        "destroy_plan_limits": $destroy_plan_limits_applicability,
-        "results": $limits_results
-      },
-      "failure_reasons": $failure_reasons
-    }' > "${result_file}"
-
-  log-multiline "Result file contents" "$(cat "${result_file}")"
-}
-
 # ============================================================================
-# Main Evaluation Logic
+# Single Environment Evaluation Logic
 # ============================================================================
 
-function main {
+# Evaluate a single environment's eligibility
+# All input_* variables must be set before calling this function
+# Returns: 0 if evaluation completed (check ENV_IS_ELIGIBLE for result), 1 on fatal error
+function evaluate_single_environment {
   log-info "Starting automerge eligibility evaluation for environment '${input_environment_name}'..."
 
-  # Initialize global state
-  declare -g -a FAILURE_REASONS=()
+  # Initialize per-environment state
+  declare -g -a ENV_FAILURE_REASONS=()
   declare -g -A TOTAL_COUNTS=()
   declare -g -A LIMIT_RESULTS=()
   declare -g INCLUDE_PLAN_LIMITS=false
@@ -485,10 +419,10 @@ function main {
   declare -g RESULT_PLAN_LIMITS_APPLICABILITY="SKIPPED"
   declare -g RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="SKIPPED"
 
-  local is_eligible="true"
+  ENV_IS_ELIGIBLE="true"
 
   # Log all inputs for debugging
-  start-group "Inputs"
+  start-group "Inputs for ${input_environment_name}"
   log-info "Environment: ${input_environment_name}"
   log-info "Actor: ${GITHUB_ACTOR}"
   log-info "PR automerge enabled: ${input_pr_auto_merge_enabled}"
@@ -498,24 +432,24 @@ function main {
   log-info "  plan-was-created: ${input_plan_was_created}"
   log-info "  performing-apply-on-pr: ${input_performing_apply_on_pr}"
   log-info "  apply-on-pr-succeeded: ${input_apply_on_pr_succeeded}"
-  log-info "  plan-count-add: ${input_plan_count_add}"
-  log-info "  plan-count-change: ${input_plan_count_change}"
-  log-info "  plan-count-destroy: ${input_plan_count_destroy}"
-  log-info "  plan-count-import: ${input_plan_count_import}"
-  log-info "  plan-count-move: ${input_plan_count_move}"
-  log-info "  plan-count-remove: ${input_plan_count_remove}"
+  log-info "  plan-count-add: ${input_plan_count_add:-<empty>}"
+  log-info "  plan-count-change: ${input_plan_count_change:-<empty>}"
+  log-info "  plan-count-destroy: ${input_plan_count_destroy:-<empty>}"
+  log-info "  plan-count-import: ${input_plan_count_import:-<empty>}"
+  log-info "  plan-count-move: ${input_plan_count_move:-<empty>}"
+  log-info "  plan-count-remove: ${input_plan_count_remove:-<empty>}"
   log-info ""
   log-info "Destroy plan inputs:"
   log-info "  destroy-plan-shouldve-been-created: ${input_destroy_plan_shouldve_been_created}"
   log-info "  destroy-plan-was-created: ${input_destroy_plan_was_created}"
   log-info "  performing-destroy-on-pr: ${input_performing_destroy_on_pr}"
   log-info "  destroy-on-pr-succeeded: ${input_destroy_on_pr_succeeded}"
-  log-info "  destroy-plan-count-add: ${input_destroy_plan_count_add}"
-  log-info "  destroy-plan-count-change: ${input_destroy_plan_count_change}"
-  log-info "  destroy-plan-count-destroy: ${input_destroy_plan_count_destroy}"
-  log-info "  destroy-plan-count-import: ${input_destroy_plan_count_import}"
-  log-info "  destroy-plan-count-move: ${input_destroy_plan_count_move}"
-  log-info "  destroy-plan-count-remove: ${input_destroy_plan_count_remove}"
+  log-info "  destroy-plan-count-add: ${input_destroy_plan_count_add:-<empty>}"
+  log-info "  destroy-plan-count-change: ${input_destroy_plan_count_change:-<empty>}"
+  log-info "  destroy-plan-count-destroy: ${input_destroy_plan_count_destroy:-<empty>}"
+  log-info "  destroy-plan-count-import: ${input_destroy_plan_count_import:-<empty>}"
+  log-info "  destroy-plan-count-move: ${input_destroy_plan_count_move:-<empty>}"
+  log-info "  destroy-plan-count-remove: ${input_destroy_plan_count_remove:-<empty>}"
   log-info ""
   log-info "Limits configuration:"
   log-info "  ${input_pr_auto_merge_limits_json}"
@@ -525,7 +459,7 @@ function main {
   end-group
 
   # 1. Configuration Validation
-  start-group "Step 1: Configuration Validation"
+  start-group "Step 1: Configuration Validation (${input_environment_name})"
   if ! validate_configuration; then
     # Configuration errors are fatal - exit with error
     end-group
@@ -535,35 +469,35 @@ function main {
   end-group
 
   # 2. PR Auto-merge Enabled Check
-  start-group "Step 2: PR Auto-merge Enabled Check"
+  start-group "Step 2: PR Auto-merge Enabled Check (${input_environment_name})"
   if ! check_pr_automerge_enabled; then
-    is_eligible="false"
+    ENV_IS_ELIGIBLE="false"
   fi
   end-group
 
   # 3. Actor Authorization Check
-  start-group "Step 3: Actor Authorization Check"
+  start-group "Step 3: Actor Authorization Check (${input_environment_name})"
   if ! check_actor_authorization; then
-    is_eligible="false"
+    ENV_IS_ELIGIBLE="false"
   fi
   end-group
 
   # 4. Plan Creation Validation
-  start-group "Step 4: Plan Creation Validation"
+  start-group "Step 4: Plan Creation Validation (${input_environment_name})"
   if ! validate_plan_creation; then
-    is_eligible="false"
+    ENV_IS_ELIGIBLE="false"
   fi
   end-group
 
   # 5. Apply/Destroy Operation Success Check
-  start-group "Step 5: Operation Success Check"
+  start-group "Step 5: Operation Success Check (${input_environment_name})"
   if ! check_operation_success; then
-    is_eligible="false"
+    ENV_IS_ELIGIBLE="false"
   fi
   end-group
 
   # 6. Determine Limit Applicability
-  start-group "Step 6: Limit Applicability"
+  start-group "Step 6: Limit Applicability (${input_environment_name})"
   determine_limit_applicability
   end-group
 
@@ -572,9 +506,9 @@ function main {
     local counts_valid=true
 
     # 7. Count Validation
-    start-group "Step 7: Count Validation"
+    start-group "Step 7: Count Validation (${input_environment_name})"
     if ! validate_counts; then
-      is_eligible="false"
+      ENV_IS_ELIGIBLE="false"
       counts_valid=false
     fi
     end-group
@@ -582,14 +516,14 @@ function main {
     # Only proceed with aggregation and limit evaluation if counts are valid
     if [[ "${counts_valid}" == "true" ]]; then
       # 8. Count Aggregation
-      start-group "Step 8: Count Aggregation"
+      start-group "Step 8: Count Aggregation (${input_environment_name})"
       aggregate_counts
       end-group
 
       # 9. Limit Evaluation
-      start-group "Step 9: Limit Evaluation"
+      start-group "Step 9: Limit Evaluation (${input_environment_name})"
       if ! evaluate_limits; then
-        is_eligible="false"
+        ENV_IS_ELIGIBLE="false"
       fi
       end-group
     fi
@@ -597,29 +531,138 @@ function main {
     log-info "Skipping count validation and limit evaluation (all limits ignored)"
   fi
 
-  # 10. Final Eligibility Determination
-  start-group "Step 10: Final Eligibility Determination"
-  log-info "Final eligibility: ${is_eligible}"
-  if [[ "${is_eligible}" == "true" ]]; then
+  # 10. Final Eligibility Determination for this environment
+  start-group "Step 10: Final Eligibility Determination (${input_environment_name})"
+  log-info "Final eligibility: ${ENV_IS_ELIGIBLE}"
+  if [[ "${ENV_IS_ELIGIBLE}" == "true" ]]; then
     log-info "Environment '${input_environment_name}' is ELIGIBLE for PR automerge"
   else
     log-info "Environment '${input_environment_name}' is NOT ELIGIBLE for PR automerge"
   fi
   end-group
 
-  # Generate result JSON file (note: generate_result_json uses log-multiline which creates its own group)
-  #   RUNNER_TEMP is a GitHub Actions environment variable that points to a temporary directory
-  #   that is unique to the runner executing the workflow. It is automatically cleaned up after
-  #   the job completes. Falls back to /tmp if not running in GitHub Actions environment.
-  local result_file
-  result_file="${RUNNER_TEMP:-/tmp}/auto-merge-evaluation-result-${input_environment_name}.json"
+  return 0
+}
 
-  log-info "Generating result JSON file: ${result_file}"
-  generate_result_json "${result_file}" "${is_eligible}"
+# ============================================================================
+# Main Multi-File Processing Logic
+# ============================================================================
 
-  # Set outputs
-  set-output "is-eligible" "${is_eligible}"
-  set-output "result-json-file" "${result_file}"
+function main {
+  log-info "Starting automerge eligibility evaluation..."
+  log-info "Metadata files pattern: ${input_metadata_files_pattern}"
+
+  # Track overall results
+  local overall_eligible="true"
+  local environments_processed=0
+  local environments_eligible=0
+  local environments_ineligible=0
+  declare -a ENVIRONMENT_RESULTS=()
+
+  # Find all metadata files matching the pattern
+  start-group "File Discovery"
+  shopt -s nullglob
+  local files=(${input_metadata_files_pattern})
+  shopt -u nullglob
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    log-warn "No metadata files found matching pattern: ${input_metadata_files_pattern}"
+    log-info "Setting is-eligible=false (no files to process)"
+    set-output "is-eligible" "false"
+    end-group
+    return 0
+  fi
+
+  log-info "Found ${#files[@]} metadata file(s):"
+  for file in "${files[@]}"; do
+    log-info "  - ${file}"
+  done
+  end-group
+
+  # Process each metadata file
+  for file in "${files[@]}"; do
+    start-group "Processing: ${file}"
+
+    # Validate metadata file
+    if ! validate_metadata_file "${file}"; then
+      log-error "Skipping invalid metadata file: ${file}"
+      overall_eligible="false"
+      ENVIRONMENT_RESULTS+=("INVALID:${file}")
+      end-group
+      continue
+    fi
+
+    # Extract environment data from metadata file
+    extract_environment_data "${file}"
+    local env_name="${input_environment_name}"
+
+    log-info "Extracted data for environment: ${env_name}"
+    end-group
+
+    # Evaluate this environment
+    if ! evaluate_single_environment; then
+      # Fatal error during evaluation (e.g., configuration validation failure)
+      log-error "Fatal error evaluating environment '${env_name}'"
+      end-group
+      log-error "Exiting due to fatal error in environment evaluation"
+      return 1
+    fi
+
+    environments_processed=$((environments_processed + 1))
+
+    if [[ "${ENV_IS_ELIGIBLE}" == "true" ]]; then
+      environments_eligible=$((environments_eligible + 1))
+      ENVIRONMENT_RESULTS+=("ELIGIBLE:${env_name}")
+      log-info "✅ Environment '${env_name}' is eligible for automerge"
+    else
+      environments_ineligible=$((environments_ineligible + 1))
+      ENVIRONMENT_RESULTS+=("INELIGIBLE:${env_name}")
+      overall_eligible="false"
+      log-info "❌ Environment '${env_name}' is NOT eligible for automerge"
+    fi
+  done
+
+  # Final summary
+  start-group "Final Summary"
+  log-info ""
+  log-info "=========================================="
+  log-info "Automerge Eligibility Summary"
+  log-info "=========================================="
+  log-info "Files found: ${#files[@]}"
+  log-info "Environments processed: ${environments_processed}"
+  log-info "Environments eligible: ${environments_eligible}"
+  log-info "Environments ineligible: ${environments_ineligible}"
+  log-info ""
+  log-info "Per-environment results:"
+  for result in "${ENVIRONMENT_RESULTS[@]}"; do
+    local status="${result%%:*}"
+    local name="${result#*:}"
+    case "${status}" in
+      ELIGIBLE)
+        log-info "  ✅ ${name}"
+        ;;
+      INELIGIBLE)
+        log-info "  ❌ ${name}"
+        ;;
+      INVALID)
+        log-info "  ⚠️  ${name} (invalid file)"
+        ;;
+      ERROR)
+        log-info "  💥 ${name} (error during evaluation)"
+        ;;
+    esac
+  done
+  log-info ""
+  if [[ "${overall_eligible}" == "true" ]]; then
+    log-info "✅ FINAL RESULT: All environments eligible - PR CAN be automerged"
+  else
+    log-info "❌ FINAL RESULT: Not all environments eligible - PR CANNOT be automerged"
+  fi
+  log-info "=========================================="
+  end-group
+
+  # Set output
+  set-output "is-eligible" "${overall_eligible}"
 
   return 0
 }

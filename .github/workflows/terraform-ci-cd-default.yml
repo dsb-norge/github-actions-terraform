@@ -565,52 +565,6 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
-      # save evaluation to be used later by the automerge job
-      - name: "⚖️ Evaluate PR automerge eligibility"
-        id: evaluate-automerge
-        # note: here we use the global 'pr-auto-merge-enabled' input, the per environment setting is ignored
-        if: github.event_name == 'pull_request' && inputs.pr-auto-merge-enabled == true
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
-        with:
-          environment-name: ${{ matrix.vars.github-environment }}
-          pr-auto-merge-enabled: ${{ matrix.vars.pr-auto-merge-enabled }}
-          pr-auto-merge-limits-json: ${{ toJSON(matrix.vars.pr-auto-merge-limits) }}
-          pr-auto-merge-from-actors-json: ${{ toJSON(matrix.vars.pr-auto-merge-from-actors) }}
-          plan-shouldve-been-created: ${{ contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') }}
-          plan-was-created: ${{ steps.plan.outcome == 'success' }}
-          performing-apply-on-pr: ${{ contains(matrix.vars.goals, 'apply-on-pr') }}
-          apply-on-pr-succeeded: ${{ steps.apply.outcome == 'success' }}
-          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
-          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
-          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
-          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
-          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
-          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
-          destroy-plan-shouldve-been-created: ${{ contains(matrix.vars.goals, 'destroy-plan') }}
-          destroy-plan-was-created: ${{ steps.destroy-plan.outcome == 'success' }}
-          performing-destroy-on-pr: ${{ contains(matrix.vars.goals, 'destroy-on-pr') }}
-          destroy-on-pr-succeeded: ${{ steps.destroy.outcome == 'success' }}
-          destroy-plan-count-add: ${{ steps.parse-destroy-plan.outputs.count-add }}
-          destroy-plan-count-change: ${{ steps.parse-destroy-plan.outputs.count-change }}
-          destroy-plan-count-destroy: ${{ steps.parse-destroy-plan.outputs.count-destroy }}
-          destroy-plan-count-import: ${{ steps.parse-destroy-plan.outputs.count-import }}
-          destroy-plan-count-move: ${{ steps.parse-destroy-plan.outputs.count-move }}
-          destroy-plan-count-remove: ${{ steps.parse-destroy-plan.outputs.count-remove }}
-        # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
-
-      - name: "📦 Upload PR automerge evaluation result"
-        id: upload-automerge-evaluation
-        if: steps.evaluate-automerge.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: auto-merge-evaluation-result-${{ matrix.vars.github-environment }}
-          path: ${{ steps.evaluate-automerge.outputs.result-json-file }}
-        # do not terminate if configured to ignore, fromJSON ensures bool
-        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
-
-      # Capture comprehensive metadata from all steps for debugging and analysis
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata
         if: always()
@@ -648,67 +602,28 @@ jobs:
       needs.conclusion.result == 'success'
       && github.event_name == 'pull_request'
       && inputs.pr-auto-merge-enabled == true
-    name: "Automerge PR"
+    name: "PR auto merger"
     needs: [terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
     steps:
-      - id: download-automerge-evaluations
-        name: "📥 Download PR automerge evaluation results"
+      - name: "📥 Download matrix job metadata"
+        id: download-metadata
         uses: actions/download-artifact@v4
         with:
-          pattern: auto-merge-evaluation-result-*
+          pattern: matrix-job-meta-* # uploaded by capture-matrix-job-meta step in terraform-ci-cd job
           merge-multiple: true
       - name: "🔍 Evaluate PR automerge eligibility across all environments"
         id: evaluate-automerge
-        run: |
-          echo "📋 Automerge evaluation per environment:"
-
-          # Check if any evaluation files exist
-          #   nullglob ensures that if no files match the pattern, the array is empty
-          shopt -s nullglob
-          files=(auto-merge-evaluation-result-*.json)
-          if [[ ${#files[@]} -eq 0 ]]; then
-            echo "❌ No automerge evaluation files found"
-            echo "should-auto-merge=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          should_auto_merge=true
-          for file in "${files[@]}"; do
-            echo "::group::Contents of $file"
-            cat "$file"
-            echo "::endgroup::"
-
-            is_eligible=$(jq -r '.is_eligible // empty' "$file")
-            environment=$(jq -r '.environment // empty' "$file")
-
-            if [[ -z "$is_eligible" ]]; then
-              should_auto_merge=false
-              echo "❌ File '$file' is missing 'is_eligible' field"
-            elif [[ -z "$environment" ]]; then
-              should_auto_merge=false
-              echo "❌ File '$file' is missing 'environment' field"
-            elif [[ "$is_eligible" != "true" ]]; then
-              should_auto_merge=false
-              echo "❌ Environment '$environment' is not eligible for automerge"
-            else
-              echo "✅ Environment '$environment' is eligible for automerge"
-            fi
-          done
-
-          echo ""
-          if [[ "$should_auto_merge" == "true" ]]; then
-            echo "✅ All environments can be automerged"
-          else
-            echo "❌ At least one environment cannot be automerged"
-          fi
-          echo "should-auto-merge=$should_auto_merge" >> $GITHUB_OUTPUT
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@automerge
+        with:
+          metadata-files-pattern: "matrix-job-meta-*.json"
       - name: "🎫 Create GitHub App token"
         id: app-token
-        if: steps.evaluate-automerge.outputs.should-auto-merge == 'true'
+        if: steps.evaluate-automerge.outputs.is-eligible == 'true'
         uses: actions/create-github-app-token@v2
         with:
           app-id: "2746453" # dsb-infra-pr-merger, TODO: change this to an input
@@ -717,7 +632,7 @@ jobs:
           permission-pull-requests: write
       - name: "🤖 Automerge PR if no critical changes found in Terraform plan"
         id: automerge
-        if: steps.evaluate-automerge.outputs.should-auto-merge == 'true'
+        if: steps.evaluate-automerge.outputs.is-eligible == 'true'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/automerge@automerge
         with:
