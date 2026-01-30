@@ -610,6 +610,66 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
+      # Capture comprehensive metadata from all steps for debugging and analysis
+      - name: "📊 Capture CI/CD metadata"
+        id: capture-metadata
+        if: always()
+        uses: dsb-norge/github-actions-terraform/capture-terraform-ci-cd-meta@copilot/vscode-ml0q0rl4-0vp5
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          matrix-vars-json: ${{ toJSON(matrix.vars) }}
+          github-context-json: ${{ toJSON(github) }}
+          # Step outcomes and results
+          step-init-outcome: ${{ steps.init.outcome }}
+          step-init-result: ${{ steps.init.result || '' }}
+          step-fmt-outcome: ${{ steps.fmt.outcome }}
+          step-fmt-result: ${{ steps.fmt.result || '' }}
+          step-validate-outcome: ${{ steps.validate.outcome }}
+          step-validate-result: ${{ steps.validate.result || '' }}
+          step-lint-outcome: ${{ steps.lint.outcome }}
+          step-lint-result: ${{ steps.lint.result || '' }}
+          step-plan-outcome: ${{ steps.plan.outcome }}
+          step-plan-result: ${{ steps.plan.result || '' }}
+          step-parse-plan-outcome: ${{ steps.parse-plan.outcome }}
+          step-parse-plan-result: ${{ steps.parse-plan.result || '' }}
+          step-apply-outcome: ${{ steps.apply.outcome }}
+          step-apply-result: ${{ steps.apply.result || '' }}
+          step-destroy-plan-outcome: ${{ steps.destroy-plan.outcome }}
+          step-destroy-plan-result: ${{ steps.destroy-plan.result || '' }}
+          step-parse-destroy-plan-outcome: ${{ steps.parse-destroy-plan.outcome }}
+          step-parse-destroy-plan-result: ${{ steps.parse-destroy-plan.result || '' }}
+          step-destroy-outcome: ${{ steps.destroy.outcome }}
+          step-destroy-result: ${{ steps.destroy.result || '' }}
+          step-evaluate-automerge-outcome: ${{ steps.evaluate-automerge.outcome }}
+          step-evaluate-automerge-result: ${{ steps.evaluate-automerge.result || '' }}
+          step-create-validation-summary-outcome: ${{ steps.create-validation-summary.outcome }}
+          step-create-validation-summary-result: ${{ steps.create-validation-summary.result || '' }}
+          # Step outputs as JSON
+          step-init-outputs-json: ${{ toJSON(steps.init.outputs) }}
+          step-fmt-outputs-json: ${{ toJSON(steps.fmt.outputs) }}
+          step-validate-outputs-json: ${{ toJSON(steps.validate.outputs) }}
+          step-lint-outputs-json: ${{ toJSON(steps.lint.outputs) }}
+          step-plan-outputs-json: ${{ toJSON(steps.plan.outputs) }}
+          step-parse-plan-outputs-json: ${{ toJSON(steps.parse-plan.outputs) }}
+          step-apply-outputs-json: ${{ toJSON(steps.apply.outputs) }}
+          step-destroy-plan-outputs-json: ${{ toJSON(steps.destroy-plan.outputs) }}
+          step-parse-destroy-plan-outputs-json: ${{ toJSON(steps.parse-destroy-plan.outputs) }}
+          step-destroy-outputs-json: ${{ toJSON(steps.destroy.outputs) }}
+          step-evaluate-automerge-outputs-json: ${{ toJSON(steps.evaluate-automerge.outputs) }}
+          step-create-validation-summary-outputs-json: ${{ toJSON(steps.create-validation-summary.outputs) }}
+          step-setup-terraform-cache-outputs-json: ${{ toJSON(steps.setup-terraform-cache.outputs) }}
+          step-setup-tflint-outputs-json: ${{ toJSON(steps.setup-tflint.outputs) }}
+        continue-on-error: true # best effort - never fail the job
+
+      - name: "📦 Upload CI/CD metadata"
+        id: upload-metadata
+        if: always() && steps.capture-metadata.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-ci-cd-meta-${{ matrix.vars.github-environment }}
+          path: ${{ steps.capture-metadata.outputs.result-json-file }}
+        continue-on-error: true # best effort - never fail the job
+
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
   conclusion:
