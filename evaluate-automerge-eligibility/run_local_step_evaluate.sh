@@ -12,6 +12,7 @@ GITHUB_ACTOR="some-user"
 
 # required input variables
 input_environment_name=sandbox
+input_pr_auto_merge_enabled=true
 input_plan_shouldve_been_created=true
 input_plan_was_created=true
 input_performing_apply_on_pr=false

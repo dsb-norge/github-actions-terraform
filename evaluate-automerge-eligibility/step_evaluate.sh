@@ -85,7 +85,23 @@ function validate_configuration {
   return 0
 }
 
-# 2. Actor Authorization Check
+# 2. PR Auto-merge Enabled Check
+function check_pr_automerge_enabled {
+  log-info "Checking if PR automerge is enabled for environment..."
+  
+  if parse_bool "${input_pr_auto_merge_enabled}"; then
+    log-info "PR automerge is enabled for this environment: PASS"
+    RESULT_PR_AUTOMERGE_ENABLED="PASS"
+    return 0
+  else
+    add_failure_reason "PR automerge is disabled for this environment"
+    log-info "PR automerge enabled check: FAIL"
+    RESULT_PR_AUTOMERGE_ENABLED="FAIL"
+    return 1
+  fi
+}
+
+# 3. Actor Authorization Check
 function check_actor_authorization {
   log-info "Checking actor authorization..."
   log-info "  Current actor: ${GITHUB_ACTOR}"
@@ -116,7 +132,7 @@ function check_actor_authorization {
   fi
 }
 
-# 3. Plan Creation Validation
+# 4. Plan Creation Validation
 function validate_plan_creation {
   log-info "Validating plan creation..."
   local validation_passed=true
@@ -160,7 +176,7 @@ function validate_plan_creation {
   fi
 }
 
-# 4. Apply/Destroy Operation Success Check
+# 5. Apply/Destroy Operation Success Check
 function check_operation_success {
   log-info "Checking operation success..."
   local check_passed=true
@@ -204,7 +220,7 @@ function check_operation_success {
   fi
 }
 
-# 5. Determine Limit Applicability
+# 6. Determine Limit Applicability
 function determine_limit_applicability {
   log-info "Determining limit applicability..."
 
@@ -252,7 +268,7 @@ function determine_limit_applicability {
   return 0
 }
 
-# 6. Validate Counts
+# 7. Validate Counts
 function validate_counts {
   log-info "Validating plan counts..."
   local counts_valid=true
@@ -299,7 +315,7 @@ function validate_counts {
   return 0
 }
 
-# 7. Aggregate Counts
+# 8. Aggregate Counts
 function aggregate_counts {
   log-info "Aggregating counts..."
 
@@ -324,7 +340,7 @@ function aggregate_counts {
   done
 }
 
-# 8. Evaluate Limits
+# 9. Evaluate Limits
 function evaluate_limits {
   log-info "Evaluating limits..."
 
@@ -411,6 +427,7 @@ function generate_result_json {
     --arg actor "${GITHUB_ACTOR}" \
     --argjson is_eligible "${is_eligible}" \
     --arg config_validation "${RESULT_CONFIG_VALIDATION:-SKIPPED}" \
+    --arg pr_automerge_enabled "${RESULT_PR_AUTOMERGE_ENABLED:-SKIPPED}" \
     --arg actor_auth "${RESULT_ACTOR_AUTH:-SKIPPED}" \
     --arg plan_creation "${RESULT_PLAN_CREATION:-SKIPPED}" \
     --arg destroy_plan_creation "${RESULT_DESTROY_PLAN_CREATION:-SKIPPED}" \
@@ -426,6 +443,7 @@ function generate_result_json {
       "is_eligible": $is_eligible,
       "checks": {
         "configuration_validation": $config_validation,
+        "pr_automerge_enabled": $pr_automerge_enabled,
         "actor_authorization": $actor_auth,
         "plan_creation": $plan_creation,
         "destroy_plan_creation": $destroy_plan_creation,
@@ -458,6 +476,7 @@ function main {
   declare -g INCLUDE_DESTROY_PLAN_LIMITS=false
   declare -g ALL_LIMITS_IGNORED=true
   declare -g RESULT_CONFIG_VALIDATION="SKIPPED"
+  declare -g RESULT_PR_AUTOMERGE_ENABLED="SKIPPED"
   declare -g RESULT_ACTOR_AUTH="SKIPPED"
   declare -g RESULT_PLAN_CREATION="SKIPPED"
   declare -g RESULT_DESTROY_PLAN_CREATION="SKIPPED"
@@ -472,6 +491,7 @@ function main {
   start-group "Inputs"
   log-info "Environment: ${input_environment_name}"
   log-info "Actor: ${GITHUB_ACTOR}"
+  log-info "PR automerge enabled: ${input_pr_auto_merge_enabled}"
   log-info ""
   log-info "Plan inputs:"
   log-info "  plan-shouldve-been-created: ${input_plan_shouldve_been_created}"
@@ -514,29 +534,36 @@ function main {
   fi
   end-group
 
-  # 2. Actor Authorization Check
-  start-group "Step 2: Actor Authorization Check"
+  # 2. PR Auto-merge Enabled Check
+  start-group "Step 2: PR Auto-merge Enabled Check"
+  if ! check_pr_automerge_enabled; then
+    is_eligible="false"
+  fi
+  end-group
+
+  # 3. Actor Authorization Check
+  start-group "Step 3: Actor Authorization Check"
   if ! check_actor_authorization; then
     is_eligible="false"
   fi
   end-group
 
-  # 3. Plan Creation Validation
-  start-group "Step 3: Plan Creation Validation"
+  # 4. Plan Creation Validation
+  start-group "Step 4: Plan Creation Validation"
   if ! validate_plan_creation; then
     is_eligible="false"
   fi
   end-group
 
-  # 4. Apply/Destroy Operation Success Check
-  start-group "Step 4: Operation Success Check"
+  # 5. Apply/Destroy Operation Success Check
+  start-group "Step 5: Operation Success Check"
   if ! check_operation_success; then
     is_eligible="false"
   fi
   end-group
 
-  # 5. Determine Limit Applicability
-  start-group "Step 5: Limit Applicability"
+  # 6. Determine Limit Applicability
+  start-group "Step 6: Limit Applicability"
   determine_limit_applicability
   end-group
 
@@ -544,8 +571,8 @@ function main {
   if [[ "${ALL_LIMITS_IGNORED}" == "false" ]]; then
     local counts_valid=true
 
-    # 6. Count Validation
-    start-group "Step 6: Count Validation"
+    # 7. Count Validation
+    start-group "Step 7: Count Validation"
     if ! validate_counts; then
       is_eligible="false"
       counts_valid=false
@@ -554,13 +581,13 @@ function main {
 
     # Only proceed with aggregation and limit evaluation if counts are valid
     if [[ "${counts_valid}" == "true" ]]; then
-      # 7. Count Aggregation
-      start-group "Step 7: Count Aggregation"
+      # 8. Count Aggregation
+      start-group "Step 8: Count Aggregation"
       aggregate_counts
       end-group
 
-      # 8. Limit Evaluation
-      start-group "Step 8: Limit Evaluation"
+      # 9. Limit Evaluation
+      start-group "Step 9: Limit Evaluation"
       if ! evaluate_limits; then
         is_eligible="false"
       fi
@@ -570,8 +597,8 @@ function main {
     log-info "Skipping count validation and limit evaluation (all limits ignored)"
   fi
 
-  # 9. Final Eligibility Determination
-  start-group "Step 9: Final Eligibility Determination"
+  # 10. Final Eligibility Determination
+  start-group "Step 10: Final Eligibility Determination"
   log-info "Final eligibility: ${is_eligible}"
   if [[ "${is_eligible}" == "true" ]]; then
     log-info "Environment '${input_environment_name}' is ELIGIBLE for PR automerge"

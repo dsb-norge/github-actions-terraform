@@ -67,6 +67,7 @@ reset_defaults() {
   export GITHUB_ACTOR="dependabot[bot]"
 
   export input_environment_name="test-env"
+  export input_pr_auto_merge_enabled="true"
   export input_plan_shouldve_been_created="true"
   export input_plan_was_created="true"
   export input_performing_apply_on_pr="false"
@@ -838,6 +839,18 @@ input_pr_auto_merge_limits_json='{
   "plan-max-count-remove": 5
 }'
 run_test "Remove count exceeds limit" "false"
+
+# ============================================================================
+# Test 16: PR Auto-merge disabled for environment
+# ============================================================================
+reset_defaults
+input_pr_auto_merge_enabled="false"
+# Set everything else to pass
+input_plan_shouldve_been_created="true"
+input_plan_was_created="true"
+input_performing_apply_on_pr="false"
+input_plan_count_add="0"
+run_test "PR auto-merge disabled for environment" "false"
 
 # ============================================================================
 # Summary
