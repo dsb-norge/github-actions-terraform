@@ -610,6 +610,17 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
+      - name: DEBUG
+        if: always()
+        run: |
+          steps_json=$(cat <<'EOF'
+          ${{ steps }}
+          EOF
+          )
+          echo "::group::Steps debug output"
+          echo "$steps_json" | jq .
+          echo "::endgroup::"
+
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
   conclusion:
