@@ -614,7 +614,7 @@ jobs:
         if: always()
         run: |
           steps_json=$(cat <<'EOF'
-          ${{ toJSON(steps) }}
+          ${{ toJSON(matrix) }}
           EOF
           )
           echo "::group::Steps debug output"
