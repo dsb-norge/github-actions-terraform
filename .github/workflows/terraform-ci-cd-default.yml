@@ -610,16 +610,18 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
-      - name: DEBUG
+      # Capture comprehensive metadata from all steps for debugging and analysis
+      - name: "📊 Capture matrix job metadata"
+        id: capture-metadata
         if: always()
-        run: |
-          steps_json=$(cat <<'EOF'
-          ${{ toJSON(matrix) }}
-          EOF
-          )
-          echo "::group::Steps debug output"
-          echo "$steps_json" | jq .
-          echo "::endgroup::"
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@automerge
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          matrix-context-json: ${{ toJSON(matrix) }}
+          github-context-json: ${{ toJSON(github) }}
+          steps-context-json: ${{ toJSON(steps) }}
+        continue-on-error: true # never fail the job due to metadata capture
 
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules

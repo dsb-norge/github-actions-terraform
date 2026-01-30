@@ -1,0 +1,51 @@
+## `steps` context
+
+The `steps` context contains information about the steps in the current job that have an [`id`](/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsid) specified and have already run.
+
+| Property name                           | Type     | Description                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `steps`                                 | `object` | This context changes for each step in a job. You can access this context from any step in a job. This object contains all the properties listed below.                                                                                                                                                                                                    |
+| `steps.<step_id>.outputs`               | `object` | The set of outputs defined for the step. For more information, see [Metadata syntax reference](/en/actions/creating-actions/metadata-syntax-for-github-actions#outputs-for-docker-container-and-javascript-actions).                                                                                                                                      |
+| `steps.<step_id>.conclusion`            | `string` | The result of a completed step after [`continue-on-error`](/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepscontinue-on-error) is applied. Possible values are `success`, `failure`, `cancelled`, or `skipped`. When a `continue-on-error` step fails, the `outcome` is `failure`, but the final `conclusion` is `success`.  |
+| `steps.<step_id>.outcome`               | `string` | The result of a completed step before [`continue-on-error`](/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepscontinue-on-error) is applied. Possible values are `success`, `failure`, `cancelled`, or `skipped`. When a `continue-on-error` step fails, the `outcome` is `failure`, but the final `conclusion` is `success`. |
+| `steps.<step_id>.outputs.<output_name>` | `string` | The value of a specific output.                                                                                                                                                                                                                                                                                                                           |
+
+### Example contents of the `steps` context
+
+This example `steps` context shows two previous steps that had an [`id`](/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsid) specified. The first step had the `id` named `checkout`, the second `generate_number`. The `generate_number` step had an output named `random_number`.
+
+```json
+{
+  "checkout": {
+    "outputs": {},
+    "outcome": "success",
+    "conclusion": "success"
+  },
+  "generate_number": {
+    "outputs": {
+      "random_number": "1"
+    },
+    "outcome": "success",
+    "conclusion": "success"
+  }
+}
+```
+
+### Example usage of the `steps` context
+
+This example workflow generates a random number as an output in one step, and a later step uses the `steps` context to read the value of that output.
+
+```yaml copy
+name: Generate random failure
+on: push
+jobs:
+  randomly-failing-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate 0 or 1
+        id: generate_number
+        run: echo "random_number=$(($RANDOM % 2))" >> $GITHUB_OUTPUT
+      - name: Pass or fail
+        run: |
+          if [[ ${{ steps.generate_number.outputs.random_number }} == 0 ]]; then exit 0; else exit 1; fi
+```
