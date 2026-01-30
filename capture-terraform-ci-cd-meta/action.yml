@@ -1,0 +1,333 @@
+name: "Capture Terraform CI/CD Metadata"
+description: |
+  Captures comprehensive metadata from all steps in the terraform-ci-cd job.
+  Gathers step outputs, outcomes, results, and matrix variables into a single
+  JSON file for artifact upload and later analysis.
+
+  ## Behavior Notes
+
+  - Runs with best-effort collection: missing data will not cause failure
+  - Handles null/empty values gracefully
+  - Designed to run with if: always() to capture data even on job failure
+  - Excludes secret values from output
+
+author: "Peder Schmedling"
+inputs:
+  environment-name:
+    description: |
+      Name of the current deployment environment (e.g., "sandbox", "production").
+      Used for naming the output JSON file.
+    required: true
+
+  # Matrix variables
+  matrix-vars-json:
+    description: |
+      JSON object containing all matrix.vars values.
+      Pass as: ${{ toJSON(matrix.vars) }}
+    required: true
+
+  # GitHub context
+  github-context-json:
+    description: |
+      JSON object containing github context (filtered for non-sensitive data).
+      Pass as: ${{ toJSON(github) }}
+    required: true
+
+  # Step outcomes and results (outcome = before continue-on-error, result = after)
+  step-init-outcome:
+    description: "Outcome of terraform init step"
+    required: false
+    default: ""
+  step-init-result:
+    description: "Result of terraform init step"
+    required: false
+    default: ""
+  step-fmt-outcome:
+    description: "Outcome of terraform fmt step"
+    required: false
+    default: ""
+  step-fmt-result:
+    description: "Result of terraform fmt step"
+    required: false
+    default: ""
+  step-validate-outcome:
+    description: "Outcome of terraform validate step"
+    required: false
+    default: ""
+  step-validate-result:
+    description: "Result of terraform validate step"
+    required: false
+    default: ""
+  step-lint-outcome:
+    description: "Outcome of tflint step"
+    required: false
+    default: ""
+  step-lint-result:
+    description: "Result of tflint step"
+    required: false
+    default: ""
+  step-plan-outcome:
+    description: "Outcome of terraform plan step"
+    required: false
+    default: ""
+  step-plan-result:
+    description: "Result of terraform plan step"
+    required: false
+    default: ""
+  step-parse-plan-outcome:
+    description: "Outcome of parse terraform plan step"
+    required: false
+    default: ""
+  step-parse-plan-result:
+    description: "Result of parse terraform plan step"
+    required: false
+    default: ""
+  step-apply-outcome:
+    description: "Outcome of terraform apply step"
+    required: false
+    default: ""
+  step-apply-result:
+    description: "Result of terraform apply step"
+    required: false
+    default: ""
+  step-destroy-plan-outcome:
+    description: "Outcome of terraform destroy plan step"
+    required: false
+    default: ""
+  step-destroy-plan-result:
+    description: "Result of terraform destroy plan step"
+    required: false
+    default: ""
+  step-parse-destroy-plan-outcome:
+    description: "Outcome of parse destroy plan step"
+    required: false
+    default: ""
+  step-parse-destroy-plan-result:
+    description: "Result of parse destroy plan step"
+    required: false
+    default: ""
+  step-destroy-outcome:
+    description: "Outcome of terraform destroy step"
+    required: false
+    default: ""
+  step-destroy-result:
+    description: "Result of terraform destroy step"
+    required: false
+    default: ""
+  step-evaluate-automerge-outcome:
+    description: "Outcome of evaluate automerge step"
+    required: false
+    default: ""
+  step-evaluate-automerge-result:
+    description: "Result of evaluate automerge step"
+    required: false
+    default: ""
+  step-create-validation-summary-outcome:
+    description: "Outcome of create validation summary step"
+    required: false
+    default: ""
+  step-create-validation-summary-result:
+    description: "Result of create validation summary step"
+    required: false
+    default: ""
+
+  # Step outputs as JSON objects
+  step-init-outputs-json:
+    description: |
+      JSON object containing init step outputs.
+      Pass as: ${{ toJSON(steps.init.outputs) }}
+    required: false
+    default: "{}"
+  step-fmt-outputs-json:
+    description: |
+      JSON object containing fmt step outputs.
+      Pass as: ${{ toJSON(steps.fmt.outputs) }}
+    required: false
+    default: "{}"
+  step-validate-outputs-json:
+    description: |
+      JSON object containing validate step outputs.
+      Pass as: ${{ toJSON(steps.validate.outputs) }}
+    required: false
+    default: "{}"
+  step-lint-outputs-json:
+    description: |
+      JSON object containing lint step outputs.
+      Pass as: ${{ toJSON(steps.lint.outputs) }}
+    required: false
+    default: "{}"
+  step-plan-outputs-json:
+    description: |
+      JSON object containing plan step outputs.
+      Pass as: ${{ toJSON(steps.plan.outputs) }}
+    required: false
+    default: "{}"
+  step-parse-plan-outputs-json:
+    description: |
+      JSON object containing parse-plan step outputs.
+      Pass as: ${{ toJSON(steps.parse-plan.outputs) }}
+    required: false
+    default: "{}"
+  step-apply-outputs-json:
+    description: |
+      JSON object containing apply step outputs.
+      Pass as: ${{ toJSON(steps.apply.outputs) }}
+    required: false
+    default: "{}"
+  step-destroy-plan-outputs-json:
+    description: |
+      JSON object containing destroy-plan step outputs.
+      Pass as: ${{ toJSON(steps.destroy-plan.outputs) }}
+    required: false
+    default: "{}"
+  step-parse-destroy-plan-outputs-json:
+    description: |
+      JSON object containing parse-destroy-plan step outputs.
+      Pass as: ${{ toJSON(steps.parse-destroy-plan.outputs) }}
+    required: false
+    default: "{}"
+  step-destroy-outputs-json:
+    description: |
+      JSON object containing destroy step outputs.
+      Pass as: ${{ toJSON(steps.destroy.outputs) }}
+    required: false
+    default: "{}"
+  step-evaluate-automerge-outputs-json:
+    description: |
+      JSON object containing evaluate-automerge step outputs.
+      Pass as: ${{ toJSON(steps.evaluate-automerge.outputs) }}
+    required: false
+    default: "{}"
+  step-create-validation-summary-outputs-json:
+    description: |
+      JSON object containing create-validation-summary step outputs.
+      Pass as: ${{ toJSON(steps.create-validation-summary.outputs) }}
+    required: false
+    default: "{}"
+
+  # Setup step outputs
+  step-setup-terraform-cache-outputs-json:
+    description: |
+      JSON object containing setup-terraform-cache step outputs.
+      Pass as: ${{ toJSON(steps.setup-terraform-cache.outputs) }}
+    required: false
+    default: "{}"
+  step-setup-tflint-outputs-json:
+    description: |
+      JSON object containing setup-tflint step outputs.
+      Pass as: ${{ toJSON(steps.setup-tflint.outputs) }}
+    required: false
+    default: "{}"
+
+outputs:
+  result-json-file:
+    description: |
+      Absolute path to the JSON file containing all captured metadata.
+      Use this path with actions/upload-artifact to save the result.
+    value: ${{ steps.capture.outputs.result-json-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: capture
+      shell: bash
+      env:
+        input_environment_name: ${{ inputs.environment-name }}
+        # outcomes and results
+        input_step_init_outcome: ${{ inputs.step-init-outcome }}
+        input_step_init_result: ${{ inputs.step-init-result }}
+        input_step_fmt_outcome: ${{ inputs.step-fmt-outcome }}
+        input_step_fmt_result: ${{ inputs.step-fmt-result }}
+        input_step_validate_outcome: ${{ inputs.step-validate-outcome }}
+        input_step_validate_result: ${{ inputs.step-validate-result }}
+        input_step_lint_outcome: ${{ inputs.step-lint-outcome }}
+        input_step_lint_result: ${{ inputs.step-lint-result }}
+        input_step_plan_outcome: ${{ inputs.step-plan-outcome }}
+        input_step_plan_result: ${{ inputs.step-plan-result }}
+        input_step_parse_plan_outcome: ${{ inputs.step-parse-plan-outcome }}
+        input_step_parse_plan_result: ${{ inputs.step-parse-plan-result }}
+        input_step_apply_outcome: ${{ inputs.step-apply-outcome }}
+        input_step_apply_result: ${{ inputs.step-apply-result }}
+        input_step_destroy_plan_outcome: ${{ inputs.step-destroy-plan-outcome }}
+        input_step_destroy_plan_result: ${{ inputs.step-destroy-plan-result }}
+        input_step_parse_destroy_plan_outcome: ${{ inputs.step-parse-destroy-plan-outcome }}
+        input_step_parse_destroy_plan_result: ${{ inputs.step-parse-destroy-plan-result }}
+        input_step_destroy_outcome: ${{ inputs.step-destroy-outcome }}
+        input_step_destroy_result: ${{ inputs.step-destroy-result }}
+        input_step_evaluate_automerge_outcome: ${{ inputs.step-evaluate-automerge-outcome }}
+        input_step_evaluate_automerge_result: ${{ inputs.step-evaluate-automerge-result }}
+        input_step_create_validation_summary_outcome: ${{ inputs.step-create-validation-summary-outcome }}
+        input_step_create_validation_summary_result: ${{ inputs.step-create-validation-summary-result }}
+      run: |
+        # JSON inputs require special handling (heredocs)
+        input_matrix_vars_json=$(cat <<'EOF'
+        ${{ inputs.matrix-vars-json }}
+        EOF
+        )
+        input_github_context_json=$(cat <<'EOF'
+        ${{ inputs.github-context-json }}
+        EOF
+        )
+        input_step_init_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-init-outputs-json }}
+        EOF
+        )
+        input_step_fmt_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-fmt-outputs-json }}
+        EOF
+        )
+        input_step_validate_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-validate-outputs-json }}
+        EOF
+        )
+        input_step_lint_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-lint-outputs-json }}
+        EOF
+        )
+        input_step_plan_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-plan-outputs-json }}
+        EOF
+        )
+        input_step_parse_plan_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-parse-plan-outputs-json }}
+        EOF
+        )
+        input_step_apply_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-apply-outputs-json }}
+        EOF
+        )
+        input_step_destroy_plan_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-destroy-plan-outputs-json }}
+        EOF
+        )
+        input_step_parse_destroy_plan_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-parse-destroy-plan-outputs-json }}
+        EOF
+        )
+        input_step_destroy_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-destroy-outputs-json }}
+        EOF
+        )
+        input_step_evaluate_automerge_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-evaluate-automerge-outputs-json }}
+        EOF
+        )
+        input_step_create_validation_summary_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-create-validation-summary-outputs-json }}
+        EOF
+        )
+        input_step_setup_terraform_cache_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-setup-terraform-cache-outputs-json }}
+        EOF
+        )
+        input_step_setup_tflint_outputs_json=$(cat <<'EOF'
+        ${{ inputs.step-setup-tflint-outputs-json }}
+        EOF
+        )
+
+        # Run step and exit with its exit code
+        set -o allexport
+        source "${{ github.action_path }}/step_capture.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
