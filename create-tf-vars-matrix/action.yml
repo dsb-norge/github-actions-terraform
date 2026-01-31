@@ -119,12 +119,6 @@ runs:
             set-field 'url' "" # modifies $ENVIRONMENT_OBJ
           fi
 
-          # Set default runner if runs-on is not specified
-          if ! has-field 'runs-on'; then
-            log-info "'runs-on' not specified for environment, using 'ubuntu-latest'"
-            set-field 'runs-on' 'ubuntu-latest' # modifies $ENVIRONMENT_OBJ
-          fi
-
           # goals-yml and terraform-init-additional-dirs-yml
           #   - use global value if not defined
           #   - 'field-yml' becomes 'field'
