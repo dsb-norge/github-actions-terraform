@@ -38,23 +38,35 @@ on:
                 note: if this is omitted the workflow will default to using deployment environment with name  specified by workflow input 'environment'.
             - url
                 string, a url to display in github's deployment environment UI.
+            - add-pr-comment
+                bool, whether to add validation summary as comment on PR, see the workflow input 'add-pr-comment'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - allow-failing-terraform-operations
                 bool, defaults to false, if true: the workflow will not terminate with failure even if job steps fails.
                 This parameter allows for ignoring failing results of terraform operations for select environments.
-            - goals-yml
-                YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
-                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
-            - terraform-init-additional-dirs-yml
-                YAML array (as string), additional directories for 'terraform init', see the workflow input 'terraform-init-additional-dirs-yml'.
+            - extra-envs-from-secrets-yml
+                YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - extra-envs-yml
                 YAML objects, make environment variables available, see the workflow input 'extra-envs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
-            - extra-envs-from-secrets-yml
-                YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
+            - format-check-in-root-dir
+                bool, whether to perform format check from the root of the repo, see the workflow input 'format-check-in-root-dir'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - goals-yml
+                YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - runs-on
-                string, name of the runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
+                string, name of the runner group to run the job on, see the workflow input 'runs-on'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - terraform-init-additional-dirs-yml
+                YAML array (as string), additional directories for 'terraform init', see the workflow input 'terraform-init-additional-dirs-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - terraform-version
+                string, version of terraform to use, see the workflow input 'terraform-version'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - tflint-version
+                string, version of TFLint to use, see the workflow input 'tflint-version'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
         required: true
       goals-yml:
