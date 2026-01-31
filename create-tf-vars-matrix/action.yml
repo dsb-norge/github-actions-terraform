@@ -28,12 +28,15 @@ runs:
         )
         log-multiline "input 'inputs-json'" "${INPUTS_JSON}"
 
-        # Deliberately excluded from this array: terraform-version, tflint-version, format-check-in-root-dir, add-pr-comment, runs-on
+        # deliberately left out as they should only exist as global inputs-json:
+        #  - pr-auto-merge-enabled
         YML_INPUTS=(
           environments-yml
           extra-envs-from-secrets-yml
           extra-envs-yml
           goals-yml
+          pr-auto-merge-from-actors-yml
+          pr-auto-merge-limits-yml
           terraform-init-additional-dirs-yml
         )
 
@@ -119,7 +122,7 @@ runs:
             set-field 'url' "" # modifies $ENVIRONMENT_OBJ
           fi
 
-          # goals-yml and terraform-init-additional-dirs-yml
+          # fields where we use global value if not defined:
           #   - use global value if not defined
           #   - 'field-yml' becomes 'field'
           DEFAULT_INPUT_YML_FIELDS=(
@@ -153,15 +156,16 @@ runs:
             fi
           done
 
-          # extra-envs-yml and extra-envs-from-secrets-yml
-          #   - yml fields that needs merge
+          # fields merged with global:
           #   - if defined merge with global value, otherwise use global
           #   - '*-yml' becomes '*'
           MERGE_INPUT_YML_FIELDS=(
             extra-envs-from-secrets-yml
             extra-envs-yml
+            pr-auto-merge-from-actors-yml
+            pr-auto-merge-limits-yml
           )
-          log-info "Processing 'extra-envs-*' yml fields ..."
+          log-info "Processing yml fields that needs merge ..."
           for MERGE_FIELD in ${MERGE_INPUT_YML_FIELDS[*]}; do
             # global value
             GLOBAL_ENVS_JSON=$(get-yaml-input-as-json "${MERGE_FIELD}")
@@ -224,6 +228,9 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
+          pr-auto-merge-enabled
+          pr-auto-merge-from-actors
+          pr-auto-merge-limits
           project-dir
           terraform-init-additional-dirs
           terraform-version
@@ -242,6 +249,9 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
+          pr-auto-merge-enabled
+          pr-auto-merge-from-actors
+          pr-auto-merge-limits
           project-dir
           terraform-version
           tflint-version
