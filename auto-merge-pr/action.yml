@@ -1,0 +1,83 @@
+name: "Auto-merge Pull Request"
+description: |
+  Automatically merges a pull request using admin privileges when conditions are met.
+
+  This action receives the GitHub event context to determine PR eligibility for auto-merge.
+  It checks that the PR is open, not a draft, and in a mergeable state before performing
+  the merge operation with admin privileges using rebase strategy.
+
+  ## Prerequisites
+
+  - Must run in pull_request event context
+  - The provided github-token must have admin privileges for the repository
+  - PR must be open, not a draft, and in a mergeable state
+
+  ## Behavior Notes
+
+  - Uses GitHub CLI (gh) for merge operations
+  - Merges with --admin --rebase --delete-branch flags
+  - Exits with error if PR is not in a valid state for merging
+  - Skips gracefully when PR is being closed or converted to draft
+
+author: "Artjoms Laivins, Peder Schmedling"
+inputs:
+  github-token:
+    description: |
+      GitHub token with admin privileges for the repository.
+      Required for performing admin merge operation.
+    required: true
+    default: ${{ github.token }}
+
+  github-event-context-json:
+    description: |
+      JSON object containing the GitHub event context (github.event).
+      This should include pull_request data with state, draft, and mergeable fields.
+      Pass as: toJSON(github.event)
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - id: pr-event-check
+      if: github.event_name != 'pull_request'
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-error "This action can only run in pull request context"
+        exit 1
+
+    - id: pr-action-check
+      if: |
+        github.event_name == 'pull_request'
+        && (
+          github.event.action == 'closed'
+          || github.event.action == 'converted_to_draft'
+        )
+      shell: bash
+      run: |
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+        log-info "Skipping: PR is being closed or converted to draft"
+        exit 0
+
+    - id: auto-merge-pr
+      if: |
+        github.event_name == 'pull_request'
+        && github.event.action != 'closed'
+        && github.event.action != 'converted_to_draft'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        input_repo_ref: ${{ github.repository }}
+        input_pr_number: ${{ github.event.number }}
+      run: |
+        # JSON inputs require special handling (heredocs)
+        input_github_event_context_json=$(cat <<'EOF'
+        ${{ inputs.github-event-context-json }}
+        EOF
+        )
+
+        export input_github_event_context_json
+
+        source "${GITHUB_ACTION_PATH}/step_auto_merge_pr.sh"
+        exit_code=$?
+        exit ${exit_code}

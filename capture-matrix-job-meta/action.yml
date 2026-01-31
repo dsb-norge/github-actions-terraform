@@ -1,0 +1,86 @@
+name: "Capture Matrix Job Metadata"
+description: |
+  Captures comprehensive metadata from all steps in a matrix job.
+  Gathers step outputs, outcomes, conclusions, and matrix context into a single
+  JSON file for artifact upload and later analysis.
+
+  ## Behavior Notes
+
+  - Runs with best-effort collection: missing data will not cause failure
+  - Handles null/empty values gracefully
+  - Designed to run with if: always() to capture data even on job failure
+  - Excludes secret values from output
+  - Automatically captures all steps from the steps context (future-proof)
+
+author: "Peder Schmedling"
+inputs:
+  environment-name:
+    description: |
+      Name of the current deployment environment (e.g., "sandbox", "production").
+      Used for naming the output JSON file.
+    required: true
+
+  matrix-context-json:
+    description: |
+      JSON object containing the full matrix context.
+      Pass as: toJSON(matrix)
+    required: true
+
+  github-context-json:
+    description: |
+      JSON object containing github context (filtered for non-sensitive data).
+      Pass as: toJSON(github)
+    required: true
+
+  steps-context-json:
+    description: |
+      JSON object containing the entire steps context.
+      This captures all step outcomes, conclusions, and outputs automatically.
+      Pass as: toJSON(steps)
+    required: true
+
+outputs:
+  result-json-file:
+    description: |
+      Absolute path to the JSON file containing all captured metadata.
+      Use this path with actions/upload-artifact to save the result.
+    value: ${{ steps.capture.outputs.result-json-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: capture
+      shell: bash
+      env:
+        input_environment_name: ${{ inputs.environment-name }}
+      run: |
+        # JSON inputs require special handling (heredocs)
+        input_matrix_context_json=$(cat <<'EOF'
+        ${{ inputs.matrix-context-json }}
+        EOF
+        )
+        input_github_context_json=$(cat <<'EOF'
+        ${{ inputs.github-context-json }}
+        EOF
+        )
+        input_steps_context_json=$(cat <<'EOF'
+        ${{ inputs.steps-context-json }}
+        EOF
+        )
+
+        export input_matrix_context_json
+        export input_github_context_json
+        export input_steps_context_json
+
+        source "${GITHUB_ACTION_PATH}/step_capture.sh"
+        exit_code=$?
+        exit ${exit_code}
+
+    - name: "📦 Upload matrix job metadata"
+      id: upload-metadata
+      if: steps.capture.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: matrix-job-meta-${{ inputs.environment-name }}
+        path: ${{ steps.capture.outputs.result-json-file }}
+      continue-on-error: true # never fail the job due to metadata upload
