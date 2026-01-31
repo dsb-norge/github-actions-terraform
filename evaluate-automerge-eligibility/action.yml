@@ -1,0 +1,66 @@
+name: "Evaluate automerge eligibility"
+description: |
+  Evaluates whether a pull request is eligible for automatic merging based on Terraform plan
+  changes, configured limits, and actor restrictions. This action processes metadata files
+  from multiple matrix job environments and produces an aggregated eligibility decision.
+
+  ## Evaluation Order (per environment)
+
+  The evaluation follows this order to fail fast and provide meaningful feedback:
+  1. Configuration Validation - Validates limits configuration (fails action on error)
+  2. PR Auto-merge Enabled Check - Verifies PR automerge is enabled for this environment
+  3. Actor Authorization - Verifies current actor is in the allowed list (if specified)
+  4. Plan Creation Validation - Verifies expected plans were created
+  5. Operation Success Check - Verifies apply/destroy operations succeeded (if performed)
+  6. Limit Applicability - Determines which limits should be evaluated
+  7. Count Validation - Validates counts are available when needed
+  8. Count Aggregation - Combines plan and destroy-plan counts if both evaluated
+  9. Limit Evaluation - Compares aggregated counts against configured limits
+  10. Final Eligibility - All checks must pass for eligibility
+
+  ## Multi-Environment Processing
+
+  This action processes multiple matrix-job-meta-*.json files and evaluates each environment
+  independently. The final `is-eligible` output is `true` only if ALL environments are eligible.
+
+  ## Behavior Notes
+
+  - Configuration errors (invalid limits JSON) will fail the action step with exit code 1
+  - All other validation failures result in is-eligible=false but exit code 0
+  - If pr-auto-merge-enabled is false, the environment is marked ineligible regardless of other checks
+  - Plan limits are ignored when performing-apply-on-pr is true
+  - Destroy plan limits are ignored when performing-destroy-on-pr is true
+  - When both plan and destroy plan limits are evaluated, counts are aggregated (summed)
+  - Empty plan counts are acceptable only when the corresponding limits are ignored
+  - If no metadata files are found matching the pattern, is-eligible=false
+author: "Peder Schmedling"
+inputs:
+  metadata-files-pattern:
+    description: |
+      Glob pattern to find matrix-job-meta files from the capture-matrix-job-meta action.
+      The pattern is matched against files in the current working directory.
+      Each matching file should be a JSON file with the structure produced by capture-matrix-job-meta.
+      Example: "matrix-job-meta-*.json"
+    required: true
+outputs:
+  is-eligible:
+    description: |
+      Boolean string ("true" or "false") indicating whether all environments are eligible for
+      PR automerge. Returns "true" only if all environments pass all checks: actor authorization,
+      plan creation validation, operation success (if applicable), and all limit evaluations.
+      Returns "false" if any environment fails or if no metadata files are found.
+    value: ${{ steps.evaluate.outputs.is-eligible }}
+runs:
+  using: "composite"
+  steps:
+    - id: evaluate
+      shell: bash
+      env:
+        input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+      run: |
+        # run step and exit with its exit code
+        set -o allexport
+        source "${{ github.action_path }}/step_evaluate.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
