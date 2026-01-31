@@ -28,12 +28,13 @@ runs:
         )
         log-multiline "input 'inputs-json'" "${INPUTS_JSON}"
 
+        # Deliberately excluded from this array: terraform-version, tflint-version, format-check-in-root-dir, add-pr-comment, runs-on
         YML_INPUTS=(
           environments-yml
-          goals-yml
-          terraform-init-additional-dirs-yml
           extra-envs-from-secrets-yml
           extra-envs-yml
+          goals-yml
+          terraform-init-additional-dirs-yml
         )
 
         # Calling repo branches information
@@ -159,11 +160,12 @@ runs:
           done
 
           # extra-envs-yml and extra-envs-from-secrets-yml
+          #   - yml fields that needs merge
           #   - if defined merge with global value, otherwise use global
           #   - '*-yml' becomes '*'
           MERGE_INPUT_YML_FIELDS=(
-            extra-envs-yml
             extra-envs-from-secrets-yml
+            extra-envs-yml
           )
           log-info "Processing 'extra-envs-*' yml fields ..."
           for MERGE_FIELD in ${MERGE_INPUT_YML_FIELDS[*]}; do
@@ -219,6 +221,7 @@ runs:
         # Required fields
         REQ_FIELDS=(
           add-pr-comment
+          allow-failing-terraform-operations
           caller-repo-calling-branch
           caller-repo-default-branch
           caller-repo-is-on-default-branch
@@ -227,7 +230,6 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
-          allow-failing-terraform-operations
           project-dir
           terraform-init-additional-dirs
           terraform-version
@@ -237,6 +239,7 @@ runs:
 
         NOT_EMPTY_FIELDS=(
           add-pr-comment
+          allow-failing-terraform-operations
           caller-repo-calling-branch
           caller-repo-default-branch
           caller-repo-is-on-default-branch
@@ -245,7 +248,6 @@ runs:
           extra-envs-from-secrets
           github-environment
           goals
-          allow-failing-terraform-operations
           project-dir
           terraform-version
           tflint-version
