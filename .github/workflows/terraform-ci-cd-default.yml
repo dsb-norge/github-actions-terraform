@@ -331,7 +331,11 @@ jobs:
 
       - name: 📝 Create validation summary
         id: create-validation-summary
-        if: github.event_name == 'pull_request' && matrix.vars.add-pr-comment == 'true'
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: ${{ matrix.vars.github-environment }}
@@ -418,6 +422,7 @@ jobs:
         #        AND push or manual on default branch
         #     2. goal 'apply-on-pr'
         #        AND pull request to default branch
+        #        except when PR is being closed or converted to draft
         if: |
           steps.plan.outcome == 'success'
           && (
@@ -427,6 +432,8 @@ jobs:
             ) || (
               contains(matrix.vars.goals, 'apply-on-pr')
               && github.event_name == 'pull_request'
+              && github.event.action != 'closed'
+              && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
         uses: dsb-norge/github-actions-terraform/terraform-apply@v0
@@ -457,6 +464,7 @@ jobs:
         #        AND push or manual on default branch
         #     2. goal 'destroy-on-pr'
         #        AND pull request to default branch
+        #        except when PR is being closed or converted to draft
         if: |
           steps.destroy-plan.outcome == 'success'
           && (
@@ -466,6 +474,8 @@ jobs:
             ) || (
               contains(matrix.vars.goals, 'destroy-on-pr')
               && github.event_name == 'pull_request'
+              && github.event.action != 'closed'
+              && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
         uses: dsb-norge/github-actions-terraform/terraform-apply@v0
