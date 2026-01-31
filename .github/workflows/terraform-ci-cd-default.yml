@@ -185,11 +185,21 @@ on:
           Set this to false to avoid a comment being added.
         required: false
         default: true
+      runs-on:
+        type: string
+        description: |
+          The runner group to run jobs on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
+
+          This applies to all environments, if you need to specify this per environment, specify this directly in the environment specification.
+
+          Note: some jobs are 'global' and thus always run on the group specified here, e.g. the 'create-matrix' job and the final 'terraform-conclusion' job.
+        required: false
+        default: "ubuntu-latest"
 
 jobs:
   create-matrix:
     name: Create job matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
@@ -471,7 +481,7 @@ jobs:
     if: always()
     name: "Terraform conclusion"
     needs: [create-matrix, terraform-ci-cd]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
         shell: bash
