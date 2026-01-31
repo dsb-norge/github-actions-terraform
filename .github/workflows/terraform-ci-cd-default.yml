@@ -7,7 +7,7 @@ name: "DSB terraform CI/CD workflow"
 #     pull-requests: write  # required for commenting on PRs
 #
 # Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
-# all secrets available to the calling workflow must be passe down to this one by:
+# all secrets available to the calling workflow must be passed down to this one by:
 #   secrets: inherit
 #
 on:
@@ -45,13 +45,13 @@ on:
                 YAML array (as string), steps/stages of the workflow to perform for the given environment, see the workflow input 'goals-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - terraform-init-additional-dirs-yml
-                YAML array (as string), additional directories for 'terraform init', see the workflow input 'goals-yml'.
+                YAML array (as string), additional directories for 'terraform init', see the workflow input 'terraform-init-additional-dirs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - extra-envs-yml
-                YAML objects, make environment variables available, see the workflow input 'goals-yml'.
+                YAML objects, make environment variables available, see the workflow input 'extra-envs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - extra-envs-from-secrets-yml
-                YAML objects, make environment variables with secrets available, see the workflow input 'goals-yml'.
+                YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - runs-on
                 string, name of the runner group to run the job on, see https://docs.github.com/en/actions/hosting-your-own-runners/about-self-hosted-runners#about-self-hosted-runners.
@@ -169,7 +169,7 @@ on:
       add-pr-comment:
         type: boolean
         description: |
-          The default is to add validation summary as comment on PR if the workflow triggerd by a pull request event.
+          The default is to add validation summary as comment on PR if the workflow triggered by a pull request event.
           Set this to false to avoid a comment being added.
         required: false
         default: true
@@ -233,7 +233,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ matrix.vars.terraform-version }}
-          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
+          # workaround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
           terraform_wrapper: false
 
       - name: "🗄️ Setup Terraform provider plugin cache"
