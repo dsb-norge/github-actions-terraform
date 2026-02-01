@@ -87,6 +87,66 @@ function execute_merge() {
   gh pr merge "${pr_number}" --admin --rebase --delete-branch --repo "${repo_ref}"
 }
 
+# Check current PR mergeable status via API
+function get_pr_mergeable_status() {
+  local pr_number="${1}"
+  local repo_ref="${2}"
+
+  gh pr view "${pr_number}" --repo "${repo_ref}" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN"
+}
+
+# Attempt merge with retry logic for pending mergeable status
+function merge_with_retry() {
+  local pr_number="${1}"
+  local repo_ref="${2}"
+  local max_attempts="${MERGE_RETRY_MAX_ATTEMPTS:-5}"
+  local retry_delay="${MERGE_RETRY_DELAY:-5}"
+  local attempt=1
+
+  while [[ ${attempt} -le ${max_attempts} ]]; do
+    log-info "Merge attempt ${attempt}/${max_attempts}"
+
+    # Check current mergeable status before attempting merge
+    if [[ ${attempt} -gt 1 ]]; then
+      local current_mergeable
+      current_mergeable=$(get_pr_mergeable_status "${pr_number}" "${repo_ref}")
+      log-info "Current mergeable status: ${current_mergeable}"
+
+      if [[ "${current_mergeable}" == "NOT_MERGEABLE" ]]; then
+        log-error "PR is not mergeable (status: ${current_mergeable})"
+        return 1
+      fi
+
+      if [[ "${current_mergeable}" == "MERGEABLE" ]]; then
+        log-info "PR is now confirmed mergeable"
+      fi
+    fi
+
+    # Attempt the merge
+    local merge_output
+    local merge_exit_code=0
+    merge_output=$(execute_merge "${pr_number}" "${repo_ref}" 2>&1) || merge_exit_code=$?
+
+    if [[ ${merge_exit_code} -eq 0 ]]; then
+      log-info "Successfully merged PR #${pr_number}"
+      return 0
+    fi
+
+    log-warn "Merge attempt ${attempt} failed with exit code: ${merge_exit_code}"
+    log-warn "Output: ${merge_output}"
+
+    if [[ ${attempt} -lt ${max_attempts} ]]; then
+      log-info "Waiting ${retry_delay} seconds before retry..."
+      sleep ${retry_delay}
+    fi
+
+    ((attempt++))
+  done
+
+  log-error "Failed to merge PR after ${max_attempts} attempts"
+  return 1
+}
+
 # Extract PR info for debugging from event context
 function get_pr_debug_info() {
   local event_context_json="${1}"
@@ -173,27 +233,43 @@ function main() {
   fi
 
   if [[ "${pr_mergeable}" == "null" ]]; then
-    log-warn "PR mergeable status is pending computation - will attempt merge anyway"
+    log-warn "PR mergeable status is pending computation - will attempt merge with retry logic"
   fi
 
   end-group
 
   start-group "Merge PR #${pr_number}"
 
-  if execute_merge "${pr_number}" "${repo_ref}" 2>&1; then
-    log-info "Successfully merged PR #${pr_number}"
-    end-group
-    return 0
+  # Use retry logic when mergeable status is null (pending), otherwise single attempt
+  if [[ "${pr_mergeable}" == "null" ]]; then
+    log-info "Using retry logic due to pending mergeable status"
+    if merge_with_retry "${pr_number}" "${repo_ref}"; then
+      end-group
+      return 0
+    else
+      local exit_code=$?
+      # Show additional PR info for debugging
+      log-info "PR details for debugging:"
+      get_pr_debug_info "${event_context_json}" || true
+      end-group
+      return ${exit_code}
+    fi
   else
-    local exit_code=$?
-    log-error "Failed to merge PR with exit code: ${exit_code}"
+    if execute_merge "${pr_number}" "${repo_ref}" 2>&1; then
+      log-info "Successfully merged PR #${pr_number}"
+      end-group
+      return 0
+    else
+      local exit_code=$?
+      log-error "Failed to merge PR with exit code: ${exit_code}"
 
-    # Show additional PR info for debugging
-    log-info "PR details for debugging:"
-    get_pr_debug_info "${event_context_json}" || true
+      # Show additional PR info for debugging
+      log-info "PR details for debugging:"
+      get_pr_debug_info "${event_context_json}" || true
 
-    end-group
-    return ${exit_code}
+      end-group
+      return ${exit_code}
+    fi
   fi
 }
 
