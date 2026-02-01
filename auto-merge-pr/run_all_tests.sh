@@ -27,6 +27,10 @@ TESTS_RUN=0
 # ============================================================================
 gh_mock_success() {
   echo "[MOCK gh] Called with: $*" >&2
+  # Handle 'gh pr view' for mergeable status check
+  if [[ "$1" == "pr" && "$2" == "view" ]]; then
+    echo "MERGEABLE"
+  fi
   return 0
 }
 
@@ -39,18 +43,75 @@ gh_mock_failure() {
   return 1
 }
 
-# Current mock mode (success or failure)
+# ============================================================================
+# Mock gh CLI - fails initially then succeeds (for retry testing)
+# Uses a temp file to track attempts across subshells
+# ============================================================================
+GH_MOCK_ATTEMPT_FILE=""
+GH_MOCK_FAIL_COUNT=0
+GH_MOCK_VIEW_RESPONSES=()
+
+gh_mock_retry() {
+  echo "[MOCK gh] Called with: $*" >&2
+
+  # Read current attempt from file
+  local current_attempt=0
+  if [[ -f "${GH_MOCK_ATTEMPT_FILE}" ]]; then
+    current_attempt=$(cat "${GH_MOCK_ATTEMPT_FILE}")
+  fi
+
+  # Handle 'gh pr view' for mergeable status check
+  if [[ "$1" == "pr" && "$2" == "view" ]]; then
+    # Use view_attempt to track which response to return
+    local view_file="${GH_MOCK_ATTEMPT_FILE}.view"
+    local view_attempt=0
+    if [[ -f "${view_file}" ]]; then
+      view_attempt=$(cat "${view_file}")
+    fi
+    echo $((view_attempt + 1)) > "${view_file}"
+
+    if [[ ${#GH_MOCK_VIEW_RESPONSES[@]} -gt 0 && ${view_attempt} -lt ${#GH_MOCK_VIEW_RESPONSES[@]} ]]; then
+      echo "${GH_MOCK_VIEW_RESPONSES[${view_attempt}]}"
+    else
+      echo "MERGEABLE"
+    fi
+    return 0
+  fi
+
+  # Handle 'gh pr merge'
+  if [[ "$1" == "pr" && "$2" == "merge" ]]; then
+    current_attempt=$((current_attempt + 1))
+    echo "${current_attempt}" > "${GH_MOCK_ATTEMPT_FILE}"
+
+    if [[ ${current_attempt} -le ${GH_MOCK_FAIL_COUNT} ]]; then
+      echo "[MOCK gh] Simulating failure (attempt ${current_attempt}/${GH_MOCK_FAIL_COUNT})" >&2
+      return 1
+    fi
+    echo "[MOCK gh] Success on attempt ${current_attempt}" >&2
+    return 0
+  fi
+
+  return 0
+}
+
+# Current mock mode (success, failure, or retry)
 GH_MOCK_MODE="success"
 
 # The actual mock function that gets exported - delegates based on mode
 gh() {
-  if [[ "${GH_MOCK_MODE}" == "failure" ]]; then
-    gh_mock_failure "$@"
-  else
-    gh_mock_success "$@"
-  fi
+  case "${GH_MOCK_MODE}" in
+    failure)
+      gh_mock_failure "$@"
+      ;;
+    retry)
+      gh_mock_retry "$@"
+      ;;
+    *)
+      gh_mock_success "$@"
+      ;;
+  esac
 }
-export -f gh gh_mock_success gh_mock_failure
+export -f gh gh_mock_success gh_mock_failure gh_mock_retry
 
 # Function to run a single test
 # Args:
@@ -124,6 +185,14 @@ run_test() {
 # Function to reset all variables to valid defaults
 reset_defaults() {
   export GH_MOCK_MODE="success"
+  # Create fresh temp file for retry attempt tracking
+  export GH_MOCK_ATTEMPT_FILE=$(mktemp)
+  echo "0" > "${GH_MOCK_ATTEMPT_FILE}"
+  export GH_MOCK_FAIL_COUNT=0
+  export GH_MOCK_VIEW_RESPONSES=()
+  # Use fast retry for testing (0 seconds instead of 5)
+  export MERGE_RETRY_DELAY=0
+  export MERGE_RETRY_MAX_ATTEMPTS=5
   export input_repo_ref="test-org/test-repo"
   export input_pr_number="123"
   export input_github_event_context_json='{
@@ -340,6 +409,146 @@ run_test "Debug info contains PR title" 1 "Debug Test PR"
 # ============================================================================
 reset_defaults
 run_test "Successful merge logs success" 0 "Successfully merged PR"
+
+# ============================================================================
+# Test 17: Null mergeable triggers retry logic
+# ============================================================================
+reset_defaults
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Null mergeable uses retry logic" 0 "Using retry logic due to pending mergeable status"
+
+# ============================================================================
+# Test 18: Retry succeeds on second attempt
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=1
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry succeeds on second attempt" 0 "Merge attempt 2"
+
+# ============================================================================
+# Test 19: Retry succeeds on third attempt
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=2
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "UNKNOWN" "MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry succeeds on third attempt" 0 "Merge attempt 3"
+
+# ============================================================================
+# Test 20: Retry fails after max attempts
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="failure"
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry fails after max attempts" 1 "Failed to merge PR after 5 attempts"
+
+# ============================================================================
+# Test 21: Retry aborts if PR becomes non-mergeable
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=5
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "NOT_MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry aborts when PR becomes non-mergeable" 1 "PR is not mergeable"
+
+# ============================================================================
+# Test 22: Retry logs waiting message between attempts
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=1
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry logs wait message" 0 "Waiting .* seconds before retry"
+
+# ============================================================================
+# Test 23: Retry logs current mergeable status
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=1
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry logs mergeable status check" 0 "Current mergeable status:"
+
+# ============================================================================
+# Test 24: Retry confirms when PR becomes mergeable
+# ============================================================================
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=2
+# First view returns UNKNOWN, second returns MERGEABLE (triggers the confirmation message)
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "MERGEABLE" "MERGEABLE")
+export input_github_event_context_json='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {
+    "state": "open",
+    "draft": false,
+    "mergeable": null
+  }
+}'
+run_test "Retry confirms PR is mergeable" 0 "PR is now confirmed mergeable"
 
 # ============================================================================
 # Summary
