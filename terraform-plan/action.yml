@@ -42,6 +42,9 @@ outputs:
   txt-output-file:
     description: "The output of the terraform plan in plain txt format, ie. processed by the 'terraform show' command."
     value: ${{ steps.plan-show.outputs.tf-plan-txt-output-file }}
+  json-output-file:
+    description: "The output of the terraform plan in JSON format, ie. processed by the 'terraform show -json' command."
+    value: ${{ steps.plan-json.outputs.tf-plan-json-output-file }}
 runs:
   using: "composite"
   steps:
@@ -127,6 +130,29 @@ runs:
         set-output 'tf-plan-txt-output-file' "${PLAN_TXT_OUT_FILE}"
         terraform show -no-color ${PLAN_TF_OUT_FILE} 2>&1 | tee ${PLAN_TXT_OUT_FILE}
         end-group
+      continue-on-error: true # allow action to continue, execution status is returned by the last step
+    - id: plan-json
+      if: steps.plan.outcome == 'success'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # create plan.json file
+
+        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
+
+        start-group "output the plan as json"
+        PLAN_TF_OUT_FILE="${{ steps.plan.outputs.tf-plan-tf-output-file }}"
+        PLAN_JSON_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.json"
+        set-output 'tf-plan-json-output-file' "${PLAN_JSON_OUT_FILE}"
+        terraform show -json ${PLAN_TF_OUT_FILE} > ${PLAN_JSON_OUT_FILE} 2>&1
+        end-group
+      continue-on-error: true # allow action to continue, execution status is returned by the last step
+    - id: plan-json-upload
+      if: steps.plan-json.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.environment-name }}-terraform-plan-json
+        path: ${{ steps.plan-json.outputs.tf-plan-json-output-file }}
       continue-on-error: true # allow action to continue, execution status is returned by the last step
     - id: plan-status
       if: |
