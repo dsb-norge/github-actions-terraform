@@ -88,26 +88,30 @@ runs:
             # Count both types of move operations:
             # 1. "has moved to" - simple move without changes
             # 2. "(moved from" - move with in-place update
-            moves=0
-            if has_moved_count=$(echo "$content" | grep -c "has moved to" || true); then
-              moves=$((moves + has_moved_count))
-            fi
-            if moved_from_count=$(echo "$content" | grep -c "(moved from" || true); then
-              moves=$((moves + moved_from_count))
+            # grep -c exits 0 on match, 1 on no match, 2+ on error
+            set +e
+            has_moved_count=$(echo "$content" | grep -c "has moved to")
+            grep_rc_1=$?
+            moved_from_count=$(echo "$content" | grep -c "(moved from")
+            grep_rc_2=$?
+            set -e
+            if [ $grep_rc_1 -le 1 ] && [ $grep_rc_2 -le 1 ]; then
+              moves=$((has_moved_count + moved_from_count))
+            else
+              log-error "failed to parse, unexpected error when counting moved resources in the plan file"
             fi
 
-            if ! echo "$content" | grep -q "Some objects will no longer be managed by Terraform"; then
-              removes=0
+            # Count resources to be removed from state (no longer managed by Terraform).
+            # Each such resource has a comment line containing "will no longer be managed by Terraform".
+            # grep -c exits 0 on match, 1 on no match, 2+ on error
+            set +e
+            removed_count=$(echo "$content" | grep -c "will no longer be managed by Terraform")
+            grep_rc=$?
+            set -e
+            if [ $grep_rc -le 1 ]; then
+              removes=$removed_count
             else
-              if ! removed_block=$(echo "$content" | sed -n '/following objects, but it will not delete them:/,/After applying this plan/p'); then
-                log-error "failed to parse, expected to find the list of resources to be removed in the plan file"
-              else
-                if ! removed_lines=$(echo "$removed_block" | grep -c "  - "); then
-                  log-error "failed to parse, expected to find the number of resources to be removed in the plan file"
-                else
-                  removes=$removed_lines
-                fi
-              fi
+              log-error "failed to parse, unexpected error when counting resources to be removed from the plan file"
             fi
 
           else
