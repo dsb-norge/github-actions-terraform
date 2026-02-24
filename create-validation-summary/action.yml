@@ -84,6 +84,7 @@ runs:
         COUNT_IMPORT: ${{ inputs.plan-count-import }}
         COUNT_MOVE: ${{ inputs.plan-count-move }}
         COUNT_REMOVE: ${{ inputs.plan-count-remove }}
+        JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
       run: |
         # Build pull request comment
 
@@ -125,6 +126,8 @@ runs:
           COMMENT_CONTENT="${COMMENT_CONTENT} |"
         fi
 
+        # add link to job logs
+        JOB_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${JOB_CHECK_RUN_ID}#logs"
         # look for plan output
         PLAN_OUT=""
         if [ -f "${PLAN_OUT_FILE}" ]; then
@@ -163,7 +166,7 @@ runs:
 
         COMMENT_CONTENT="${COMMENT_CONTENT}
 
-        *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${GITHUB_WORKFLOW}\`*"
+        *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${GITHUB_WORKFLOW}\`, Job log: [link](${JOB_URL})*"
 
         log-info "Final validation summary prefix: ${COMMENT_PREFIX}"
         log-multiline "Final validation summary " "${COMMENT_CONTENT}"
