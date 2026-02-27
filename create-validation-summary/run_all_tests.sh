@@ -440,12 +440,64 @@ export input_plan_console_file="${_plan_console_file}"
 run_test "Plan output from console file (with refresh stripping)" assert_plan_from_console_file
 rm -f "${_plan_console_file}"
 
-# Test 8: Custom environment name in prefix
+# Test 8: Large plan file (verifies no E2BIG / 'Argument list too long' error)
+# With 'set -o allexport', large variables get exported to the environment.
+# When the env exceeds ARG_MAX (~2MB), forking external commands fails with E2BIG.
+# This test generates a plan file >200KB to verify the fix works.
+reset_defaults
+_large_plan_file=$(mktemp)
+{
+  echo "Terraform used the selected providers to generate the following execution plan."
+  echo "Resource actions are indicated with the following symbols:"
+  echo "  + create"
+  echo ""
+  # Generate ~250KB of plan content to exceed typical E2BIG thresholds
+  for i in $(seq 1 5000); do
+    echo "  # module.example.azurerm_resource.item[\"item-${i}\"] will be created"
+    echo "  + resource \"azurerm_resource\" \"item\" {"
+    echo "      + id   = (known after apply)"
+    echo "      + name = \"item-${i}\""
+    echo "    }"
+    echo ""
+  done
+  echo "Plan: 5000 to add, 0 to change, 0 to destroy."
+} > "${_large_plan_file}"
+
+assert_large_plan_file() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+
+  # Should contain plan output (it will be the tail end due to 65k char cap)
+  if [[ "${summary}" == *"Plan not available"* ]]; then
+    fails+="  summary: should not say 'Plan not available' for large plan file\n"
+  fi
+
+  # The output should be capped at 65k characters
+  local plan_section
+  plan_section=$(echo "${summary}" | sed -n '/```terraform/,/```/p')
+  local plan_length=${#plan_section}
+  if [[ ${plan_length} -gt 66000 ]]; then
+    fails+="  summary: plan section too long (${plan_length} chars), should be capped at ~65k\n"
+  fi
+
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+
+export input_plan_txt_output_file="${_large_plan_file}"
+run_test "Large plan file (>200KB) does not cause E2BIG error" assert_large_plan_file
+rm -f "${_large_plan_file}"
+
+# Test 9: Custom environment name in prefix
 reset_defaults
 export input_environment_name="production"
 run_test "Environment name appears in prefix" assert_environment_name_in_prefix
 
-# Test 9: Job URL is correct in summary footer
+# Test 10: Job URL is correct in summary footer
 reset_defaults
 run_test "Job URL is correctly constructed" assert_job_url_in_summary
 
