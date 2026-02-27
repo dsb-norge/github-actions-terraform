@@ -1,0 +1,769 @@
+data.external.get_ops_ipam_token: Reading...
+module.application_gateway_wlz.module.waf_policy["app-gw-1::flow_portal_example_com"].modtm_telemetry.telemetry[0]: Refreshing state... [id=30a4e982-d4a3-48dd-bb4e-05507d5c5c80]
+module.application_gateway_wlz.module.waf_policy["app-gw-1::flow_portal_example_com"].random_uuid.telemetry[0]: Refreshing state... [id=364b0ad8-d424-a672-db9e-45425112fef5]
+module.application_gateway_wlz.module.waf_policy["app-gw-1::ifs_portal_example_com"].modtm_telemetry.telemetry[0]: Refreshing state... [id=3b5a0344-f5ac-42fd-ad60-ad3a53afe514]
+module.application_gateway_wlz.module.waf_policy["app-gw-1::ifs_portal_example_com"].random_uuid.telemetry[0]: Refreshing state... [id=bdef50c7-fea4-929b-33d8-c732786a81f9]
+module.main.module.rg_name["arc-servers"].random_string.first_letter: Refreshing state... [id=v]
+module.main.module.rg_name["mail-server"].random_string.first_letter: Refreshing state... [id=l]
+module.main.module.rg_name["web-portal"].random_string.first_letter: Refreshing state... [id=w]
+module.main.module.rg_name["backup-server"].random_string.first_letter: Refreshing state... [id=a]
+module.main.module.rg_name["network-monitor"].random_string.first_letter: Refreshing state... [id=d]
+module.main.module.rg_name["erp-system"].random_string.first_letter: Refreshing state... [id=a]
+module.main.module.rg_name["patch-management"].random_string.first_letter: Refreshing state... [id=h]
+module.main.module.rg_name["geo-services"].random_string.first_letter: Refreshing state... [id=n]
+module.main.module.rg_name["quorum-witness"].random_string.first_letter: Refreshing state... [id=n]
+module.main.module.rg_name["monitoring"].random_string.first_letter: Refreshing state... [id=h]
+module.main.module.rg_name["migration-tools"].random_string.first_letter: Refreshing state... [id=d]
+module.application_gateway_wlz.data.azuread_group.infra_maintainers["prod"]: Reading...
+module.application_gateway_wlz.data.azuread_group.infra_maintainers_eligible["prod"]: Reading...
+module.application_gateway_wlz.data.azuread_group.infra_maintainers["dev"]: Reading...
+module.main.data.azuread_group.infra_maintainers_eligible["dev"]: Reading...
+module.application_gateway_wlz.data.azuread_group.infra_maintainers_eligible["dev"]: Reading...
+module.main.data.azuread_group.infra_maintainers_eligible["prod"]: Reading...
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers["dev"]: Reading...
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers["prod"]: Reading...
+module.application_gateway_wlz.data.azuread_group.infra_maintainers["prod"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-222222222222]
+module.main.data.azuread_group.infra_maintainers["dev"]: Reading...
+module.main.data.azuread_group.infra_maintainers_eligible["prod"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-444444444444]
+module.main.data.azuread_group.infra_maintainers["prod"]: Reading...
+module.main.data.azuread_group.infra_maintainers_eligible["dev"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-333333333333]
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers_eligible["dev"]: Reading...
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers["prod"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-222222222222]
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers_eligible["prod"]: Reading...
+module.application_gateway_wlz.data.azuread_group.infra_maintainers_eligible["dev"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-333333333333]
+module.application_gateway_wlz.data.azuread_group.infra_maintainers_eligible["prod"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-444444444444]
+module.main.module.rg_name["erp-system"].random_string.main: Refreshing state... [id=hl7842278d7jfu9w2g2jyr2b4ttmnrm71bt6azlwau5w4p8hfzmqs4ka2brd]
+module.main.module.rg_name["mail-server"].random_string.main: Refreshing state... [id=2x83nae5yjhbut4iku8xtludttzwy52xupx7rws34zohb9zrwuzhldhv3sxy]
+module.main.module.rg_name["web-portal"].random_string.main: Refreshing state... [id=pxymow6aijjdrsylg65vvyc3hkq74x6uv1sqtwpj7t1rq0einpaskg147g0q]
+module.main.module.rg_name["migration-tools"].random_string.main: Refreshing state... [id=52x6hmqjhtt75dyufdbkcb552ifaooc70r5nxf49i4bbni6lgdy6w2im8rlw]
+data.external.get_ops_ipam_token: Read complete after 1s [id=-]
+module.main.module.rg_name["arc-servers"].random_string.main: Refreshing state... [id=7t6cue3t185w3zzm4o9yabsajwj9c34onx0k7k5bbpre1eskl2mpbinwhy13]
+module.main.module.rg_name["network-monitor"].random_string.main: Refreshing state... [id=kza4k6mfazzfqicalpo91mmngfrp2hcviea4z9vb2noehj937esudbw6docl]
+module.main.module.rg_name["geo-services"].random_string.main: Refreshing state... [id=7s47fppqxskc35kwfq0qidughecpqtx09m0dveiislc144n84mpbmjs5tol3]
+module.main.module.rg_name["backup-server"].random_string.main: Refreshing state... [id=5epxok527ilsbx1rqvh4s8aslfb8834h388u699if05flds8o4c8thot0o3h]
+module.main.module.rg_name["monitoring"].random_string.main: Refreshing state... [id=hsvfe7bev643rtfvmb1xb8jsnoyl7d0u658oy2svv8yhjsyssyany3jsujoz]
+module.main.module.rg_name["patch-management"].random_string.main: Refreshing state... [id=w8ukwve5s27x1g0ur3shco40jkvj08br9c1qngcyl7nwvk1o7tx2s4nh87vl]
+module.main.data.azuread_group.infra_maintainers["dev"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-111111111111]
+module.main.module.rg_name["quorum-witness"].random_string.main: Refreshing state... [id=28c8eilaejzppq5jw60ahqx9qztode32tftebkvtbnq2uvtx9i29gedoa3a2]
+module.application_gateway_wlz.data.azuread_group.infra_maintainers["dev"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-111111111111]
+module.main.module.admin_key_vault_names["network-monitor"].random_string.first_letter: Refreshing state... [id=a]
+module.main.module.admin_key_vault_names["erp-system"].random_string.first_letter: Refreshing state... [id=e]
+module.main.module.admin_key_vault_names["monitoring"].random_string.first_letter: Refreshing state... [id=w]
+module.main.module.admin_key_vault_names["mail-server"].random_string.first_letter: Refreshing state... [id=q]
+module.main.data.azuread_group.infra_maintainers["prod"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-222222222222]
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers["dev"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-111111111111]
+module.main.module.admin_key_vault_names["quorum-witness"].random_string.first_letter: Refreshing state... [id=v]
+module.main.module.storage_account_names["geo-services-geo-services"].random_string.first_letter: Refreshing state... [id=f]
+module.main.module.virtual_machine_names["quorum-witness-hpe-quorum-6"].random_string.first_letter: Refreshing state... [id=g]
+module.main.module.virtual_machine_names["monitoring-monitoring1"].random_string.first_letter: Refreshing state... [id=e]
+module.main.module.virtual_machine_names["mail-server-mail-server1"].random_string.first_letter: Refreshing state... [id=s]
+module.main.tls_private_key.vm_ssh["quorum-witness-hpe-quorum-6"]: Refreshing state... [id=f6fa23a256e3dcee8c6851a02c0668d227638eab]
+module.main.random_password.vm_admin["monitoring-monitoring1"]: Refreshing state... [id=none]
+module.main.module.virtual_machine_names["erp-system-erp-system"].random_string.first_letter: Refreshing state... [id=o]
+module.main.random_password.vm_admin["erp-system-erp-system"]: Refreshing state... [id=none]
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers_eligible["dev"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-333333333333]
+module.main.random_password.vm_admin["mail-server-mail-server1"]: Refreshing state... [id=none]
+module.main.module.admin_key_vault_names["monitoring"].random_string.main: Refreshing state... [id=jui6njdcj4y6bzujhqvv6vtwtfxhx2dxfi67ess70idntjvw0ar7khg3itw5]
+module.main.module.admin_key_vault_names["erp-system"].random_string.main: Refreshing state... [id=322epjl5jikhazlswty8208u1x6011g7o4siwkx1p9a97s0mlq3dy9cggor0]
+module.main.module.admin_key_vault_names["quorum-witness"].random_string.main: Refreshing state... [id=d8pqdlgee6quhf3xlmzyqkmn0r8866qfqtrdi1za24mfw01xks5z3x3vp5iu]
+module.main.module.admin_key_vault_names["mail-server"].random_string.main: Refreshing state... [id=wxq9pa78v8k7mzbs7d4sfxjafdm48u29m7dq2gmuirecu2ezm7l7ngvdvp30]
+module.main.module.admin_key_vault_names["network-monitor"].random_string.main: Refreshing state... [id=n3zsurhi8p49zf2abju763dp03isrv0jdo8c4qjxlqe4yq5jo7dj5fa1i4bc]
+module.main.module.admin_key_vault["network-monitor"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.admin_key_vault["erp-system"].data.azapi_client_config.telemetry[0]: Reading...
+module.public_dns_zones_wlz.data.azuread_group.infra_maintainers_eligible["prod"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-444444444444]
+module.main.module.admin_key_vault["mail-server"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.admin_key_vault["network-monitor"].random_uuid.telemetry[0]: Refreshing state... [id=5b71a109-7af5-b3bb-52eb-b72477f7662a]
+module.main.module.admin_key_vault["quorum-witness"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.admin_key_vault["erp-system"].random_uuid.telemetry[0]: Refreshing state... [id=58230342-ee8a-b344-9d56-acf7d697cd19]
+module.main.module.admin_key_vault["monitoring"].random_uuid.telemetry[0]: Refreshing state... [id=f5ad630e-baae-767d-b971-7d9302076660]
+module.main.module.admin_key_vault["mail-server"].random_uuid.telemetry[0]: Refreshing state... [id=2a979ebd-6d65-a675-f9f7-345fe30c8c3f]
+module.main.module.admin_key_vault["quorum-witness"].random_uuid.telemetry[0]: Refreshing state... [id=919607a4-066c-47f2-baa7-85f5049a3da4]
+module.main.module.admin_key_vault["quorum-witness"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.admin_key_vault["network-monitor"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.admin_key_vault["network-monitor"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.admin_key_vault["quorum-witness"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.admin_key_vault["erp-system"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.admin_key_vault["monitoring"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.admin_key_vault["erp-system"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.admin_key_vault["monitoring"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.admin_key_vault["monitoring"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.admin_key_vault["mail-server"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.admin_key_vault["mail-server"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.storage_account_names["geo-services-geo-services"].random_string.main: Refreshing state... [id=4zm5hd4musujdtbsmnob7trzax0bm7do8udrkrtyegoaz95c9wnkms3qj1yl]
+module.main.module.regions[0].data.azapi_client_config.current: Reading...
+module.main.data.azuread_users.vm_access[0]: Reading...
+module.public_dns_zones_wlz.module.admin_key_vault_names["public-dns"].random_string.first_letter: Refreshing state... [id=c]
+module.main.module.ipam_config_baseline["mg_operations_lz"].azureipam_space.this[0]: Refreshing state... [name=mg_operations_lz]
+module.main.module.virtual_machine_names["monitoring-monitoring1"].random_string.main: Refreshing state... [id=ymxr5wocymg4ztor47286t8chrh9qt57bgadks072bqmfj5xx9wxpwqitcen]
+module.main.module.virtual_machine_names["erp-system-erp-system"].random_string.main: Refreshing state... [id=q08i4q2bvk4se3c1spxnugaocwbfwa0g1m59ac4f1ritxukjkpu2br7d20lv]
+module.main.module.virtual_machine_names["mail-server-mail-server1"].random_string.main: Refreshing state... [id=ygrfkjsxrzp0zwmuycpfbv51ftjwpv0fzn2rl0h62yg3z6pw06aly9mj5bxc]
+module.main.module.virtual_machine_names["quorum-witness-hpe-quorum-6"].random_string.main: Refreshing state... [id=okd10hdih0s2qtozsmw6tt2y6otpjxccx606ny02s5fw0fbhzy2llksa66b8]
+module.main.module.ipam_config_baseline["mg_operations_lz"].azureipam_block.this["ss11_ikt_prod"]: Refreshing state... [name=ss11_ikt_prod]
+module.main.module.mssql_database_names["erp-system-mssql-db-erp-system-db"].random_string.first_letter: Refreshing state... [id=g]
+module.main.module.mssql_database_names["erp-system-mssql-db-erp-systemLicense-db"].random_string.first_letter: Refreshing state... [id=d]
+module.main.module.mssql_database_names["network-monitor-mssql-db-network-monitor-db"].random_string.first_letter: Refreshing state... [id=m]
+module.main.module.regions[0].random_uuid.telemetry[0]: Refreshing state... [id=7ed04315-b23f-edce-0a23-a951e2fbd512]
+module.main.module.regions[0].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.regions[0].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.regions[0].data.azapi_client_config.telemetry[0]: Reading...
+module.public_dns_zones_wlz.module.public_dns_cert_maintainer_name["public-dns"].random_string.first_letter: Refreshing state... [id=p]
+module.public_dns_zones_wlz.module.admin_key_vault_names["public-dns"].random_string.main: Refreshing state... [id=j3efy6vxbhq34wnw7qy1ngc3plw1ioxezi4tf2gir1yca4rxuwua21r0xp0t]
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].data.modtm_module_source.telemetry[0]: Reading...
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].random_uuid.telemetry[0]: Refreshing state... [id=368a2db2-84cc-bc32-18a7-fc2a00a82aa2]
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.admin_key_vault["network-monitor"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.admin_key_vault["erp-system"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.admin_key_vault["mail-server"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.admin_key_vault["quorum-witness"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.admin_key_vault["monitoring"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.regions[0].data.azapi_client_config.current: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.regions[0].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.public_dns_zones_wlz.module.public_dns_cert_reader_name["public-dns"].random_string.first_letter: Refreshing state... [id=e]
+module.main.module.ipam_reservations["erp-system"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=9yxyaViAFWqfnAMXXk6krk]
+module.main.module.ipam_reservations["web-portal"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=TRToEfLWDDVcuhBK4xaJi4]
+module.main.module.ipam_reservations["geo-services"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=WMEfke9E8Y8KXxG823w9jJ]
+module.main.module.ipam_reservations["backup-server"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=oSgUueo2ZghzZmLz6GuvH4]
+module.main.module.ipam_reservations["quorum-witness"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=RWgT7WuCf2JbygcFuAwSeB]
+module.main.module.ipam_reservations["mail-server"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=aUHaNFpMTMbWrXXYNJgVZ8]
+module.main.module.ipam_reservations["monitoring"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=8nhqoML9myVNLCZiRgnZou]
+module.main.module.ipam_reservations["migration-tools"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=KtpYnv7Tbo7bHgogdbfsw9]
+module.main.data.azuread_users.vm_access[0]: Read complete after 1s [id=users#aAbBcCdDeEfFgGhHiIjJkKlL=]
+module.main.module.ipam_reservations["network-monitor"].azureipam_reservation.this["vnet1"]: Refreshing state... [id=eg3kzmKB6rL97SL5niktUS]
+module.main.data.azuread_group.mssql_server_admin["erp-system"]: Reading...
+module.main.data.azuread_group.mssql_server_admin["network-monitor"]: Reading...
+module.main.module.mssql_database_names["network-monitor-mssql-db-network-monitor-db"].random_string.main: Refreshing state... [id=9d2yjto6c8vm66yqmpwtye3kmxfw2mo5zqy2zhql2vijbpktcklc3dvbp2uj]
+module.main.module.mssql_database_names["erp-system-mssql-db-erp-system-db"].random_string.main: Refreshing state... [id=jgaxhcvxt6cgg1axeoe6w3wcfji3bbuzwco1214ukzqh4u2eblywql801hem]
+module.main.module.mssql_database_names["erp-system-mssql-db-erp-systemLicense-db"].random_string.main: Refreshing state... [id=2lcyo4uxrxkvdm16q1eqqje7qxwgc8dkx450jo4avfnncz8liw4bsup5g6yh]
+module.public_dns_zones_wlz.module.public_dns_cert_reader_name["public-dns"].random_string.main: Refreshing state... [id=0ywmj4qbigpwzt4yymo2clhtlg70a3285ib4v7zzswg8pu8z8uuv0tlzf3hn]
+module.main.module.regions[0].modtm_telemetry.telemetry[0]: Refreshing state... [id=eeebb16b-3672-49d8-ab60-a37264e803d1]
+module.public_dns_zones_wlz.module.public_dns_cert_maintainer_name["public-dns"].random_string.main: Refreshing state... [id=x3y5ijvry0yaytejbswbngbl0t5v2lrl6lbvc8kvet4paaor3jckkjh0z0ds]
+module.main.data.azuread_group.mssql_server_admin["erp-system"]: Read complete after 1s [id=/groups/00000000-aaaa-bbbb-cccc-666666666666]
+module.public_dns_zones_wlz.module.ipam_reservations["public-dns"].azureipam_reservation.this["1"]: Refreshing state... [id=iixEPfz8KKgycHq3XBFj9w]
+module.main.data.azuread_group.mssql_server_admin["network-monitor"]: Read complete after 0s [id=/groups/00000000-aaaa-bbbb-cccc-555555555555]
+module.main.ephemeral.random_password.mssql_server_admin_password["network-monitor"]: Opening...
+module.main.ephemeral.random_password.mssql_server_admin_password["erp-system"]: Opening...
+module.main.ephemeral.random_password.mssql_server_admin_password["erp-system"]: Opening complete after 0s
+module.main.ephemeral.random_password.mssql_server_admin_password["network-monitor"]: Opening complete after 0s
+module.main.module.mssql_database_server_names["network-monitor"].random_string.first_letter: Refreshing state... [id=b]
+module.main.module.mssql_database_server_names["erp-system"].random_string.first_letter: Refreshing state... [id=k]
+module.main.module.mssql_database_server_names["erp-system"].random_string.main: Refreshing state... [id=j7sfam611gujfsqwotqxsgnbqdrcn2qd88oy9ot2blmkklno4f1lkqt4eiec]
+module.main.module.mssql_database_server_names["network-monitor"].random_string.main: Refreshing state... [id=6u6symhy28vq6dr9vfv5sfayw2gairq1pv1cxbd7tzmzsbgowm2ydh91lq3q]
+module.application_gateway_wlz.data.azurerm_subscription.current: Reading...
+module.public_dns_zones_wlz.azurerm_resource_group.workload["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns]
+module.application_gateway_wlz.data.azurerm_client_config.this: Reading...
+module.public_dns_zones_wlz.data.azurerm_client_config.this: Reading...
+module.main.data.azurerm_client_config.this: Reading...
+module.public_dns_zones_wlz.data.azurerm_subscription.current: Reading...
+module.main.data.azurerm_subscription.current: Reading...
+module.main.data.azurerm_client_config.this: Read complete after 0s [id=YmFzZTY0LWVuY29kZWQtY2xpZW50LWNvbmZpZw==]
+module.application_gateway_wlz.data.azurerm_client_config.this: Read complete after 0s [id=YmFzZTY0LWVuY29kZWQtY2xpZW50LWNvbmZpZw==]
+module.public_dns_zones_wlz.data.azurerm_client_config.this: Read complete after 0s [id=YmFzZTY0LWVuY29kZWQtY2xpZW50LWNvbmZpZw==]
+module.main.azurerm_resource_group.workload["erp-system"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7]
+module.main.azurerm_resource_group.workload["backup-server"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-backup-server-a5ep]
+module.main.azurerm_resource_group.workload["web-portal"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy]
+module.main.azurerm_resource_group.workload["monitoring"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv]
+module.main.azurerm_resource_group.workload["arc-servers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-arc-servers-v7t6]
+module.main.azurerm_resource_group.workload["network-monitor"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza]
+module.main.azurerm_resource_group.workload["migration-tools"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-migration-tools-d52x]
+module.main.data.azurerm_subscription.current: Read complete after 0s [id=/subscriptions/00000000-1111-2222-3333-555555555555]
+module.main.azurerm_resource_group.workload["mail-server"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8]
+module.main.azurerm_resource_group.workload["quorum-witness"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c]
+module.main.azurerm_resource_group.workload["geo-services"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4]
+module.main.azurerm_resource_group.workload["patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-patch-management-hw8u]
+module.main.data.azurerm_role_definition.vm_admin_login: Reading...
+module.main.data.azurerm_role_definition.vm_user_login: Reading...
+module.public_dns_zones_wlz.data.azurerm_subscription.current: Read complete after 1s [id=/subscriptions/00000000-1111-2222-3333-555555555555]
+module.main.azurerm_role_assignment.veeam_backup_contributor[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleAssignments/9bb64f80-efee-9ada-155e-145c7004bc23]
+module.public_dns_zones_wlz.data.azurerm_role_definition.vm_admin_login: Reading...
+module.public_dns_zones_wlz.data.azurerm_role_definition.vm_user_login: Reading...
+module.public_dns_zones_wlz.azurerm_role_definition.public_dns_zone_txt_record_contributor["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/85aefd50-a8df-c567-3434-f64662f80c8e|/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns]
+module.application_gateway_wlz.data.azurerm_subscription.current: Read complete after 2s [id=/subscriptions/00000000-1111-2222-3333-555555555555]
+module.public_dns_zones_wlz.azurerm_dns_zone.this["public-dns::ops_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/ops.example.com]
+module.public_dns_zones_wlz.azurerm_dns_zone.this["public-dns::portal_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/portal.example.com]
+module.public_dns_zones_wlz.azurerm_user_assigned_identity.public_dns_cert_maintainer["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-public-dns-cert-maintainer]
+module.application_gateway_wlz.data.azurerm_role_definition.vm_admin_login: Reading...
+module.application_gateway_wlz.data.azurerm_role_definition.vm_user_login: Reading...
+module.public_dns_zones_wlz.azurerm_user_assigned_identity.public_dns_cert_reader["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-public-dns-cert-reader]
+module.main.data.azurerm_role_definition.vm_admin_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4]
+module.main.azurerm_storage_account.storage_account["geo-services-geo-services"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Storage/storageAccounts/stgeo-servicesgeo-servicesf4zm]
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e]
+module.main.data.azurerm_role_definition.vm_user_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/fb879df8-f326-4884-b1cf-06f3ad86be52]
+module.public_dns_zones_wlz.azurerm_federated_identity_credential.public_dns_cert_maintainer_identity_from_this_repo["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-public-dns-cert-maintainer/federatedIdentityCredentials/fic-branch__main__in-repo_azure-terraform-infra-operations_of-org_example-org]
+module.public_dns_zones_wlz.data.azurerm_role_definition.vm_user_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/fb879df8-f326-4884-b1cf-06f3ad86be52]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_cert_maintainer_manage_txt_records["public-dns"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Authorization/roleAssignments/5788930d-ffde-b15d-513b-cdbff7ccf634]
+module.public_dns_zones_wlz.data.azurerm_role_definition.vm_admin_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4]
+module.public_dns_zones_wlz.module.admin_key_vault["public-dns"].modtm_telemetry.telemetry[0]: Refreshing state... [id=39e262c3-afc0-4f32-ae1b-1c53f7d46553]
+module.public_dns_zones_wlz.data.azapi_resource.external_public_dns_zone["/subscriptions/00000000-1111-2222-3333-777777777777/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/dev.ops.example.com"]: Reading...
+module.main.azurerm_maintenance_configuration.this["operations-azure-monthly-3rd-tuesday-window-1-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-patch-management-hw8u/providers/Microsoft.Maintenance/maintenanceConfigurations/mc-operations-azure-monthly-3rd-tuesday-window-1-prod]
+module.public_dns_zones_wlz.data.azapi_resource.external_public_dns_zone["/subscriptions/00000000-1111-2222-3333-777777777777/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/dev.ops.example.com"]: Read complete after 1s [id=/subscriptions/00000000-1111-2222-3333-777777777777/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/dev.ops.example.com]
+module.main.azurerm_maintenance_configuration.this["operations-azure-monthly-3rd-tuesday-window-2-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-patch-management-hw8u/providers/Microsoft.Maintenance/maintenanceConfigurations/mc-operations-azure-monthly-3rd-tuesday-window-2-prod]
+module.main.azurerm_maintenance_configuration.this["operations-arc-monthly-3rd-tuesday-window-1-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-patch-management-hw8u/providers/Microsoft.Maintenance/maintenanceConfigurations/mc-operations-arc-monthly-3rd-tuesday-window-1-prod]
+module.main.azurerm_maintenance_configuration.this["operations-arc-monthly-3rd-tuesday-window-2-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-patch-management-hw8u/providers/Microsoft.Maintenance/maintenanceConfigurations/mc-operations-arc-monthly-3rd-tuesday-window-2-prod]
+module.application_gateway_wlz.data.azurerm_role_definition.vm_admin_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4]
+module.main.module.admin_key_vault["network-monitor"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.KeyVault/vaults/kv-network-monitor-an3z]
+module.main.module.admin_key_vault["monitoring"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.KeyVault/vaults/kv-monitoring-wjui]
+module.application_gateway_wlz.data.azurerm_role_definition.vm_user_login: Read complete after 3s [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/fb879df8-f326-4884-b1cf-06f3ad86be52]
+module.main.module.admin_key_vault["erp-system"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.KeyVault/vaults/kv-erp-system-e322]
+module.main.module.admin_key_vault["mail-server"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.KeyVault/vaults/kv-mail-server-qwxq]
+module.main.module.admin_key_vault["quorum-witness"].azurerm_key_vault.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.KeyVault/vaults/kv-quorum-witness-vd]
+module.public_dns_zones_wlz.azurerm_role_assignment.infra_maintainers_read_dns_zone["public-dns::portal_example_com::infra-maintainer-group-for-env-dev"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/portal.example.com/providers/Microsoft.Authorization/roleAssignments/ae248c92-9eb9-f1dd-034b-abe99a5ce33a]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_cert_maintainer_read_dns_zones["public-dns::ops_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/ops.example.com/providers/Microsoft.Authorization/roleAssignments/252fc286-7289-71c7-e0f5-eae2f4a5f5c6]
+module.public_dns_zones_wlz.azurerm_dns_ns_record.delegated_to_outside_wlz["public-dns::ops_example_com::out_of_subscription_zone"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/ops.example.com/NS/dev]
+module.public_dns_zones_wlz.azurerm_role_assignment.infra_maintainers_read_dns_zone["public-dns::ops_example_com::infra-maintainer-group-for-env-dev"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/ops.example.com/providers/Microsoft.Authorization/roleAssignments/e24153fc-9dae-d462-27ba-3f42ccae686a]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_cert_maintainer_read_dns_zones["public-dns::portal_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/portal.example.com/providers/Microsoft.Authorization/roleAssignments/7b71b928-ac4f-e93c-b74f-c675a367e1bf]
+module.public_dns_zones_wlz.azurerm_dns_a_record.this["public-dns::portal_example_com::flow"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/portal.example.com/A/flow]
+module.public_dns_zones_wlz.azurerm_dns_a_record.this["public-dns::portal_example_com::ifs"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/dnsZones/portal.example.com/A/ifs]
+module.main.module.admin_key_vault["monitoring"].modtm_telemetry.telemetry[0]: Refreshing state... [id=0220c672-8b85-4e0c-9544-ba2b592fb528]
+module.main.module.admin_key_vault["erp-system"].modtm_telemetry.telemetry[0]: Refreshing state... [id=63abbdae-dc3e-43ab-b39c-fb4fed42c453]
+module.main.module.admin_key_vault["mail-server"].modtm_telemetry.telemetry[0]: Refreshing state... [id=fac3122a-ad77-4fdf-b006-a0bc7eba7f1a]
+module.main.module.admin_key_vault["quorum-witness"].modtm_telemetry.telemetry[0]: Refreshing state... [id=dad6b5e2-b68a-4479-9b96-a9d00b55b5df]
+module.main.module.admin_key_vault["network-monitor"].modtm_telemetry.telemetry[0]: Refreshing state... [id=02b6cf07-6642-4b79-8ed2-aebe47b1095d]
+module.main.azurerm_maintenance_assignment_dynamic_scope.this["operations-arc-monthly-3rd-tuesday-window-2-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Maintenance/configurationAssignments/scope-mc-operations-arc-monthly-3rd-tuesday-window-2-prod]
+module.main.azurerm_maintenance_assignment_dynamic_scope.this["operations-arc-monthly-3rd-tuesday-window-1-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Maintenance/configurationAssignments/scope-mc-operations-arc-monthly-3rd-tuesday-window-1-prod]
+module.main.azurerm_maintenance_assignment_dynamic_scope.this["operations-azure-monthly-3rd-tuesday-window-1-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Maintenance/configurationAssignments/scope-mc-operations-azure-monthly-3rd-tuesday-window-1-prod]
+module.main.azurerm_maintenance_assignment_dynamic_scope.this["operations-azure-monthly-3rd-tuesday-window-2-in-wlz-patch-management"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Maintenance/configurationAssignments/scope-mc-operations-azure-monthly-3rd-tuesday-window-2-prod]
+module.main.azurerm_user_assigned_identity.mssql_server_entra_id_reader["network-monitor"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-network-monitor-b6u6]
+module.main.azurerm_user_assigned_identity.mssql_server_entra_id_reader["erp-system"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-erp-system-kj7s]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet_name["1"].random_string.first_letter: Refreshing state... [id=o]
+module.main.random_integer.vm_zone["erp-system-erp-system"]: Refreshing state... [id=2]
+module.main.random_integer.vm_zone["mail-server-mail-server1"]: Refreshing state... [id=3]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet_name["1"].random_string.main: Refreshing state... [id=ni9tfcj02856fiq2ou45cycaojl964bhuqsjd2fsd69y4udy1hpq8bqp3uir]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.nsg_name["1-private-endpoints"].random_string.first_letter: Refreshing state... [id=p]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_admin_key_vault["public-dns::wlz_cert_maintainer_cert_officer"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e/providers/Microsoft.Authorization/roleAssignments/5dbb4af0-201a-b0bc-a1d7-58c97d393a70]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_admin_key_vault["public-dns::wlz_cert_maintainer_secrets_officer"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e/providers/Microsoft.Authorization/roleAssignments/9d48f447-3d07-a2bf-af61-2e4496a515b7]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_admin_key_vault["public-dns::wlz_cert_reader_access"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e/providers/Microsoft.Authorization/roleAssignments/d55b4560-4bf2-3657-0ec5-387846fd7482]
+module.public_dns_zones_wlz.azurerm_role_assignment.public_dns_admin_key_vault["public-dns::wlz_secret_reader_access"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e/providers/Microsoft.Authorization/roleAssignments/0adfc037-03be-bde7-a761-89dd8f3997b8]
+module.public_dns_zones_wlz.azurerm_role_assignment.admin_key_vault["public-dns-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e/providers/Microsoft.Authorization/roleAssignments/0cbb74e2-03db-b87f-0e1d-613bd8e060ab]
+module.main.module.vnet["geo-services"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=c]
+module.main.module.vnet["web-portal"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=b]
+module.main.module.vnet["quorum-witness"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=t]
+module.main.module.vnet["backup-server"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=c]
+module.main.module.vnet["erp-system"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=j]
+module.main.module.vnet["monitoring"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=p]
+module.main.module.vnet["network-monitor"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=q]
+module.main.module.vnet["migration-tools"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=z]
+module.main.module.vnet["mail-server"].module.vnet_name["vnet1"].random_string.first_letter: Refreshing state... [id=q]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.nsg_name["1-private-endpoints"].random_string.main: Refreshing state... [id=zdksn2en1i8klqsrmnrdil3d7k0yr7vivko98nh2ufu00qldyq6ikkse84v8]
+module.main.azurerm_role_assignment.admin_key_vault["monitoring-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.KeyVault/vaults/kv-monitoring-wjui/providers/Microsoft.Authorization/roleAssignments/0abb8bd2-33bb-5b0f-47c2-d573bd97af3e]
+module.main.azurerm_role_assignment.admin_key_vault["erp-system-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.KeyVault/vaults/kv-erp-system-e322/providers/Microsoft.Authorization/roleAssignments/bea85a02-32b5-8de8-002d-3b56ac8b4b5f]
+module.main.azurerm_role_assignment.admin_key_vault["mail-server-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.KeyVault/vaults/kv-mail-server-qwxq/providers/Microsoft.Authorization/roleAssignments/68240e0f-f158-85c5-f8c0-6b74538889bf]
+module.main.azurerm_role_assignment.admin_key_vault["quorum-witness-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.KeyVault/vaults/kv-quorum-witness-vd/providers/Microsoft.Authorization/roleAssignments/856479e7-1eba-e72d-8bef-5ca32616094a]
+module.main.azurerm_role_assignment.admin_key_vault["network-monitor-key_vault_administrator_for_infra-operations-prod-infra-maintainers"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.KeyVault/vaults/kv-network-monitor-an3z/providers/Microsoft.Authorization/roleAssignments/e6bce18e-5b81-e088-d5ee-8dd8bc292765]
+module.main.module.vnet["monitoring"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=5pxpgx08ldtdk9cv8mqadopc4euyxawxh8mjommghehhwbw9pwjxhj6vlrvm]
+module.main.module.vnet["erp-system"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=8k7gkyhux4hpjys3luf6ukza1r0wewnl9cvu5133j6era10sh3soe7h3whha]
+module.main.module.vnet["mail-server"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=hfxlyu2oiv698stuahsfq6n52gda575cjtvr02yqvxa71n6wzuv2m8jao1l5]
+module.main.module.vnet["backup-server"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=ktwmw0gs95ywaya371a19p5c0snvn74zch0hd1v0uc5qic3epebx0gixlp0o]
+module.main.module.vnet["geo-services"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=cqa0iaxmyvqpaer8akqsfgro9yfdx6hibpdm4hxwto4ergc58xgt37sj4rda]
+module.main.module.vnet["migration-tools"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=czzdelxpr14u5smjxo54xlb6nbdg57hyig20extj33bdyrcjnyiero7z2kor]
+module.main.module.vnet["web-portal"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=hisoogqxqgpyajfdbr697lpnt77878smv0b9igp2ur2y5smud8d0fo55pj6r]
+module.main.module.vnet["quorum-witness"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=sousz3wsksoaxu22n4yu2tm9ngrmh0xt6b8tobgw84zhmpcoad8ttvx1fmia]
+module.main.module.vnet["network-monitor"].module.vnet_name["vnet1"].random_string.main: Refreshing state... [id=7mej6gwlzm834nbqkdkqadjqa40h6mi6jv3l75a5yskbobe1mt5e55ua1iys]
+module.main.module.vnet["geo-services"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=e]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-frontend-flow"].random_string.first_letter: Refreshing state... [id=g]
+module.main.module.vnet["quorum-witness"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=e]
+module.main.module.vnet["backup-server"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=g]
+module.main.module.vnet["network-monitor"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=x]
+module.main.module.vnet["monitoring"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=u]
+module.main.module.vnet["migration-tools"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=r]
+module.main.module.vnet["mail-server"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=m]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-backend"].random_string.first_letter: Refreshing state... [id=w]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-frontend-ifs"].random_string.first_letter: Refreshing state... [id=h]
+module.main.module.vnet["erp-system"].module.nsg_name["vnet1-subnet1"].random_string.first_letter: Refreshing state... [id=n]
+module.main.azuread_group_member.mssql_server_entra_id_reader["network-monitor"]: Refreshing state... [id=00000000-aaaa-bbbb-cccc-777777777777/member/a06e9a23-2647-4412-b974-00cf6be43a25]
+module.main.azuread_group_member.mssql_server_entra_id_reader["erp-system"]: Refreshing state... [id=00000000-aaaa-bbbb-cccc-777777777777/member/6dc5bebf-5a7e-451f-b771-8aa68091efec]
+module.main.azurerm_mssql_server.this["erp-system"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Sql/servers/sql-erp-system-kj7s]
+module.main.azurerm_mssql_server.this["network-monitor"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Sql/servers/sql-network-monitor-b6u6]
+module.main.azurerm_storage_share.file_share["geo-services-geo-services-share-shared-data"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Storage/storageAccounts/stgeo-servicesgeo-servicesf4zm/fileServices/default/shares/shared-data]
+module.main.module.vnet["quorum-witness"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=it7z6kbq3txezi31dpn7grae429vrg80onn78al0jjuoolmc0mgaxcdestb1]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-frontend-ifs"].random_string.main: Refreshing state... [id=c8z6oa8vnmc8xvr8ltwbamcy3k4w0iwxh1y31623mtyfstcalv20m9inpevr]
+module.main.module.vnet["monitoring"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=5qkcox7xebu7yjguqrwv5s97lrnymwubz1zwcsxwdy8eprllm7abudma4f01]
+module.main.module.vnet["mail-server"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=ktm9gnua47bs6j8ognn9poq4yzqx5ptndjcfrxijnbtezbbhjlgcwklacwlq]
+module.main.module.vnet["geo-services"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=ymhethugt85ifvhk18un6jhb9oaxs496pqfa4fxvhwx0rzme0kytq7y59x0b]
+module.main.module.vnet["backup-server"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=zpueciznwyk4hcshjrqs3q38m1rdqmmp4oh7ocw0m6b9e9bisbquml3it5if]
+module.main.module.vnet["network-monitor"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=ek7aw0d4yzodhuv1ceupmdxshmq6k5dlkgl0oxmakwjc08761mbn496f3vua]
+module.main.module.vnet["migration-tools"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=yvwdxc6iu25x48mwwnp9qsxyjnksozvplon351u116hl2oy8puy3r4s61qtk]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-backend"].random_string.main: Refreshing state... [id=aguojt4a5vfbkdq3icy1uhjks1zzloc0c9mfx952tzz4q5zbai2l4is2n1fj]
+module.main.module.vnet["web-portal"].module.nsg_name["vnet1-frontend-flow"].random_string.main: Refreshing state... [id=nzdoho9yuqz5incq3tvh30nhf0nsyzhl27n5r9j5jiaa3lj771r83ruo7kzv]
+module.main.module.vnet["erp-system"].module.nsg_name["vnet1-subnet1"].random_string.main: Refreshing state... [id=i1s2lazpqdhrgijbscke8x7x1wdf1bs35rb0e1ja86lrh8qzr7kmvzzyahi4]
+module.public_dns_zones_wlz.time_sleep.admin_key_vault_wait_for_rbac["public-dns"]: Refreshing state... [id=2025-11-06T09:28:49Z]
+module.main.time_sleep.admin_key_vault_wait_for_rbac["monitoring"]: Refreshing state... [id=2025-11-06T09:28:25Z]
+module.main.time_sleep.admin_key_vault_wait_for_rbac["mail-server"]: Refreshing state... [id=2025-11-06T09:28:25Z]
+module.main.time_sleep.admin_key_vault_wait_for_rbac["erp-system"]: Refreshing state... [id=2025-11-18T11:00:31Z]
+module.main.time_sleep.admin_key_vault_wait_for_rbac["network-monitor"]: Refreshing state... [id=2025-11-06T09:28:25Z]
+module.main.time_sleep.admin_key_vault_wait_for_rbac["quorum-witness"]: Refreshing state... [id=2025-11-06T09:28:25Z]
+module.public_dns_zones_wlz.module.vnet["public-dns"].azurerm_network_security_group.this["1-private-endpoints"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/networkSecurityGroups/nsg-public-dns-1-private-endpoints-prod-pzdk]
+module.main.azurerm_mssql_database.prod["erp-system-mssql-db-erp-systemLicense-db"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Sql/servers/sql-erp-system-kj7s/databases/sqldb-erp-systemLicense-db]
+module.main.azurerm_mssql_database.prod["network-monitor-mssql-db-network-monitor-db"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Sql/servers/sql-network-monitor-b6u6/databases/sqldb-network-monitor-db]
+module.main.azurerm_mssql_database.prod["erp-system-mssql-db-erp-system-db"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Sql/servers/sql-erp-system-kj7s/databases/sqldb-erp-system-db]
+module.main.module.vnet["geo-services"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Network/networkSecurityGroups/nsg-geo-services-vnet1-subnet1-prod-eymh]
+module.main.module.vnet["quorum-witness"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Network/networkSecurityGroups/nsg-quorum-witness-vnet1-subnet1-prod-eit7]
+module.main.module.vnet["migration-tools"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-migration-tools-d52x/providers/Microsoft.Network/networkSecurityGroups/nsg-migration-tools-vnet1-subnet1-prod-ryvw]
+module.main.module.vnet["web-portal"].azurerm_network_security_group.this["vnet1-backend"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/networkSecurityGroups/nsg-web-portal-vnet1-backend-prod-wagu]
+module.main.module.vnet["web-portal"].azurerm_network_security_group.this["vnet1-frontend-flow"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/networkSecurityGroups/nsg-web-portal-vnet1-frontend-flow-prod-gnzd]
+module.main.module.vnet["backup-server"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-backup-server-a5ep/providers/Microsoft.Network/networkSecurityGroups/nsg-backup-server-vnet1-subnet1-prod-gzpu]
+module.main.module.vnet["web-portal"].azurerm_network_security_group.this["vnet1-frontend-ifs"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/networkSecurityGroups/nsg-web-portal-vnet1-frontend-ifs-prod-hc8z]
+module.main.module.vnet["erp-system"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Network/networkSecurityGroups/nsg-erp-system-vnet1-subnet1-prod-ni1s]
+module.main.module.vnet["network-monitor"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Network/networkSecurityGroups/nsg-network-monitor-vnet1-subnet1-prod-xek7]
+module.main.module.vnet["mail-server"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Network/networkSecurityGroups/nsg-mail-server-vnet1-subnet1-prod-mktm]
+module.main.module.vnet["monitoring"].azurerm_network_security_group.this["vnet1-subnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Network/networkSecurityGroups/nsg-monitoring-vnet1-subnet1-prod-u5qk]
+module.main.azurerm_key_vault_secret.compute["monitoring-monitoring1-admin-username"]: Refreshing state... [id=https://kv-monitoring-wjui.vault.azure.net/secrets/monitoring1-admin-username/82b4a6bd1e114eb3b530b253df089308]
+module.main.azurerm_key_vault_secret.compute["quorum-witness-hpe-quorum-6-ssh-public-key"]: Refreshing state... [id=https://kv-quorum-witness-vd.vault.azure.net/secrets/hpe-quorum-6-ssh-public-key/ca0677a36a2c4b7ba1cd7120af83c35d]
+module.main.azurerm_key_vault_secret.compute["mail-server-mail-server1-admin-username"]: Refreshing state... [id=https://kv-mail-server-qwxq.vault.azure.net/secrets/mail-server1-admin-username/aab52096cb8947a29905df46c139dd4c]
+module.main.azurerm_key_vault_secret.compute["erp-system-erp-system-admin-password"]: Refreshing state... [id=https://kv-erp-system-e322.vault.azure.net/secrets/erp-system-admin-password/950cd6a5f20a4457b2e5e8f84c7f8215]
+module.main.azurerm_key_vault_secret.compute["quorum-witness-hpe-quorum-6-admin-username"]: Refreshing state... [id=https://kv-quorum-witness-vd.vault.azure.net/secrets/hpe-quorum-6-admin-username/259a794a3ef144ee9c2087d4f80d195a]
+module.main.azurerm_key_vault_secret.compute["mail-server-mail-server1-admin-password"]: Refreshing state... [id=https://kv-mail-server-qwxq.vault.azure.net/secrets/mail-server1-admin-password/188f21d9ddf84b63ae57980ace5ca363]
+module.main.azurerm_key_vault_secret.compute["erp-system-erp-system-admin-username"]: Refreshing state... [id=https://kv-erp-system-e322.vault.azure.net/secrets/erp-system-admin-username/16dff04f52b748f39d1d7d1537ca80ff]
+module.main.azurerm_key_vault_secret.compute["monitoring-monitoring1-admin-password"]: Refreshing state... [id=https://kv-monitoring-wjui.vault.azure.net/secrets/monitoring1-admin-password/d7c2a31f4d5445d983e4f7440e30e2da]
+module.main.azurerm_key_vault_secret.mssql_server_admin_username["erp-system"]: Refreshing state... [id=https://kv-erp-system-e322.vault.azure.net/secrets/wlz-erp-system-mssql-server-admin-username/34bf9fc1dbe14d8ab208d35b87761658]
+module.main.azurerm_key_vault_secret.compute["quorum-witness-hpe-quorum-6-ssh-private-key"]: Refreshing state... [id=https://kv-quorum-witness-vd.vault.azure.net/secrets/hpe-quorum-6-ssh-private-key/f1f660a268a1431da4eb513ac7e95ec3]
+module.main.azurerm_key_vault_secret.mssql_server_admin_username["network-monitor"]: Refreshing state... [id=https://kv-network-monitor-an3z.vault.azure.net/secrets/wlz-network-monitor-mssql-server-admin-username/08ea9786219643639036a381be91d396]
+module.main.azurerm_key_vault_secret.mssql_server_admin_password["network-monitor"]: Refreshing state... [id=https://kv-network-monitor-an3z.vault.azure.net/secrets/wlz-network-monitor-mssql-server-admin-password/a4d705ca5a30431da78dd67bf74a75e2]
+module.main.azurerm_key_vault_secret.mssql_server_admin_password["erp-system"]: Refreshing state... [id=https://kv-erp-system-e322.vault.azure.net/secrets/wlz-erp-system-mssql-server-admin-password/e610483eb46e47adab0c28887a76d7cc]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].random_uuid.telemetry[0]: Refreshing state... [id=7253420a-476a-32ff-0b2b-feb4d76d50a5]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.mssql_prod_database_delete_lock["erp-system-mssql-db-erp-systemLicense-db"].azurerm_management_lock.protected_resource_lock["lock_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Sql/servers/sql-erp-system-kj7s/databases/sqldb-erp-systemLicense-db/providers/Microsoft.Authorization/locks/lock-sqldb-erp-systemLicense-db]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].data.azapi_client_config.telemetry[0]: Read complete after 1s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.mssql_prod_database_delete_lock["erp-system-mssql-db-erp-system-db"].azurerm_management_lock.protected_resource_lock["lock_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Sql/servers/sql-erp-system-kj7s/databases/sqldb-erp-system-db/providers/Microsoft.Authorization/locks/lock-sqldb-erp-system-db]
+module.main.module.mssql_prod_database_delete_lock["network-monitor-mssql-db-network-monitor-db"].azurerm_management_lock.protected_resource_lock["lock_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Sql/servers/sql-network-monitor-b6u6/databases/sqldb-network-monitor-db/providers/Microsoft.Authorization/locks/lock-sqldb-network-monitor-db]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].data.modtm_module_source.telemetry[0]: Reading...
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/virtualNetworks/vnet-public-dns-1-prod-oni9]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=b104f240-6c1f-473d-9eea-c0a8e20192bd]
+module.public_dns_zones_wlz.module.vnet["public-dns"].module.vnet["1"].module.subnet["private-endpoints"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/virtualNetworks/vnet-public-dns-1-prod-oni9/subnets/private-endpoints]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=ae680764-5aa2-f7ff-2034-2870256abf67]
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=69031e03-e1df-a064-6d72-5f40aeff764b]
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=d6bafa97-d6ab-ffe1-7749-1e7522dc3dd3]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=f7138933-3b94-34cc-1a4d-98a1751a34a7]
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=6b9fd31b-72cc-3792-0934-a9c8613bba01]
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=b7d3c5c2-62c4-a3b1-4c34-177fda31cd81]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=00be4c37-b7f6-eabd-ab0b-0b5c4d7393d2]
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=26794074-2198-879b-577e-99ac08fb8a4a]
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].random_uuid.telemetry[0]: Refreshing state... [id=1674f462-e62b-3f6d-53ff-1f2afc636fd0]
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=766abb85-68e8-45e4-9680-e69cbbc4bbf3]
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=5831a054-3ae8-4644-92fa-2186f59ef143]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=00ca857e-08ff-4d4e-85e1-0c61b838f633]
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=bd9d9d2d-7d41-4513-87a9-76832b87a749]
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=dd9b3178-07fd-4744-8eb7-998b4cc51696]
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=fe8644e4-f4c9-445d-84de-c5c301100ae0]
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=72111fa4-105a-4998-9223-b5a6edcf986d]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=31dfe53d-d01e-486a-b376-42b962fb2027]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=a42c6d91-47cb-47a5-ab0e-3816fc9da9b4]
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Network/virtualNetworks/vnet-monitoring-vnet1-prod-p5px]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Network/virtualNetworks/vnet-mail-server-vnet1-prod-qhfx]
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-migration-tools-d52x/providers/Microsoft.Network/virtualNetworks/vnet-migration-tools-vnet1-prod-zczz]
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-backup-server-a5ep/providers/Microsoft.Network/virtualNetworks/vnet-backup-server-vnet1-prod-cktw]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/virtualNetworks/vnet-web-portal-vnet1-prod-bhis]
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Network/virtualNetworks/vnet-geo-services-vnet1-prod-ccqa]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Network/virtualNetworks/vnet-network-monitor-vnet1-prod-q7me]
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Network/virtualNetworks/vnet-quorum-witness-vnet1-prod-tsou]
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Network/virtualNetworks/vnet-erp-system-vnet1-prod-j8k7]
+module.public_dns_zones_wlz.module.admin_key_vault_private_endpoint_names["public-dns-akv-pe-vnet_1_pe_snet_this_wlz"].random_string.first_letter: Refreshing state... [id=y]
+module.public_dns_zones_wlz.module.admin_key_vault_private_endpoint_names["public-dns-akv-pe-vnet_1_pe_snet_this_wlz"].random_string.main: Refreshing state... [id=nqvg7go0258216010c9bik6w9d88fr2zpzor4oos4jobpy0dq58zibxrjlaw]
+module.application_gateway_wlz.azapi_update_resource.enable_private_agw_deployment[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Features/featureProviders/Microsoft.Network/subscriptionFeatureRegeo-servicestrations/EnableApplicationGatewayNetworkIsolation]
+module.public_dns_zones_wlz.azurerm_private_endpoint.admin_key_vault["public-dns-akv-pe-vnet_1_pe_snet_this_wlz"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.Network/privateEndpoints/pe-kv-public-dns-cj3e-ynqv]
+module.application_gateway_wlz.module.agw_name["app-gw-1"].random_string.first_letter: Refreshing state... [id=y]
+module.application_gateway_wlz.module.agw_public_ip_name["app-gw-1"].random_string.first_letter: Refreshing state... [id=n]
+module.application_gateway_wlz.module.agw_route_table_name["app-gw-1"].random_string.first_letter: Refreshing state... [id=s]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].random_uuid.telemetry[0]: Refreshing state... [id=fd3432db-e649-27dd-89ac-ea5a8a662df8]
+module.application_gateway_wlz.azurerm_resource_group.workload["app-gw-1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].data.modtm_module_source.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.application_gateway_wlz.module.agw_name["app-gw-1"].random_string.main: Refreshing state... [id=7bgtp20d2f1mes1d0z1yb8z9to6of9kkhi7pbc8ppl1c25zm2hrc58tqidti]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].data.azapi_client_config.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.application_gateway_wlz.module.waf_policy_name["app-gw-1::ifs_portal_example_com"].random_string.first_letter: Refreshing state... [id=s]
+module.application_gateway_wlz.module.waf_policy_name["app-gw-1::flow_portal_example_com"].random_string.first_letter: Refreshing state... [id=a]
+module.application_gateway_wlz.module.agw_public_ip_name["app-gw-1"].random_string.main: Refreshing state... [id=bczlmfoef1sjpurgrcj77qmo9zugpjk7yc3wfuisp3auhqlockq5l34wx4yq]
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].data.modtm_module_source.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].random_uuid.telemetry[0]: Refreshing state... [id=ad68f35a-6f63-9fdf-561a-36083490aa30]
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].data.azurerm_client_config.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw_route_table_name["app-gw-1"].random_string.main: Refreshing state... [id=ts81c2y9ke2ntncb2kninhas16chjy31e1zw84ooso39pkofq1ewc989rpg8]
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].data.azurerm_client_config.telemetry[0]: Read complete after 0s [id=YmFzZTY0LWVuY29kZWQtY2xpZW50LWNvbmZpZw==]
+module.application_gateway_wlz.module.ipam_reservations["app-gw-1"].azureipam_reservation.this["1"]: Refreshing state... [id=FxWV8i5JZMtpWFSuu4nxP9]
+module.application_gateway_wlz.module.waf_policy_name["app-gw-1::flow_portal_example_com"].random_string.main: Refreshing state... [id=nb745hmj0zys8vmhhv8ysy4cxzo2danjgut8040ou3ry4ao37e9141aluw6j]
+module.application_gateway_wlz.module.waf_policy_name["app-gw-1::ifs_portal_example_com"].random_string.main: Refreshing state... [id=vteiepi349l8ofr6y787os59axz50lc1um0kzzo6s0nrpv7rar3bttlv5j4e]
+module.application_gateway_wlz.data.azurerm_key_vault_secrets.agw_certificate["kv-public-dns-cj3e"]: Reading...
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=17898c89-7d3a-46a1-9f8e-8b8dd7204020]
+module.application_gateway_wlz.data.azurerm_key_vault_secrets.agw_certificate["kv-public-dns-cj3e"]: Read complete after 1s [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-public-dns/providers/Microsoft.KeyVault/vaults/kv-public-dns-cj3e]
+module.main.module.vnet["geo-services"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Network/virtualNetworks/vnet-geo-services-vnet1-prod-ccqa/subnets/subnet1]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].module.subnet["backend"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/virtualNetworks/vnet-web-portal-vnet1-prod-bhis/subnets/backend]
+module.main.module.vnet["quorum-witness"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Network/virtualNetworks/vnet-quorum-witness-vnet1-prod-tsou/subnets/subnet1]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].module.subnet["frontend-ifs"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/virtualNetworks/vnet-web-portal-vnet1-prod-bhis/subnets/frontend-ifs]
+module.main.module.vnet["monitoring"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Network/virtualNetworks/vnet-monitoring-vnet1-prod-p5px/subnets/subnet1]
+module.main.module.vnet["web-portal"].module.vnet["vnet1"].module.subnet["frontend-flow"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-web-portal-wpxy/providers/Microsoft.Network/virtualNetworks/vnet-web-portal-vnet1-prod-bhis/subnets/frontend-flow]
+module.main.module.vnet["erp-system"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Network/virtualNetworks/vnet-erp-system-vnet1-prod-j8k7/subnets/subnet1]
+module.main.module.vnet["backup-server"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-backup-server-a5ep/providers/Microsoft.Network/virtualNetworks/vnet-backup-server-vnet1-prod-cktw/subnets/subnet1]
+module.main.module.vnet["network-monitor"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Network/virtualNetworks/vnet-network-monitor-vnet1-prod-q7me/subnets/subnet1]
+module.main.module.vnet["mail-server"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Network/virtualNetworks/vnet-mail-server-vnet1-prod-qhfx/subnets/subnet1]
+module.main.module.vnet["migration-tools"].module.vnet["vnet1"].module.subnet["subnet1"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-migration-tools-d52x/providers/Microsoft.Network/virtualNetworks/vnet-migration-tools-vnet1-prod-zczz/subnets/subnet1]
+module.application_gateway_wlz.module.agw["app-gw-1"].random_uuid.telemetry[0]: Refreshing state... [id=253fed96-bd9a-383b-b964-c3249725dd69]
+module.application_gateway_wlz.module.agw["app-gw-1"].data.modtm_module_source.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw["app-gw-1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.application_gateway_wlz.module.agw["app-gw-1"].data.azurerm_client_config.telemetry[0]: Reading...
+module.application_gateway_wlz.module.agw["app-gw-1"].data.azurerm_client_config.telemetry[0]: Read complete after 0s [id=YmFzZTY0LWVuY29kZWQtY2xpZW50LWNvbmZpZw==]
+module.application_gateway_wlz.module.agw["app-gw-1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=9eaa85b7-955a-4e8f-ab7b-9e1b5a207d3b]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=094151df-3e02-4ed0-995d-e8750eb6b181]
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].azurerm_public_ip.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/publicIPAddresses/pip-app-gw-1-nbcz]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].azurerm_route_table.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/routeTables/route-app-gw-1-sts8]
+module.application_gateway_wlz.module.agw_route_table["app-gw-1"].module.routes["default_to_internet"].azapi_resource.route: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/routeTables/route-app-gw-1-sts8/routes/default-to-internet]
+module.application_gateway_wlz.azurerm_web_application_firewall_policy.waf_policy["app-gw-1::flow_portal_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-public-internal-flow_portal_example_com-anb7]
+module.application_gateway_wlz.azurerm_web_application_firewall_policy.waf_policy["app-gw-1::ifs_portal_example_com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-private-ifs_portal_example_com-svte]
+module.main.data.azapi_resource.private_dns_zone_to_link["/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com"]: Reading...
+module.main.module.storage_account_private_endpoint_names["geo-services-geo-services-pe-wlz-default-file"].random_string.first_letter: Refreshing state... [id=n]
+module.main.module.storage_account_private_endpoint_names["geo-services-geo-services-pe-wlz-default-file"].random_string.main: Refreshing state... [id=3j8g4hkhje4ek2onc1e3d3lgoveoil7yd6vk9s2nx2ycpvosj4afoi8iiql7]
+module.main.module.mssql_private_endpoint_names["network-monitor-mssql-pe-wlz_default_private_endpoint"].random_string.first_letter: Refreshing state... [id=a]
+module.main.module.mssql_private_endpoint_names["network-monitor-mssql-pe-wlz_default_private_endpoint"].random_string.main: Refreshing state... [id=v2cmnphyf9s4swbl975nnifhoe86eqb7e023jllmnh1rywq8o3bbtglmb7zr]
+module.main.module.mssql_private_endpoint_names["erp-system-mssql-pe-wlz_default_private_endpoint"].random_string.main: Refreshing state... [id=qptwpz1hmcsl8fcjmt14s3so88s4l5gd18pzdrbttxbyyde8gpbxwoy4xlvo]
+azurerm_log_analytics_workspace.wlz_monitoring: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.OperationalInsights/workspaces/log-monitoring-hhsv]
+module.main.module.mssql_private_endpoint_names["erp-system-mssql-pe-wlz_default_private_endpoint"].random_string.first_letter: Refreshing state... [id=y]
+module.application_gateway_wlz.module.agw_public_ip["app-gw-1"].azurerm_management_lock.this[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/publicIPAddresses/pip-app-gw-1-nbcz/providers/Microsoft.Authorization/locks/CanNotDelete]
+module.main.data.azapi_resource.private_dns_zone_to_link["/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com"]: Read complete after 0s [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["monitoring::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-monitoring-vnet1-prod-p5px]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["network-monitor::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-network-monitor-vnet1-prod-q7me]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["backup-server::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-backup-server-vnet1-prod-cktw]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["geo-services::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-geo-services-vnet1-prod-ccqa]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["erp-system::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-erp-system-vnet1-prod-j8k7]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["quorum-witness::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-quorum-witness-vnet1-prod-tsou]
+module.main.azapi_resource.vm_vnet_link_to_private_dns_zone["migration-tools::vnet1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-666666666666/resourceGroups/rg-private-dns-zones-norwayeast-mltx/providers/Microsoft.Network/privateDnsZones/internal.example.com/virtualNetworkLinks/link-to-enable-auto-reg-of-vms-in-vnet-migration-tools-vnet1-prod-zczz]
+module.main.azurerm_private_endpoint.storage_account["geo-services-geo-services-pe-wlz-default-file"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-geo-services-n7s4/providers/Microsoft.Network/privateEndpoints/pe-stgeo-servicesgeo-servicesf4zm-file-n3j8]
+module.main.azurerm_private_endpoint.mssql_server["network-monitor-mssql-pe-wlz_default_private_endpoint"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-network-monitor-dkza/providers/Microsoft.Network/privateEndpoints/pe-sql-network-monitor-b6u6-av2c]
+module.main.azurerm_private_endpoint.mssql_server["erp-system-mssql-pe-wlz_default_private_endpoint"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Network/privateEndpoints/pe-sql-erp-system-kj7s-yqpt]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].random_uuid.telemetry[0]: Refreshing state... [id=27666aed-65ab-95e5-5ef7-4a7ab2d9a543]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].random_uuid.telemetry[0]: Refreshing state... [id=46bbda52-31cd-de9e-7685-5f1fbdbaec52]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].random_uuid.telemetry[0]: Refreshing state... [id=3df79e57-5794-2dd0-6d48-d6de94bfe22e]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.compute_virtual_machine["erp-system-erp-system"].random_uuid.telemetry[0]: Refreshing state... [id=6218b7dd-4018-d6d9-24be-80772db8c5bf]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["erp-system-erp-system"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].data.modtm_module_source.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["erp-system-erp-system"].data.azapi_client_config.telemetry[0]: Reading...
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].azurerm_managed_disk.this["datadisk-01"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/disks/dsk-erp-system-datadisk-01]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].azurerm_network_interface.virtualmachine_network_interfaces["network_interface_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Network/networkInterfaces/nic-erp-system]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].azurerm_network_interface.virtualmachine_network_interfaces["network_interface_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Network/networkInterfaces/nic-hpe-quorum-6]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].azurerm_network_interface.virtualmachine_network_interfaces["network_interface_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Network/networkInterfaces/nic-monitoring1]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].azurerm_network_interface.virtualmachine_network_interfaces["network_interface_1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Network/networkInterfaces/nic-mail-server1]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet_name["1"].random_string.first_letter: Refreshing state... [id=y]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.nsg_name["1-backend"].random_string.first_letter: Refreshing state... [id=j]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].modtm_telemetry.telemetry[0]: Refreshing state... [id=0ce571d6-1b36-448a-83d4-98077c386756]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=d9fb8e90-9523-44fa-973d-e11244cbe1e7]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].modtm_telemetry.telemetry[0]: Refreshing state... [id=d952dae4-a821-4c12-b52f-787085400810]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=a3802105-c7e5-4aa0-bd7a-d901cfdc8733]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet_name["1"].random_string.main: Refreshing state... [id=ai2m3ocgvc3xa99ds4sqw987ukvi0xrjnf3mklm1ol7exfres7k4f7awrf8a]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.nsg_name["1-backend"].random_string.main: Refreshing state... [id=lwt120x0tycryj3ggc5xpr04r4v3mtju65sffwdw1wxu8ndjt3asauz39jeh]
+module.application_gateway_wlz.module.vnet["app-gw-1"].azurerm_network_security_group.this["1-backend"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-app-gw-1-1-backend-prod-jlwt]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].azurerm_windows_virtual_machine.this[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].azurerm_linux_virtual_machine.this[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Compute/virtualMachines/vm-hpe-quorum-6]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].azurerm_windows_virtual_machine.this[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Compute/virtualMachines/vm-mail-server1]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].azurerm_windows_virtual_machine.this[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Compute/virtualMachines/vm-monitoring1]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].random_uuid.telemetry[0]: Refreshing state... [id=9572d0d6-767d-f4c4-3cf5-9f763511561a]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].data.azapi_client_config.telemetry[0]: Reading...
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].data.modtm_module_source.telemetry[0]: Reading...
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].data.modtm_module_source.telemetry[0]: Read complete after 0s
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].data.azapi_client_config.telemetry[0]: Read complete after 0s [id=clientConfigs/subscriptionId=00000000-1111-2222-3333-555555555555;tenantId=00000000-aaaa-bbbb-cccc-dddddddddddd]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].modtm_telemetry.telemetry[0]: Refreshing state... [id=c9a480f3-bc16-46bc-bd87-6be43dcf51d2]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].azapi_resource.vnet: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/virtualNetworks/vnet-app-gw-1-1-prod-yai2]
+module.application_gateway_wlz.module.vnet["app-gw-1"].module.vnet["1"].module.subnet["backend"].azapi_resource.subnet[0]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/virtualNetworks/vnet-app-gw-1-1-prod-yai2/subnets/backend]
+module.application_gateway_wlz.module.agw["app-gw-1"].azurerm_application_gateway.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1]
+module.main.ephemeral.random_password.mssql_server_admin_password["erp-system"]: Closing...
+module.main.ephemeral.random_password.mssql_server_admin_password["erp-system"]: Closing complete after 0s
+module.main.ephemeral.random_password.mssql_server_admin_password["network-monitor"]: Closing...
+module.main.ephemeral.random_password.mssql_server_admin_password["network-monitor"]: Closing complete after 0s
+module.main.module.compute_virtual_machine["erp-system-erp-system"].azurerm_virtual_machine_data_disk_attachment.this_windows["datadisk-01"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/dataDisks/dsk-erp-system-datadisk-01]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].module.extension["azure_network_watcher"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Compute/virtualMachines/vm-monitoring1/extensions/AzureNetworkWatcherExtension]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].module.extension["azure_network_watcher"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Compute/virtualMachines/vm-mail-server1/extensions/AzureNetworkWatcherExtension]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].module.extension["aad_login_for_windows"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Compute/virtualMachines/vm-monitoring1/extensions/AADLoginForWindows]
+module.main.module.compute_virtual_machine["mail-server-mail-server1"].module.extension["aad_login_for_windows"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Compute/virtualMachines/vm-mail-server1/extensions/AADLoginForWindows]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].module.extension["aad_login_for_linux"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Compute/virtualMachines/vm-hpe-quorum-6/extensions/AADSSHLoginForLinux]
+module.main.module.compute_virtual_machine["quorum-witness-hpe-quorum-6"].module.extension["azure_network_watcher"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Compute/virtualMachines/vm-hpe-quorum-6/extensions/AzureNetworkWatcherExtension]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].module.extension["azure_network_watcher"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/extensions/AzureNetworkWatcherExtension]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].module.extension["aad_login_for_windows"].azurerm_virtual_machine_extension.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/extensions/AADLoginForWindows]
+module.main.module.compute_virtual_machine["erp-system-erp-system"].module.run_command["configure_dns_suffix_windows"].azurerm_virtual_machine_run_command.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/runCommands/configure-dns-suffix-internal.example.com]
+module.main.module.compute_virtual_machine["monitoring-monitoring1"].module.run_command["configure_dns_suffix_windows"].azurerm_virtual_machine_run_command.this: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Compute/virtualMachines/vm-monitoring1/runCommands/configure-dns-suffix-internal.example.com]
+module.main.azurerm_role_assignment.infra_maintainers_vm_admin["quorum-witness-hpe-quorum-6"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-quorum-witness-n28c/providers/Microsoft.Compute/virtualMachines/vm-hpe-quorum-6/providers/Microsoft.Authorization/roleAssignments/52a7560d-1289-2ae9-e5a3-41f1324330f5]
+module.main.azurerm_role_assignment.vm_user["erp-system-erp-system::user::user1@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/providers/Microsoft.Authorization/roleAssignments/8942c25a-2a05-418a-ecdc-51b5c32639df]
+module.main.azurerm_role_assignment.vm_user["erp-system-erp-system::user::user2@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/providers/Microsoft.Authorization/roleAssignments/5662077e-abb3-0a3d-3d5d-738927a54747]
+module.main.azurerm_role_management_policy.vm_admin_pim["erp-system-erp-system"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system]
+module.main.azurerm_role_assignment.infra_maintainers_vm_admin["monitoring-monitoring1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-monitoring-hhsv/providers/Microsoft.Compute/virtualMachines/vm-monitoring1/providers/Microsoft.Authorization/roleAssignments/c6d62eb7-01f8-1e62-7ecc-b9769cd12c7a]
+module.main.azurerm_role_assignment.vm_user["erp-system-erp-system::user::user4@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/providers/Microsoft.Authorization/roleAssignments/c08b6253-14f1-b7cc-7bac-074759023dc1]
+module.main.azurerm_role_assignment.vm_user["erp-system-erp-system::user::user3@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/providers/Microsoft.Authorization/roleAssignments/28e5902f-4ad9-9310-7cb3-13360ee5aa22]
+module.main.azurerm_role_assignment.infra_maintainers_vm_admin["mail-server-mail-server1"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-mail-server-l2x8/providers/Microsoft.Compute/virtualMachines/vm-mail-server1/providers/Microsoft.Authorization/roleAssignments/3b4e6c28-27f4-ef47-0197-48d4831f591f]
+module.main.azurerm_role_assignment.infra_maintainers_vm_admin["erp-system-erp-system"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system/providers/Microsoft.Authorization/roleAssignments/1612c4ab-695d-15eb-f58b-21cb0246504f]
+module.main.azurerm_pim_eligible_role_assignment.vm_admin["erp-system-erp-system::admin::user2@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system|/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|e15c7411-882e-486c-8888-055b3e8a104d]
+module.main.azurerm_pim_eligible_role_assignment.vm_admin["erp-system-erp-system::admin::user3@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system|/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|223bc3db-a0b7-4e9a-8ca0-84991000b156]
+module.main.azurerm_pim_eligible_role_assignment.vm_admin["erp-system-erp-system::admin::user4@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system|/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|a42527ef-682c-4a83-a5c7-784e3aa49c92]
+module.main.azurerm_pim_eligible_role_assignment.vm_admin["erp-system-erp-system::admin::user5@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system|/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|97093983-3973-415f-a976-f77ab0df01f5]
+module.main.azurerm_pim_eligible_role_assignment.vm_admin["erp-system-erp-system::admin::user6@example.com"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-erp-system-ahl7/providers/Microsoft.Compute/virtualMachines/vm-erp-system|/subscriptions/00000000-1111-2222-3333-555555555555/providers/Microsoft.Authorization/roleDefinitions/1c0163c0-47e6-4577-8991-ea5c82e286e4|3a751107-6cfb-4a10-b757-652803e9362d]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+  - destroy
++/- create replacement and then destroy
+
+Terraform will perform the following actions:
+
+  # module.application_gateway_wlz.azurerm_web_application_firewall_policy.waf_policy["app-gw-1::flow_portal_example_com"] must be replaced
+  # (moved from module.application_gateway_wlz.module.waf_policy["app-gw-1::flow_portal_example_com"].azurerm_web_application_firewall_policy.this)
++/- resource "azurerm_web_application_firewall_policy" "waf_policy" {
+      ~ http_listener_ids   = [
+          - "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/httpListeners/FlowPortalExampleCom-0260",
+        ] -> (known after apply)
+      ~ id                  = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-public-internal-flow_portal_example_com-anb7" -> (known after apply)
+      ~ name                = "afwp-app-gw-1-public-internal-flow_portal_example_com-anb7" -> "afwp-app-gw-1-public-open-flow_portal_example_com-anb7" # forces replacement
+      ~ path_based_rule_ids = [] -> (known after apply)
+      ~ tags                = {
+            "CreatedBy"   = "https://github.com/example-org/azure-terraform-config"
+          ~ "Description" = "Web Application Firewall policy for 'public-internal' access to 'flow_portal_example_com' in Application Gateway for workload landing zone 'app-gw-1', the 'prod' environment." -> "Web Application Firewall policy for 'public-open' access to 'flow_portal_example_com' in Application Gateway for workload landing zone 'app-gw-1', the 'prod' environment."
+            "Environment" = "prod"
+        }
+        # (2 unchanged attributes hidden)
+
+      - custom_rules {
+          - action               = "Block" -> null
+          - enabled              = true -> null
+          - name                 = "BlockAllButAllowedIp" -> null
+          - priority             = 10 -> null
+          - rate_limit_threshold = 0 -> null
+          - rule_type            = "MatchRule" -> null
+            # (2 unchanged attributes hidden)
+
+          - match_conditions {
+              - match_values       = [
+                  - "198.51.100.0",
+                  - "203.0.113.10",
+                  - "192.0.2.50",
+                  - "10.0.0.0/24",
+                ] -> null
+              - negation_condition = true -> null
+              - operator           = "IPMatch" -> null
+              - transforms         = [] -> null
+
+              - match_variables {
+                  - variable_name = "RemoteAddr" -> null
+                    # (1 unchanged attribute hidden)
+                }
+            }
+        }
+
+      ~ policy_settings {
+          ~ file_upload_enforcement                   = false -> (known after apply)
+            # (8 unchanged attributes hidden)
+
+            # (1 unchanged block hidden)
+        }
+
+        # (1 unchanged block hidden)
+    }
+
+  # module.application_gateway_wlz.module.waf_policy["app-gw-1::ifs_portal_example_com"].azurerm_web_application_firewall_policy.this has moved to module.application_gateway_wlz.azurerm_web_application_firewall_policy.waf_policy["app-gw-1::ifs_portal_example_com"]
+    resource "azurerm_web_application_firewall_policy" "waf_policy" {
+        id                  = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-private-ifs_portal_example_com-svte"
+        name                = "afwp-app-gw-1-private-ifs_portal_example_com-svte"
+        tags                = {
+            "CreatedBy"   = "https://github.com/example-org/azure-terraform-config"
+            "Description" = "Web Application Firewall policy for 'private' access to 'ifs_portal_example_com' in Application Gateway for workload landing zone 'app-gw-1', the 'prod' environment."
+            "Environment" = "prod"
+        }
+        # (4 unchanged attributes hidden)
+
+        # (3 unchanged blocks hidden)
+    }
+
+  # module.application_gateway_wlz.module.agw["app-gw-1"].azurerm_application_gateway.this will be updated in-place
+  ~ resource "azurerm_application_gateway" "this" {
+        id                                = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1"
+        name                              = "agw-app-gw-1"
+        tags                              = {
+            "CreatedBy"   = "https://github.com/example-org/azure-terraform-config"
+            "Description" = "Application Gateway for workload landing zone 'app-gw-1', the 'prod' environment."
+            "Environment" = "prod"
+        }
+        # (8 unchanged attributes hidden)
+
+      - http_listener {
+          - firewall_policy_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-private-ifs_portal_example_com-svte" -> null
+          - frontend_ip_configuration_id   = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendIPConfigurations/private-ip" -> null
+          - frontend_ip_configuration_name = "private-ip" -> null
+          - frontend_port_id               = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendPorts/port-443" -> null
+          - frontend_port_name             = "port-443" -> null
+          - host_names                     = [
+              - "ifs.portal.example.com",
+            ] -> null
+          - id                             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/httpListeners/IfsPortalExampleCom-dbb9" -> null
+          - name                           = "IfsPortalExampleCom-dbb9" -> null
+          - protocol                       = "Https" -> null
+          - require_sni                    = true -> null
+          - ssl_certificate_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/sslCertificates/le-cert-production-portal-example-com-pfx" -> null
+          - ssl_certificate_name           = "le-cert-production-portal-example-com-pfx" -> null
+            # (3 unchanged attributes hidden)
+        }
+      - http_listener {
+          - firewall_policy_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-public-internal-flow_portal_example_com-anb7" -> null
+          - frontend_ip_configuration_id   = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendIPConfigurations/public-ip" -> null
+          - frontend_ip_configuration_name = "public-ip" -> null
+          - frontend_port_id               = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendPorts/port-443" -> null
+          - frontend_port_name             = "port-443" -> null
+          - host_names                     = [
+              - "flow.portal.example.com",
+            ] -> null
+          - id                             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/httpListeners/FlowPortalExampleCom-0260" -> null
+          - name                           = "FlowPortalExampleCom-0260" -> null
+          - protocol                       = "Https" -> null
+          - require_sni                    = true -> null
+          - ssl_certificate_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/sslCertificates/le-cert-production-portal-example-com-pfx" -> null
+          - ssl_certificate_name           = "le-cert-production-portal-example-com-pfx" -> null
+            # (3 unchanged attributes hidden)
+        }
+      + http_listener {
+          + firewall_policy_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/afwp-app-gw-1-private-ifs_portal_example_com-svte"
+          + frontend_ip_configuration_id   = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendIPConfigurations/private-ip"
+          + frontend_ip_configuration_name = "private-ip"
+          + frontend_port_id               = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/frontendPorts/port-443"
+          + frontend_port_name             = "port-443"
+          + host_names                     = [
+              + "ifs.portal.example.com",
+            ]
+          + id                             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/httpListeners/IfsPortalExampleCom-dbb9"
+          + name                           = "IfsPortalExampleCom-dbb9"
+          + protocol                       = "Https"
+          + require_sni                    = true
+          + ssl_certificate_id             = "/subscriptions/00000000-1111-2222-3333-555555555555/resourceGroups/rg-application-gateway-1-prod/providers/Microsoft.Network/applicationGateways/agw-app-gw-1/sslCertificates/le-cert-production-portal-example-com-pfx"
+          + ssl_certificate_name           = "le-cert-production-portal-example-com-pfx"
+            # (1 unchanged attribute hidden)
+        }
+      + http_listener {
+          + firewall_policy_id             = (known after apply)
+          + frontend_ip_configuration_id   = (known after apply)
+          + frontend_ip_configuration_name = "public-ip"
+          + frontend_port_id               = (known after apply)
+          + frontend_port_name             = "port-443"
+          + host_names                     = [
+              + "flow.portal.example.com",
+            ]
+          + id                             = (known after apply)
+          + name                           = "FlowPortalExampleCom-0260"
+          + protocol                       = "Https"
+          + require_sni                    = true
+          + ssl_certificate_id             = (known after apply)
+          + ssl_certificate_name           = "le-cert-production-portal-example-com-pfx"
+          + ssl_profile_id                 = (known after apply)
+            # (2 unchanged attributes hidden)
+        }
+
+        # (22 unchanged blocks hidden)
+    }
+
+  # module.application_gateway_wlz.module.waf_policy["app-gw-1::flow_portal_example_com"].modtm_telemetry.telemetry[0] will be destroyed
+  # (because modtm_telemetry.telemetry is not in configuration)
+  - resource "modtm_telemetry" "telemetry" {
+      - id   = "30a4e982-d4a3-48dd-bb4e-05507d5c5c80" -> null
+      - tags = {
+          - "location"        = "norwayeast"
+          - "module_source"   = "regeo-servicestry.terraform.io/Azure/avm-res-network-applicationgatewaywebapplicationfirewallpolicy/azurerm"
+          - "module_version"  = "0.2.0"
+          - "random_id"       = "364b0ad8-d424-a672-db9e-45425112fef5"
+          - "subscription_id" = "00000000-1111-2222-3333-555555555555"
+          - "tenant_id"       = "00000000-aaaa-bbbb-cccc-dddddddddddd"
+        } -> null
+    }
+
+  # module.application_gateway_wlz.module.waf_policy["app-gw-1::flow_portal_example_com"].random_uuid.telemetry[0] will be destroyed
+  # (because random_uuid.telemetry is not in configuration)
+  - resource "random_uuid" "telemetry" {
+      - id     = "364b0ad8-d424-a672-db9e-45425112fef5" -> null
+      - result = "364b0ad8-d424-a672-db9e-45425112fef5" -> null
+    }
+
+  # module.application_gateway_wlz.module.waf_policy["app-gw-1::ifs_portal_example_com"].modtm_telemetry.telemetry[0] will be destroyed
+  # (because modtm_telemetry.telemetry is not in configuration)
+  - resource "modtm_telemetry" "telemetry" {
+      - id   = "3b5a0344-f5ac-42fd-ad60-ad3a53afe514" -> null
+      - tags = {
+          - "location"        = "norwayeast"
+          - "module_source"   = "regeo-servicestry.terraform.io/Azure/avm-res-network-applicationgatewaywebapplicationfirewallpolicy/azurerm"
+          - "module_version"  = "0.2.0"
+          - "random_id"       = "bdef50c7-fea4-929b-33d8-c732786a81f9"
+          - "subscription_id" = "00000000-1111-2222-3333-555555555555"
+          - "tenant_id"       = "00000000-aaaa-bbbb-cccc-dddddddddddd"
+        } -> null
+    }
+
+  # module.application_gateway_wlz.module.waf_policy["app-gw-1::ifs_portal_example_com"].random_uuid.telemetry[0] will be destroyed
+  # (because random_uuid.telemetry is not in configuration)
+  - resource "random_uuid" "telemetry" {
+      - id     = "bdef50c7-fea4-929b-33d8-c732786a81f9" -> null
+      - result = "bdef50c7-fea4-929b-33d8-c732786a81f9" -> null
+    }
+
+Plan: 1 to add, 1 to change, 5 to destroy.
+
+Warning: Deprecated attribute
+
+  on .terraform/modules/application_gateway_wlz.compute_virtual_machine/main.windows_vm.tf line 176, in resource "azurerm_windows_virtual_machine" "this":
+ 176:       vm_agent_platform_updates_enabled # Added property to ignore_changes as it continues to detect change in state.
+
+The attribute "vm_agent_platform_updates_enabled" is deprecated. Refer to the
+provider documentation for details.
+
+(and 2 more similar warnings elsewhere)
+
+Warning: Argument is deprecated
+
+  with module.main.module.admin_key_vault["network-monitor"].azurerm_key_vault.this,
+  on .terraform/modules/main.admin_key_vault/main.tf line 7, in resource "azurerm_key_vault" "this":
+   7:   enable_rbac_authorization       = !var.legacy_access_policies_enabled
+
+This property has been renamed to `rbac_authorization_enabled` and will be
+removed in v5.0 of the provider
+
+(and 2 more similar warnings elsewhere)
