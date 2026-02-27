@@ -1,0 +1,64 @@
+module.cluster.random_password.default_app_user["api-server"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["web-service"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["metrics-exporter"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["data-api"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["indexer-service"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["report-server"]: Refreshing state... [id=none]
+module.cluster.random_password.default_app_user["cache-server"]: Refreshing state... [id=none]
+data.azurerm_key_vault.auth_info: Reading...
+module.cluster.data.azurerm_key_vault.es_user_credentials["apps_kv"]: Reading...
+module.cluster.data.azurerm_key_vault.es_user_credentials["apps_kv"]: Read complete after 1s [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-app-prod/providers/Microsoft.KeyVault/vaults/kv-example-apps-prod]
+data.azurerm_key_vault.auth_info: Read complete after 1s [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-config-prod/providers/Microsoft.KeyVault/vaults/kv-example-config-prod]
+data.azurerm_key_vault_secret.auth_info["endpoint"]: Reading...
+data.azurerm_key_vault_secret.auth_info["password"]: Reading...
+data.azurerm_key_vault_secret.auth_info["username"]: Reading...
+data.azurerm_key_vault_secret.auth_info["username"]: Read complete after 0s [id=https://kv-example-config-prod.vault.azure.net/secrets/app-prod-cluster-elasticsearch-username/7e7021d3d5ec4145ade108f68b15362b]
+data.azurerm_key_vault_secret.auth_info["endpoint"]: Read complete after 0s [id=https://kv-example-config-prod.vault.azure.net/secrets/app-prod-cluster-elasticsearch-endpoint/3c6b8380e7df48c68ca1fa41f30b5ebc]
+data.azurerm_key_vault_secret.auth_info["password"]: Read complete after 0s [id=https://kv-example-config-prod.vault.azure.net/secrets/app-prod-cluster-elasticsearch-password/8369aa98e8da4c69890c3f015de95cee]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_writer"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_writer]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_reports_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_reports_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_facilities_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_facilities_reader]
+module.cluster.data.elasticstack_elasticsearch_security_role.entra_id_role["superuser"]: Reading...
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_customers_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_customers_reader]
+module.cluster.data.elasticstack_elasticsearch_security_role.entra_id_role["viewer"]: Reading...
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_districts_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_districts_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_tasks_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_tasks_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_stations_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_stations_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_dispatch_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_dispatch_reader]
+module.cluster.data.elasticstack_elasticsearch_security_role.entra_id_role["superuser"]: Read complete after 0s [id=AbCdEfGhIjKlMnOpQrStUv/superuser]
+module.cluster.data.elasticstack_elasticsearch_security_role.entra_id_role["viewer"]: Read complete after 0s [id=AbCdEfGhIjKlMnOpQrStUv/viewer]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_regions_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_regions_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_orgs_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_orgs_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_incidents_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_incidents_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_external_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_external_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_locations_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_locations_reader]
+module.cluster.elasticstack_elasticsearch_security_role.default_app["app_reader"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/app_reader]
+module.cluster.elasticstack_elasticsearch_security_role_mapping.default_entra_id_mapping["entra-id-developers-admins-viewer"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/entra-id-developers-admins-viewer]
+module.cluster.elasticstack_elasticsearch_security_role_mapping.default_entra_id_mapping["entra-id-developers-users-viewer"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/entra-id-developers-users-viewer]
+module.cluster.elasticstack_elasticsearch_security_role_mapping.default_entra_id_mapping["entra-id-solution-admin-superuser"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/entra-id-solution-admin-superuser]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["report-server"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/report-server]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["api-server"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/api-server]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["data-api"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/data-api]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["web-service"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/web-service]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["metrics-exporter"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/metrics-exporter]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["indexer-service"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/indexer-service]
+module.cluster.elasticstack_elasticsearch_security_user.default_app["cache-server"]: Refreshing state... [id=AbCdEfGhIjKlMnOpQrStUv/cache-server]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-data-api-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/data-api-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-metrics-exporter-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/metrics-exporter-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-cache-server-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/cache-server-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-cache-server-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/cache-server-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-api-server-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/api-server-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-api-server-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/api-server-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-data-api-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/data-api-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-report-server-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/report-server-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-web-service-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/web-service-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-report-server-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/report-server-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-metrics-exporter-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/metrics-exporter-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-indexer-service-password"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/indexer-service-searchcluster-elasticsearch-password]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-indexer-service-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/indexer-service-searchcluster-elasticsearch-username]
+module.cluster.azapi_data_plane_resource.es_user_credentials["apps_kv-web-service-username"]: Refreshing state... [id=kv-example-apps-prod.vault.azure.net/secrets/web-service-searchcluster-elasticsearch-username]
+
+No changes. Your infrastructure matches the configuration.
+
+Terraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
