@@ -252,6 +252,31 @@ on:
           plan-max-count-import: -1
           plan-max-count-move: -1
           plan-max-count-remove: 0
+      pr-auto-merge-app-id:
+        type: string
+        description: |
+          GitHub App ID for the app used to perform auto-merge operations.
+          Required when 'pr-auto-merge-enabled' is true.
+
+          NOTE: This setting applies to all environments, there is no per environment setting for this.
+        required: false
+        default: ""
+      pr-auto-merge-app-private-key-secret:
+        type: string
+        description: |
+          Name of the GitHub Actions secret containing the private key for the auto-merge GitHub App.
+          The secret must be available to the calling workflow (via 'secrets: inherit').
+          Required when 'pr-auto-merge-enabled' is true.
+
+          This input holds the NAME of the secret, not the secret value itself.
+          The actual secret value is resolved at runtime from the secrets passed to this workflow.
+
+          Example:
+            pr-auto-merge-app-private-key-secret: "MY_APP_PRIVATE_KEY"
+
+          NOTE: This setting applies to all environments, there is no per environment setting for this.
+        required: false
+        default: ""
       runs-on:
         type: string
         description: |
@@ -604,6 +629,17 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: "🔐 Validate auto-merge configuration"
+        id: validate-automerge-config
+        run: |
+          if [ -z "${{ inputs.pr-auto-merge-app-id }}" ]; then
+            echo "::error::Auto-merge is enabled but 'pr-auto-merge-app-id' is not set. Please provide the GitHub App ID."
+            exit 1
+          fi
+          if [ -z "${{ inputs.pr-auto-merge-app-private-key-secret }}" ]; then
+            echo "::error::Auto-merge is enabled but 'pr-auto-merge-app-private-key-secret' is not set. Please provide the name of the secret containing the GitHub App private key."
+            exit 1
+          fi
       - name: "📥 Download matrix job metadata"
         id: download-metadata
         uses: actions/download-artifact@v4
@@ -615,13 +651,36 @@ jobs:
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@v0
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
+      - name: "🔑 Resolve auto-merge app private key"
+        id: resolve-key
+        if: steps.evaluate-automerge.outputs.is-eligible == 'true'
+        shell: bash
+        env:
+          SECRET_NAME: ${{ inputs.pr-auto-merge-app-private-key-secret }}
+        run: |
+          SECRETS_JSON=$(cat <<'EOF'
+          ${{ toJSON(secrets) }}
+          EOF
+          )
+          PRIVATE_KEY=$(echo "${SECRETS_JSON}" | jq --arg key "${SECRET_NAME}" -r '.[$key]')
+          if [ -z "${PRIVATE_KEY}" ] || [ "${PRIVATE_KEY}" == "null" ]; then
+            echo "::error::Secret '${SECRET_NAME}' not found. Ensure the secret exists and 'secrets: inherit' is set in the calling workflow."
+            exit 1
+          fi
+          # Mask the value so it never appears in logs
+          echo "::add-mask::${PRIVATE_KEY}"
+          # Set as output using delimiter to handle multiline PEM keys
+          EOF_DELIM=$(openssl rand -hex 16)
+          echo "private-key<<${EOF_DELIM}" >> $GITHUB_OUTPUT
+          echo "${PRIVATE_KEY}" >> $GITHUB_OUTPUT
+          echo "${EOF_DELIM}" >> $GITHUB_OUTPUT
       - name: "🎫 Create GitHub App token"
         id: app-token
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
         uses: actions/create-github-app-token@v2
         with:
-          app-id: "2746453" # dsb-infra-pr-merger, TODO: change this to an input
-          private-key: ${{ secrets.PRIVATE_KEY }} # TODO: key vault or input
+          app-id: ${{ inputs.pr-auto-merge-app-id }}
+          private-key: ${{ steps.resolve-key.outputs.private-key }}
           permission-contents: write
           permission-pull-requests: write
       - name: "🤖 Auto merge PR"
