@@ -1,0 +1,12 @@
+data.github_repositories.all: Reading...
+data.github_repositories.all: Read complete after 1s
+
+Changes to Outputs:
+  ~ repos_not_in_iac = [
+        # (4 unchanged elements hidden)
+        "some-existing-repo",
+      + "some-new-repo",
+    ]
+
+You can apply this plan to save these new output values to the Terraform
+state, without changing any real infrastructure.

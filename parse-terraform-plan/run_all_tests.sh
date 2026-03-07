@@ -136,13 +136,19 @@ export input_plan_console_file="${_this_script_dir}/test-data/plan_1_change.log"
 run_test "0 add, 1 change, 0 destroy" \
   "0" "0" "1" "0" "0" "0"
 
-# Test 5: Empty input (no file specified)
+# Test 5: Output-only changes (no resource changes)
+export input_plan_console_file="${_this_script_dir}/test-data/plan_output_only_changes.log"
+#                   imports adds changes destroys moves removes
+run_test "Output-only changes (no resource changes)" \
+  "0" "0" "0" "0" "0" "0"
+
+# Test 6: Empty input (no file specified)
 export input_plan_console_file=""
 #                   imports adds changes destroys moves removes
 run_test "Empty input file path yields fallback values" \
   "?" "?" "?" "?" "?" "?"
 
-# Test 6: Non-existent file (empty file = file exists but is empty)
+# Test 7: Non-existent file (empty file = file exists but is empty)
 _empty_file=$(mktemp)
 export input_plan_console_file="${_empty_file}"
 #                   imports adds changes destroys moves removes

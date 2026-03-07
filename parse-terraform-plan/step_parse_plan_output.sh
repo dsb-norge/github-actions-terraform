@@ -35,8 +35,16 @@ function main {
 
     if [ -s "${input_plan_console_file}" ]; then
 
-      # Parse the Plan: line or detect "No changes."
+      # Parse the Plan: line or detect "No changes." / output-only changes
       if grep -q "No changes." "${input_plan_console_file}"; then
+        imports=0
+        adds=0
+        changes=0
+        destroys=0
+      elif grep -q "without changing any real infrastructure" "${input_plan_console_file}"; then
+        # Output-only changes: Terraform reports changes to outputs but no resource changes.
+        # There is no "Plan:" summary line in this case.
+        log-info "detected output-only changes (no resource changes)"
         imports=0
         adds=0
         changes=0
