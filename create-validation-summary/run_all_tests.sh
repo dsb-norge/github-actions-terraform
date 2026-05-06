@@ -54,6 +54,7 @@ reset_defaults() {
   export input_plan_console_file=""
   export input_plan_txt_output_file=""
   export input_status_init="success"
+  export input_status_verify_lock="success"
   export input_status_fmt="success"
   export input_status_validate="success"
   export input_status_lint="success"
@@ -500,6 +501,41 @@ run_test "Environment name appears in prefix" assert_environment_name_in_prefix
 # Test 10: Job URL is correct in summary footer
 reset_defaults
 run_test "Job URL is correctly constructed" assert_job_url_in_summary
+
+# Test 11: Lock file row renders success in table
+assert_lock_row_success() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *"| 🔒 | Lock file | \`success\` |"* ]]; then
+    fails+="  summary: expected lock file row with success status\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Lock file row renders success" assert_lock_row_success
+
+# Test 12: Lock file row renders failure with <kbd>
+assert_lock_row_failure() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *"| 🔒 | Lock file | <kbd>failure</kbd> |"* ]]; then
+    fails+="  summary: expected lock file row with <kbd>failure</kbd>\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_status_verify_lock="failure"
+run_test "Lock file row renders failure with <kbd>" assert_lock_row_failure
 
 # --------------------------------------------------
 # Summary

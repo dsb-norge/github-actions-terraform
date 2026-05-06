@@ -17,6 +17,9 @@ inputs:
   status-init:
     description: Outcome of init step.
     required: true
+  status-verify-lock:
+    description: Outcome of the lock file verification step.
+    required: true
   status-fmt:
     description: Outcome of fmt step.
     required: true
@@ -74,6 +77,7 @@ runs:
         input_plan_console_file: ${{ inputs.plan-console-file }}
         input_plan_txt_output_file: ${{ inputs.plan-txt-output-file }}
         input_status_init: ${{ inputs.status-init }}
+        input_status_verify_lock: ${{ inputs.status-verify-lock }}
         input_status_fmt: ${{ inputs.status-fmt }}
         input_status_validate: ${{ inputs.status-validate }}
         input_status_lint: ${{ inputs.status-lint }}
