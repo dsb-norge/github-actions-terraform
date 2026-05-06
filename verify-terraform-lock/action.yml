@@ -1,0 +1,58 @@
+name: "Verify Terraform lock file platform coverage"
+description: |
+  Fails if .terraform.lock.hcl is missing h1: hashes for any of the
+  required platforms. Run this in CI to catch single-platform lock
+  bumps before they break runs on other architectures (CI Linux runners,
+  developer Macs, Windows ARM64 dev machines, etc.).
+
+  Prerequisites:
+  - 'terraform init' must have run successfully in 'working-directory'
+    before this action. The action reuses the populated '.terraform/'
+    directory rather than re-initializing, so make sure to gate this
+    action's invocation on init success via:
+      if: steps.init.outcome == 'success'
+
+  How it works:
+  1. Saves a copy of the existing .terraform.lock.hcl
+  2. Runs 'terraform providers lock' for the required platforms
+     (reuses '.terraform/' from the prior init step)
+  3. Compares the result against the original
+  4. Fails with a clear remediation message if anything would change
+
+  The original lock file is always restored before the action exits,
+  so subsequent steps see the committed file unchanged.
+
+author: "Peder Schmedling"
+inputs:
+  working-directory:
+    description: |
+      Directory containing .terraform.lock.hcl. Must already have had
+      'terraform init' run in it (so '.terraform/' is populated).
+    required: true
+  platforms:
+    description: |
+      Newline-separated list of os_arch platforms to require hashes for.
+      Default covers:
+        - infra development on Linux, both AMD64 and ARM64
+        - infra development on Apple Silicon Macs (Darwin ARM64)
+        - github runners on Linux, normally AMD64
+    required: false
+    default: |
+      linux_amd64
+      linux_arm64
+      darwin_arm64
+outputs:
+  is-complete:
+    description: "'true' if lock file already covers all required platforms, 'false' otherwise."
+    value: ${{ steps.verify-lock.outputs.is-complete }}
+runs:
+  using: "composite"
+  steps:
+    - id: verify-lock
+      shell: bash
+      env:
+        input_working_directory: ${{ inputs.working-directory }}
+        input_platforms: ${{ inputs.platforms }}
+      run: |
+        set -o allexport
+        source "${{ github.action_path }}/step_verify_lock.sh"
