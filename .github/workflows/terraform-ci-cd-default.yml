@@ -379,6 +379,22 @@ jobs:
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
+      # Verify the committed .terraform.lock.hcl covers all required platforms.
+      # Only runs on PR events — once merged to the default branch the
+      # verification has already happened at PR-time, so push/dispatch/schedule
+      # runs skip this step.
+      - name: "🔒 Verify lock file platform coverage"
+        id: verify-lock
+        if: |
+          steps.init.outcome == 'success'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v0
+        with:
+          working-directory: ${{ matrix.vars.project-dir }}
+        continue-on-error: true # allow job to continue, step outcome is evaluated later
+
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
@@ -434,6 +450,7 @@ jobs:
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }} # created by terraform by parsing the plan file, not available when plan fails
           plan-console-file: ${{ steps.plan.outputs.console-output-file }} # captured from console output, possibly available even if plan fails
           status-init: ${{ steps.init.outcome }}
+          status-verify-lock: ${{ steps.verify-lock.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
@@ -465,6 +482,20 @@ jobs:
         run: |
           if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
             echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: 🔒 Lock file"
+        # Only checked when verify-lock actually ran (PR events with successful init).
+        if: |
+          steps.init.outcome == 'success'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        run: |
+          if [ ! "${{ steps.verify-lock.outcome }}" == 'success' ]; then
+            echo "::error title=Lock file verification failed::Outcome of lock file verification step was '${{ steps.verify-lock.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
