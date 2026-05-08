@@ -475,7 +475,7 @@ Most existing actions embed their logic directly in `action.yml` YAML strings. H
 Some steps are fine to keep inline:
 
 - **Pre-requisite checks** (e.g., verifying a binary exists) — these are usually 3–5 lines and don't need their own test suite.
-- **Steps that are purely declarative** (e.g., `uses: actions/upload-artifact@v4`).
+- **Steps that are purely declarative** (e.g., `uses: actions/upload-artifact@v7`).
 - **Pass-through steps** that only set a condition (`if:`) and print a message.
 
 Use your judgement — the goal is testability, not blind extraction.

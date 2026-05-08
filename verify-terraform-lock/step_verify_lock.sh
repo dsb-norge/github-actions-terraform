@@ -22,7 +22,7 @@
 #     result is always a superset of the original.
 #   - Downstream steps in the same job (plan, apply) read the lock file
 #     for hash verification and work correctly with a superset.
-#   - The 'actions/cache@v4' key was computed earlier in the job, so a
+#   - The 'actions/cache@v5' key was computed earlier in the job, so a
 #     mid-job rewrite does not affect cache restore/save.
 #   - The CI rewrite never makes it back to the repo — when verification
 #     fails, the user fixes the lock file locally and pushes a new commit.

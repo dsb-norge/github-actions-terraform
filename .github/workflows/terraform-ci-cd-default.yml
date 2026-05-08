@@ -314,10 +314,11 @@ jobs:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: "🎰 Create env matrix"
         id: create-matrix
-        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@nodejs24
         with:
           inputs-json: ${{ toJSON(inputs) }}
 
@@ -339,17 +340,18 @@ jobs:
         shell: bash
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: "🎰 Export environment variables and secrets"
-        uses: dsb-norge/github-actions-terraform/export-env-vars@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/export-env-vars@nodejs24
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
           secrets-json: ${{ toJSON(secrets) }}
 
       - name: "🔑 Login to Azure"
-        uses: azure/login@v2
+        uses: azure/login@v3
         if: env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
         with:
           tenant-id: ${{ env.ARM_TENANT_ID }}
@@ -357,7 +359,7 @@ jobs:
           client-id: ${{ env.ARM_CLIENT_ID }}
 
       - name: "📥 Setup Terraform"
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ matrix.vars.terraform-version }}
           # workaround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
@@ -365,19 +367,21 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@nodejs24
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-tflint@nodejs24
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
           working-directory: ${{ matrix.vars.project-dir }}
 
       - name: "🚀 Cache Terraform provider plugins"
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.vars.project-dir)) }}"
@@ -385,7 +389,8 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
-        uses: dsb-norge/github-actions-terraform/terraform-init@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
@@ -405,7 +410,8 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -413,7 +419,8 @@ jobs:
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
@@ -422,7 +429,8 @@ jobs:
       - name: ✔ Terraform Validate
         id: validate
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
-        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-validate@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -430,7 +438,8 @@ jobs:
       - name: 🧹 Lint with TFLint
         id: lint
         if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -438,7 +447,8 @@ jobs:
       - name: 📖 Terraform Plan
         id: plan
         if: steps.init.outcome == 'success' && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-plan@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
@@ -447,7 +457,8 @@ jobs:
       - name: "🔍 Parse terraform plan"
         id: parse-plan
         if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@nodejs24
         with:
           plan-console-file: ${{ steps.plan.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
@@ -459,7 +470,8 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@nodejs24
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }} # created by terraform by parsing the plan file, not available when plan fails
@@ -576,7 +588,8 @@ jobs:
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-apply@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
@@ -588,7 +601,8 @@ jobs:
         if: |
           steps.init.outcome == 'success'
           && contains(matrix.vars.goals, 'destroy-plan')
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-plan@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
@@ -618,7 +632,8 @@ jobs:
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-apply@nodejs24
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
@@ -628,7 +643,8 @@ jobs:
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata
         if: always()
-        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@nodejs24
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           matrix-context-json: ${{ toJSON(matrix) }}
@@ -696,7 +712,8 @@ jobs:
           merge-multiple: true
       - name: "🔍 Evaluate PR auto merge eligibility across all environments"
         id: evaluate-automerge
-        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@nodejs24
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
       - name: "🔑 Resolve auto-merge app private key"
@@ -734,7 +751,8 @@ jobs:
       - name: "🤖 Auto merge PR"
         id: auto-merge-pr
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
-        uses: dsb-norge/github-actions-terraform/auto-merge-pr@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/auto-merge-pr@nodejs24
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           github-event-context-json: ${{ toJSON(github.event) }}

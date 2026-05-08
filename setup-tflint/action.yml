@@ -154,14 +154,14 @@ runs:
     # attempt to retrieve tflint binary from GitHub cache
     # note: this will also save the binary to GitHub cache in cases where the binary must be downloaded and installed
     - id: cache-tflint
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ steps.get-meta.outputs.install-dir }}
         key: ${{ steps.get-meta.outputs.cache-key }}
     # attempt to retrieve tflint plugins from GitHub cache
     # note: this will also save the plugins to GitHub cache in cases where the plugins must be downloaded and installed
     - id: cache-tflint-plugins
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: "~/.tflint.d/plugins"
         key: "tflint-plugins-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(steps.get-config.outputs.config-file) }}"
