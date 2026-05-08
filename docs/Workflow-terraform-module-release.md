@@ -47,7 +47,6 @@ on:
 
 jobs:
   release-plan:
-    # TODO revert to @v0
-    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@nodejs24
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-module-release.yaml@v0
     secrets: inherit
 ```
