@@ -43,7 +43,7 @@ runs:
         end-group
 
     - id: azure-login
-      uses: azure/login@v2
+      uses: azure/login@v3
       with:
         tenant-id: ${{ env.ARM_TENANT_ID }}
         subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
@@ -134,7 +134,7 @@ runs:
         exit ${TEST_EXIT_CODE}
 
     - id: upload-test-results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: test-results-output-${{ inputs.test-file }}
         path: ${{ steps.run-tests.outputs.json }}

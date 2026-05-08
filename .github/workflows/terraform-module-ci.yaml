@@ -75,7 +75,7 @@ jobs:
 
       - name: "📥 Checkout"
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
           ref: ${{ github.event.pull_request.head.ref }}
@@ -84,7 +84,8 @@ jobs:
 
       - name: "📝 Validate and update README.md"
         id: update-readme
-        uses: dsb-norge/github-actions-terraform/terraform-docs@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-docs@nodejs24
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
         continue-on-error: true
@@ -107,11 +108,12 @@ jobs:
         uses: dsb-norge/directory-recreate@v1
 
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: "🎰 Create the matrix"
         id: create-test-matrix
-        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@nodejs24
 
   # runs all validation steps but also builds up the terraform provider plugin cache
   validate-project:
@@ -128,10 +130,10 @@ jobs:
         uses: dsb-norge/directory-recreate@v1
 
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: "📥 Setup Terraform"
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ inputs.terraform-version }}
           # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
@@ -139,24 +141,27 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@nodejs24
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
-        uses: dsb-norge/github-actions-terraform/setup-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/setup-tflint@nodejs24
         with:
           tflint-version: ${{ inputs.tflint-version }}
           working-directory: ${{ github.workspace }}
 
       - name: "🚀 Cache Terraform provider plugins"
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
 
       - name: ⚙️ Terraform Init
         id: init
-        uses: dsb-norge/github-actions-terraform/terraform-init@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@nodejs24
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -165,7 +170,8 @@ jobs:
 
       - name: 🖌 Terraform Format
         id: fmt
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@nodejs24
         with:
           working-directory: ${{ github.workspace }}
           format-check-in-root-dir: true
@@ -173,14 +179,16 @@ jobs:
 
       - name: ✔ Terraform Validate
         id: validate
-        uses: dsb-norge/github-actions-terraform/terraform-validate@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-validate@nodejs24
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧹 Lint with TFLint
         id: lint
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@nodejs24
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -188,7 +196,8 @@ jobs:
       - name: 📝 Create validation summary
         id: create-validation-summary
         if: github.event_name == 'pull_request'
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@nodejs24
         with:
           environment-name: "module"
           status-init: ${{ steps.init.outcome }}
@@ -253,24 +262,25 @@ jobs:
         test-file: ${{ fromJSON(needs.create-test-matrix.outputs.all-tests).files }}
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: "📥 Setup Terraform"
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ inputs.terraform-version }}
           # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
           terraform_wrapper: false
 
       - name: "🚀 Cache Terraform provider plugins"
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ needs.validate-project.outputs.plugin-cache-directory }}
           key: ${{ needs.validate-project.outputs.plugin-cache-key-monthly-rolling }}
 
       - name: ⚙️ Terraform Init
         id: init
-        uses: dsb-norge/github-actions-terraform/terraform-init@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-init@nodejs24
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -279,7 +289,8 @@ jobs:
 
       - name: 🧪 Terraform Test
         id: test
-        uses: dsb-norge/github-actions-terraform/terraform-test@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/terraform-test@nodejs24
         with:
           test-file: ${{ matrix.test-file }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -287,7 +298,8 @@ jobs:
       - name: 📝 Create test report
         id: create-test-report
         if: github.event_name == 'pull_request'
-        uses: dsb-norge/github-actions-terraform/create-test-report@v0
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-test-report@nodejs24
         with:
           test-out-file: ${{ steps.test.outputs.json }}
           status-init: ${{ steps.init.outcome }}
