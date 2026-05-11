@@ -7,5 +7,6 @@
   "tflint-version": "v0.46.1",
   "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./module/1\"\n- \"./module/2\"\n",
   "format-check-in-root-dir": "true",
-  "add-pr-comment": "true"
+  "add-pr-comment": "true",
+  "verify-lock-file": "true"
 }

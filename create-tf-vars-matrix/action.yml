@@ -236,6 +236,7 @@ runs:
           terraform-version
           tflint-version
           url
+          verify-lock-file
         )
 
         NOT_EMPTY_FIELDS=(
@@ -255,6 +256,7 @@ runs:
           project-dir
           terraform-version
           tflint-version
+          verify-lock-file
         )
 
         # Check that environment vars is of type array
