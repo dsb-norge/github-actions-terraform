@@ -1,0 +1,70 @@
+name: "Aggregate validation summaries into per-group PR comments"
+description: |
+  Reconciles the set of per-group "validation summary" PR comments on a pull request
+  according to the desired set computed from matrix-job-meta-*.json artifacts.
+
+  See docs/Workflow-pr-comments.md for the full spec — this action implements §4
+  (the per-group comment shape and the reconcile algorithm).
+
+  Behavior:
+    - Reads every matrix-job-meta-*.json in the current directory.
+    - Partitions envs by their matrix_context.vars["pr-comment-group"] value.
+    - Lists all PR comments via the GitHub API; finds existing group comments by
+      family-prefix match.
+    - Deletes existing group comments whose specific prefix is no longer desired
+      (orphans from removed/renamed groups), plus existing group comments that
+      ARE desired (will be reposted with fresh body).
+    - Posts one fresh per-group comment per distinct non-empty group.
+
+  Failure isolation:
+    - Empty desired set + empty existing set -> no-op.
+    - Empty desired set + non-empty existing set -> sweep mode (clean orphans only).
+    - GitHub API outage -> degraded mode: skip delete pass, still post fresh bodies.
+    - Malformed individual metadata file -> log warning, skip the file.
+
+author: "Peder Schmedling"
+
+inputs:
+  metadata-files-pattern:
+    description: |
+      Glob pattern matched against files in the working directory. Each match must
+      be a JSON file with the structure produced by capture-matrix-job-meta.
+    required: false
+    default: "matrix-job-meta-*.json"
+  pr-number:
+    description: |
+      The pull request number to reconcile group comments against.
+    required: true
+  github-token:
+    description: |
+      Token used by the `gh` CLI to call the GitHub API. Needs `pull-requests: write`.
+
+      No default is provided: the `github` context is not available inside a
+      composite action's `inputs.<name>.default`, so the caller must pass the
+      token explicitly. From a reusable workflow, the canonical value to pass
+      is the `github.token` context (or the `secrets.GITHUB_TOKEN` secret).
+    required: true
+
+outputs:
+  groups-processed-json:
+    description: |
+      JSON array of objects describing each action taken. Each object has shape:
+        {group: <string>, "comment-id": <string>, action: posted|repost|orphan-deleted|post-failed}
+      Used for logs/tests; not normally consumed by callers.
+    value: ${{ steps.aggregate.outputs.groups-processed-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: aggregate
+      shell: bash
+      env:
+        input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+        input_pr_number: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -o allexport
+        source "${{ github.action_path }}/step_aggregate.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
