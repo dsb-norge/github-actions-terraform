@@ -15,6 +15,7 @@
 #   input_status_validate      - Outcome of validate step
 #   input_status_lint          - Outcome of lint step
 #   input_status_plan          - Outcome of plan step
+#   input_pr_comment_group     - Name of comment group this env belongs to ("" = ungrouped)
 #   input_include_plan_details - Whether to include plan details in the summary
 #   input_plan_count_add       - Number of resources to be added
 #   input_plan_count_change    - Number of resources to be changed
@@ -46,10 +47,28 @@ function main {
   log-info "creating pull request comment ..."
 
   local comment_prefix="### Terraform validation summary for environment: \`${input_environment_name}\`"
+  local comment_content="${comment_prefix}"
 
-  # Build the validation summary table
-  # don't touch the indenting here
-  local comment_content="${comment_prefix}
+  # Branch on grouped vs ungrouped mode (docs/Workflow-pr-comments.md §3).
+  # Grouped mode (pr-comment-group is non-empty): omit the validation table
+  # and prepend a pointer to the per-group summary comment. The prefix above
+  # is unchanged in both modes — that is the §6.2 prefix-continuity invariant.
+  if [ -n "${input_pr_comment_group}" ]; then
+    log-info "grouped mode active (group='${input_pr_comment_group}') — omitting validation table"
+
+    # don't touch the indenting here
+    # The grouped summary comment is posted by the pr-comment-aggregator job
+    # which runs AFTER all matrix jobs, so it appears below the per-env
+    # comments in GitHub's default chronological PR conversation order.
+    comment_content="${comment_content}
+
+> Part of group \`${input_pr_comment_group}\` — see the grouped summary below."
+  else
+    log-info "ungrouped mode — rendering full validation table"
+
+    # Build the validation summary table
+    # don't touch the indenting here
+    comment_content="${comment_content}
 |  | Step | Result |
 |:---:|---|---|
 | ⚙️ | Initialization | $(format-status "${input_status_init}") |
@@ -59,27 +78,28 @@ function main {
 | 🧹 | TFLint | $(format-status "${input_status_lint}") |
 | 📖 | Plan | $(format-status "${input_status_plan}") |"
 
-  # Add plan details if enabled
-  if [ "${input_include_plan_details}" == 'true' ]; then
+    # Add plan details if enabled
+    if [ "${input_include_plan_details}" == 'true' ]; then
 
-    # don't touch the indenting here
-    comment_content="${comment_content}
+      # don't touch the indenting here
+      comment_content="${comment_content}
 | 📊 | Plan Details | <span title=\"Resources to be added\">\`💫 ${input_plan_count_add}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_plan_count_change}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_plan_count_destroy}\` destroy</span>"
 
-    if [ "${input_plan_count_move}" != '0' ]; then
-      comment_content="${comment_content}<br><span title=\"Resources to be moved\">\`🔀 ${input_plan_count_move}\` move</span>"
-    fi
+      if [ "${input_plan_count_move}" != '0' ]; then
+        comment_content="${comment_content}<br><span title=\"Resources to be moved\">\`🔀 ${input_plan_count_move}\` move</span>"
+      fi
 
-    if [ "${input_plan_count_import}" != '0' ]; then
-      comment_content="${comment_content}<br><span title=\"Resources to be imported\">\`📥 ${input_plan_count_import}\` import</span>"
-    fi
+      if [ "${input_plan_count_import}" != '0' ]; then
+        comment_content="${comment_content}<br><span title=\"Resources to be imported\">\`📥 ${input_plan_count_import}\` import</span>"
+      fi
 
-    if [ "${input_plan_count_remove}" != '0' ]; then
-      comment_content="${comment_content}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_plan_count_remove}\` remove</span>"
-    fi
+      if [ "${input_plan_count_remove}" != '0' ]; then
+        comment_content="${comment_content}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_plan_count_remove}\` remove</span>"
+      fi
 
-    # end of table row
-    comment_content="${comment_content} |"
+      # end of table row
+      comment_content="${comment_content} |"
+    fi
   fi
 
   # Add link to job logs

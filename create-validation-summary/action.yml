@@ -32,6 +32,16 @@ inputs:
   status-plan:
     description: Outcome of plan step.
     required: true
+  pr-comment-group:
+    description: |
+      Name of the comment group this environment belongs to. When non-empty:
+        - The validation table is omitted from the per-env comment body (it appears
+          in the per-group comment posted by aggregate-validation-summaries instead).
+        - A short "Part of group `<name>`" note is prepended above the plan extract.
+      The comment prefix is unchanged regardless of this value — see
+      docs/Workflow-pr-comments.md §6.2 (prefix continuity invariant).
+    required: false
+    default: ""
   include-plan-details:
     description: Whether to include plan details in the summary.
     required: false
@@ -82,6 +92,7 @@ runs:
         input_status_validate: ${{ inputs.status-validate }}
         input_status_lint: ${{ inputs.status-lint }}
         input_status_plan: ${{ inputs.status-plan }}
+        input_pr_comment_group: ${{ inputs.pr-comment-group }}
         input_include_plan_details: ${{ inputs.include-plan-details }}
         input_plan_count_add: ${{ inputs.plan-count-add }}
         input_plan_count_change: ${{ inputs.plan-count-change }}
