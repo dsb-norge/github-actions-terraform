@@ -44,6 +44,13 @@ on:
             - verify-lock-file
                 bool, whether to verify lock file platform coverage on PRs, see the workflow input 'verify-lock-file'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - pr-comment-group
+                string, name of a group this environment belongs to for PR-comment aggregation, see the workflow input 'pr-comment-group'.
+                Environments with the same non-empty group value share a single grouped validation-summary PR comment (one column per environment).
+                Their per-environment comments drop the validation table and keep only the plan extract.
+                Default behavior (empty string) is unchanged from prior versions — each environment gets its own table+plan comment.
+                See docs/Workflow-pr-comments.md for full details.
+                note: this is a per environment setting, use the workflow input for a global default that applies to all environments.
             - allow-failing-terraform-operations
                 bool, defaults to false, if true: the workflow will not terminate with failure even if job steps fails.
                 This parameter allows for ignoring failing results of terraform operations for select environments.
@@ -198,6 +205,18 @@ on:
           Set this to 'false' to disable lock file verification. For per environment control specify this directly in the environment specification.
         required: false
         default: true
+      pr-comment-group:
+        type: string
+        description: |
+          Optional global default for the per-environment 'pr-comment-group' field. Rarely useful as a global value — you almost always want to set this per environment in 'environments-yml'.
+
+          When an environment's effective value is non-empty, the workflow:
+            - Removes the validation table from that environment's per-environment PR comment (keeping plan extract and footer only).
+            - Adds the environment as a column to a per-group PR comment shared with all other environments using the same group name.
+
+          See docs/Workflow-pr-comments.md for the full grouped-comment spec.
+        required: false
+        default: ""
       pr-auto-merge-enabled:
         type: boolean
         description: |
