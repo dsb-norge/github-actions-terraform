@@ -489,6 +489,9 @@ jobs:
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
           status-plan: ${{ steps.plan.outcome }}
+          # When non-empty, omits the validation table from the per-env comment
+          # body (it appears in the per-group comment instead). See docs/Workflow-pr-comments.md §3.2.
+          pr-comment-group: ${{ matrix.vars.pr-comment-group }}
           # include details when parse step actually returned data
           include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
           plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
@@ -654,6 +657,41 @@ jobs:
           github-context-json: ${{ toJSON(github) }}
           steps-context-json: ${{ toJSON(steps) }}
         continue-on-error: true # never fail the job due to metadata capture
+
+  # Reconciles per-group PR comments according to the desired set computed from
+  # matrix-job-meta-*.json artifacts. Runs unconditionally on PR events (not gated
+  # on whether any env declares a pr-comment-group) so that toggling grouping off
+  # for an env reliably cleans up its stale group comment on the very next run.
+  # See docs/Workflow-pr-comments.md §4.6 for the reconcile algorithm and the
+  # cost discussion behind the unconditional gate.
+  pr-comment-aggregator:
+    if: |
+      always()
+      && github.event_name == 'pull_request'
+      && github.event.action != 'closed'
+      && github.event.action != 'converted_to_draft'
+    name: "PR comment aggregator"
+    needs: [create-matrix, terraform-ci-cd]
+    runs-on: ${{ inputs.runs-on }} # global setting
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download matrix job metadata"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-job-meta-*
+          merge-multiple: true
+        # An empty artifact set is a valid input (sweep-only mode still
+        # needs to run to clean up any orphan group comments).
+        continue-on-error: true
+      - name: "🧮 Reconcile per-group PR comments"
+        uses: dsb-norge/github-actions-terraform/aggregate-validation-summaries@v0
+        with:
+          metadata-files-pattern: "matrix-job-meta-*.json"
+          pr-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+        continue-on-error: true # never fail the workflow over PR comment rendering
 
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
