@@ -59,6 +59,7 @@ reset_defaults() {
   export input_status_validate="success"
   export input_status_lint="success"
   export input_status_plan="success"
+  export input_pr_comment_group=""
   export input_include_plan_details="false"
   export input_plan_count_add="0"
   export input_plan_count_change="0"
@@ -873,6 +874,216 @@ EOF
 export input_plan_console_file="${_console_file}"
 run_test "Console-file refresh-stripping retains marker + after, drops before" assert_console_refresh_stripping_exact
 rm -f "${_console_file}"
+
+# --------------------------------------------------
+# Grouped-mode tests (pr-comment-group is non-empty).
+# Verify the new branch: validation table omitted, "Part of group ..."
+# note prepended, prefix unchanged. See docs/Workflow-pr-comments.md §3.2.
+# --------------------------------------------------
+
+# Test 28: Grouped mode — prefix is byte-identical to ungrouped mode
+# This is the §6.2 prefix-continuity invariant.
+assert_grouped_prefix_unchanged() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='### Terraform validation summary for environment: `dev`'
+  if [[ "${prefix}" != "${expected}" ]]; then
+    echo "  prefix: byte-exact mismatch — grouped mode must keep the same prefix as ungrouped"
+    echo "    expected: ${expected}"
+    echo "    actual:   ${prefix}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: prefix is byte-identical to ungrouped mode" assert_grouped_prefix_unchanged
+
+# Test 29: Grouped mode — validation table is OMITTED from body
+assert_grouped_table_omitted() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  # No standard row labels should appear
+  local forbidden_rows=(
+    "| ⚙️ | Initialization |"
+    "| 🔒 | Lock file |"
+    "| 🖌 | Format and Style |"
+    "| ✔ | Validate |"
+    "| 🧹 | TFLint |"
+    "| 📖 | Plan |"
+    "|  | Step | Result |"
+    "|:---:|---|---|"
+  )
+  for row in "${forbidden_rows[@]}"; do
+    if [[ "${summary}" == *"${row}"* ]]; then
+      fails+="  summary: grouped mode must NOT contain row '${row}'\n"
+    fi
+  done
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: validation table is omitted from per-env body" assert_grouped_table_omitted
+
+# Test 30: Grouped mode — "Part of group ..." pointer is prepended (byte-exact)
+assert_grouped_note_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='> Part of group `dev-group` — see the grouped summary below.'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: expected byte-exact pointer"
+    echo "    expected: ${expected}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: 'Part of group <name>' pointer is byte-exact" assert_grouped_note_byte_exact
+
+# Test 31: Grouped mode — group name is properly escaped in the note (different group name)
+assert_grouped_note_uses_input_group() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'> Part of group `prod-norge` — see the grouped summary below.'* ]]; then
+    echo "  summary: grouped note should reflect the configured group name 'prod-norge'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="prod-norge"
+run_test "Grouped mode: note carries the configured group name" assert_grouped_note_uses_input_group
+
+# Test 32: Grouped mode — plan extract still rendered when plan file present
+assert_grouped_plan_extract_kept() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *'<details><summary>Show Plan (last 65k characters)</summary>'* ]]; then
+    fails+="  summary: grouped mode must still render the <details> plan extract block\n"
+  fi
+  if [[ "${summary}" != *'GROUPED_PLAN_BODY'* ]]; then
+    fails+="  summary: grouped mode must still include plan body content\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+_plan_file=$(mktemp)
+echo "GROUPED_PLAN_BODY content of the plan" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+run_test "Grouped mode: plan extract is kept" assert_grouped_plan_extract_kept
+rm -f "${_plan_file}"
+
+# Test 33: Grouped mode — "Plan not available" fallback works (no plan file)
+assert_grouped_plan_not_available() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'Plan not available 🤷‍♀️'* ]]; then
+    echo "  summary: grouped mode should still produce the 'Plan not available 🤷‍♀️' fallback"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: 'Plan not available 🤷‍♀️' fallback still works" assert_grouped_plan_not_available
+
+# Test 34: Grouped mode — footer is unchanged
+assert_grouped_footer_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: grouped mode footer byte-exact mismatch"
+    echo "    expected: ${expected}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: footer is byte-exact (same as ungrouped)" assert_grouped_footer_byte_exact
+
+# Test 35: Grouped mode — include-plan-details=true does NOT cause Plan Details row to appear
+# (plan-details belong in the per-group comment, not the per-env grouped comment)
+assert_grouped_plan_details_row_omitted() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" == *"Plan Details"* ]]; then
+    echo "  summary: grouped mode must NOT render the Plan Details row even when include-plan-details=true"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+export input_include_plan_details="true"
+export input_plan_count_add="5"
+export input_plan_count_change="2"
+export input_plan_count_destroy="1"
+run_test "Grouped mode: Plan Details row is omitted even when include-plan-details=true" assert_grouped_plan_details_row_omitted
+
+# Test 36: Grouped mode — full body byte-exact (no plan file, default counts)
+# Strongest grouped-mode contract guard, parallel to test #14 for ungrouped.
+assert_grouped_full_body_golden() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected
+  expected=$(cat <<'EOF'
+### Terraform validation summary for environment: `dev`
+
+> Part of group `dev-group` — see the grouped summary below.
+
+Plan not available 🤷‍♀️
+
+*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*
+EOF
+)
+  if [[ "${summary}" != "${expected}" ]]; then
+    echo "  summary: grouped mode byte-exact mismatch (diff below)"
+    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode: full body byte-exact golden" assert_grouped_full_body_golden
+
+# Test 37: Empty pr-comment-group falls back to ungrouped behavior
+# This is the §6 backwards-compat invariant — the default value must not change behavior.
+assert_empty_group_acts_ungrouped() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  # Must contain the full table (ungrouped shape)
+  if [[ "${summary}" != *"| ⚙️ | Initialization |"* ]]; then
+    fails+="  summary: empty pr-comment-group must render full validation table (got grouped shape?)\n"
+  fi
+  # Must NOT contain the grouped "Part of group" note
+  if [[ "${summary}" == *"Part of group"* ]]; then
+    fails+="  summary: empty pr-comment-group must NOT add 'Part of group' note\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group=""
+run_test "Empty pr-comment-group falls back to ungrouped behavior" assert_empty_group_acts_ungrouped
 
 # --------------------------------------------------
 # Summary
