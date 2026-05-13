@@ -538,6 +538,343 @@ export input_status_verify_lock="failure"
 run_test "Lock file row renders failure with <kbd>" assert_lock_row_failure
 
 # --------------------------------------------------
+# Backwards-compatibility tests for ungrouped per-env comment shape.
+# These tests pin down the EXACT byte-level output of the historical
+# (ungrouped) per-env comment. They are the contract enforced by
+# docs/Workflow-pr-comments.md §6.1 ("Default-mode shape unchanged")
+# — any future change to comment rendering that breaks one of these
+# tests breaks the backwards-compat contract.
+# --------------------------------------------------
+
+# Test 13: Prefix is exactly "### Terraform validation summary for environment: `<env>`"
+assert_prefix_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='### Terraform validation summary for environment: `dev`'
+  if [[ "${prefix}" != "${expected}" ]]; then
+    echo "  prefix: byte-exact mismatch"
+    echo "    expected: ${expected}"
+    echo "    actual:   ${prefix}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Prefix is byte-exact '### Terraform validation summary for environment: \`<env>\`'" assert_prefix_byte_exact
+
+# Test 14: Full body byte-exact for the canonical all-success-no-plan scenario.
+# This is the strongest backwards-compat assert: any change to the
+# rendered output breaks this test immediately.
+assert_full_body_golden_all_success_no_plan() {
+  local prefix="${1}"
+  local summary="${2}"
+  # don't touch the indentation / newlines in the heredoc below
+  local expected
+  expected=$(cat <<'EOF'
+### Terraform validation summary for environment: `dev`
+|  | Step | Result |
+|:---:|---|---|
+| ⚙️ | Initialization | `success` |
+| 🔒 | Lock file | `success` |
+| 🖌 | Format and Style | `success` |
+| ✔ | Validate | `success` |
+| 🧹 | TFLint | `success` |
+| 📖 | Plan | `success` |
+
+Plan not available 🤷‍♀️
+
+*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*
+EOF
+)
+  if [[ "${summary}" != "${expected}" ]]; then
+    echo "  summary: byte-exact mismatch (diff below)"
+    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Golden full body — all success, no plan details, no plan file" assert_full_body_golden_all_success_no_plan
+
+# Test 15: Every standard row's emoji+label is byte-exact (locks against accidental edits)
+assert_all_row_labels_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  local rows=(
+    "| ⚙️ | Initialization | "
+    "| 🔒 | Lock file | "
+    "| 🖌 | Format and Style | "
+    "| ✔ | Validate | "
+    "| 🧹 | TFLint | "
+    "| 📖 | Plan | "
+  )
+  for row in "${rows[@]}"; do
+    if [[ "${summary}" != *"${row}"* ]]; then
+      fails+="  summary: missing byte-exact row prefix '${row}'\n"
+    fi
+  done
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Every standard row's emoji+label is byte-exact" assert_all_row_labels_byte_exact
+
+# Test 16: Table header line and alignment line are byte-exact
+assert_table_header_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *$'|  | Step | Result |\n|:---:|---|---|'* ]]; then
+    fails+="  summary: expected exact header lines '|  | Step | Result |' followed by '|:---:|---|---|'\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Table header and alignment line are byte-exact" assert_table_header_byte_exact
+
+# Test 17: Plan Details row uses the documented <span title="..."> badge format
+assert_plan_details_row_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  local expected='| 📊 | Plan Details | <span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span> |'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    fails+="  summary: Plan Details row not byte-exact\n"
+    fails+="    expected substring: ${expected}\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_include_plan_details="true"
+run_test "Plan Details row badges are byte-exact <span title=...> shape" assert_plan_details_row_byte_exact
+
+# Test 18: Plan Details with non-zero move/import/remove appends exact <br>… badge lines
+assert_plan_details_extras_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  local expected_move='<br><span title="Resources to be moved">`🔀 2` move</span>'
+  local expected_import='<br><span title="Resources to be imported">`📥 1` import</span>'
+  local expected_remove='<br><span title="Resources to be removed">`⛓️‍💥 3` remove</span>'
+  if [[ "${summary}" != *"${expected_move}"* ]]; then
+    fails+="  summary: move badge byte-exact mismatch\n"
+  fi
+  if [[ "${summary}" != *"${expected_import}"* ]]; then
+    fails+="  summary: import badge byte-exact mismatch\n"
+  fi
+  if [[ "${summary}" != *"${expected_remove}"* ]]; then
+    fails+="  summary: remove badge byte-exact mismatch\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_include_plan_details="true"
+export input_plan_count_move="2"
+export input_plan_count_import="1"
+export input_plan_count_remove="3"
+run_test "Plan Details optional badges (move/import/remove) byte-exact" assert_plan_details_extras_byte_exact
+
+# Test 19: <details>/<summary> heading line is byte-exact
+assert_details_heading_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='<details><summary>Show Plan (last 65k characters)</summary>'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: expected exact '<details><summary>...' heading"
+    return 1
+  fi
+  # also lock the terraform code fence language tag
+  if [[ "${summary}" != *'```terraform'* ]]; then
+    echo "  summary: expected '\`\`\`terraform' code fence language tag"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "Resource actions are indicated with the following symbols:" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+run_test "<details> heading and 'terraform' code fence tag are byte-exact" assert_details_heading_byte_exact
+rm -f "${_plan_file}"
+
+# Test 20: Footer line is byte-exact (down to the comma/space separators and backtick escapes)
+assert_footer_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: footer byte-exact mismatch"
+    echo "    expected: ${expected}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Footer line is byte-exact" assert_footer_byte_exact
+
+# Test 21: "Plan not available 🤷‍♀️" is the byte-exact fallback (incl. emoji)
+assert_plan_not_available_byte_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='Plan not available 🤷‍♀️'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: expected exact fallback 'Plan not available 🤷‍♀️' (incl. emoji)"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "'Plan not available 🤷‍♀️' fallback is byte-exact (incl. emoji)" assert_plan_not_available_byte_exact
+
+# Test 22: 'cancelled' outcome renders as <kbd>cancelled</kbd>
+assert_cancelled_kbd() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<kbd>cancelled</kbd>'* ]]; then
+    echo "  summary: expected '<kbd>cancelled</kbd>'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_status_plan="cancelled"
+run_test "Non-success outcome 'cancelled' renders as <kbd>cancelled</kbd>" assert_cancelled_kbd
+
+# Test 23: 'skipped' outcome renders as <kbd>skipped</kbd>
+assert_skipped_kbd() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<kbd>skipped</kbd>'* ]]; then
+    echo "  summary: expected '<kbd>skipped</kbd>'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_status_plan="skipped"
+run_test "Non-success outcome 'skipped' renders as <kbd>skipped</kbd>" assert_skipped_kbd
+
+# Test 24: empty outcome string still passes through format-status as <kbd></kbd>
+# (Non-success branch is taken; the raw value is whatever was passed.)
+assert_empty_outcome_kbd() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<kbd></kbd>'* ]]; then
+    echo "  summary: expected '<kbd></kbd>' for empty outcome string"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_status_plan=""
+run_test "Empty outcome string renders as <kbd></kbd> (non-success branch)" assert_empty_outcome_kbd
+
+# Test 25: Plan extract source precedence — txt file wins over console file
+assert_txt_wins_over_console() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *"FROM_TXT"* ]]; then
+    echo "  summary: expected txt-file content 'FROM_TXT' to win"
+    return 1
+  fi
+  if [[ "${summary}" == *"FROM_CONSOLE"* ]]; then
+    echo "  summary: console-file content 'FROM_CONSOLE' must not appear when txt file is present"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_txt_file=$(mktemp)
+_console_file=$(mktemp)
+echo "FROM_TXT line of plan content" > "${_txt_file}"
+cat > "${_console_file}" <<'EOF'
+Terraform used the selected providers to generate the following execution plan.
+FROM_CONSOLE line of plan content
+EOF
+export input_plan_txt_output_file="${_txt_file}"
+export input_plan_console_file="${_console_file}"
+run_test "Plan extract source precedence: txt file wins over console file" assert_txt_wins_over_console
+rm -f "${_txt_file}" "${_console_file}"
+
+# Test 26: Plan extract is capped at 65000 chars regardless of source
+assert_plan_capped_at_65k() {
+  local prefix="${1}"
+  local summary="${2}"
+  # Extract only the code-fence content
+  local code_block
+  code_block=$(echo "${summary}" | awk '/^```terraform$/{flag=1;next}/^```$/{flag=0}flag')
+  local len=${#code_block}
+  if [[ ${len} -gt 65000 ]]; then
+    echo "  summary: plan code block exceeded 65000 chars (got ${len})"
+    return 1
+  fi
+  # Should be exactly 65000 or just under (tail -c trims at byte boundary; emoji-free content so chars == bytes)
+  if [[ ${len} -lt 64000 ]]; then
+    echo "  summary: plan code block unexpectedly short (got ${len}, expected near 65000)"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_huge_file=$(mktemp)
+# Generate ~100k of single-byte-per-char content
+yes "abcdefghij" | head -c 100000 > "${_huge_file}"
+export input_plan_txt_output_file="${_huge_file}"
+run_test "Plan extract is capped at 65000 chars" assert_plan_capped_at_65k
+rm -f "${_huge_file}"
+
+# Test 27: Refresh-line stripping in console-file path uses the exact sed pattern
+# Lines before "Terraform used the selected providers to generate the following execution"
+# must be dropped; the marker line itself and everything after kept.
+assert_console_refresh_stripping_exact() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" == *"NOISE_BEFORE_MARKER"* ]]; then
+    fails+="  summary: refresh-noise line was NOT stripped (NOISE_BEFORE_MARKER leaked through)\n"
+  fi
+  if [[ "${summary}" != *"Terraform used the selected providers"* ]]; then
+    fails+="  summary: marker line itself must be retained\n"
+  fi
+  if [[ "${summary}" != *"AFTER_MARKER_LINE"* ]]; then
+    fails+="  summary: lines AFTER the marker must be retained\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_console_file=$(mktemp)
+cat > "${_console_file}" <<'EOF'
+NOISE_BEFORE_MARKER azurerm_resource.foo: Reading...
+NOISE_BEFORE_MARKER azurerm_resource.foo: Read complete after 1s
+
+Terraform used the selected providers to generate the following execution plan.
+AFTER_MARKER_LINE will appear in the output.
+EOF
+export input_plan_console_file="${_console_file}"
+run_test "Console-file refresh-stripping retains marker + after, drops before" assert_console_refresh_stripping_exact
+rm -f "${_console_file}"
+
+# --------------------------------------------------
 # Summary
 # --------------------------------------------------
 echo ""
