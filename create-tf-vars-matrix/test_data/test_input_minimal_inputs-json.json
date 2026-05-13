@@ -6,5 +6,6 @@
   "terraform-version": "latest",
   "tflint-version": "latest",
   "add-pr-comment": "true",
-  "verify-lock-file": "true"
+  "verify-lock-file": "true",
+  "pr-comment-group": ""
 }

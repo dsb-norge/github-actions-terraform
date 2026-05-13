@@ -231,6 +231,7 @@ runs:
           pr-auto-merge-enabled
           pr-auto-merge-from-actors
           pr-auto-merge-limits
+          pr-comment-group
           project-dir
           terraform-init-additional-dirs
           terraform-version
