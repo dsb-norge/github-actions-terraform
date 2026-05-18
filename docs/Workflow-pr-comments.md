@@ -47,7 +47,7 @@ Raw markdown:
 | 🧹 | TFLint | `success` |
 | 📖 | Plan | `success` |
 
-<details><summary>Show Plan (last 65k characters)</summary>
+<details><summary>Plan: 7 changes ℹ️</summary>
 
 ```terraform
 …
@@ -55,7 +55,7 @@ Raw markdown:
 
 </details>
 
-*Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/owner/repo/actions/runs/123/job/456#logs)*
+[Job log](https://github.com/owner/repo/actions/runs/123/job/456#logs)
 ````
 
 Rendered:
@@ -71,7 +71,7 @@ Rendered:
 > | 🧹 | TFLint | `success` |
 > | 📖 | Plan | `success` |
 >
-> <details><summary>Show Plan (last 65k characters)</summary>
+> <details><summary>Plan: 7 changes ℹ️</summary>
 >
 > ```terraform
 > …
@@ -79,7 +79,7 @@ Rendered:
 >
 > </details>
 >
-> *Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](#)*
+> [Job log](#)
 
 Cell formatting in the Result column:
 
@@ -104,61 +104,55 @@ Rules:
 
 #### Plan extract
 
-After the table, the comment carries the last 65,000 characters of the Terraform plan output inside a `<details>`-collapsed code fence. Source precedence:
+The plan-extract block has four rendering modes, selected by the `plan-count-total` and `plan-has-output-only-changes` inputs (typically sourced from `parse-terraform-plan`'s `count-total` and `has-output-only-changes` outputs):
+
+| `plan-count-total` | `plan-has-output-only-changes` | Rendered block |
+|---|---|---|
+| numeric `0` | `false` | `Plan: no changes ✅` (plain text, no `<details>`) |
+| numeric `0` | `true` | `<details><summary>Plan: output-only changes ℹ️</summary>` + code-fenced plan (resource counts are zero but the Changes-to-Outputs section is the actual content) |
+| numeric `N>0` | (any) | `<details><summary>Plan: <N> changes ℹ️</summary>` + code-fenced plan, last 65k chars |
+| missing / `?` | (any) | `<details><summary>Show Plan (last 65k characters)</summary>` + code-fenced plan (legacy fallback for cases where count parsing failed) |
+
+When no plan output file is available at all (regardless of either input), the literal `Plan not available 🤷‍♀️` is rendered instead.
+
+Source precedence for the plan output itself:
 
 1. `plan-txt-output-file` (the `-no-color` output Terraform writes when the plan succeeds). Read via `tail -c 65000`.
 2. `plan-console-file` (captured stdout, used when the plan failed and #1 doesn't exist). Stripped of leading `… Refreshing state…` lines via `sed -n '/Terraform used the selected providers to generate the following execution/,$p'` before being capped at 65k chars.
-3. Neither file exists → the literal string `Plan not available 🤷‍♀️` is included instead.
 
 #### Footer
 
 ```markdown
-*Pusher: @<actor>, Action: `<event_name>`, Workflow: `<workflow_name>`, Job log: [link](<run_url>/job/<check_run_id>#logs)*
+[Job log](<run_url>/job/<check_run_id>#logs)
 ```
 
-`<actor>`, `<event_name>`, `<workflow_name>`, and the run/job IDs come from the `github` and `job` contexts.
+A single bare Markdown link. Pusher / event / workflow data is intentionally omitted — it's already visible in the PR conversation timeline header and on the linked job page, so restating it on every comment was pure noise.
 
 ### 3.2 Grouped mode
 
-The env has `pr-comment-group: "<name>"` set. The per-env comment loses its validation table — that data is now in the per-group comment (§4). Everything else is unchanged so reviewers reading the env's plan extract still get the same context.
+The env has `pr-comment-group: "<name>"` set. The per-env comment loses its validation table — that data is now in the per-group comment (§4). The plan extract block, the `Plan not available 🤷‍♀️` short-circuit, and the footer behave identically to ungrouped mode. No back-pointer to the group summary is rendered — the grouped summary itself anchor-links to every per-env comment via its Links row (§4.5), so navigation goes the natural top-down direction.
 
-Raw markdown:
+Raw markdown (no-changes example):
 
 ````markdown
 ### Terraform validation summary for environment: `sub-a-dev`
 
-> Part of group `dev` — see the grouped summary below.
+Plan: no changes ✅
 
-<details><summary>Show Plan (last 65k characters)</summary>
-
-```terraform
-…
-```
-
-</details>
-
-*Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](#)*
+[Job log](#)
 ````
 
 Rendered:
 
 > ### Terraform validation summary for environment: `sub-a-dev`
 >
-> > Part of group `dev` — see the grouped summary below.
+> Plan: no changes ✅
 >
-> <details><summary>Show Plan (last 65k characters)</summary>
->
-> ```terraform
-> …
-> ```
->
-> </details>
->
-> *Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](#)*
+> [Job log](#)
+
+For envs with changes, the body becomes `<details><summary>Plan: <N> changes ℹ️</summary>…</details>` (same as §3.1). For envs where the plan has output-only changes, `<details><summary>Plan: output-only changes ℹ️</summary>…</details>`. For envs where no plan output file exists, `Plan not available 🤷‍♀️`.
 
 The prefix is identical to ungrouped mode. This is intentional: callers who toggle grouping on/off get in-place comment updates rather than orphan accumulation.
-
-If the plan extract is unavailable, the `<details>` block is replaced by `Plan not available 🤷‍♀️`, same as ungrouped mode.
 
 ## 4. Per-group comments
 
@@ -182,7 +176,7 @@ Raw markdown:
 | <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
 | <span title="Links">🔗</span> | Links | [log extract](#issuecomment-…)<br>[job log](https://…) | [log extract](#issuecomment-…)<br>[job log](https://…) | [job log](https://…) |
 
-*Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://…)*
+[Job log](https://…)
 ````
 
 Rendered:
@@ -200,7 +194,7 @@ Rendered:
 > | <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
 > | <span title="Links">🔗</span> | Links | [log extract](#)<br>[job log](#) | [log extract](#)<br>[job log](#) | [job log](#) |
 >
-> *Pusher: @peder, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](#)*
+> [Job log](#)
 
 ### 4.2 Column ordering
 
@@ -314,11 +308,11 @@ The per-group comment is independent of `add-pr-comment`: as long as any env dec
 
 These invariants are pinned by test coverage and must hold across any future change to comment-rendering code:
 
-1. **Default-mode shape unchanged.** When no env declares `pr-comment-group`, every per-env comment is byte-identical to pre-grouping output. Same prefix, same table column count and order, same `` `success` `` / `<kbd>failure</kbd>` formatting, same Plan Details row rules, same plan-extract source precedence and 65k cap, same footer. The `create-validation-summary` action's `run_all_tests.sh` enforces this with substring assertions across every meaningful permutation.
+1. **Byte-level shape is pinned by tests.** Both modes' comments have byte-level golden tests in `create-validation-summary/run_all_tests.sh`. Any deliberate change to comment rendering must update both the test golden values AND this spec doc in the same change — the tests exist to catch accidental drift, not to lock the format forever. The v0.23 → v0.24 footer/pointer/plan-block changes are an example of a deliberate, test-and-spec-tracked format update.
 2. **Prefix continuity.** The per-env prefix is identical in both ungrouped and grouped modes: `` ### Terraform validation summary for environment: `<env>` ``. Toggling `pr-comment-group` on/off for an env produces an in-place update of its per-env comment, never an orphan.
-3. **No new required inputs.** All grouped-mode additions default to empty / off. A caller that touches nothing sees no behavioral change.
+3. **No new required inputs.** All grouped-mode additions and condensing additions default to empty / off. A caller that touches nothing sees no behavioral change beyond the agreed format updates (which apply uniformly).
 4. **Per-env metadata artifact format unchanged.** The aggregator consumes the same `matrix-job-meta-*` artifacts uploaded by `capture-matrix-job-meta` that the existing `automerge` job consumes. No new artifact format, no new permission grants.
-5. **`@v0` rolling tag.** The new `aggregate-validation-summaries` action ships on `@v0` along with all other actions in this repo; calling repos on `@v0` adopt the feature automatically on release. Adoption is opt-in via the new field; no caller is forced into grouping.
+5. **`@v0` rolling tag.** New actions and outputs (e.g. `aggregate-validation-summaries`, `parse-terraform-plan`'s `count-total`) ship on `@v0` along with all other actions in this repo; calling repos on `@v0` adopt the feature automatically on release. Adoption of grouping is opt-in via the per-env field; no caller is forced into grouping.
 
 ## 7. Action and job references
 
