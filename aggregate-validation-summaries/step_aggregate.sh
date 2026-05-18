@@ -398,25 +398,19 @@ function _first_meta_file_for_group {
   echo "${DESIRED_META[${group}/${first_env}]:-}"
 }
 
-# Render the footer line. Mirrors create-validation-summary's footer
-# (docs/Workflow-pr-comments.md §3.1).
+# Render the footer line. Mirrors create-validation-summary's v0.24+ footer
+# (docs/Workflow-pr-comments.md §4.1): a single [Job log](url) line. The
+# pusher/action/workflow data is discoverable on the linked run page and in
+# the PR conversation timeline — restating it on every comment was noise.
 function _render_footer {
   local file="${1}"
-  local actor event workflow run_id
+  local run_id=""
   if [ -n "${file}" ] && [ -f "${file}" ]; then
-    actor=$(jq -r '.workflow.actor // ""' "${file}")
-    event=$(jq -r '.workflow.event_name // ""' "${file}")
-    workflow=$(jq -r '.workflow.workflow_name // ""' "${file}")
     run_id=$(jq -r '.workflow.run_id // ""' "${file}")
   fi
-  # Fallback to env vars so the action still runs in degraded artifact states.
-  actor="${actor:-${GITHUB_ACTOR:-unknown}}"
-  event="${event:-${GITHUB_EVENT_NAME:-unknown}}"
-  workflow="${workflow:-${GITHUB_WORKFLOW:-unknown}}"
   run_id="${run_id:-${GITHUB_RUN_ID:-0}}"
-
   local run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-  echo "*Pusher: @${actor}, Action: \`${event}\`, Workflow: \`${workflow}\`, Job log: [link](${run_url})*"
+  echo "[Job log](${run_url})"
 }
 
 # ============================================================================

@@ -500,6 +500,13 @@ jobs:
           plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
           plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
           plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          # Used by create-validation-summary to short-circuit the plan-extract
+          # block: 'Plan: no changes ✅' when total==0 and no output-only changes,
+          # '<details>Plan: N changes ℹ️' when >0, '<details>Plan: output-only
+          # changes ℹ️' when total==0 but outputs changed, legacy fallback when
+          # count is missing/'?' (see docs/Workflow-pr-comments.md).
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 🏷️ Add validation summary as pull request comment
