@@ -37,7 +37,6 @@ inputs:
       Name of the comment group this environment belongs to. When non-empty:
         - The validation table is omitted from the per-env comment body (it appears
           in the per-group comment posted by aggregate-validation-summaries instead).
-        - A short "Part of group `<name>`" note is prepended above the plan extract.
       The comment prefix is unchanged regardless of this value — see
       docs/Workflow-pr-comments.md §6.2 (prefix continuity invariant).
     required: false
@@ -70,6 +69,26 @@ inputs:
     description: Number of resources to be removed.
     required: false
     default: "N/A"
+  plan-count-total:
+    description: |
+      Sum of all change counts (typically wired from parse-terraform-plan's
+      `count-total` output). When numeric and zero, the plan-extract block
+      is replaced by a single 'Plan: no changes ✅' line UNLESS
+      `plan-has-output-only-changes` is true (see below). When numeric and
+      non-zero, the <details> summary becomes 'Plan: <N> changes ℹ️'. When
+      missing or the literal '?' (parse failed), the action falls back to
+      the pre-v0.24 'Show Plan (last 65k characters)' summary.
+    required: false
+    default: ""
+  plan-has-output-only-changes:
+    description: |
+      "true" when the plan reports changes to outputs but no resource changes
+      (typically wired from parse-terraform-plan's `has-output-only-changes`
+      output). When true and count-total is 0, the plan-extract block keeps
+      the <details> collapser with summary 'Plan: output-only changes ℹ️' so
+      reviewers can still see the output diff.
+    required: false
+    default: "false"
 outputs:
   prefix:
     description: Validation summary prefix string.
@@ -100,9 +119,9 @@ runs:
         input_plan_count_import: ${{ inputs.plan-count-import }}
         input_plan_count_move: ${{ inputs.plan-count-move }}
         input_plan_count_remove: ${{ inputs.plan-count-remove }}
+        input_plan_count_total: ${{ inputs.plan-count-total }}
+        input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
         input_job_check_run_id: ${{ job.check_run_id }}
-        input_github_actor: ${{ github.actor }}
-        input_github_event_name: ${{ github.event_name }}
       run: |
         set -o allexport
         source "${{ github.action_path }}/step_create_validation_summary.sh"
