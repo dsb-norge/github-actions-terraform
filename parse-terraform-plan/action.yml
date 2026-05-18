@@ -26,6 +26,24 @@ outputs:
   count-remove:
     description: Number of resources to be removed.
     value: ${{ steps.parse-plan-output.outputs.remove-count }}
+  count-total:
+    description: |
+      Sum of all change-count outputs (add + change + destroy + import + move + remove).
+      Useful for "does this plan have any resource changes at all?" without callers
+      needing to sum the individual counts themselves (GitHub Actions expressions
+      don't support arithmetic). New count categories added in future versions of
+      this action will automatically roll into this total.
+
+      Note: output-only changes are NOT reflected here (count-total stays 0). Use
+      `has-output-only-changes` to detect that case.
+    value: ${{ steps.parse-plan-output.outputs.total-count }}
+  has-output-only-changes:
+    description: |
+      "true" when the plan reports changes to outputs but no resource changes
+      (Terraform's "without changing any real infrastructure" path), "false"
+      otherwise. Lets consumers render output-only plans differently from
+      truly-no-change plans even though both yield count-total=0.
+    value: ${{ steps.parse-plan-output.outputs.has-output-only-changes }}
 runs:
   using: "composite"
   steps:

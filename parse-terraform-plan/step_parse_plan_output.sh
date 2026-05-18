@@ -29,6 +29,11 @@ function main {
   local destroys='?'
   local moves='?'
   local removes='?'
+  # Tracks Terraform's "without changing any real infrastructure" branch.
+  # Independent of count-total because both "really no changes" and "output-only
+  # changes" set every resource count to 0 — callers need this flag to tell
+  # them apart and decide whether to render the plan extract.
+  local has_output_only_changes='false'
 
   if [ ! -z "${input_plan_console_file:-}" ]; then
     log-info "parsing plan output file: ${input_plan_console_file}"
@@ -49,6 +54,7 @@ function main {
         adds=0
         changes=0
         destroys=0
+        has_output_only_changes='true'
       else
         imports=0 # not always in the plan string
         local plan_line
@@ -122,6 +128,18 @@ function main {
   set-output 'destroy-count' "${destroys}"
   set-output 'move-count' "${moves}"
   set-output 'remove-count' "${removes}"
+
+  # Sum across every category. Computed here (single source of truth) so a
+  # future new count type only needs to be added to this sum once and every
+  # consumer picks it up — GitHub Actions expressions can't do arithmetic.
+  # Falls back to the literal '?' when any individual category did, so callers
+  # can distinguish "really no changes" (0) from "parse failed".
+  local total='?'
+  if [[ "${adds}${changes}${destroys}${imports}${moves}${removes}" =~ ^[0-9]+$ ]]; then
+    total=$((adds + changes + destroys + imports + moves + removes))
+  fi
+  set-output 'total-count' "${total}"
+  set-output 'has-output-only-changes' "${has_output_only_changes}"
 
   log-info "parse-plan-output completed."
   return 0
