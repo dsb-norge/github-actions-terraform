@@ -24,7 +24,8 @@ get_output() {
 }
 
 # Generic test runner function
-# Usage: run_test <test_name> <expected_imports> <expected_adds> <expected_changes> <expected_destroys> <expected_moves> <expected_removes>
+# Usage: run_test <test_name> <imports> <adds> <changes> <destroys> <moves> <removes> [<expected_has_output_only_changes>]
+# 8th argument defaults to "false" — most plans aren't output-only.
 run_test() {
   local test_name="${1}"
   local expected_imports="${2}"
@@ -33,6 +34,7 @@ run_test() {
   local expected_destroys="${5}"
   local expected_moves="${6}"
   local expected_removes="${7}"
+  local expected_has_output_only_changes="${8:-false}"
 
   TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -52,13 +54,23 @@ run_test() {
   exit_code=$?
 
   # Assertions
-  local actual_imports actual_adds actual_changes actual_destroys actual_moves actual_removes
+  local actual_imports actual_adds actual_changes actual_destroys actual_moves actual_removes actual_total
   actual_imports=$(get_output "import-count")
   actual_adds=$(get_output "add-count")
   actual_changes=$(get_output "change-count")
   actual_destroys=$(get_output "destroy-count")
   actual_moves=$(get_output "move-count")
   actual_removes=$(get_output "remove-count")
+  actual_total=$(get_output "total-count")
+  local actual_has_output_only_changes
+  actual_has_output_only_changes=$(get_output "has-output-only-changes")
+  # Expected total derived from the per-category expectations so existing
+  # run_test callers don't need to pass it explicitly. When any expectation
+  # is the parse-failed sentinel '?', expected_total is also '?'.
+  local expected_total='?'
+  if [[ "${expected_imports}${expected_adds}${expected_changes}${expected_destroys}${expected_moves}${expected_removes}" =~ ^[0-9]+$ ]]; then
+    expected_total=$((expected_imports + expected_adds + expected_changes + expected_destroys + expected_moves + expected_removes))
+  fi
 
   local failed=0
   local failures=""
@@ -90,6 +102,14 @@ run_test() {
   if [[ "${actual_removes}" != "${expected_removes}" ]]; then
     failed=1
     failures+="  remove-count: expected '${expected_removes}', got '${actual_removes}'\n"
+  fi
+  if [[ "${actual_total}" != "${expected_total}" ]]; then
+    failed=1
+    failures+="  total-count: expected '${expected_total}' (sum of categories), got '${actual_total}'\n"
+  fi
+  if [[ "${actual_has_output_only_changes}" != "${expected_has_output_only_changes}" ]]; then
+    failed=1
+    failures+="  has-output-only-changes: expected '${expected_has_output_only_changes}', got '${actual_has_output_only_changes}'\n"
   fi
 
   if [[ ${failed} -eq 0 ]]; then
@@ -137,10 +157,13 @@ run_test "0 add, 1 change, 0 destroy" \
   "0" "0" "1" "0" "0" "0"
 
 # Test 5: Output-only changes (no resource changes)
+# Resource counts are all 0 BUT has-output-only-changes flips to 'true' so
+# consumers can render the plan extract instead of short-circuiting to
+# "no changes" (the changes-to-outputs section lives inside the extract).
 export input_plan_console_file="${_this_script_dir}/test-data/plan_output_only_changes.log"
-#                   imports adds changes destroys moves removes
+#                   imports adds changes destroys moves removes  has-output-only-changes
 run_test "Output-only changes (no resource changes)" \
-  "0" "0" "0" "0" "0" "0"
+  "0" "0" "0" "0" "0" "0" "true"
 
 # Test 6: Empty input (no file specified)
 export input_plan_console_file=""

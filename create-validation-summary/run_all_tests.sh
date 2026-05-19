@@ -67,14 +67,19 @@ reset_defaults() {
   export input_plan_count_import="0"
   export input_plan_count_move="0"
   export input_plan_count_remove="0"
+  # plan-count-total: default to empty so old tests that don't set it
+  # exercise the pre-v0.24 fallback "Show Plan (last 65k characters)" branch.
+  # Tests that want the new no-changes / N-changes branches set this
+  # explicitly.
+  export input_plan_count_total=""
+  # plan-has-output-only-changes: default to 'false'. Only the output-only
+  # branch test overrides this.
+  export input_plan_has_output_only_changes="false"
   export input_job_check_run_id="87654321"
-  export input_github_actor="test-user"
-  export input_github_event_name="pull_request"
 
   export GITHUB_SERVER_URL="https://github.com"
   export GITHUB_REPOSITORY="dsb-norge/github-actions-terraform"
   export GITHUB_RUN_ID="12345678"
-  export GITHUB_WORKFLOW="Terraform CI"
 }
 
 # Generic test runner function
@@ -166,13 +171,9 @@ assert_happy_path_all_success() {
     fails+="  summary: should not contain <kbd> tags when all steps succeed\n"
   fi
 
-  # Should contain the footer
-  if [[ "${summary}" != *"Pusher: @test-user"* ]]; then
-    fails+="  summary: expected to contain 'Pusher: @test-user'\n"
-  fi
-
-  if [[ "${summary}" != *"pull_request"* ]]; then
-    fails+="  summary: expected to contain 'pull_request' event name\n"
+  # Footer is now just the [Job log](url) line (v0.24+).
+  if [[ "${summary}" != *'[Job log]('* ]]; then
+    fails+="  summary: expected to contain '[Job log](' in footer\n"
   fi
 
   if [[ "${summary}" != *"Plan not available"* ]]; then
@@ -539,12 +540,11 @@ export input_status_verify_lock="failure"
 run_test "Lock file row renders failure with <kbd>" assert_lock_row_failure
 
 # --------------------------------------------------
-# Backwards-compatibility tests for ungrouped per-env comment shape.
-# These tests pin down the EXACT byte-level output of the historical
-# (ungrouped) per-env comment. They are the contract enforced by
-# docs/Workflow-pr-comments.md §6.1 ("Default-mode shape unchanged")
-# — any future change to comment rendering that breaks one of these
-# tests breaks the backwards-compat contract.
+# Byte-level shape tests for the ungrouped per-env comment.
+# These tests pin down the EXACT spec'd output. Any change to comment
+# rendering that breaks one of these tests must also update the test
+# AND docs/Workflow-pr-comments.md — they exist to catch accidental
+# format drift, not to lock the format forever.
 # --------------------------------------------------
 
 # Test 13: Prefix is exactly "### Terraform validation summary for environment: `<env>`"
@@ -584,7 +584,7 @@ assert_full_body_golden_all_success_no_plan() {
 
 Plan not available 🤷‍♀️
 
-*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*
+[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
   if [[ "${summary}" != "${expected}" ]]; then
@@ -714,16 +714,25 @@ export input_plan_txt_output_file="${_plan_file}"
 run_test "<details> heading and 'terraform' code fence tag are byte-exact" assert_details_heading_byte_exact
 rm -f "${_plan_file}"
 
-# Test 20: Footer line is byte-exact (down to the comma/space separators and backtick escapes)
+# Test 20: Footer is byte-exact — single [Job log](url) line (v0.24+).
+# Pusher/action/workflow data was dropped: it's already visible in the
+# PR conversation header and on the linked job page.
 assert_footer_byte_exact() {
   local prefix="${1}"
   local summary="${2}"
-  local expected='*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*'
+  local expected='[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)'
   if [[ "${summary}" != *"${expected}"* ]]; then
     echo "  summary: footer byte-exact mismatch"
     echo "    expected: ${expected}"
     return 1
   fi
+  # Negative: must NOT contain any of the dropped legacy fields.
+  for stale in 'Pusher: @' 'Action: `pull_request`' 'Workflow: `'; do
+    if [[ "${summary}" == *"${stale}"* ]]; then
+      echo "  summary: stale legacy footer field still present: ${stale}"
+      return 1
+    fi
+  done
   return 0
 }
 reset_defaults
@@ -930,35 +939,47 @@ reset_defaults
 export input_pr_comment_group="dev-group"
 run_test "Grouped mode: validation table is omitted from per-env body" assert_grouped_table_omitted
 
-# Test 30: Grouped mode — "Part of group ..." pointer is prepended (byte-exact)
-assert_grouped_note_byte_exact() {
+# Test 30: Grouped mode — does NOT emit the legacy "Part of group ..." pointer
+# (removed in v0.24; the grouped summary itself anchor-links back to per-env
+# comments, so the back-pointer was redundant).
+assert_grouped_no_legacy_pointer() {
   local prefix="${1}"
   local summary="${2}"
-  local expected='> Part of group `dev-group` — see the grouped summary below.'
-  if [[ "${summary}" != *"${expected}"* ]]; then
-    echo "  summary: expected byte-exact pointer"
-    echo "    expected: ${expected}"
+  if [[ "${summary}" == *"Part of group"* ]]; then
+    echo "  summary: legacy 'Part of group' pointer must be absent in v0.24+"
+    return 1
+  fi
+  # Sanity: the group name should NOT appear anywhere in the per-env body
+  # either — the env doesn't carry group meta in its rendered comment.
+  if [[ "${summary}" == *"dev-group"* ]]; then
+    echo "  summary: group name should not leak into per-env body"
     return 1
   fi
   return 0
 }
 reset_defaults
 export input_pr_comment_group="dev-group"
-run_test "Grouped mode: 'Part of group <name>' pointer is byte-exact" assert_grouped_note_byte_exact
+run_test "Grouped mode: legacy 'Part of group' pointer absent" assert_grouped_no_legacy_pointer
 
-# Test 31: Grouped mode — group name is properly escaped in the note (different group name)
-assert_grouped_note_uses_input_group() {
+# Test 31: Grouped mode — even with a different group name, no pointer is emitted
+# (regression guard for the v0.23 → v0.24 transition; covers the case where the
+# group name happened to overlap with a footer field in earlier formats).
+assert_grouped_pointer_absent_other_group() {
   local prefix="${1}"
   local summary="${2}"
-  if [[ "${summary}" != *'> Part of group `prod-norge` — see the grouped summary below.'* ]]; then
-    echo "  summary: grouped note should reflect the configured group name 'prod-norge'"
+  if [[ "${summary}" == *"Part of group"* ]]; then
+    echo "  summary: 'Part of group' pointer must be absent regardless of group name"
+    return 1
+  fi
+  if [[ "${summary}" == *"prod-norge"* ]]; then
+    echo "  summary: group name 'prod-norge' should not leak into per-env body"
     return 1
   fi
   return 0
 }
 reset_defaults
 export input_pr_comment_group="prod-norge"
-run_test "Grouped mode: note carries the configured group name" assert_grouped_note_uses_input_group
+run_test "Grouped mode: pointer absent regardless of group name" assert_grouped_pointer_absent_other_group
 
 # Test 32: Grouped mode — plan extract still rendered when plan file present
 assert_grouped_plan_extract_kept() {
@@ -999,16 +1020,23 @@ reset_defaults
 export input_pr_comment_group="dev-group"
 run_test "Grouped mode: 'Plan not available 🤷‍♀️' fallback still works" assert_grouped_plan_not_available
 
-# Test 34: Grouped mode — footer is unchanged
+# Test 34: Grouped mode — footer is byte-exact and matches ungrouped (the
+# condensed v0.24+ [Job log](url) line). No mode-dependent footer divergence.
 assert_grouped_footer_byte_exact() {
   local prefix="${1}"
   local summary="${2}"
-  local expected='*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*'
+  local expected='[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)'
   if [[ "${summary}" != *"${expected}"* ]]; then
     echo "  summary: grouped mode footer byte-exact mismatch"
     echo "    expected: ${expected}"
     return 1
   fi
+  for stale in 'Pusher: @' 'Action: `pull_request`' 'Workflow: `'; do
+    if [[ "${summary}" == *"${stale}"* ]]; then
+      echo "  summary: grouped mode still carrying legacy footer field: ${stale}"
+      return 1
+    fi
+  done
   return 0
 }
 reset_defaults
@@ -1043,11 +1071,9 @@ assert_grouped_full_body_golden() {
   expected=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
 
-> Part of group `dev-group` — see the grouped summary below.
-
 Plan not available 🤷‍♀️
 
-*Pusher: @test-user, Action: `pull_request`, Workflow: `Terraform CI`, Job log: [link](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)*
+[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
   if [[ "${summary}" != "${expected}" ]]; then
@@ -1084,6 +1110,271 @@ assert_empty_group_acts_ungrouped() {
 reset_defaults
 export input_pr_comment_group=""
 run_test "Empty pr-comment-group falls back to ungrouped behavior" assert_empty_group_acts_ungrouped
+
+# --------------------------------------------------
+# Plan-count-total branching (v0.24+).
+# Three rendering modes for the plan-extract block based on count-total:
+#   numeric 0   → 'Plan: no changes ✅' (plain text, no <details>)
+#   numeric N>0 → '<details><summary>Plan: N changes ℹ️</summary>…'
+#   '' or '?'   → fallback to legacy 'Show Plan (last 65k characters)'
+# --------------------------------------------------
+
+# Test 38: count-total=0 → 'Plan: no changes ✅' replaces the <details> block
+assert_no_changes_short_circuit() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *$'\n'$'\n'"Plan: no changes ✅"* ]]; then
+    echo "  summary: expected 'Plan: no changes ✅' line"
+    return 1
+  fi
+  # Must NOT contain a <details> block for the plan when count-total=0
+  if [[ "${summary}" == *"<details><summary>Plan:"* ]] || [[ "${summary}" == *"<details><summary>Show Plan"* ]]; then
+    echo "  summary: <details> block must be omitted when count-total=0"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "No changes. Your infrastructure matches the configuration." > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="0"
+run_test "count-total=0 → 'Plan: no changes ✅' short-circuit" assert_no_changes_short_circuit
+rm -f "${_plan_file}"
+
+# Test 39: count-total=N>0 → <details> summary becomes 'Plan: N changes ℹ️'
+assert_changes_summary_with_count() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected='<details><summary>Plan: 7 changes ℹ️</summary>'
+  if [[ "${summary}" != *"${expected}"* ]]; then
+    echo "  summary: expected '${expected}'"
+    return 1
+  fi
+  # Must NOT contain the legacy fallback summary
+  if [[ "${summary}" == *'Show Plan (last 65k characters)'* ]]; then
+    echo "  summary: legacy fallback summary should not appear when count-total>0"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "some plan output body content here" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="7"
+run_test "count-total=N>0 → '<details><summary>Plan: N changes ℹ️</summary>'" assert_changes_summary_with_count
+rm -f "${_plan_file}"
+
+# Test 40: count-total empty → legacy 'Show Plan (last 65k characters)' fallback
+assert_count_empty_falls_back_to_legacy_summary() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<details><summary>Show Plan (last 65k characters)</summary>'* ]]; then
+    echo "  summary: expected legacy 'Show Plan (last 65k characters)' fallback when count-total is empty"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "some plan body" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total=""
+run_test "count-total='' → legacy 'Show Plan (last 65k characters)' fallback" assert_count_empty_falls_back_to_legacy_summary
+rm -f "${_plan_file}"
+
+# Test 41: count-total='?' (parse failed) → legacy fallback too
+assert_count_question_mark_falls_back_to_legacy_summary() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<details><summary>Show Plan (last 65k characters)</summary>'* ]]; then
+    echo "  summary: expected legacy fallback when count-total='?'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "some plan body" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="?"
+run_test "count-total='?' → legacy 'Show Plan (last 65k characters)' fallback" assert_count_question_mark_falls_back_to_legacy_summary
+rm -f "${_plan_file}"
+
+# Test 42: count-total=0 in grouped mode also short-circuits
+assert_grouped_no_changes_short_circuit() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *"Plan: no changes ✅"* ]]; then
+    echo "  summary: grouped mode with count-total=0 should also short-circuit"
+    return 1
+  fi
+  # And still no validation table (it's in the per-group comment)
+  if [[ "${summary}" == *'| ⚙️ | Initialization'* ]]; then
+    echo "  summary: grouped mode must still omit validation table"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+_plan_file=$(mktemp)
+echo "No changes." > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="0"
+run_test "Grouped mode + count-total=0 → 'Plan: no changes ✅' short-circuit" assert_grouped_no_changes_short_circuit
+rm -f "${_plan_file}"
+
+# Test 43: count-total=0 but NO plan file → 'Plan not available' wins over 'no changes ✅'
+assert_no_plan_file_beats_zero_total() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'Plan not available 🤷‍♀️'* ]]; then
+    echo "  summary: 'Plan not available' must win when no plan file even if count-total=0"
+    return 1
+  fi
+  if [[ "${summary}" == *'Plan: no changes ✅'* ]]; then
+    echo "  summary: 'Plan: no changes ✅' must NOT appear when no plan file"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_count_total="0"
+# Note: no plan file is set
+run_test "count-total=0 + no plan file → 'Plan not available' wins" assert_no_plan_file_beats_zero_total
+
+# Test 44: Golden no-changes body (ungrouped, count-total=0, with plan file)
+assert_golden_no_changes_body() {
+  local prefix="${1}"
+  local summary="${2}"
+  local expected
+  expected=$(cat <<'EOF'
+### Terraform validation summary for environment: `dev`
+|  | Step | Result |
+|:---:|---|---|
+| ⚙️ | Initialization | `success` |
+| 🔒 | Lock file | `success` |
+| 🖌 | Format and Style | `success` |
+| ✔ | Validate | `success` |
+| 🧹 | TFLint | `success` |
+| 📖 | Plan | `success` |
+
+Plan: no changes ✅
+
+[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
+EOF
+)
+  if [[ "${summary}" != "${expected}" ]]; then
+    echo "  summary: golden no-changes body byte-exact mismatch (diff below)"
+    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "No changes." > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="0"
+run_test "Golden body — ungrouped, count-total=0, all success" assert_golden_no_changes_body
+rm -f "${_plan_file}"
+
+# Test 45: count-total=0 + output-only changes → keep <details> with
+# 'Plan: output-only changes ℹ️' summary (no short-circuit to 'no changes ✅').
+# Regression guard for the v0.23→v0.24 transition: parse-terraform-plan zeros
+# out resource counts in the output-only case, and a naive count-total==0
+# check would otherwise hide the (useful) plan extract.
+assert_output_only_keeps_details() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *'<details><summary>Plan: output-only changes ℹ️</summary>'* ]]; then
+    fails+="  summary: expected output-only <details><summary> line\n"
+  fi
+  # Must NOT short-circuit to 'no changes ✅'
+  if [[ "${summary}" == *'Plan: no changes ✅'* ]]; then
+    fails+="  summary: must NOT short-circuit when output-only changes are present\n"
+  fi
+  # Plan extract content should still be present
+  if [[ "${summary}" != *'OUTPUT_ONLY_BODY'* ]]; then
+    fails+="  summary: plan body content should be inside the <details> block\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+cat > "${_plan_file}" <<'PLAN'
+Changes to Outputs:
+  ~ my_arn = (known after apply)
+
+OUTPUT_ONLY_BODY marker for assertion.
+
+You can apply this change to apply the configuration without changing any real infrastructure.
+PLAN
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="0"
+export input_plan_has_output_only_changes="true"
+run_test "count-total=0 + has-output-only-changes=true → keep <details>" assert_output_only_keeps_details
+rm -f "${_plan_file}"
+
+# Test 46: count-total=N>0 + has-output-only-changes=true (defensive — shouldn't
+# happen in practice since parse-terraform-plan only sets output-only when
+# resource counts are 0) → the N-changes branch wins. We test this so callers
+# composing the inputs themselves get well-defined behavior.
+assert_resource_changes_dominate_over_output_only() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<details><summary>Plan: 3 changes ℹ️</summary>'* ]]; then
+    echo "  summary: when count-total>0 the N-changes branch wins regardless of output-only flag"
+    return 1
+  fi
+  if [[ "${summary}" == *'output-only changes'* ]]; then
+    echo "  summary: must not render the output-only summary when count-total>0"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp)
+echo "some plan body" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="3"
+export input_plan_has_output_only_changes="true"
+run_test "count-total>0 dominates over has-output-only-changes=true" assert_resource_changes_dominate_over_output_only
+rm -f "${_plan_file}"
+
+# Test 47: count-total=0 + has-output-only-changes=true + grouped mode
+# → still keeps <details> with output-only summary (group mode doesn't suppress
+# the output-only short-circuit decision).
+assert_grouped_output_only_keeps_details() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'<details><summary>Plan: output-only changes ℹ️</summary>'* ]]; then
+    echo "  summary: grouped mode with output-only changes must still show <details>"
+    return 1
+  fi
+  # No validation table (group mode invariant)
+  if [[ "${summary}" == *'| ⚙️ | Initialization'* ]]; then
+    echo "  summary: grouped mode must still omit the validation table"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+_plan_file=$(mktemp)
+echo "output diff content" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+export input_plan_count_total="0"
+export input_plan_has_output_only_changes="true"
+run_test "Grouped + count-total=0 + output-only → keep <details>" assert_grouped_output_only_keeps_details
+rm -f "${_plan_file}"
 
 # --------------------------------------------------
 # Summary

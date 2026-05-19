@@ -473,8 +473,14 @@ jobs:
 
       - name: 📝 Create validation summary
         id: create-validation-summary
+        # always() so the comment refreshes even when an earlier infrastructure
+        # step (setup-tflint, azure/login, plugin-cache fetch, ...) fails. Skipped
+        # earlier steps surface as steps.<id>.outcome == '' and render as
+        # <kbd></kbd> in the validation table — better than leaving a stale
+        # comment from the previous run on the PR.
         if: |
-          matrix.vars.add-pr-comment == 'true'
+          always()
+          && matrix.vars.add-pr-comment == 'true'
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
@@ -500,11 +506,22 @@ jobs:
           plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
           plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
           plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          # Used by create-validation-summary to short-circuit the plan-extract
+          # block: 'Plan: no changes ✅' when total==0 and no output-only changes,
+          # '<details>Plan: N changes ℹ️' when >0, '<details>Plan: output-only
+          # changes ℹ️' when total==0 but outputs changed, legacy fallback when
+          # count is missing/'?' (see docs/Workflow-pr-comments.md).
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 🏷️ Add validation summary as pull request comment
         id: validation-summary-on-pr
-        if: steps.create-validation-summary.outcome == 'success'
+        # always() so that, paired with the always() on create-validation-summary
+        # above, the per-env comment refreshes even when an earlier
+        # infrastructure step fails. Without it the per-env comment would stay
+        # frozen at whatever the previous run posted.
+        if: always() && steps.create-validation-summary.outcome == 'success'
         uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
         with:
           pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
