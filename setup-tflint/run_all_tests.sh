@@ -227,44 +227,56 @@ test_get_meta_latest_malformed_json_fails() {
 test_get_meta_specific_version_sets_outputs() {
   prep_get_meta_env
   export input_tflint_version="v0.61.0"
-  echo "${ALL_RELEASES_JSON}" > "${CURL_FAKE_BODY_FILE}"
+  # No fixture needed: specific-version path doesn't call the API.
   run_step step_get_meta.sh
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   [[ "$(get_output tag-name)" = "v0.61.0" ]] || { echo "tag-name: $(get_output tag-name)"; return 1; }
-  [[ "$(get_output download-url)" = "https://example/tflint_v0.61.0_linux_amd64.zip" ]] || { echo "download-url: $(get_output download-url)"; return 1; }
+  # URL is constructed deterministically from the version + stable asset
+  # name pattern, not fetched from the API.
+  [[ "$(get_output download-url)" = "https://github.com/terraform-linters/tflint/releases/download/v0.61.0/tflint_linux_amd64.zip" ]] \
+    || { echo "download-url: $(get_output download-url)"; return 1; }
   [[ "$(get_output install-dir)" = "/tmp/runner-tool-cache/tflint_v0.61.0" ]] || { echo "install-dir: $(get_output install-dir)"; return 1; }
   [[ "$(get_output cache-key)" = "tflint-binary-v0.61.0-Linux-X64" ]] || { echo "cache-key: $(get_output cache-key)"; return 1; }
   return 0
 }
 
-test_get_meta_specific_version_currently_calls_api() {
-  # PIN-API-FOR-SPECIFIC-VERSION: today, a specific version triggers an
-  # /releases?per_page=100 call. The upcoming logic change makes this go
-  # away — when it does, this test SHOULD break, and we'll replace it
-  # with the new short-circuit assertion.
+test_get_meta_specific_version_short_circuits_api() {
+  # Replaces the pre-v0.24 "currently calls list-releases API" assertion.
+  # Specific-version path must NOT hit any GitHub API endpoint — the whole
+  # point is to eliminate the curl-exit-92 / HTTP/2-stream-error failure
+  # class for specific versions.
   prep_get_meta_env
   export input_tflint_version="v0.61.0"
-  echo "${ALL_RELEASES_JSON}" > "${CURL_FAKE_BODY_FILE}"
   run_step step_get_meta.sh
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || return 1
-  if ! grep -q '/releases?per_page=' "${CURL_FAKE_CALL_LOG}"; then
-    echo "expected curl to hit /releases?per_page=... (current behavior)"
+  if grep -q 'api\.github\.com' "${CURL_FAKE_CALL_LOG}"; then
+    echo "specific-version path should not hit api.github.com"
+    cat "${CURL_FAKE_CALL_LOG}"
+    return 1
+  fi
+  # Stronger: NO curl calls at all in the specific-version path.
+  if [ -s "${CURL_FAKE_CALL_LOG}" ]; then
+    echo "specific-version path should make zero outbound calls; saw:"
     cat "${CURL_FAKE_CALL_LOG}"
     return 1
   fi
   return 0
 }
 
-test_get_meta_specific_version_not_in_response_fails() {
-  # PIN-API-FOR-SPECIFIC-VERSION: today, requesting a version that doesn't
-  # appear in the list endpoint fails. After short-circuit, this case would
-  # pass (we'd trust the input) — that's a different trade-off the new
-  # behavior accepts.
+test_get_meta_specific_version_trusts_input() {
+  # Pre-v0.24, requesting a version not in the list-releases response
+  # caused get-meta to fail. Post-v0.24, we trust the caller's input —
+  # tag-name is taken verbatim and the deterministic URL is constructed.
+  # If the URL is bogus (typo'd version), the install step will fail
+  # loudly when curl can't fetch the constructed URL — see the install
+  # tests for that path.
   prep_get_meta_env
-  export input_tflint_version="v9.99.99"  # not in fixture
-  echo "${ALL_RELEASES_JSON}" > "${CURL_FAKE_BODY_FILE}"
+  export input_tflint_version="v9.99.99-fake"
   run_step step_get_meta.sh
-  [[ ${STEP_EXIT_CODE} -ne 0 ]] || { echo "expected non-zero exit for missing version"; return 1; }
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(get_output tag-name)" = "v9.99.99-fake" ]] || { echo "tag-name: $(get_output tag-name)"; return 1; }
+  [[ "$(get_output download-url)" = "https://github.com/terraform-linters/tflint/releases/download/v9.99.99-fake/tflint_linux_amd64.zip" ]] \
+    || { echo "download-url: $(get_output download-url)"; return 1; }
   return 0
 }
 
@@ -447,10 +459,10 @@ run_test "get-meta 'latest' selects only linux_amd64 asset"             test_get
 run_test "get-meta 'latest' fails on empty response"                    test_get_meta_latest_empty_response_fails
 run_test "get-meta 'latest' fails on malformed json"                    test_get_meta_latest_malformed_json_fails
 
-# step_get_meta — specific-version path
+# step_get_meta — specific-version path (short-circuits API, v0.24+)
 run_test "get-meta specific version sets all 5 outputs correctly"       test_get_meta_specific_version_sets_outputs
-run_test "get-meta specific version currently calls list-releases API"  test_get_meta_specific_version_currently_calls_api
-run_test "get-meta specific version not in response → fails"            test_get_meta_specific_version_not_in_response_fails
+run_test "get-meta specific version short-circuits API (zero curls)"    test_get_meta_specific_version_short_circuits_api
+run_test "get-meta specific version trusts caller input"                test_get_meta_specific_version_trusts_input
 
 # step_get_meta — curl failures
 run_test "get-meta propagates curl failure (exit 92)"                   test_get_meta_curl_failure_propagates
