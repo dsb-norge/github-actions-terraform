@@ -36,121 +36,25 @@ runs:
   steps:
     - id: get-meta
       shell: bash
+      env:
+        input_tflint_version: ${{ inputs.tflint-version }}
+        input_github_token: ${{ inputs.github-token }}
+        input_runner_tool_cache: ${{ runner.tool_cache }}
+        input_runner_os: ${{ runner.os }}
+        input_runner_arch: ${{ runner.arch }}
       run: |
-        # determine download url and tag
+        set -o allexport
+        source "${{ github.action_path }}/step_get_meta.sh"
 
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        if [ "latest" == "${{ inputs.tflint-version }}" ]; then
-          RELEASE_URL='https://api.github.com/repos/terraform-linters/tflint/releases/latest'
-          log-info "get 'latest' release json from '${RELEASE_URL}' ..."
-          RELEASE_JSON=$(
-            curl -s --request GET \
-            --url "${RELEASE_URL}" \
-            --header "Accept: application/json" \
-            --header 'authorization: Bearer ${{ inputs.github-token }}'
-          )
-          #log-json "release json" "${RELEASE_JSON}"
-        else
-          RELEASE_URL='https://api.github.com/repos/terraform-linters/tflint/releases?per_page=100'
-          log-info "get '${{ inputs.tflint-version }}' release json from '${RELEASE_URL}' ..."
-          ALL_RELEASES_JSON=$(
-            curl -s --request GET \
-            --url "${RELEASE_URL}" \
-            --header "Accept: application/json" \
-            --header 'authorization: Bearer ${{ inputs.github-token }}'
-          )
-          # log-multiline "all release json" "${ALL_RELEASES_JSON}"
-          RELEASE_JSON=$(echo "$ALL_RELEASES_JSON" | jq 'first(.[] | select(.tag_name == "${{ inputs.tflint-version }}" ) )') || (
-            log-error "jq failed to parse locate 'tag_name' = '${{ inputs.tflint-version }}' in release json!"
-            log-multiline "release json" "${RELEASE_JSON}"
-            exit 1
-          )
-
-          if [ -z "${RELEASE_JSON}" ]; then
-            log-error "unable to parse latest release from response of '${RELEASE_URL}'!"
-            exit 1
-          fi
-
-        fi
-
-        TAG_NAME=$(echo "$RELEASE_JSON" | jq -r '.tag_name') || (
-          log-error "jq failed to find 'tag_name' in release json!"
-          log-multiline "release json" "${RELEASE_JSON}"
-          exit 1
-        )
-        log-info "found release tag '${TAG_NAME}'"
-
-        # NOTE: architecture hardcoded to linux amd64
-        ASSET_JSON=$(echo "$RELEASE_JSON" | jq '.assets[] | select(.name | contains("_linux_amd64.zip") )') || (
-          log-error "jq failed to find an asset containing '_linux_amd64.zip' in release json!"
-          log-multiline "release json" "${RELEASE_JSON}"
-          exit 1
-        )
-
-        if [ -z "${ASSET_JSON}" ]; then
-          log-error "unable to find correct asset to download from release JSON!"
-          log-multiline "release json" "${RELEASE_JSON}"
-          exit 1
-        fi
-
-        DL_URL=$(echo "${ASSET_JSON}" | jq -r '.browser_download_url') || (
-          log-error "jq failed to find 'browser_download_url' in asset json!"
-          log-multiline "asset json" "${ASSET_JSON}"
-          exit 1
-        )
-
-        if [ -z "${DL_URL}" ]; then
-          log-error "unable to get download url from asset json!"
-          log-multiline "release json" "${ASSET_JSON}"
-          exit 1
-        fi
-
-        log-info "found release download url '${DL_URL}'"
-
-        INSTALL_DIR="${{ runner.tool_cache }}/tflint_${TAG_NAME}"
-
-        set-output 'tag-name' "${TAG_NAME}"
-        set-output 'download-url' "${DL_URL}"
-        set-output 'install-dir' "${INSTALL_DIR}"
-        set-output 'install-bin-path' "${INSTALL_DIR}/tflint"
-        set-output 'cache-key' "tflint-binary-${TAG_NAME}-${{ runner.os }}-${{ runner.arch }}"
     - id: get-config
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      env:
+        input_config_file_path: ${{ inputs.config-file-path }}
+        input_working_directory: ${{ inputs.working-directory }}
       run: |
-        # attempt to locate TFLint config file
+        set -o allexport
+        source "${{ github.action_path }}/step_get_config.sh"
 
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        configured_path='${{ inputs.config-file-path }}'
-        possible_paths=(
-          "$(pwd)/.tflint.hcl"
-          "${GITHUB_WORKSPACE}/.tflint.hcl"
-        )
-
-        # allow output to be empty, worst case output of hashfiles in cache key further down will be empty
-        path_to_use=""
-        if [ ! -z "${configured_path}" ]; then
-          log-info "using configured TFLint config file path"
-          if [ -f "${configured_path}" ]; then
-            path_to_use="${configured_path}"
-          elif [ -f "$(pwd)/${configured_path}" ]; then
-            path_to_use="$(pwd)/${configured_path}"
-          else
-            log-warn "the configured path '${configured_path}' does not exist, unable to conform to configuration!"
-          fi
-        else
-          log-info "TFLint config file path was not configured, attempting to locate one ..."
-          for path_to_use in ${possible_paths[*]}; do
-            [ -f "${path_to_use}" ] && break || :
-          done
-          if [ ! -f "${path_to_use}" ]; then
-            log-warn "could not find a TFLint config file to use, unable to conform to configuration!"
-          fi
-        fi
-        log-info "using TFLint config file path '${path_to_use}'"
-        set-output 'config-file' "${path_to_use}"
     # attempt to retrieve tflint binary from GitHub cache
     # note: this will also save the binary to GitHub cache in cases where the binary must be downloaded and installed
     - id: cache-tflint
@@ -158,6 +62,7 @@ runs:
       with:
         path: ${{ steps.get-meta.outputs.install-dir }}
         key: ${{ steps.get-meta.outputs.cache-key }}
+
     # attempt to retrieve tflint plugins from GitHub cache
     # note: this will also save the plugins to GitHub cache in cases where the plugins must be downloaded and installed
     - id: cache-tflint-plugins
@@ -165,57 +70,31 @@ runs:
       with:
         path: "~/.tflint.d/plugins"
         key: "tflint-plugins-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(steps.get-config.outputs.config-file) }}"
+
     - id: exists-check
       shell: bash
       env:
-        INSTALL_DIR: ${{ steps.get-meta.outputs.install-dir }}
-        INSTALL_BIN_PATH: ${{ steps.get-meta.outputs.install-bin-path }}
+        input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
+        input_install_bin_path: ${{ steps.get-meta.outputs.install-bin-path }}
       run: |
-        # check if tflint binary already exists in tool cache on actions runner
+        set -o allexport
+        source "${{ github.action_path }}/step_exists_check.sh"
 
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        ALREADY_INSTALLED=true
-        if [ -d "${INSTALL_DIR}" ]; then
-          log-info "found tflint install dir at '${INSTALL_DIR}'"
-        else
-          log-info "could not locate tflint install dir at '${INSTALL_DIR}'"
-          ALREADY_INSTALLED=false
-          mkdir -p "${INSTALL_DIR}"
-        fi
-
-        if [ -f "${INSTALL_BIN_PATH}" ]; then
-          log-info "found tflint binary at '${INSTALL_BIN_PATH}'"
-        else
-          log-info "could not locate tflint binary '${INSTALL_BIN_PATH}'"
-          ALREADY_INSTALLED=false
-        fi
-
-        set-output 'already-installed' "${ALREADY_INSTALLED}"
     - id: install
       if: steps.exists-check.outputs.already-installed != 'true'
       shell: bash
+      env:
+        input_download_url: ${{ steps.get-meta.outputs.download-url }}
+        input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
+        input_install_bin_path: ${{ steps.get-meta.outputs.install-bin-path }}
       run: |
-        # install tflint if needed
+        set -o allexport
+        source "${{ github.action_path }}/step_install.sh"
 
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        log-info "download tflint from: ${{ steps.get-meta.outputs.download-url }}"
-        log-info "install tflint to   : ${{ steps.get-meta.outputs.install-dir }}"
-        curl -L "${{ steps.get-meta.outputs.download-url }}" -o tflint.zip \
-          && unzip tflint.zip -d "${{ steps.get-meta.outputs.install-dir }}" \
-          && rm tflint.zip
-
-        if [ ! -f "${{ steps.get-meta.outputs.install-bin-path }}" ]; then
-          log-error "binary not found at '${{ steps.get-meta.outputs.install-bin-path }}' after installation!"
-          exit 1
-        fi
     - id: add-to-path
       shell: bash
+      env:
+        input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
       run: |
-        # add tflint to path, available to subsequent actions
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-        log-info "add binary to PATH at '${{ steps.get-meta.outputs.install-dir }}'"
-        echo '${{ steps.get-meta.outputs.install-dir }}' >> $GITHUB_PATH
-        echo "$(tflint --version) successfully installed and added to path 🥳" || :
+        set -o allexport
+        source "${{ github.action_path }}/step_add_to_path.sh"
