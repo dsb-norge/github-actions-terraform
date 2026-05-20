@@ -558,13 +558,13 @@ echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}              TEST SUMMARY                 ${NC}"
 echo -e "${YELLOW}============================================${NC}"
 echo ""
-echo -e "Total tests: ${TESTS_RUN}"
-echo -e "${GREEN}Passed: ${TESTS_PASSED}${NC}"
+echo -e "Tests run:    ${TESTS_RUN}"
+echo -e "${GREEN}Tests passed: ${TESTS_PASSED}${NC}"
 if [[ ${TESTS_FAILED} -gt 0 ]]; then
-  echo -e "${RED}Failed: ${TESTS_FAILED}${NC}"
+  echo -e "${RED}Tests failed: ${TESTS_FAILED}${NC}"
   exit 1
 else
-  echo -e "Failed: 0"
+  echo -e "Tests failed: 0"
   echo ""
   echo -e "${GREEN}All tests passed!${NC}"
   exit 0
