@@ -1,0 +1,226 @@
+name: "Action tests"
+#
+# Runs the run_all_tests.sh suites for every modern composite action in this
+# repo on every pull request, in parallel. Reports an aggregated summary as a
+# single PR comment, and exposes a stable `tests-conclusion` check for branch
+# protection.
+#
+# Spec: docs/Testing-in-ci.md
+# Discovery script: .github/scripts/discover-actions.sh
+# Aggregator script: .github/scripts/aggregate-action-tests.sh
+#
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Cancel previous runs for the same PR / ref when a new commit lands.
+concurrency:
+  group: action-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  discover:
+    name: "🔎 Discover actions"
+    # Fork PRs cannot post the summary comment (read-only token) — skip entirely.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    outputs:
+      tests-matrix: ${{ steps.discover.outputs.tests-matrix }}
+      no-tests-list: ${{ steps.discover.outputs.no-tests-list }}
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      - name: "🔎 Partition actions by test-suite presence"
+        id: discover
+        run: bash .github/scripts/discover-actions.sh
+
+  test:
+    name: "🧪 Test"
+    needs: discover
+    if: needs.discover.outputs.tests-matrix != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # for gh api .../jobs lookup (job URL resolution)
+    strategy:
+      fail-fast: false
+      matrix:
+        action: ${{ fromJSON(needs.discover.outputs.tests-matrix) }}
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      # Runs the suite, enforces the canonical summary-line contract (§4),
+      # parses counts, writes result.json, emits annotations, and finally
+      # exits with the suite's real exit code. Everything happens in this
+      # single step because GitHub Actions does not propagate
+      # steps.<id>.outputs.* from a step that exits non-zero — splitting
+      # into multiple steps would lose the log path / counts on failure.
+      - name: "🧪 Run ${{ matrix.action }} tests"
+        id: run-tests
+        env:
+          ACTION_NAME: ${{ matrix.action }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -o pipefail
+
+          start_ts=$(date +%s)
+          mkdir -p _test-out _artifact
+          log_file="_test-out/${ACTION_NAME}.log"
+          stripped="${log_file}.stripped"
+
+          set +e
+          bash "${ACTION_NAME}/run_all_tests.sh" 2>&1 | tee "${log_file}"
+          test_exit=${PIPESTATUS[0]}
+          set -e
+
+          duration=$(( $(date +%s) - start_ts ))
+
+          # Strip ANSI escapes once so subsequent grep/awk can match colored output.
+          sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "${log_file}" > "${stripped}"
+
+          # Format-drift check: every suite must emit the canonical summary lines.
+          # See docs/Testing-in-ci.md §4.
+          missing=()
+          grep -qE '^Tests run:[[:space:]]+[0-9]+'    "${stripped}" || missing+=('Tests run:')
+          grep -qE '^Tests passed:[[:space:]]+[0-9]+' "${stripped}" || missing+=('Tests passed:')
+          grep -qE '^Tests failed:[[:space:]]+[0-9]+' "${stripped}" || missing+=('Tests failed:')
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            outcome=failure
+            run_sum=null; pass_sum=null; fail_sum=null
+            echo "::error title=Suite format drift::${ACTION_NAME}/run_all_tests.sh did not emit canonical summary lines (missing: ${missing[*]}). See docs/Testing-in-ci.md §4 and docs/Action-implementation-guide.md."
+            # Force failure even if the suite happened to exit 0; drift alone is enough.
+            [[ ${test_exit} -eq 0 ]] && test_exit=1
+          else
+            run_sum=$( awk '/^Tests run:[[:space:]]+[0-9]+/    {sum += $3} END {print sum+0}' "${stripped}")
+            pass_sum=$(awk '/^Tests passed:[[:space:]]+[0-9]+/ {sum += $3} END {print sum+0}' "${stripped}")
+            fail_sum=$(awk '/^Tests failed:[[:space:]]+[0-9]+/ {sum += $3} END {print sum+0}' "${stripped}")
+            if [[ ${test_exit} -eq 0 ]]; then
+              outcome=success
+            else
+              outcome=failure
+              echo "::error title=Action tests failed::${ACTION_NAME}: ${pass_sum}/${run_sum} tests passed (${fail_sum} failed)"
+            fi
+          fi
+
+          # Resolve the specific matrix job URL via the API. Matrix job names are
+          # "<job-name> (<matrix-value>)" — match on the trailing "(<action>)" suffix.
+          job_url="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+          if api_jobs=$(gh api --paginate "/repos/${REPO}/actions/runs/${RUN_ID}/jobs" 2>/dev/null); then
+            resolved=$(echo "${api_jobs}" \
+              | jq -r --arg suffix "(${ACTION_NAME})" \
+                  '.jobs[] | select(.name | endswith($suffix)) | .html_url' \
+              | head -n1)
+            [[ -n "${resolved}" ]] && job_url="${resolved}"
+          fi
+
+          out="_artifact/result-${ACTION_NAME}.json"
+          jq -n \
+            --arg     action   "${ACTION_NAME}" \
+            --arg     outcome  "${outcome}" \
+            --argjson run      "${run_sum}" \
+            --argjson passed   "${pass_sum}" \
+            --argjson failed   "${fail_sum}" \
+            --argjson duration "${duration}" \
+            --arg     job_url  "${job_url}" \
+            '{
+              action: $action,
+              outcome: $outcome,
+              "tests-run": $run,
+              "tests-passed": $passed,
+              "tests-failed": $failed,
+              "duration-seconds": $duration,
+              "job-url": $job_url
+            }' > "${out}"
+
+          echo "Captured result for ${ACTION_NAME}:"
+          cat "${out}"
+
+          exit "${test_exit}"
+
+      - name: "📤 Upload result artifact"
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-result-${{ matrix.action }}
+          path: _artifact/result-${{ matrix.action }}.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  summary:
+    name: "📝 Aggregate summary"
+    needs: [discover, test]
+    if: |
+      !cancelled() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      - name: "📥 Download all test result artifacts"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-result-*
+          merge-multiple: true
+          path: _results
+
+      - name: "📝 Build summary and upsert PR comment"
+        env:
+          RESULTS_DIR: _results
+          NO_TESTS_LIST: ${{ needs.discover.outputs.no-tests-list }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/aggregate-action-tests.sh
+
+  # Stable check name for branch protection. Aggregates the matrix into one
+  # status — independent of how the matrix grows. See docs/Testing-in-ci.md §2.4.
+  tests-conclusion:
+    name: "tests-conclusion"
+    needs: [discover, test]
+    if: |
+      always() &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+    runs-on: ubuntu-latest
+    steps:
+      - name: "🛑 Verify all suites passed"
+        env:
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          echo "discover result: ${DISCOVER_RESULT}"
+          echo "test result:     ${TEST_RESULT}"
+
+          if [[ "${DISCOVER_RESULT}" != "success" ]]; then
+            echo "::error title=Discover failed::discover job result was '${DISCOVER_RESULT}'"
+            exit 1
+          fi
+
+          # 'test' job result is the worst across matrix entries.
+          # 'skipped' is acceptable (happens when tests-matrix is empty).
+          case "${TEST_RESULT}" in
+            success|skipped)
+              echo "All test suites passed (or none to run)."
+              ;;
+            failure|cancelled|*)
+              echo "::error title=Tests failed::test job result was '${TEST_RESULT}'"
+              exit 1
+              ;;
+          esac

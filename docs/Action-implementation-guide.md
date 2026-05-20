@@ -423,6 +423,7 @@ fi
 - **Use a `reset_defaults` or `create_metadata_file` helper** to reduce boilerplate if many tests share structure.
 - **Cover edge cases**: empty inputs, null values, invalid JSON, missing fields, boundary values.
 - **Exit with code 1 if any test failed** so CI can catch regressions.
+- **Emit the canonical summary lines** — three lines, exactly: `Tests run:    <N>`, `Tests passed: <N>`, `Tests failed: <N>`. These are parsed by the [action-tests workflow](../.github/workflows/action-tests.yml) to populate per-action and total test counts in the PR comment summary. ANSI color codes around the numbers are fine; the format of the rest of the line must not drift (no "Total tests:", no "Passed:", etc.). See [Testing-in-ci.md §4](Testing-in-ci.md#4-test-count-parsing-contract) for the full parsing contract.
 
 ---
 
