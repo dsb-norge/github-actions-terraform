@@ -56,7 +56,9 @@ function main {
     else
       without_tests+="${name}"$'\n'
     fi
-  done < <(find "${repo_root}" -mindepth 2 -maxdepth 2 -name action.yml -not -path '*/.github/*' | sort)
+  done < <(find "${repo_root}" -mindepth 2 -maxdepth 2 \
+    \( -name action.yml -o -name action.yaml \) -not -path '*/.github/*' \
+    | sort)
 
   local tests_matrix no_tests_list
   tests_matrix="$(printf '%s' "${with_tests}" | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
