@@ -92,11 +92,12 @@ jobs:
           sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "${log_file}" > "${stripped}"
 
           # Format-drift check: every suite must emit the canonical summary lines.
-          # See docs/Testing-in-ci.md §4.
+          # See docs/Testing-in-ci.md §4. Regex anchors on both ends (after ANSI
+          # strip) so a suffix like "Tests run: 7 (extra)" is rejected as drift.
           missing=()
-          grep -qE '^Tests run:[[:space:]]+[0-9]+'    "${stripped}" || missing+=('Tests run:')
-          grep -qE '^Tests passed:[[:space:]]+[0-9]+' "${stripped}" || missing+=('Tests passed:')
-          grep -qE '^Tests failed:[[:space:]]+[0-9]+' "${stripped}" || missing+=('Tests failed:')
+          grep -qE '^Tests run:[[:space:]]+[0-9]+[[:space:]]*$'    "${stripped}" || missing+=('Tests run:')
+          grep -qE '^Tests passed:[[:space:]]+[0-9]+[[:space:]]*$' "${stripped}" || missing+=('Tests passed:')
+          grep -qE '^Tests failed:[[:space:]]+[0-9]+[[:space:]]*$' "${stripped}" || missing+=('Tests failed:')
 
           if [[ ${#missing[@]} -gt 0 ]]; then
             outcome=failure

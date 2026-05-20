@@ -32,7 +32,7 @@ discover  ─►  test (matrix, fan-out)  ─►  summary  ─►  tests-conclus
 
 ### 2.1 `discover`
 
-Scans top-level `*/action.yml` files in the checkout. For each action directory, classifies as:
+Scans top-level `*/action.yml` and `*/action.yaml` files in the checkout (both extensions exist in this repo). For each action directory, classifies as:
 
 - **has-tests** if `run_all_tests.sh` exists, *and* the directory is not on the explicit exclusion list (§3).
 - **no-tests** otherwise.
@@ -82,13 +82,13 @@ Fails if `needs.discover.result != success`, or if `needs.test.result` is `failu
 
 ## 3. Discovery rules and exclusions
 
-Discovery globs `*/action.yml` from the repo root. The following directories are **excluded by name**, regardless of whether `run_all_tests.sh` is present:
+Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. The following directories are **excluded by name**, regardless of whether `run_all_tests.sh` is present:
 
 | Excluded | Reason |
 |---|---|
 | `create-tf-vars-matrix` | Has a known-flaky `test_action_source.sh` harness that requires a real tty and may fail on pristine main. Documented in [`CLAUDE.md`](../CLAUDE.md). Not yet ported to the modern `run_all_tests.sh` shape. |
 
-`.github/` is naturally excluded because the glob is `*/action.yml`, not `**/action.yml`.
+`.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`.
 
 When an excluded directory gets a real `run_all_tests.sh` later, drop it from the exclusion list in the same PR.
 
@@ -106,7 +106,7 @@ This format is set by the template in [Action-implementation-guide.md §`run_all
 
 Multi-step orchestrator scripts (e.g. [`aggregate-validation-summaries/run_all_tests.sh`](../aggregate-validation-summaries/run_all_tests.sh)) emit these lines once **per delegated step script**. The parser sums them, so the action's totals are the sum across its sub-suites.
 
-ANSI color codes around the numbers are tolerated — the parser greps with a regex that allows optional escape sequences before the digit.
+ANSI color codes around the numbers are tolerated — escapes are stripped before matching. Each line is anchored on both ends (`^Tests run:[[:space:]]+[0-9]+[[:space:]]*$`) so a suffix like `Tests run: 7 (extra info)` is rejected as drift; a trailing space or two is fine.
 
 ### 4.1 What if a new suite diverges from this format?
 
@@ -355,15 +355,15 @@ bash .github/scripts/aggregate-action-tests.sh
 # step summary appended to /tmp/step-summary.md, "DRY_RUN=true — skipping comment upsert."
 ```
 
-**Suite-format conformance sweep** — every suite must emit the canonical lines (§4). Run them all and grep:
+**Suite-format conformance sweep** — every suite must emit the canonical lines (§4). Run them all and grep with the same anchored regex CI uses:
 
 ```bash
 for d in */run_all_tests.sh; do
   log=$(bash "${d}" 2>&1)
   stripped=$(echo "${log}" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
   for needle in 'Tests run:' 'Tests passed:' 'Tests failed:'; do
-    if ! echo "${stripped}" | grep -qE "^${needle}[[:space:]]+[0-9]+"; then
-      echo "DRIFT: ${d} missing '${needle}'"
+    if ! echo "${stripped}" | grep -qE "^${needle}[[:space:]]+[0-9]+[[:space:]]*$"; then
+      echo "DRIFT: ${d} missing or non-canonical '${needle}'"
     fi
   done
 done
