@@ -46,6 +46,7 @@ Raw markdown:
 | ✔ | Validate | `success` |
 | 🧹 | TFLint | `success` |
 | 📖 | Plan | `success` |
+| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
 
 <details><summary>Plan: 7 changes ℹ️</summary>
 
@@ -70,6 +71,7 @@ Rendered:
 > | ✔ | Validate | `success` |
 > | 🧹 | TFLint | `success` |
 > | 📖 | Plan | `success` |
+> | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
 >
 > <details><summary>Plan: 7 changes ℹ️</summary>
 >
@@ -102,6 +104,18 @@ Rules:
 - `move`, `import`, `remove` lines are appended only when their respective count is non-zero, with emojis `🔀`, `📥`, `⛓️‍💥`.
 - Lines are separated by `<br>`. Each badge is wrapped in `<span title="…">…</span>` with a human-readable description as the tooltip.
 
+#### Plan time row
+
+Always rendered as the trailing row of the validation table:
+
+```markdown
+| ⏱ | Plan time | `mm:ss` |
+```
+
+The value is the wall-clock duration of the `terraform plan` invocation, formatted as `mm:ss` (minutes can exceed 99 — e.g. `120:05` — though CI plans rarely cross an hour). The value is sourced from `terraform-plan@v0`'s `plan-time` output and is always populated, including when the plan command failed — surfacing "slow AND failing" in a single row instead of forcing reviewers into the job log. When the caller does not supply a value, the cell renders `` `N/A` `` (matching the `plan-count-*` defaults).
+
+The cell is wrapped in `<span title="mm:ss (minutes:seconds)">…</span>` (around both the value and the `N/A` fallback) so desktop hover surfaces the format hint, matching the badge convention used by the Plan Details row and the status-emoji cells.
+
 #### Plan extract
 
 The plan-extract block has four rendering modes, selected by the `plan-count-total` and `plan-has-output-only-changes` inputs (typically sourced from `parse-terraform-plan`'s `count-total` and `has-output-only-changes` outputs):
@@ -130,7 +144,7 @@ A single bare Markdown link. Pusher / event / workflow data is intentionally omi
 
 ### 3.2 Grouped mode
 
-The env has `pr-comment-group: "<name>"` set. The per-env comment loses its validation table — that data is now in the per-group comment (§4). The plan extract block, the `Plan not available 🤷‍♀️` short-circuit, and the footer behave identically to ungrouped mode. No back-pointer to the group summary is rendered — the grouped summary itself anchor-links to every per-env comment via its Links row (§4.5), so navigation goes the natural top-down direction.
+The env has `pr-comment-group: "<name>"` set. The per-env comment loses its validation table — that data is now in the per-group comment (§4). The plan extract block, the `Plan not available 🤷‍♀️` short-circuit, and the footer behave identically to ungrouped mode. No back-pointer to the group summary is rendered — the grouped summary itself anchor-links to every per-env comment via its Links row (§4.6), so navigation goes the natural top-down direction.
 
 Raw markdown (no-changes example):
 
@@ -174,6 +188,7 @@ Raw markdown:
 | <span title="TFLint">🧹</span> | TFLint | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
 | <span title="Plan">📖</span> | Plan | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
 | <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:42`</span> | <span title="mm:ss (minutes:seconds)">`2:05`</span> | <span title="mm:ss (minutes:seconds)">—</span> |
 | <span title="Links">🔗</span> | Links | [log extract](#issuecomment-…)<br>[job log](https://…) | [log extract](#issuecomment-…)<br>[job log](https://…) | [job log](https://…) |
 
 [Job log](https://…)
@@ -192,6 +207,7 @@ Rendered:
 > | <span title="TFLint">🧹</span> | TFLint | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
 > | <span title="Plan">📖</span> | Plan | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
 > | <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
+> | <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:42`</span> | <span title="mm:ss (minutes:seconds)">`2:05`</span> | <span title="mm:ss (minutes:seconds)">—</span> |
 > | <span title="Links">🔗</span> | Links | [log extract](#)<br>[job log](#) | [log extract](#)<br>[job log](#) | [job log](#) |
 >
 > [Job log](#)
@@ -212,7 +228,7 @@ Every status cell wraps an emoji in `<span title="<outcome>">…</span>` so desk
 | `skipped` | ⏭️ | `skipped` |
 | `''` / step not present in env's metadata | — (em dash) | `not applicable` |
 
-The column-1 step emojis (⚙️ 🔒 🖌 ✔ 🧹 📖 📊 🔗) are also wrapped in `<span title="<step-name>">…</span>` for desktop hover discoverability.
+The column-1 step emojis (⚙️ 🔒 🖌 ✔ 🧹 📖 📊 ⏱ 🔗) are also wrapped in `<span title="<step-name>">…</span>` for desktop hover discoverability.
 
 Tooltips degrade silently: GitHub's mobile apps don't render `title` attributes, and screen readers don't reliably announce them. The emoji itself carries the user-facing meaning; tooltips are an enhancement.
 
@@ -220,7 +236,17 @@ Tooltips degrade silently: GitHub's mobile apps don't render `title` attributes,
 
 Same multi-line content as the ungrouped Plan Details row (§3.1) — one `<br>`-separated line per non-zero category, with `add` / `change` / `destroy` always shown. Each cell wraps its badge stack in `<div align="left">…</div>` so the badges anchor to the left edge of the otherwise center-aligned column. `N/A` when the plan didn't run or `parse-terraform-plan` couldn't extract counts for that env.
 
-### 4.5 Links row
+### 4.5 Plan time row
+
+Per-env cell holds the wall-clock duration of `terraform plan` for that env, formatted as `mm:ss` and wrapped in backticks for a monospace look (e.g. `` `0:42` ``, `` `2:05` ``). The value is sourced from `.steps.plan.outputs["plan-time"]` in the env's matrix-job-meta artifact — `capture-matrix-job-meta` picks it up automatically from the converted `terraform-plan@v0` step's outputs.
+
+When the value is missing (env's metadata file omits the field, e.g. plan was skipped or the env ran on an older terraform-plan release), the cell renders the em-dash `—`. This matches the §4.3 "not applicable" convention used for missing step outcomes, so missing-data cells across the table look uniform.
+
+Both branches (value and em-dash) wrap the cell content in `<span title="mm:ss (minutes:seconds)">…</span>` — so hovering on an em-dash cell still teaches the column's intent, not just its absence.
+
+The row is always emitted as long as the group has at least one env; it sits between the Plan details row (§4.4) and the Links row (§4.6).
+
+### 4.6 Links row
 
 Per-env cell, zero to two Markdown links, one per line, separated by `<br>`. Each line is independently optional:
 
@@ -237,7 +263,7 @@ Per-env-comment lookup edge cases:
 
 If the Jobs API call itself fails (rate limit, transient 5xx), every env's `job log` line is dropped and a single warning is logged; the grouped table still renders.
 
-### 4.6 Reconcile algorithm
+### 4.7 Reconcile algorithm
 
 The aggregator action runs every PR event. Its job is to make the set of group comments on the PR equal to the desired set computed from the current run's metadata:
 
@@ -246,7 +272,7 @@ The aggregator action runs every PR event. Its job is to make the set of group c
     - `repos/$REPO/issues/$PR/comments` — from the result, build two maps:
       - existing group comments (body starts with `### Terraform validation summary for group: `)
       - existing per-env comments (body starts with the exact backtick-delimited per-env prefix from §2)
-    - `repos/$REPO/actions/runs/$RUN_ID/jobs` — used to resolve each env's matrix job URL for the Links row (§4.5). Match by GitHub-rendered job name pattern `^Terraform \(<env>\)$`. Either call may fail independently: a Jobs API failure drops `job log` links from every Links cell; a PR-comments failure triggers degraded mode (skip reconcile delete pass, still post fresh bodies, will re-reconcile on next run).
+    - `repos/$REPO/actions/runs/$RUN_ID/jobs` — used to resolve each env's matrix job URL for the Links row (§4.6). Match by GitHub-rendered job name pattern `^Terraform \(<env>\)$`. Either call may fail independently: a Jobs API failure drops `job log` links from every Links cell; a PR-comments failure triggers degraded mode (skip reconcile delete pass, still post fresh bodies, will re-reconcile on next run).
 3. **Render desired.** For each desired group, sort envs alphabetically and build the prefix + body per §4.1. The Links row uses the per-env comment map (step 2) to resolve `log extract` anchors.
 4. **Reconcile (delete pass).** Walk the existing group comments:
     - prefix not in desired set → DELETE (orphan from a removed/renamed group)
@@ -324,6 +350,6 @@ Quick map from spec section to implementing code:
 | §3.2 Grouped per-env comment body | same file, branched on `pr-comment-group` |
 | §3 Posting/replacing per-env comments | [`dsb-norge/github-actions/ci-cd/comment-on-pr@v2`](https://github.com/dsb-norge/github-actions/tree/main/ci-cd/comment-on-pr) |
 | §4 Per-group comment body + reconcile | [`aggregate-validation-summaries/step_aggregate.sh`](../aggregate-validation-summaries/step_aggregate.sh) |
-| §4.6 Source artifacts | [`capture-matrix-job-meta/step_capture.sh`](../capture-matrix-job-meta/step_capture.sh) |
+| §4.7 Source artifacts | [`capture-matrix-job-meta/step_capture.sh`](../capture-matrix-job-meta/step_capture.sh) |
 | §5 Input plumbing & per-env defaults | [`create-tf-vars-matrix/action.yml`](../create-tf-vars-matrix/action.yml) |
 | Workflow wiring | [`.github/workflows/terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) |
