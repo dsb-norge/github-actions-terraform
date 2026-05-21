@@ -65,48 +65,15 @@ runs:
         end-group
     - id: plan
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       env:
         TF_IN_AUTOMATION: "true"
+        input_working_directory: ${{ inputs.working-directory }}
+        input_environment_name: ${{ inputs.environment-name }}
+        input_extra_global_args: ${{ inputs.extra-global-args }}
+        input_extra_plan_args: ${{ inputs.extra-plan-args }}
       run: |
-        # run terraform plan
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        PLAN_CONSOLE_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-console-output-${{ inputs.environment-name }}.txt"
-        PLAN_TF_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.plan"
-        set-output 'tf-plan-console-output-file' "${PLAN_CONSOLE_OUT_FILE}"
-        set-output 'tf-plan-tf-output-file' "${PLAN_TF_OUT_FILE}"
-
-        PLAN_CMD="terraform ${{ inputs.extra-global-args }} plan -detailed-exitcode -input=false -no-color -out=${PLAN_TF_OUT_FILE} ${{ inputs.extra-plan-args }}"
-        log-info "command string is '${PLAN_CMD}'"
-        start-group "'terraform plan' in '$(ws-path $(pwd))'"
-
-        # Need this to properly catch terraform exit code
-        set -o pipefail
-
-        # Github runner gets confused by set commands, make sure 'continue-on-error: true' still applies after 'set -o pipefail'
-        set +e
-        ${PLAN_CMD} 2>&1 | tee ${PLAN_CONSOLE_OUT_FILE}
-        PLAN_EXIT_CODE=${?}
-
-        set-output 'tf-plan-exitcode' "${PLAN_EXIT_CODE}"
-
-        # make sure '2' is consider 'success'
-        # 'terraform plan' exits with exit code 2 upon success when changes are present
-        #   https://www.terraform.io/docs/commands/plan.html#detailed-exitcode
-        if [ "${PLAN_EXIT_CODE}" == "0" ]; then
-          log-info 'successfully planned Terraform configuration, no changes indicated.'
-        elif [ "${PLAN_EXIT_CODE}" == "2" ]; then
-          PLAN_EXIT_CODE=0
-          log-info 'successfully planned Terraform configuration, changes indicated!'
-        else
-          log-error "failed to plan Terraform configuration, exit code: ${PLAN_EXIT_CODE}"
-          PLAN_EXIT_CODE=-1
-        fi
-        end-group
-
-        exit ${PLAN_EXIT_CODE}
+        set -o allexport
+        source "${{ github.action_path }}/step_plan.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
     - id: plan-upload
       if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
@@ -118,34 +85,24 @@ runs:
     - id: plan-show
       if: steps.plan.outcome == 'success'
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      env:
+        input_working_directory: ${{ inputs.working-directory }}
+        input_environment_name: ${{ inputs.environment-name }}
+        input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
       run: |
-        # create plan.txt file
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        start-group "output the plan as txt"
-        PLAN_TF_OUT_FILE="${{ steps.plan.outputs.tf-plan-tf-output-file }}"
-        PLAN_TXT_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.txt"
-        set-output 'tf-plan-txt-output-file' "${PLAN_TXT_OUT_FILE}"
-        terraform show -no-color ${PLAN_TF_OUT_FILE} 2>&1 | tee ${PLAN_TXT_OUT_FILE}
-        end-group
+        set -o allexport
+        source "${{ github.action_path }}/step_plan_show.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
     - id: plan-json
       if: steps.plan.outcome == 'success'
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      env:
+        input_working_directory: ${{ inputs.working-directory }}
+        input_environment_name: ${{ inputs.environment-name }}
+        input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
       run: |
-        # create plan.json file
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        start-group "output the plan as json"
-        PLAN_TF_OUT_FILE="${{ steps.plan.outputs.tf-plan-tf-output-file }}"
-        PLAN_JSON_OUT_FILE="${GITHUB_WORKSPACE}/tf-plan-${{ inputs.environment-name }}.json"
-        set-output 'tf-plan-json-output-file' "${PLAN_JSON_OUT_FILE}"
-        terraform show -json ${PLAN_TF_OUT_FILE} > ${PLAN_JSON_OUT_FILE} 2>&1
-        end-group
+        set -o allexport
+        source "${{ github.action_path }}/step_plan_json.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
     - id: plan-json-upload
       if: steps.plan-json.outcome == 'success'
