@@ -110,11 +110,19 @@ teardown() {
 }
 
 # Create a metadata file in TEST_DIR.
-# Usage: write_meta <env> [group] [fmt_outcome] [extra-counts-json]
+# Usage: write_meta <env> [group] [fmt_outcome] [extra-counts-json] [plan_time]
+# When plan_time is non-empty, the plan step's outputs include a
+# "plan-time" entry — mimicking what terraform-plan@v0 now publishes.
+# Empty / unset preserves the pre-plan-time fixture shape so older tests
+# stay backwards-compatible.
 write_meta() {
-  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}"
+  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}"
   local counts_default='{"count-add":"0","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
   local counts_use="${counts:-${counts_default}}"
+  local plan_outputs='{}'
+  if [ -n "${plan_time}" ]; then
+    plan_outputs="{\"plan-time\": \"${plan_time}\"}"
+  fi
   cat > "${TEST_DIR}/matrix-job-meta-${env}.json" <<JSON
 {
   "metadata": {"environment": "${env}", "captured_at": "2026-01-30T12:00:00Z", "schema_version": "2.0.0"},
@@ -130,7 +138,7 @@ write_meta() {
     "fmt":         {"outcome": "${fmt_outcome}", "conclusion": "${fmt_outcome}", "outputs": {}},
     "validate":    {"outcome": "success", "conclusion": "success", "outputs": {}},
     "lint":        {"outcome": "success", "conclusion": "success", "outputs": {}},
-    "plan":        {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "plan":        {"outcome": "success", "conclusion": "success", "outputs": ${plan_outputs}},
     "parse-plan":  {"outcome": "success", "conclusion": "success", "outputs": ${counts_use}}
   }
 }
@@ -734,7 +742,7 @@ test_step_row_order_byte_exact() {
   local log="${TEST_DIR}/step.log"
   # Extract just the table body rows in order
   local lines
-  lines=$(grep -oE '^\| <span title="[^"]+">' "${log}" | head -8)
+  lines=$(grep -oE '^\| <span title="[^"]+">' "${log}" | head -9)
   local expected='| <span title="Initialization">
 | <span title="Lock file">
 | <span title="Format and Style">
@@ -742,6 +750,7 @@ test_step_row_order_byte_exact() {
 | <span title="TFLint">
 | <span title="Plan">
 | <span title="Plan details">
+| <span title="Plan time">
 | <span title="Links">'
   if [[ "${lines}" != "${expected}" ]]; then
     echo "step row order mismatch"
@@ -764,6 +773,87 @@ test_missing_pr_number_fails_fast() {
   fi
   if ! grep -q 'input_pr_number is required' "${TEST_DIR}/step.log"; then
     echo "expected 'input_pr_number is required' error"
+    return 1
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# Plan time row
+# --------------------------------------------------------------------------
+
+# Plan time present in metadata → backtick-wrapped value wrapped in a
+# <span title="mm:ss (minutes:seconds)"> so desktop hover surfaces the unit.
+test_plan_time_row_renders_value() {
+  write_meta "envA" "g" "success" "" "1:23"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  local expected='| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |'
+  if ! grep -qF "${expected}" "${log}"; then
+    echo "expected Plan time row with value-cell tooltip"
+    echo "expected line: ${expected}"
+    grep -F 'Plan time' "${log}" | sed 's/^/  /'
+    return 1
+  fi
+  return 0
+}
+
+# Plan time absent from metadata → cell renders the 'not applicable' dash,
+# still wrapped in the same tooltip so the column meaning stays discoverable.
+test_plan_time_row_renders_em_dash_when_missing() {
+  write_meta "envA" "g"  # no plan_time → plan.outputs is '{}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  local expected='| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">—</span> |'
+  if ! grep -qF "${expected}" "${log}"; then
+    echo "expected em-dash cell with tooltip for missing plan-time"
+    echo "expected line: ${expected}"
+    grep -F 'Plan time' "${log}" | sed 's/^/  /'
+    return 1
+  fi
+  return 0
+}
+
+# Multi-env group: each env's Plan time cell reflects its own metadata,
+# rows are emitted in alphabetical column order. Each cell carries the
+# same tooltip — present-value and em-dash branches alike.
+test_plan_time_row_per_env() {
+  # Alphabetical column order makes the env-to-cell mapping predictable.
+  write_meta "alpha" "g" "success" "" "0:42"
+  write_meta "bravo" "g" "success" "" ""        # missing → "—"
+  write_meta "charlie" "g" "success" "" "2:05"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  # Build expected row: icon | label | alpha-cell | bravo-cell | charlie-cell
+  local expected='| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:42`</span> | <span title="mm:ss (minutes:seconds)">—</span> | <span title="mm:ss (minutes:seconds)">`2:05`</span> |'
+  if ! grep -qF "${expected}" "${log}"; then
+    echo "expected per-env Plan time row not found"
+    echo "expected line: ${expected}"
+    grep -F 'Plan time' "${log}" | sed 's/^/  /'
+    return 1
+  fi
+  return 0
+}
+
+# Plan time row sits between Plan Details and Links.
+test_plan_time_row_position() {
+  write_meta "envA" "g" "success" "" "0:05"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  local pd_line pt_line links_line
+  pd_line=$(grep -n '| <span title="Plan details">' "${log}" | head -n1 | cut -d: -f1)
+  pt_line=$(grep -n '| <span title="Plan time">'    "${log}" | head -n1 | cut -d: -f1)
+  links_line=$(grep -n '| <span title="Links">'     "${log}" | head -n1 | cut -d: -f1)
+  if [ -z "${pd_line}" ] || [ -z "${pt_line}" ] || [ -z "${links_line}" ]; then
+    echo "expected Plan details, Plan time and Links rows all present (pd=${pd_line} pt=${pt_line} links=${links_line})"
+    return 1
+  fi
+  if ! { [ "${pt_line}" -gt "${pd_line}" ] && [ "${pt_line}" -lt "${links_line}" ]; }; then
+    echo "expected Plan time row between Plan details (${pd_line}) and Links (${links_line}); got pt=${pt_line}"
     return 1
   fi
   return 0
@@ -814,6 +904,10 @@ run_test "envs without pr-comment-group are ignored"                       test_
 run_test "multiple groups are posted in alphabetical order"                test_multiple_groups_sorted_alphabetically
 run_test "groups-processed-json output records every action"               test_groups_processed_json_output
 run_test "table step rows appear in spec order"                            test_step_row_order_byte_exact
+run_test "Plan time row renders backtick-wrapped value when present"        test_plan_time_row_renders_value
+run_test "Plan time row renders em-dash '—' when plan-time missing"         test_plan_time_row_renders_em_dash_when_missing
+run_test "Plan time row reflects per-env values across multi-env group"    test_plan_time_row_per_env
+run_test "Plan time row sits between Plan details and Links rows"           test_plan_time_row_position
 run_test "missing input_pr_number fails the step"                          test_missing_pr_number_fails_fast
 run_test "post failure does not abort, recorded in output"                 test_post_failure_recorded_without_aborting
 

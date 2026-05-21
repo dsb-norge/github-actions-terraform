@@ -113,6 +113,25 @@ function _render_plan_details_cell {
   echo "${cell}"
 }
 
+# Render the Plan time cell for a single env in the grouped table.
+# Empty input → "—" (matches the existing 'not applicable' fallback from
+# _status_emoji_and_title for missing data). Non-empty values are wrapped
+# in backticks for a monospace look that aligns with the rest of the
+# data badges in the table.
+# Both branches wrap the cell in <span title="mm:ss (minutes:seconds)"> so
+# desktop-hover discloses the value's unit — even on the em-dash branch,
+# where the dash itself communicates absence and the tooltip explains
+# what would otherwise be there.
+function _render_plan_time_cell {
+  local v="${1:-}"
+  local title='mm:ss (minutes:seconds)'
+  if [ -z "${v}" ]; then
+    echo "<span title=\"${title}\">—</span>"
+    return
+  fi
+  echo "<span title=\"${title}\">\`${v}\`</span>"
+}
+
 # Render the Links cell for a single env (0-2 lines, <br>-separated).
 # Each argument may be empty — the corresponding line is omitted. Both empty
 # yields an empty cell rather than a row of stray pipes.
