@@ -15,13 +15,15 @@ export GITHUB_WORKSPACE="${RUNNER_TEMP}"
 WORK_DIR="${RUNNER_TEMP}/envs/sandbox"
 mkdir -p "${WORK_DIR}"
 
-# Stub terraform that exits 2 (success-with-changes).
+# Stub terraform that exits 2 (success-with-changes) after a short sleep
+# so the plan-time output is non-zero.
 STUB_DIR="${RUNNER_TEMP}/stub-bin"
 mkdir -p "${STUB_DIR}"
 cat >"${STUB_DIR}/terraform" <<'EOF'
 #!/bin/env bash
 echo "stub terraform $*"
 echo "Plan: 1 to add, 0 to change, 0 to destroy."
+sleep 1
 exit 2
 EOF
 chmod +x "${STUB_DIR}/terraform"

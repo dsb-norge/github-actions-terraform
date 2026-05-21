@@ -45,6 +45,9 @@ outputs:
   json-output-file:
     description: "The output of the terraform plan in JSON format, ie. processed by the 'terraform show -json' command."
     value: ${{ steps.plan-json.outputs.tf-plan-json-output-file }}
+  plan-time:
+    description: "Wall-clock duration of the 'terraform plan' invocation, formatted as 'mm:ss'. Always populated — even when the plan command fails — so PR-comment tables can surface timing alongside the outcome."
+    value: ${{ steps.plan.outputs.plan-time }}
 runs:
   using: "composite"
   steps:
