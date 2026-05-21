@@ -75,6 +75,9 @@ reset_defaults() {
   # plan-has-output-only-changes: default to 'false'. Only the output-only
   # branch test overrides this.
   export input_plan_has_output_only_changes="false"
+  # plan-time: default 'N/A' matches the action.yml default and is what the
+  # Plan time row renders when terraform-plan didn't supply a duration.
+  export input_plan_time="N/A"
   export input_job_check_run_id="87654321"
 
   export GITHUB_SERVER_URL="https://github.com"
@@ -581,6 +584,7 @@ assert_full_body_golden_all_success_no_plan() {
 | ✔ | Validate | `success` |
 | 🧹 | TFLint | `success` |
 | 📖 | Plan | `success` |
+| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
 Plan not available 🤷‍♀️
 
@@ -609,6 +613,7 @@ assert_all_row_labels_byte_exact() {
     "| ✔ | Validate | "
     "| 🧹 | TFLint | "
     "| 📖 | Plan | "
+    "| ⏱ | Plan time | "
   )
   for row in "${rows[@]}"; do
     if [[ "${summary}" != *"${row}"* ]]; then
@@ -1260,6 +1265,7 @@ assert_golden_no_changes_body() {
 | ✔ | Validate | `success` |
 | 🧹 | TFLint | `success` |
 | 📖 | Plan | `success` |
+| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
 Plan: no changes ✅
 
@@ -1375,6 +1381,110 @@ export input_plan_count_total="0"
 export input_plan_has_output_only_changes="true"
 run_test "Grouped + count-total=0 + output-only → keep <details>" assert_grouped_output_only_keeps_details
 rm -f "${_plan_file}"
+
+# --------------------------------------------------
+# Plan time row (added in v0.X — terraform-plan now publishes wall-clock
+# duration of the plan command; create-validation-summary renders it as
+# a trailing row of the ungrouped validation table).
+# --------------------------------------------------
+
+# Plan time row: renders mm:ss when input provided, wrapped in a
+# <span title="mm:ss (minutes:seconds)"> so desktop hover surfaces the unit.
+assert_plan_time_row_with_value() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |'* ]]; then
+    echo "  summary: expected backtick-wrapped value cell with format tooltip"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_time="1:23"
+run_test "Plan time row renders backtick-wrapped mm:ss value with tooltip" assert_plan_time_row_with_value
+
+# Plan time row: defaults to N/A when caller passes nothing (matches
+# the create-validation-summary input default and plan-count-* convention).
+# Tooltip wrapper applies to the N/A branch too so hover-discovery works
+# even when there's no timing recorded.
+assert_plan_time_row_default_na() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |'* ]]; then
+    echo "  summary: expected default N/A cell with format tooltip"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Plan time row defaults to 'N/A' with tooltip when input not supplied" assert_plan_time_row_default_na
+
+# Plan time row: rendered even when Plan Details is off (Plan time row is
+# always emitted in ungrouped mode; Plan Details row is conditional).
+assert_plan_time_without_plan_details() {
+  local prefix="${1}"
+  local summary="${2}"
+  local fails=""
+  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`0:45`</span> |'* ]]; then
+    fails+="  summary: expected Plan time row (with tooltip) to render without Plan Details\n"
+  fi
+  if [[ "${summary}" == *"Plan Details"* ]]; then
+    fails+="  summary: Plan Details row should NOT appear when include-plan-details=false\n"
+  fi
+  if [[ -n "${fails}" ]]; then
+    echo -e "${fails}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_time="0:45"
+export input_include_plan_details="false"
+run_test "Plan time row renders even when Plan Details row is omitted" assert_plan_time_without_plan_details
+
+# Plan time row: omitted in grouped mode (whole validation table is
+# omitted from per-env body in grouped mode — see docs/Workflow-pr-comments.md §3).
+assert_plan_time_omitted_in_grouped_mode() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" == *"Plan time"* ]]; then
+    echo "  summary: Plan time row must NOT appear in grouped per-env body"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+export input_plan_time="2:00"
+run_test "Plan time row omitted in grouped mode (table moves to per-group comment)" assert_plan_time_omitted_in_grouped_mode
+
+# Plan time row placement: appears AFTER Plan Details when both are present
+# (per design — Plan time goes below Plan Details).
+assert_plan_time_after_plan_details() {
+  local prefix="${1}"
+  local summary="${2}"
+  # Extract the bit between Plan Details opener and the blank line that
+  # closes the table. Plan time row must be after Plan Details in that span.
+  local pd_pos pt_pos
+  pd_pos=$(echo "${summary}" | grep -n '| 📊 | Plan Details |' | head -n1 | cut -d: -f1)
+  pt_pos=$(echo "${summary}" | grep -n '| ⏱ | Plan time |'   | head -n1 | cut -d: -f1)
+  if [ -z "${pd_pos}" ] || [ -z "${pt_pos}" ]; then
+    echo "  summary: expected both Plan Details and Plan time rows present (pd=${pd_pos}, pt=${pt_pos})"
+    return 1
+  fi
+  if [ "${pt_pos}" -le "${pd_pos}" ]; then
+    echo "  summary: Plan time row (line ${pt_pos}) must appear AFTER Plan Details (line ${pd_pos})"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_include_plan_details="true"
+export input_plan_count_add="1"
+export input_plan_count_change="0"
+export input_plan_count_destroy="0"
+export input_plan_time="3:14"
+run_test "Plan time row appears after Plan Details when both rendered" assert_plan_time_after_plan_details
 
 # --------------------------------------------------
 # Summary

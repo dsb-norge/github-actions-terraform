@@ -89,6 +89,14 @@ inputs:
       reviewers can still see the output diff.
     required: false
     default: "false"
+  plan-time:
+    description: |
+      Wall-clock duration of the `terraform plan` invocation, formatted as
+      `mm:ss` (typically wired from terraform-plan's `plan-time` output).
+      Rendered as a trailing row of the validation table. Defaults to "N/A"
+      when not provided — matches the convention used by `plan-count-*`.
+    required: false
+    default: "N/A"
 outputs:
   prefix:
     description: Validation summary prefix string.
@@ -121,6 +129,7 @@ runs:
         input_plan_count_remove: ${{ inputs.plan-count-remove }}
         input_plan_count_total: ${{ inputs.plan-count-total }}
         input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
+        input_plan_time: ${{ inputs.plan-time }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
         set -o allexport
