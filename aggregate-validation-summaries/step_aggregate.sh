@@ -339,6 +339,17 @@ function render_group_body {
     plan_details_row+=" $(_render_plan_details_cell "${c_add}" "${c_change}" "${c_destroy}" "${c_import}" "${c_move}" "${c_remove}") |"
   done
 
+  # ---- Plan time row ----
+  # Sits below Plan details so timing reads as supplementary plan info,
+  # not as a step-status row alongside init/fmt/validate/lint/plan.
+  local plan_time_row="| $(_render_step_icon_cell "⏱" "Plan time") | Plan time |"
+  for env in "${envs[@]}"; do
+    local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
+    local pt
+    pt=$(_extract_plan_time "${meta_file}")
+    plan_time_row+=" $(_render_plan_time_cell "${pt}") |"
+  done
+
   # ---- Links row ----
   local links_row="| $(_render_step_icon_cell "🔗" "Links") | Links |"
   for env in "${envs[@]}"; do
@@ -356,12 +367,15 @@ function render_group_body {
   footer=$(_render_footer "${first_env_meta_file}")
 
   # ---- Assembly ----
-  printf '%s\n%s\n%s\n%s%s\n%s\n\n%s\n' \
+  # rows ends with a trailing newline; the rest are plain rows with no
+  # trailing newline, so the format string supplies the line breaks.
+  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
     "${rows}" \
     "${plan_details_row}" \
+    "${plan_time_row}" \
     "${links_row}" \
     "${footer}"
 }
@@ -385,6 +399,19 @@ function _extract_plan_count {
   [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
   local val
   val=$(jq -r --arg k "${key}" '.steps["parse-plan"].outputs[$k] // ""' "${file}" 2>/dev/null || echo "")
+  [ "${val}" = "null" ] && val=""
+  echo "${val}"
+}
+
+# Extract the plan-time (mm:ss) emitted by terraform-plan from the metadata
+# file. Empty when terraform-plan didn't run for this env or the file is
+# from a prior version that didn't expose the output. The caller's
+# rendering helper (_render_plan_time_cell) maps empty → "—".
+function _extract_plan_time {
+  local file="${1}"
+  [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
+  local val
+  val=$(jq -r '.steps.plan.outputs["plan-time"] // ""' "${file}" 2>/dev/null || echo "")
   [ "${val}" = "null" ] && val=""
   echo "${val}"
 }
