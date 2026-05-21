@@ -106,6 +106,13 @@ assert() {
   fi
 }
 
+# Check that a value matches a regex.
+match_regex() {
+  local value="${1}"
+  local pattern="${2}"
+  [[ "${value}" =~ ${pattern} ]]
+}
+
 # --------------------------------------------------------------------------
 # Tests
 # --------------------------------------------------------------------------
@@ -114,6 +121,45 @@ echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}         TERRAFORM-PLAN STEP TESTS         ${NC}"
 echo -e "${YELLOW}============================================${NC}"
+
+# ----------------------------------------------------------------------
+# format-duration-mmss helper (helpers_additional.sh)
+# ----------------------------------------------------------------------
+# Source the helper directly so we can test it in isolation, independent
+# of the timing path in step_plan.sh.
+setup_workdir
+(
+  source "${_this_script_dir}/helpers.sh" >/dev/null 2>&1
+  printf '%s\n' \
+    "0=$(format-duration-mmss 0)" \
+    "1=$(format-duration-mmss 1)" \
+    "59=$(format-duration-mmss 59)" \
+    "60=$(format-duration-mmss 60)" \
+    "61=$(format-duration-mmss 61)" \
+    "125=$(format-duration-mmss 125)" \
+    "3599=$(format-duration-mmss 3599)" \
+    "7205=$(format-duration-mmss 7205)" \
+    "default=$(format-duration-mmss)"
+) >/tmp/test_output_plan.txt 2>&1
+
+assert "format-duration-mmss(0) = 0:00" \
+  grep -Fxq "0=0:00" /tmp/test_output_plan.txt
+assert "format-duration-mmss(1) = 0:01" \
+  grep -Fxq "1=0:01" /tmp/test_output_plan.txt
+assert "format-duration-mmss(59) = 0:59" \
+  grep -Fxq "59=0:59" /tmp/test_output_plan.txt
+assert "format-duration-mmss(60) = 1:00" \
+  grep -Fxq "60=1:00" /tmp/test_output_plan.txt
+assert "format-duration-mmss(61) = 1:01" \
+  grep -Fxq "61=1:01" /tmp/test_output_plan.txt
+assert "format-duration-mmss(125) = 2:05" \
+  grep -Fxq "125=2:05" /tmp/test_output_plan.txt
+assert "format-duration-mmss(3599) = 59:59" \
+  grep -Fxq "3599=59:59" /tmp/test_output_plan.txt
+assert "format-duration-mmss(7205) = 120:05" \
+  grep -Fxq "7205=120:05" /tmp/test_output_plan.txt
+assert "format-duration-mmss() defaults to 0:00" \
+  grep -Fxq "default=0:00" /tmp/test_output_plan.txt
 
 # ----------------------------------------------------------------------
 # Test: Happy path, no changes (terraform exit 0)
@@ -162,6 +208,50 @@ assert "Exit 1: tf-plan-exitcode publishes raw '1'" \
   test "$(get_output tf-plan-exitcode)" = "1"
 assert "Exit 1: failure log line present" \
   grep -q "failed to plan" /tmp/test_output_plan.txt
+
+# ----------------------------------------------------------------------
+# Test: plan-time on fast plan (sub-second / 1-2s jitter window)
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=0
+run_step
+pt_fast="$(get_output plan-time)"
+assert "Fast plan: plan-time published" test -n "${pt_fast}"
+assert "Fast plan: plan-time matches mm:ss format" \
+  match_regex "${pt_fast}" '^[0-9]+:[0-9]{2}$'
+# Accept 0:00, 0:01, 0:02 — accommodates clock-tick jitter.
+assert "Fast plan: plan-time is 0:00, 0:01, or 0:02" \
+  bash -c "case '${pt_fast}' in 0:0[0-2]) exit 0;; *) exit 1;; esac"
+
+# ----------------------------------------------------------------------
+# Test: plan-time reflects a few-seconds delay
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=0
+export MOCK_TF_SLEEP=2
+run_step
+pt_slow="$(get_output plan-time)"
+assert "Slow plan: plan-time matches mm:ss format" \
+  match_regex "${pt_slow}" '^[0-9]+:[0-9]{2}$'
+# 2s sleep ± 1s jitter
+assert "Slow plan: plan-time is 0:02 or 0:03" \
+  bash -c "case '${pt_slow}' in 0:0[2-3]) exit 0;; *) exit 1;; esac"
+
+# ----------------------------------------------------------------------
+# Test: plan-time is emitted even when terraform fails
+# Regression guard — timing on failure is the whole point of showing
+# a "Plan time" row in the PR comment (slow + failing = bad signal).
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=1
+run_step
+pt_failed="$(get_output plan-time)"
+assert "Failed plan: plan-time still emitted" test -n "${pt_failed}"
+assert "Failed plan: plan-time matches mm:ss format" \
+  match_regex "${pt_failed}" '^[0-9]+:[0-9]{2}$'
 
 # ----------------------------------------------------------------------
 # Test: extra-global-args and extra-plan-args reach terraform invocation

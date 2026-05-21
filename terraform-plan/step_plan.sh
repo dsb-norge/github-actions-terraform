@@ -2,8 +2,8 @@
 #
 # Source for the terraform-plan main step.
 #
-# Runs 'terraform plan' in the working directory and captures the console
-# output.
+# Runs 'terraform plan' in the working directory, captures the console
+# output, and measures the wall-clock time the plan command took.
 #
 # Outputs:
 #   tf-plan-console-output-file - Path of file with captured stdout/stderr.
@@ -17,6 +17,11 @@
 #                                 'success-no-changes'. The script itself
 #                                 still exits 0 in both cases.
 #                                 https://www.terraform.io/docs/commands/plan.html#detailed-exitcode
+#   plan-time                   - Wall-clock duration of the plan command,
+#                                 formatted as 'mm:ss'. Always emitted —
+#                                 even on failure, so PR-comment tables can
+#                                 surface "this plan failed AND it took N
+#                                 minutes" in one glance.
 #
 # Required environment variables:
 #   input_working_directory   - Where to invoke terraform.
@@ -31,6 +36,7 @@
 
 set +o nounset
 
+# Load helpers (provides format-duration-mmss via helpers_additional.sh)
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
@@ -55,8 +61,19 @@ function main {
   # GitHub runner gets confused by set commands; make sure
   # 'continue-on-error: true' still applies after 'set -o pipefail'.
   set +e
+
+  # Capture elapsed seconds around the actual plan invocation. SECONDS is a
+  # bash builtin that increments once per real second; the delta is the
+  # wall-clock time spent inside terraform plan (plus the trivial overhead
+  # of the surrounding shell, which is below mm:ss granularity).
+  local plan_start=${SECONDS}
   ${plan_cmd} 2>&1 | tee "${plan_console_out_file}"
   local plan_exit_code=${?}
+  local plan_duration=$((SECONDS - plan_start))
+
+  # Emit plan-time before any return path so that even on parse/eval failure
+  # downstream, the PR comment still shows how long terraform actually ran.
+  set-output 'plan-time' "$(format-duration-mmss "${plan_duration}")"
 
   set-output 'tf-plan-exitcode' "${plan_exit_code}"
 
