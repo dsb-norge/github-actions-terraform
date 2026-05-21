@@ -25,6 +25,7 @@
 #   input_plan_count_remove    - Number of resources to be removed
 #   input_plan_count_total     - Sum across categories ('' or '?' = not available; ≥0 numeric otherwise)
 #   input_plan_has_output_only_changes - 'true' when plan changes outputs only (no resource changes)
+#   input_plan_time            - Wall-clock duration of 'terraform plan' formatted as mm:ss (defaults to 'N/A')
 #   input_job_check_run_id     - The check run ID for the current job
 #
 # Standard GitHub environment variables used:
@@ -92,6 +93,16 @@ function main {
       # end of table row
       comment_content="${comment_content} |"
     fi
+
+    # Plan time row — always rendered (after Plan Details if it was included,
+    # otherwise directly after the Plan row). 'N/A' when the upstream
+    # 'terraform-plan' action didn't supply a value, matching the
+    # plan-count-* defaults. The <span title> wrapper surfaces the format
+    # hint on desktop hover, matching the badge convention used by the
+    # Plan Details row.
+    # don't touch the indenting here
+    comment_content="${comment_content}
+| ⏱ | Plan time | <span title=\"mm:ss (minutes:seconds)\">\`${input_plan_time:-N/A}\`</span> |"
   fi
 
   # Build the link to this env's job log (used in the footer).
