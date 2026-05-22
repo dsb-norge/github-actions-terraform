@@ -4,49 +4,110 @@ Authoritative spec for all pull-request comments produced by [`terraform-ci-cd-d
 
 Out of scope: deployment-environment UI, status checks, workflow run summaries — this doc is only about the comments posted on the PR conversation timeline.
 
-## 1. When are comments posted
+## 1. Mental model — heads and tags
 
-Comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Each comment carries a deterministic identity handle so re-runs update in place rather than duplicating. The two families use different mechanisms — see §2.
+Two classes of PR comment, identified by an HTML marker on the body:
 
-Comments are suppressed when either:
+- **Heads** — long-lived, mutable. PATCHed in place across runs. Never reordered: their `created_at` is fixed at first-ever post, so once seeded they stay at their position in the PR conversation forever.
+- **Tags** — run-scoped, immutable per run. Markers embed the workflow run id. Deleted at the start of the next run, re-POSTed by the matrix job that owns them.
 
-- the workflow input `add-pr-comment: false` is set (globally), or
-- a per-environment `add-pr-comment: false` override is set in `environments-yml` (per env).
+Heads are pre-allocated at the top of every workflow run, in a deterministic order. This is what guarantees the relative order of summary comments never flips between runs — the rendering changes, the positions don't. Tags appear below all heads because they're necessarily POSTed mid-run.
 
-Both controls only affect the per-environment comments. The per-group aggregator job runs unconditionally on PR events; see §6 for why and the cost analysis.
+All commenting goes through two generic, terraform-agnostic primitives — [`pr-comment`](../pr-comment/) (single op) and [`pr-comments-reconcile`](../pr-comments-reconcile/) (bulk seed + GC). They take `repo`, `issue-number`, `github-token`, and operate purely on HTML markers; they know nothing about terraform, events, or fork PRs (those concerns live in the workflow's `if:` guards).
 
-## 2. The two comment families
+## 2. Marker namespace
 
-| Family | Identity handle | Lifecycle | Posted by | Cardinality |
-|---|---|---|---|---|
-| Per-environment | H3 heading `` ### Terraform validation summary for environment: `<env>` `` (first line of body) | delete-by-prefix + post | matrix job for that env, via `comment-on-pr@v2` | one per env per workflow run |
-| Per-group | HTML marker `<!-- terraform-validation-summary-group:<group> -->` (first line of body) | upsert-by-marker (PATCH-in-place or POST) | `pr-comment-aggregator` job, via `aggregate-validation-summaries` | one per distinct non-empty `pr-comment-group` value |
+| Marker | Class | Cardinality | Posted/refreshed by |
+|---|---|---|---|
+| `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
+| `<!-- tf:head:env:<env> -->` | Head | One per env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
+| `<!-- tf:tag:plan:<env>:run-id-<run-id> -->` | Tag | One per env per run | Matrix job for that env |
 
-The two families use **different identity contracts** because they have different lifecycles:
+Marker name conventions:
 
-- **Per-env** uses a visible H3 prefix as the load-bearing handle. Each run does delete-by-prefix + post, so per-env comments get a new comment id every run (subscribers re-pinged). Cheap and simple for a one-shot job.
-- **Per-group** uses an invisible HTML marker as the load-bearing handle. Each run does PATCH-in-place on the oldest existing marker comment for that group (stable comment id, no re-ping), and deletes any duplicate markers in the same pass — self-healing against past races or degraded runs. Comments without the marker are ignored (see §2.1 below). Per-group markers are unique per group name so multiple groups on the same PR are upserted independently.
+- Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env`.
+- Tags: `tf:tag:<kind>:<scope-key>:run-id-<run-id>` — the run-id token is what the GC sweep matches on to keep current-run tags.
 
-The H3 line `` ### Terraform validation summary for group: `<group>` `` still appears (visible to readers, line 2 of the body) but is no longer load-bearing — only the HTML marker is. The H3 wording can be tweaked freely as long as the marker is unchanged.
+Markers are treated as opaque substrings by the underlying actions: matching is `body.contains(marker)`. The exact format is enforced by convention in this doc, not by the actions themselves — any unique-enough string works.
 
-Per-env prefixes use backtick-delimited env names so partial matches can't collide (e.g. `dev` doesn't match `dev-2`). Per-group markers don't need this since the colon + ` -->` close make the boundary unambiguous.
+## 3. Lifecycle of a single workflow run
 
-### 2.1 No migration policy
+```text
+                          ┌──────────────────────────────────────────────┐
+                          │  Seed phase (top of workflow, before matrix) │
+                          │                                              │
+   create-matrix ───────► │  seed-pr-comments job:                       │
+                          │   - reconcile heads (POST/PATCH per marker)  │
+                          │   - GC stale plan tags (run-id != current)   │
+                          └─────────────────┬────────────────────────────┘
+                                            │
+                          ┌─────────────────▼────────────────────────────┐
+                          │  Matrix jobs (parallel, one per env)         │
+                          │                                              │
+                          │   - PATCH `tf:head:env:<env>` with results   │
+                          │   - POST `tf:tag:plan:<env>:run-id-<id>`     │
+                          └─────────────────┬────────────────────────────┘
+                                            │
+                          ┌─────────────────▼────────────────────────────┐
+                          │  Aggregator job (after matrix)               │
+                          │                                              │
+                          │   - PATCH each `tf:head:group:<group>` head  │
+                          │     with the rolled-up grouped table         │
+                          └──────────────────────────────────────────────┘
+```
 
-When `aggregate-validation-summaries` rolls out, existing per-group comments from prior versions don't yet carry the HTML marker — they only have the H3 heading. The new code ignores those legacy comments rather than deleting them: the next run posts a fresh marked comment alongside, and operators clean up the legacy one by hand if they want. This is an intentional trade-off — adding marker detection on the legacy H3 path would require a transitional shim, and given how rare PR-runs-after-release are for a given PR, the one-time double-post is the simpler choice. Subsequent runs upsert the marked comment normally.
+### 3.1 Seed phase
 
-## 3. Per-environment comments
+The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) composes a `heads-yml` manifest from `create-matrix` outputs:
 
-Each matrix job (one per env in `environments-yml`) runs `create-validation-summary` followed by `comment-on-pr@v2`. The body shape depends on whether the env declares a `pr-comment-group`.
+1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value.
+2. One `tf:head:env:<env>` head per env with `add-pr-comment: true`.
 
-### 3.1 Ungrouped mode (default)
+Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Running…` placeholder body.
 
-The env has no `pr-comment-group` set (or its value is `""`). This is the historical behavior and the contract that backwards-compat tests pin down.
+In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- tf:tag:plan:` whose body does not also contain `run-id-<current-run-id>` — i.e. plan tags from prior runs. The seed job is added to `terraform-ci-cd`'s `needs:` chain so matrix jobs can't race ahead and POST their head updates before the seed manifest lands.
 
-Raw markdown:
+### 3.2 Matrix phase
 
-````markdown
-### Terraform validation summary for environment: `dev`
+Each env's matrix job runs the validation pipeline, calls [`create-validation-summary`](../create-validation-summary/) to render two bodies, then posts both:
+
+- **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->`. Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Running…` placeholder with the validation table + footer.
+- **Plan tag** — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id> -->`. The marker is run-scoped so it never matches anything from the seed phase or prior runs; effectively a POST-fresh.
+
+Both calls are guarded by `always()` so the head refreshes even when an earlier step (init, tflint, etc.) failed.
+
+### 3.3 Aggregator phase
+
+[`aggregate-validation-summaries`](../aggregate-validation-summaries/) downloads all `matrix-job-meta-*.json` artifacts, builds the per-group rolled-up table, and upserts each `tf:head:group:<group>` head with the final rendered body. Seed job has already pre-allocated these heads, so the upsert resolves to a PATCH (preserving `created_at`).
+
+## 4. Re-run behavior
+
+### Heads
+
+1. Seed phase PATCHes each head body to `⏳ Running (run #N)…` (existing comment, content-hash differs → PATCH lands).
+2. Matrix / aggregator phase PATCHes each head body to its final state.
+3. If the final body's content-hash matches the existing comment's embedded hash (no-op run), the PATCH is skipped — subscribers are not re-pinged. See §5.
+
+### Tags
+
+1. Seed phase GC sweep deletes plan tags from prior runs.
+2. Matrix phase POSTs fresh plan tags (their markers carry the current run id).
+3. Next run repeats: GC deletes these, POSTs new ones.
+
+The net visual effect on a re-run: heads stay in place but their content briefly shows "Running" then updates to final; plan tags disappear, then new ones appear at the bottom of the conversation.
+
+## 5. Content-hash short-circuit
+
+Every body the action writes carries an inline marker `<!-- comment-hash:<sha256> -->` on line 2, computed from the body content with a single trailing newline normalized away. On upsert, if the existing comment's embedded hash matches the hash of the new body, the PATCH call is skipped entirely.
+
+Effect: when nothing has changed (e.g. CI re-run on the same commit), no `updated_at` churn, no notification emails to PR subscribers. Subscribers only get pinged when a comment's content actually changed.
+
+## 6. Comment body shapes
+
+### 6.1 Per-env head
+
+```markdown
+### Terraform validation summary for environment: `<env>`
 |  | Step | Result |
 |:---:|---|---|
 | ⚙️ | Initialization | `success` |
@@ -57,313 +118,139 @@ Raw markdown:
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
 
-<details><summary>Plan: 7 changes ℹ️</summary>
-
-```terraform
-…
+[Job log](<url>)
 ```
 
-</details>
+Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
-[Job log](https://github.com/owner/repo/actions/runs/123/job/456#logs)
-````
+Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan@v0` `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to `N/A` when the upstream action didn't supply a value.
 
-Rendered:
-
-> ### Terraform validation summary for environment: `dev`
->
-> |  | Step | Result |
-> |:---:|---|---|
-> | ⚙️ | Initialization | `success` |
-> | 🔒 | Lock file | `success` |
-> | 🖌 | Format and Style | `success` |
-> | ✔ | Validate | `success` |
-> | 🧹 | TFLint | `success` |
-> | 📖 | Plan | `success` |
-> | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
->
-> <details><summary>Plan: 7 changes ℹ️</summary>
->
-> ```terraform
-> …
-> ```
->
-> </details>
->
-> [Job log](#)
-
-Cell formatting in the Result column:
-
-| Step outcome | Cell value |
-|---|---|
-| `success` | `` `success` `` (Markdown code-span) |
-| anything else (`failure`, `cancelled`, `skipped`, `''`) | `<kbd>failure</kbd>` etc. — the raw outcome string inside a `<kbd>` tag |
-
-#### Plan details row (optional)
-
-When `include-plan-details` is true (the workflow wires this as `steps.parse-plan.outcome == 'success'`), an extra row is appended:
+Plan Details row is rendered only when `include-plan-details=true`. Shape:
 
 ```markdown
-| 📊 | Plan Details | <span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span> |
+| 📊 | Plan Details | <span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span> |
 ```
 
-Rules:
+Optional badges (move / import / remove) are appended `<br>`-separated when the count is non-zero.
 
-- `add`, `change`, `destroy` lines are always present.
-- `move`, `import`, `remove` lines are appended only when their respective count is non-zero, with emojis `🔀`, `📥`, `⛓️‍💥`.
-- Lines are separated by `<br>`. Each badge is wrapped in `<span title="…">…</span>` with a human-readable description as the tooltip.
+#### Grouped mode
 
-#### Plan time row
-
-Always rendered as the trailing row of the validation table:
+When `pr-comment-group` is non-empty, the head body omits the validation table — that table lives on the per-group head instead. The per-env head body becomes:
 
 ```markdown
-| ⏱ | Plan time | `mm:ss` |
+### Terraform validation summary for environment: `<env>`
+
+[Job log](<url>)
 ```
 
-The value is the wall-clock duration of the `terraform plan` invocation, formatted as `mm:ss` (minutes can exceed 99 — e.g. `120:05` — though CI plans rarely cross an hour). The value is sourced from `terraform-plan@v0`'s `plan-time` output and is always populated, including when the plan command failed — surfacing "slow AND failing" in a single row instead of forcing reviewers into the job log. When the caller does not supply a value, the cell renders `` `N/A` `` (matching the `plan-count-*` defaults).
+The H3 heading is byte-identical to ungrouped mode. There is no back-pointer to the group summary; the group's Links column anchors back to each env's head.
 
-The cell is wrapped in `<span title="mm:ss (minutes:seconds)">…</span>` (around both the value and the `N/A` fallback) so desktop hover surfaces the format hint, matching the badge convention used by the Plan Details row and the status-emoji cells.
-
-#### Plan extract
-
-The plan-extract block has four rendering modes, selected by the `plan-count-total` and `plan-has-output-only-changes` inputs (typically sourced from `parse-terraform-plan`'s `count-total` and `has-output-only-changes` outputs):
-
-| `plan-count-total` | `plan-has-output-only-changes` | Rendered block |
-|---|---|---|
-| numeric `0` | `false` | `Plan: no changes ✅` (plain text, no `<details>`) |
-| numeric `0` | `true` | `<details><summary>Plan: output-only changes ℹ️</summary>` + code-fenced plan (resource counts are zero but the Changes-to-Outputs section is the actual content) |
-| numeric `N>0` | (any) | `<details><summary>Plan: <N> changes ℹ️</summary>` + code-fenced plan, last 65k chars |
-| missing / `?` | (any) | `<details><summary>Show Plan (last 65k characters)</summary>` + code-fenced plan (legacy fallback for cases where count parsing failed) |
-
-When no plan output file is available at all (regardless of either input), the literal `Plan not available 🤷‍♀️` is rendered instead.
-
-Source precedence for the plan output itself:
-
-1. `plan-txt-output-file` (the `-no-color` output Terraform writes when the plan succeeds). Read via `tail -c 65000`.
-2. `plan-console-file` (captured stdout, used when the plan failed and #1 doesn't exist). Stripped of leading `… Refreshing state…` lines via `sed -n '/Terraform used the selected providers to generate the following execution/,$p'` before being capped at 65k chars.
-
-#### Footer
+### 6.2 Per-env plan tag
 
 ```markdown
-[Job log](<run_url>/job/<check_run_id>#logs)
+### Terraform plan for environment: `<env>`
+
+<plan-block>
 ```
 
-A single bare Markdown link. Pusher / event / workflow data is intentionally omitted — it's already visible in the PR conversation timeline header and on the linked job page, so restating it on every comment was pure noise.
+`<plan-block>` is one of five shapes:
 
-### 3.2 Grouped mode
+1. `Plan: no changes ✅` — when `count-total` is numeric 0 and `has-output-only-changes` is not true.
+2. `<details><summary>Plan: output-only changes ℹ️</summary>…</details>` — when `count-total` is 0 but `has-output-only-changes=true` (the plan changes outputs but no resources).
+3. `<details><summary>Plan: N changes ℹ️</summary>…</details>` — when `count-total` is numeric > 0.
+4. `<details><summary>Show Plan (last 65k characters)</summary>…</details>` — fallback when `count-total` is missing or `?` (parse failed).
+5. `Plan not available 🤷‍♀️` — when no plan output is available at all.
 
-The env has `pr-comment-group: "<name>"` set. The per-env comment loses its validation table — that data is now in the per-group comment (§4). The plan extract block, the `Plan not available 🤷‍♀️` short-circuit, and the footer behave identically to ungrouped mode. No back-pointer to the group summary is rendered — the grouped summary itself anchor-links to every per-env comment via its Links row (§4.6), so navigation goes the natural top-down direction.
+All `<details>` shapes wrap the plan text in a `` ```terraform `` code fence. The plan text is capped at 65000 characters (tail-trimmed) to stay under GitHub's 65536-char comment limit.
 
-Raw markdown (no-changes example):
+### 6.3 Per-group head
 
-````markdown
-### Terraform validation summary for environment: `sub-a-dev`
+The rolled-up grouped table aggregates every env in the group (alphabetical column order):
 
-Plan: no changes ✅
-
-[Job log](#)
-````
-
-Rendered:
-
-> ### Terraform validation summary for environment: `sub-a-dev`
->
-> Plan: no changes ✅
->
-> [Job log](#)
-
-For envs with changes, the body becomes `<details><summary>Plan: <N> changes ℹ️</summary>…</details>` (same as §3.1). For envs where the plan has output-only changes, `<details><summary>Plan: output-only changes ℹ️</summary>…</details>`. For envs where no plan output file exists, `Plan not available 🤷‍♀️`.
-
-The prefix is identical to ungrouped mode. This is intentional: callers who toggle grouping on/off get in-place comment updates rather than orphan accumulation.
-
-## 4. Per-group comments
-
-Every PR run triggers the `pr-comment-aggregator` job once. It downloads all `matrix-job-meta-*` artifacts (uploaded by `capture-matrix-job-meta`), partitions envs by `pr-comment-group`, and emits one comment per distinct non-empty group.
-
-### 4.1 Comment shape
-
-Raw markdown:
-
-````markdown
-<!-- terraform-validation-summary-group:dev -->
-### Terraform validation summary for group: `dev`
-
-|  | Step | sub-a-dev | sub-b-dev | sub-c-dev |
+```markdown
+### Terraform validation summary for group: `<group>`
+|  | Step | <env-a> | <env-b> | <env-c> |
 |:---:|---|:---:|:---:|:---:|
-| <span title="Initialization">⚙️</span> | Initialization | <span title="success">✅</span> | <span title="success">✅</span> | <span title="failure">❌</span> |
-| <span title="Lock file">🔒</span> | Lock file | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-| <span title="Format and Style">🖌</span> | Format and Style | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-| <span title="Validate">✔</span> | Validate | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-| <span title="TFLint">🧹</span> | TFLint | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-| <span title="Plan">📖</span> | Plan | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-| <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
-| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:42`</span> | <span title="mm:ss (minutes:seconds)">`2:05`</span> | <span title="mm:ss (minutes:seconds)">—</span> |
-| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-…)<br>[job log](https://…) | [log extract](#issuecomment-…)<br>[job log](https://…) | [job log](https://…) |
+| <span title="Initialization">⚙️</span> | Initialization | <span title="success">✅</span> | <span title="failure">❌</span> | <span title="skipped">⏭️</span> |
+| <span title="Lock file">🔒</span> | Lock file | … | … | … |
+| <span title="Format and Style">🖌</span> | Format and Style | … | … | … |
+| <span title="Validate">✔</span> | Validate | … | … | … |
+| <span title="TFLint">🧹</span> | TFLint | … | … | … |
+| <span title="Plan">📖</span> | Plan | … | … | … |
+| <span title="Plan details">📊</span> | Plan details | <div align="left">…</div> | … | … |
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> | <span title="mm:ss (minutes:seconds)">—</span> | … |
+| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-…)<br>[job log](…) | … | … |
 
-[Job log](https://…)
-````
+[Job log](<aggregator-run-url>)
+```
 
-Rendered:
+Status cells map outcomes to emoji + tooltip: ✅ / ❌ / 🚫 / ⏭️ / — (empty outcome).
 
-> ### Terraform validation summary for group: `dev`
->
-> |  | Step | sub-a-dev | sub-b-dev | sub-c-dev |
-> |:---:|---|:---:|:---:|:---:|
-> | <span title="Initialization">⚙️</span> | Initialization | <span title="success">✅</span> | <span title="success">✅</span> | <span title="failure">❌</span> |
-> | <span title="Lock file">🔒</span> | Lock file | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-> | <span title="Format and Style">🖌</span> | Format and Style | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-> | <span title="Validate">✔</span> | Validate | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-> | <span title="TFLint">🧹</span> | TFLint | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-> | <span title="Plan">📖</span> | Plan | <span title="success">✅</span> | <span title="success">✅</span> | <span title="skipped">⏭️</span> |
-> | <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span><br><span title="Resources to be imported">`📥 2` import</span></div> | N/A |
-> | <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:42`</span> | <span title="mm:ss (minutes:seconds)">`2:05`</span> | <span title="mm:ss (minutes:seconds)">—</span> |
-> | <span title="Links">🔗</span> | Links | [log extract](#)<br>[job log](#) | [log extract](#)<br>[job log](#) | [job log](#) |
->
-> [Job log](#)
+Plan Details cells stack the count badges in a `<div align="left">` so they anchor left in the otherwise center-aligned column. The badges (`💫 N add`, `🛠️ N change`, `💥 N destroy`) always render; `🔀 move`, `📥 import`, `⛓️‍💥 remove` are appended only when non-zero.
 
-### 4.2 Column ordering
+Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
-Envs are sorted alphabetically by env name within the group. Stable across re-runs.
+Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the per-env head comment, when resolvable) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
-### 4.3 Status emoji cells
+## 7. Configuration
 
-Every status cell wraps an emoji in `<span title="<outcome>">…</span>` so desktop browsers surface a tooltip naming the outcome. Mapping:
+Workflow inputs:
 
-| Step outcome | Emoji | `title` attribute |
-|---|:---:|---|
-| `success` | ✅ | `success` |
-| `failure` | ❌ | `failure` |
-| `cancelled` | 🚫 | `cancelled` |
-| `skipped` | ⏭️ | `skipped` |
-| `''` / step not present in env's metadata | — (em dash) | `not applicable` |
-
-The column-1 step emojis (⚙️ 🔒 🖌 ✔ 🧹 📖 📊 ⏱ 🔗) are also wrapped in `<span title="<step-name>">…</span>` for desktop hover discoverability.
-
-Tooltips degrade silently: GitHub's mobile apps don't render `title` attributes, and screen readers don't reliably announce them. The emoji itself carries the user-facing meaning; tooltips are an enhancement.
-
-### 4.4 Plan details row
-
-Same multi-line content as the ungrouped Plan Details row (§3.1) — one `<br>`-separated line per non-zero category, with `add` / `change` / `destroy` always shown. Each cell wraps its badge stack in `<div align="left">…</div>` so the badges anchor to the left edge of the otherwise center-aligned column. `N/A` when the plan didn't run or `parse-terraform-plan` couldn't extract counts for that env.
-
-### 4.5 Plan time row
-
-Per-env cell holds the wall-clock duration of `terraform plan` for that env, formatted as `mm:ss` and wrapped in backticks for a monospace look (e.g. `` `0:42` ``, `` `2:05` ``). The value is sourced from `.steps.plan.outputs["plan-time"]` in the env's matrix-job-meta artifact — `capture-matrix-job-meta` picks it up automatically from the converted `terraform-plan@v0` step's outputs.
-
-When the value is missing (env's metadata file omits the field, e.g. plan was skipped or the env ran on an older terraform-plan release), the cell renders the em-dash `—`. This matches the §4.3 "not applicable" convention used for missing step outcomes, so missing-data cells across the table look uniform.
-
-Both branches (value and em-dash) wrap the cell content in `<span title="mm:ss (minutes:seconds)">…</span>` — so hovering on an em-dash cell still teaches the column's intent, not just its absence.
-
-The row is always emitted as long as the group has at least one env; it sits between the Plan details row (§4.4) and the Links row (§4.6).
-
-### 4.6 Links row
-
-Per-env cell, zero to two Markdown links, one per line, separated by `<br>`. Each line is independently optional:
-
-- `log extract` — anchor to the env's per-env comment (§3.2) using GitHub's `#issuecomment-<id>` fragment. Present only when the resolver matched the env's per-env comment in the PR via `gh api repos/<owner>/<repo>/issues/<n>/comments`.
-- `job log` — direct URL to the env's matrix job log on the current workflow run, with `#logs` anchor. Present only when the resolver matched the env's matrix job in the current run via `gh api repos/<owner>/<repo>/actions/runs/<run_id>/jobs`. Matching uses the GitHub-rendered job name pattern `^Terraform \(<env>\)$`.
-
-Each line is omitted independently when its source isn't resolvable. When *both* lines would be omitted, the cell is rendered as empty rather than as a stray pipe pair — keeping the table tidy. The grouped table itself always posts; the Links column degrades gracefully.
-
-Per-env-comment lookup edge cases:
-
-- **0 matches** — `log extract` line omitted (common when the per-env `comment-on-pr` step failed or the env's matrix job failed before it ran).
-- **1 match** — `log extract` line points at `#issuecomment-<id>`.
-- **2+ matches** (race / stale duplicates not yet cleaned by `comment-on-pr@v2`'s delete-by-prefix) — `log extract` points at the comment with the highest numeric `id` (GitHub IDs are monotonic, so highest = newest). A warning naming the env is logged.
-
-If the Jobs API call itself fails (rate limit, transient 5xx), every env's `job log` line is dropped and a single warning is logged; the grouped table still renders.
-
-### 4.7 Upsert algorithm
-
-The aggregator action runs every PR event. Its job is to make the set of marked group comments on the PR equal to the desired set computed from the current run's metadata, **editing in place** rather than recreating, so subscribers aren't re-pinged on every push.
-
-1. **Build desired set.** Read every `matrix-job-meta-*.json` artifact downloaded by `actions/download-artifact@v4`. Group entries by `matrix_context.vars.pr-comment-group`, dropping empty-string values. The desired set may be empty (no env declares a group).
-2. **List PR + run state.** Two paginated `gh api` calls:
-    - `repos/$REPO/issues/$PR/comments` — from the result, build two maps:
-      - existing group comments (body **starts with** `<!-- terraform-validation-summary-group:`). The group name is parsed out of the marker. Multiple matches per group are retained as a list of `(created_at, id)` pairs.
-      - existing per-env comments (body starts with the exact backtick-delimited per-env prefix from §2)
-    - `repos/$REPO/actions/runs/$RUN_ID/jobs` — used to resolve each env's matrix job URL for the Links row (§4.6). Match by GitHub-rendered job name pattern `^Terraform \(<env>\)$`. Either call may fail independently: a Jobs API failure drops `job log` links from every Links cell; a PR-comments failure triggers degraded mode (see below).
-3. **Render desired.** For each desired group, sort envs alphabetically and build the marker + H3 prefix + body per §4.1. The Links row uses the per-env comment map (step 2) to resolve `log extract` anchors.
-4. **Orphan delete pass.** Walk the existing marker comments. For each group **not** in the desired set, DELETE every matching marker comment (an orphan from a removed/renamed group can have accumulated duplicates).
-5. **Upsert pass.** For each desired group:
-    - **0 existing marker comments** → POST a fresh marked body.
-    - **1 existing** → PATCH that comment in place. Same comment id across runs, so subscribers don't get re-notified.
-    - **2+ existing** (duplicates from past races or degraded runs) → sort by `created_at` ascending, DELETE every entry except the oldest, then PATCH the oldest. The system is self-healing: one clean run collapses duplicates.
-    - **PATCH failure** (transient 5xx, comment removed mid-run, etc.) → fall back to POST so the comment is still visible on the PR.
-6. **Emit `groups-processed-json`** with one entry per action (`patched`, `posted`, `orphan-deleted`, `duplicate-deleted`, `post-failed`) for logs/tests.
-
-Scenarios:
-
-| Desired groups | Existing marker comments | Outcome |
-|---|---|---|
-| 0 | 0 | no-op |
-| 0 | N | sweep N orphans (caller disabled grouping) |
-| M | 0 | post M (first run with grouping enabled, or no-migration legacy: see §2.1) |
-| M | M, 1 marker each | PATCH M in place (no new comment ids, no re-ping) |
-| M | M+K (duplicates) | PATCH oldest M, delete K dupes |
-| M | N (mixed: some desired, some orphan) | PATCH desired, delete orphans |
-
-Self-healing: at most one PR run is needed after toggling grouping on/off, renaming groups, or recovering from a degraded run.
-
-#### Degraded mode
-
-If `gh api` listing fails (rate limit, transient 5xx), the action can't tell what already exists on the PR. It logs a warning, skips the orphan delete pass, and the upsert pass POSTs fresh bodies (no PATCH attempt). Any duplicates left behind are collapsed on the next clean run via step 5's "2+ existing" branch. The grouped table itself always renders.
-
-#### Failure isolation
-
-The aggregator job uses `actions/download-artifact@v4` with `continue-on-error: true` because the empty-artifact case (no envs uploaded metadata) is valid input — sweep-only mode still needs to run. The action also tolerates malformed individual metadata files: parse errors are logged, the file is skipped, the env is reported with `not applicable` cells in the table.
-
-## 5. Configuration reference
-
-All flags that influence PR-comment behavior. Boolean inputs are passed through `matrix.vars` as the strings `"true"` / `"false"`.
-
-### Workflow inputs
-
-| Input | Type | Default | Effect |
-|---|---|---|---|
-| `add-pr-comment` | bool | `true` | When `false`, suppresses the per-env comment for every env. Per-group comments still render (set per-env `add-pr-comment: false` and use the per-env override if you need different behavior). |
-| `pr-comment-group` | string | `""` | Global default for the per-env `pr-comment-group` field. Rarely useful (you almost always want per-env values). |
-
-### Per-environment fields (`environments-yml`)
-
-| Field | Type | Default | Effect |
-|---|---|---|---|
-| `add-pr-comment` | bool | inherits workflow input | Per-env override of the comment suppression. |
-| `pr-comment-group` | string | `""` (or workflow input) | When non-empty, the env's per-env comment switches to the §3.2 "grouped" shape and the env contributes a column to the matching per-group comment (§4). Envs sharing the same value are collapsed into one group comment. |
-
-### Comment suppression matrix
-
-| `add-pr-comment` workflow | `add-pr-comment` env | Per-env comment posted? |
-|:---:|:---:|:---:|
-| `true` | unset | yes |
-| `true` | `true` | yes |
-| `true` | `false` | no |
-| `false` | unset | no |
-| `false` | `true` | yes |
-| `false` | `false` | no |
-
-The per-group comment is independent of `add-pr-comment`: as long as any env declares a `pr-comment-group`, the aggregator emits the corresponding group comment regardless of whether per-env comments are suppressed. This is intentional — the group comment is the place where a reviewer expects the high-level status to surface, even if individual envs hide their plan extracts.
-
-## 6. Backwards-compatibility contract
-
-These invariants are pinned by test coverage and must hold across any future change to comment-rendering code:
-
-1. **Byte-level shape is pinned by tests.** Both modes' comments have byte-level golden tests in `create-validation-summary/run_all_tests.sh`. Any deliberate change to comment rendering must update both the test golden values AND this spec doc in the same change — the tests exist to catch accidental drift, not to lock the format forever. The v0.23 → v0.24 footer/pointer/plan-block changes are an example of a deliberate, test-and-spec-tracked format update.
-2. **Prefix continuity.** The per-env prefix is identical in both ungrouped and grouped modes: `` ### Terraform validation summary for environment: `<env>` ``. Toggling `pr-comment-group` on/off for an env produces an in-place update of its per-env comment, never an orphan.
-3. **No new required inputs.** All grouped-mode additions and condensing additions default to empty / off. A caller that touches nothing sees no behavioral change beyond the agreed format updates (which apply uniformly).
-4. **Per-env metadata artifact format unchanged.** The aggregator consumes the same `matrix-job-meta-*` artifacts uploaded by `capture-matrix-job-meta` that the existing `automerge` job consumes. No new artifact format, no new permission grants.
-5. **`@v0` rolling tag.** New actions and outputs (e.g. `aggregate-validation-summaries`, `parse-terraform-plan`'s `count-total`) ship on `@v0` along with all other actions in this repo; calling repos on `@v0` adopt the feature automatically on release. Adoption of grouping is opt-in via the per-env field; no caller is forced into grouping.
-
-## 7. Action and job references
-
-Quick map from spec section to implementing code:
-
-| Section | Implementing code |
+| Input | Effect |
 |---|---|
-| §3.1 Ungrouped per-env comment body | [`create-validation-summary/step_create_validation_summary.sh`](../create-validation-summary/step_create_validation_summary.sh) |
-| §3.2 Grouped per-env comment body | same file, branched on `pr-comment-group` |
-| §3 Posting/replacing per-env comments | [`dsb-norge/github-actions/ci-cd/comment-on-pr@v2`](https://github.com/dsb-norge/github-actions/tree/main/ci-cd/comment-on-pr) |
-| §4 Per-group comment body + upsert | [`aggregate-validation-summaries/step_aggregate.sh`](../aggregate-validation-summaries/step_aggregate.sh) |
-| §4.7 Source artifacts | [`capture-matrix-job-meta/step_capture.sh`](../capture-matrix-job-meta/step_capture.sh) |
-| §5 Input plumbing & per-env defaults | [`create-tf-vars-matrix/action.yml`](../create-tf-vars-matrix/action.yml) |
-| Workflow wiring | [`.github/workflows/terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) |
+| `add-pr-comment` (global default `true`) | When `false`, suppresses both the env's head + plan tag for that environment. The env does not appear in the seed manifest either. |
+| `pr-comment-group` (per env, optional) | When non-empty, the env is included in that group's per-group head. The env's own head still exists but omits the validation table (it lives on the group head). When empty (default), the env is "ungrouped" and its head carries the full table. |
+
+Triggering rules: comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Forks cannot post (the workflow guards against `github.event.pull_request.head.repo.fork == true` at the seed-job level).
+
+Required token permission: `pull-requests: write` (and `issues: write` if the comment thread is a plain issue). Declared at the top of `terraform-ci-cd-default.yml`.
+
+## 8. Ordering guarantees
+
+On a fresh PR (run #1), the seed job POSTs in declared order, so the conversation timeline becomes:
+
+```text
+↑ older                                              ↓ newer
+┌──────────────────────────────────────────────────────────┐
+│  tf:head:group:<group-1>      (group summary head)       │
+│  tf:head:group:<group-2>      (group summary head)       │
+│  …                                                       │
+│  tf:head:env:<env-a>          (per-env head)             │
+│  tf:head:env:<env-b>          (per-env head)             │
+│  …                                                       │
+│  tf:tag:plan:<env-a>:run-id-N (plan extract tag)         │
+│  tf:tag:plan:<env-b>:run-id-N (plan extract tag)         │
+│  …                                                       │
+│  <human reviewer comments interleaved chronologically>   │
+└──────────────────────────────────────────────────────────┘
+```
+
+On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags from prior runs are GC'd and new ones POSTed at the bottom of the conversation. Order between heads never changes.
+
+## 9. Concurrency caveat
+
+When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), the second run's seed-job GC pass will delete the first run's plan tags (their run-id is no longer "current"). The first run's later POST may then land at an unexpected position, or — if the first run's matrix job has already completed and POSTed — its plan tag is deleted before being read.
+
+Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
+
+## 10. Degraded mode
+
+If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment`](../pr-comment/) and [`pr-comments-reconcile`](../pr-comments-reconcile/) enter degraded mode:
+
+- `upsert` → POST a fresh comment best-effort, even though it may duplicate an existing one.
+- `delete` → no-op (we can't safely identify victims).
+- GC pass → skipped entirely.
+
+Duplicates from degraded runs self-heal on the next clean run: the upsert path always sorts marker matches by `created_at` ASC, keeps the oldest, and deletes the rest in the same call.
+
+## 11. Action references
+
+| Spec section | Implementing action / step |
+|---|---|
+| §3.1 Seed phase | `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) calling [`pr-comments-reconcile`](../pr-comments-reconcile/) |
+| §3.2 Matrix phase per-env head | matrix step "Upsert per-env head comment" calling [`pr-comment`](../pr-comment/) (mode `upsert`) |
+| §3.2 Matrix phase plan tag | matrix step "Post per-env plan-extract tag" calling [`pr-comment`](../pr-comment/) (mode `upsert`, run-id-scoped marker) |
+| §3.3 Aggregator phase | `pr-comment-aggregator` job in the workflow, calling [`aggregate-validation-summaries`](../aggregate-validation-summaries/) |
+| §5 Content-hash | implemented inside [`pr-comment`](../pr-comment/) and [`pr-comments-reconcile`](../pr-comments-reconcile/) (`_compute_body_hash` + `<!-- comment-hash:<sha> -->` marker on line 2 of every written body) |
+| §6.1, §6.2 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary` + `plan-extract` |
+| §6.3 grouped body rendering | [`aggregate-validation-summaries`](../aggregate-validation-summaries/) `render_group_body` |
