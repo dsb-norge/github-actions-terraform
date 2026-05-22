@@ -108,7 +108,7 @@ runs:
         )
         export input_body
         set -o allexport
-        source "github.action_path/step_pr_comment.sh"
+        source "${{ github.action_path }}/step_pr_comment.sh"
         exit_code=$?
         set +o allexport
         exit ${exit_code}

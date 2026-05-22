@@ -99,7 +99,7 @@ runs:
         )
         export input_heads_yml input_gc_yml
         set -o allexport
-        source "github.action_path/step_reconcile.sh"
+        source "${{ github.action_path }}/step_reconcile.sh"
         exit_code=$?
         set +o allexport
         exit ${exit_code}
