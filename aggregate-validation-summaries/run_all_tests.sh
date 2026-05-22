@@ -60,6 +60,20 @@ case "$*" in
     fi
     echo '{"deleted": true}'
     ;;
+  *"-X PATCH"*"/issues/comments/"*)
+    if [ "${GH_FAKE_PATCH_EXIT:-0}" != "0" ]; then
+      exit "${GH_FAKE_PATCH_EXIT}"
+    fi
+    # Extract the comment id from the URL and echo it — matches production
+    # _gh_patch_comment which uses --jq '.id' on the response.
+    # URL form: repos/<repo>/issues/comments/<id>
+    for arg in "$@"; do
+      if [[ "${arg}" == repos/*"/issues/comments/"* ]]; then
+        echo "${arg##*/}"
+        break
+      fi
+    done
+    ;;
   *"-X POST"*)
     if [ "${GH_FAKE_POST_EXIT:-0}" != "0" ]; then
       exit "${GH_FAKE_POST_EXIT}"
@@ -79,7 +93,7 @@ FAKE_GH
   export GH_FAKE_CALL_LOG="${TEST_DIR}/gh-calls.log"
   export GH_FAKE_LIST_RESPONSE_FILE="${TEST_DIR}/list-response.json"
   export GH_FAKE_JOBS_RESPONSE_FILE="${TEST_DIR}/jobs-response.json"
-  unset GH_FAKE_LIST_EXIT GH_FAKE_DELETE_EXIT GH_FAKE_POST_EXIT GH_FAKE_JOBS_EXIT
+  unset GH_FAKE_LIST_EXIT GH_FAKE_DELETE_EXIT GH_FAKE_POST_EXIT GH_FAKE_PATCH_EXIT GH_FAKE_JOBS_EXIT
   echo "[]" > "${GH_FAKE_LIST_RESPONSE_FILE}"
   echo "[]" > "${GH_FAKE_JOBS_RESPONSE_FILE}"
   : > "${GH_FAKE_CALL_LOG}"
@@ -245,9 +259,9 @@ test_empty_desired_empty_existing_is_noop() {
 }
 
 test_sweep_only_orphans() {
-  # No desired groups, but PR has an existing group comment from a prior run
+  # No desired groups, but PR has an existing marker comment from a prior run
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 5001, "body": "### Terraform validation summary for group: `stale-group`\nold body"}]
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -256,6 +270,9 @@ JSON
   fi
   if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
     echo "did not expect POST when desired set is empty"; return 1
+  fi
+  if grep -q 'PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect PATCH on orphan"; return 1
   fi
   return 0
 }
@@ -284,27 +301,33 @@ test_post_when_no_existing() {
   return 0
 }
 
-test_mixed_reconcile() {
-  # One desired group, one orphan, one matching-prefix-existing
+test_mixed_orphan_delete_and_patch() {
+  # One desired group ('dev'), one orphan ('obsolete-group').
+  # Existing 'dev' marker is PATCHed in place (stable identity), orphan
+  # is deleted, no POST is needed.
   write_meta "alpha-dev" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 7001, "body": "### Terraform validation summary for group: `dev`\nold matching body"},
-  {"id": 7002, "body": "### Terraform validation summary for group: `obsolete-group`\norphan body"}
+  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"},
+  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete-group -->\n### Terraform validation summary for group: `obsolete-group`\norphan body"}
 ]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
-  # Both existing must be deleted (one as repost, one as orphan)
-  if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}"; then
-    echo "expected DELETE of matching-prefix existing 7001"; return 1
+  # 'dev' marker is patched in place — NOT deleted
+  if grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}"; then
+    echo "did NOT expect DELETE of existing 'dev' marker 7001 — it should be PATCHed"; return 1
   fi
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH of existing 'dev' marker 7001"; return 1
+  fi
+  # Orphan marker is deleted
   if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/7002' "${GH_FAKE_CALL_LOG}"; then
     echo "expected DELETE of orphan 7002"; return 1
   fi
-  # And we should have posted the fresh body for 'dev'
-  if [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -ne 1 ]]; then
-    echo "expected 1 POST for desired 'dev'"; return 1
+  # No POST: 'dev' was upserted via PATCH, not a fresh post.
+  if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect POST when existing marker is patched in place"; return 1
   fi
   return 0
 }
@@ -506,7 +529,7 @@ test_grouped_footer_is_condensed_v024() {
   return 0
 }
 
-test_post_pass_does_not_nest_log_groups() {
+test_upsert_pass_does_not_nest_log_groups() {
   # GitHub Actions does not support nested log groups. Verify that no
   # ::group:: line appears before a matching ::endgroup:: while another
   # ::group:: is already open.
@@ -613,13 +636,18 @@ test_plan_details_left_align_div() {
   return 0
 }
 
-test_group_prefix_byte_exact() {
+test_group_marker_then_prefix_byte_exact() {
   write_meta "envA" "dev"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
-  # The first line of the rendered body must be the byte-exact group prefix
+  # Body line 1 must be the HTML marker (load-bearing for upsert identity).
+  # Body line 2 must be the byte-exact group H3 (still visible to readers).
+  if ! grep -q '^<!-- terraform-validation-summary-group:dev -->$' "${TEST_DIR}/step.log"; then
+    echo "expected byte-exact marker line '<!-- terraform-validation-summary-group:dev -->'"
+    return 1
+  fi
   if ! grep -q '^### Terraform validation summary for group: `dev`$' "${TEST_DIR}/step.log"; then
-    echo "expected byte-exact group prefix line"
+    echo "expected byte-exact H3 group heading"
     return 1
   fi
   return 0
@@ -693,8 +721,8 @@ test_multiple_groups_sorted_alphabetically() {
   fi
   # Per-group log group names appear in alpha order
   local order
-  order=$(grep -oE "Step 5: Posting group '[^']+'" "${TEST_DIR}/step.log" | head -3 | tr '\n' ' ')
-  local expected="Step 5: Posting group 'alpha' Step 5: Posting group 'mike' Step 5: Posting group 'zebra' "
+  order=$(grep -oE "Step 5: Upsert group '[^']+'" "${TEST_DIR}/step.log" | head -3 | tr '\n' ' ')
+  local expected="Step 5: Upsert group 'alpha' Step 5: Upsert group 'mike' Step 5: Upsert group 'zebra' "
   if [[ "${order}" != "${expected}" ]]; then
     echo "groups not in alphabetical order"
     echo "got:      ${order}"
@@ -705,15 +733,16 @@ test_multiple_groups_sorted_alphabetically() {
 }
 
 test_groups_processed_json_output() {
+  # 'dev' is desired but has no existing marker → posted fresh.
+  # 'obsolete' has an existing marker but is not desired → orphan-deleted.
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 8001, "body": "### Terraform validation summary for group: `obsolete`\n"}]
+[{"id": 8001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete -->\n### Terraform validation summary for group: `obsolete`\n"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   local processed
   processed=$(get_processed_json)
-  # Must include both orphan-deleted and posted entries
   if ! echo "${processed}" | jq -e '.[] | select(.action == "orphan-deleted" and .group == "obsolete")' >/dev/null; then
     echo "expected orphan-deleted entry for 'obsolete'"
     echo "got: ${processed}"
@@ -769,6 +798,172 @@ test_missing_pr_number_fails_fast() {
   return 0
 }
 
+# --------------------------------------------------------------------------
+# Marker-based upsert behaviour
+# --------------------------------------------------------------------------
+
+# Existing single marker comment for desired group → PATCHed in place
+# (stable comment id; no fresh POST, no DELETE).
+test_existing_marker_is_patched() {
+  write_meta "envA" "dev"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 6001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6001' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH of existing marker comment 6001"
+    grep -E 'PATCH|POST|DELETE' "${GH_FAKE_CALL_LOG}" || true
+    return 1
+  fi
+  if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect POST when existing marker can be patched"; return 1
+  fi
+  if grep -q 'DELETE' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect DELETE when only a single matching marker exists"; return 1
+  fi
+  # Processed JSON should record action=patched
+  local processed
+  processed=$(get_processed_json)
+  if ! echo "${processed}" | jq -e '.[] | select(.action == "patched" and .group == "dev" and ."comment-id" == "6001")' >/dev/null; then
+    echo "expected processed-json entry {group: 'dev', action: 'patched', id: 6001}"
+    echo "got: ${processed}"
+    return 1
+  fi
+  return 0
+}
+
+# Multiple marker comments for the SAME group (pre-existing duplicates) →
+# oldest is PATCHed, the rest are deleted. Self-healing.
+test_duplicate_markers_delete_extras_patch_oldest() {
+  write_meta "envA" "dev"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 6100, "created_at": "2026-02-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nmid-age dup"},
+  {"id": 6200, "created_at": "2026-03-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nnewest dup"},
+  {"id": 6050, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\noldest — should be kept"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  # Oldest (6050) is patched, the two newer are deleted
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6050' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH of oldest duplicate 6050"
+    grep -E 'PATCH|POST|DELETE' "${GH_FAKE_CALL_LOG}" || true
+    return 1
+  fi
+  if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/6100' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected DELETE of duplicate 6100"; return 1
+  fi
+  if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/6200' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected DELETE of duplicate 6200"; return 1
+  fi
+  # Patched and duplicate-deleted should both appear in processed-json
+  local processed
+  processed=$(get_processed_json)
+  if ! echo "${processed}" | jq -e '.[] | select(.action == "patched" and ."comment-id" == "6050")' >/dev/null; then
+    echo "expected processed.action=patched id=6050"; echo "got: ${processed}"; return 1
+  fi
+  if ! echo "${processed}" | jq -e '[.[] | select(.action == "duplicate-deleted")] | length == 2' >/dev/null; then
+    echo "expected 2 duplicate-deleted entries"; echo "got: ${processed}"; return 1
+  fi
+  return 0
+}
+
+# Legacy comment from the pre-marker era (body starts with the H3, no
+# marker) → ignored: no DELETE, no PATCH. The system posts a fresh
+# marked comment alongside it (the no-migration trade-off — operators
+# clean up legacy comments by hand).
+test_legacy_prefix_only_comment_is_ignored() {
+  write_meta "envA" "dev"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 6300, "created_at": "2025-12-01T10:00:00Z", "body": "### Terraform validation summary for group: `dev`\nlegacy body without marker"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/6300' "${GH_FAKE_CALL_LOG}"; then
+    echo "legacy comment 6300 MUST NOT be deleted (no migration policy)"; return 1
+  fi
+  if grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6300' "${GH_FAKE_CALL_LOG}"; then
+    echo "legacy comment 6300 MUST NOT be patched"; return 1
+  fi
+  if [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -ne 1 ]]; then
+    echo "expected exactly 1 POST (fresh marked comment alongside legacy)"; return 1
+  fi
+  return 0
+}
+
+# Marker comment body line 1 must be the per-group marker; line 2 the H3.
+# Pinning byte-level shape so accidental drift in render_group_body breaks
+# this test (and only this test).
+test_body_starts_with_marker_then_h3() {
+  write_meta "envA" "dev"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  # The rendered body is echoed into the step log right after a
+  # 'aggregate-validation-summaries: Body:' line; capture the next two
+  # non-blank lines (marker + H3).
+  local body_lines
+  body_lines=$(awk '/Body:$/ {flag=1; next} flag && NF {print; if (++n == 2) exit}' "${TEST_DIR}/step.log")
+  local expected
+  expected=$'<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`'
+  if [[ "${body_lines}" != "${expected}" ]]; then
+    echo "expected marker + H3 as first two body lines (byte-exact)"
+    echo "expected: ${expected//$'\n'/ \\n }"
+    echo "got:      ${body_lines//$'\n'/ \\n }"
+    return 1
+  fi
+  return 0
+}
+
+# Two distinct groups (dev + prod) both have existing markers → both get
+# PATCHed in their own pass, neither is deleted, no POST occurs. Verifies
+# per-group markers route correctly when multiple group comments coexist.
+test_multiple_groups_each_patched() {
+  write_meta "envA" "dev"
+  write_meta "envB" "prod"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 6400, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold dev"},
+  {"id": 6500, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:prod -->\n### Terraform validation summary for group: `prod`\nold prod"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6400' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH of dev marker 6400"; return 1
+  fi
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6500' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH of prod marker 6500"; return 1
+  fi
+  if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect POST when both groups have existing markers"; return 1
+  fi
+  if grep -q 'DELETE' "${GH_FAKE_CALL_LOG}"; then
+    echo "did not expect DELETE when no orphans and no duplicates"; return 1
+  fi
+  return 0
+}
+
+# PATCH failure → fall back to POST so the comment is still visible.
+test_patch_failure_falls_back_to_post() {
+  write_meta "envA" "dev"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 6600, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+JSON
+  export GH_FAKE_PATCH_EXIT=22
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE} — PATCH failure should not abort"; return 1; }
+  # PATCH was attempted on 6600, failed, then POST as fallback
+  if ! grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/6600' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH attempt before fallback"; return 1
+  fi
+  if [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -ne 1 ]]; then
+    echo "expected exactly 1 POST as fallback after PATCH failure"; return 1
+  fi
+  return 0
+}
+
 test_post_failure_recorded_without_aborting() {
   write_meta "envA" "g"
   export GH_FAKE_POST_EXIT=22
@@ -791,7 +986,7 @@ test_post_failure_recorded_without_aborting() {
 run_test "empty desired + empty existing is a no-op"                       test_empty_desired_empty_existing_is_noop
 run_test "sweep mode: empty desired + orphan existing → delete only"       test_sweep_only_orphans
 run_test "post mode: desired + no existing → post only"                    test_post_when_no_existing
-run_test "mixed reconcile: orphan deleted + matching reposted"             test_mixed_reconcile
+run_test "mixed upsert: orphan deleted + matching marker patched in place" test_mixed_orphan_delete_and_patch
 run_test "envs render in alphabetical column order"                        test_alphabetical_column_order
 run_test "per-env anchor resolved → log-extract link rendered"             test_per_env_anchor_resolved
 run_test "anchor missing + job URL resolved → Links shows only job log"    test_per_env_anchor_missing_but_job_url_resolved_shows_only_job_log
@@ -801,14 +996,14 @@ run_test "Jobs API failure → 'job log' line omitted for all envs"          tes
 run_test "job URL resolution handles 'caller / Terraform (env)' prefix"   test_job_url_resolution_handles_caller_prefixed_name
 run_test "job URL resolution handles bare 'Terraform (env)' too"          test_job_url_resolution_handles_bare_name
 run_test "job URL resolution skips non-matrix jobs"                       test_job_url_resolution_skips_non_matrix_jobs
-run_test "post pass does NOT nest log groups"                              test_post_pass_does_not_nest_log_groups
+run_test "upsert pass does NOT nest log groups"                            test_upsert_pass_does_not_nest_log_groups
 run_test "grouped comment footer is condensed v0.24 [Job log] only"       test_grouped_footer_is_condensed_v024
 run_test "per-env anchor picks newest comment id when duplicates exist"    test_per_env_anchor_picks_newest_when_duplicates
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
 run_test "Plan Details cell wraps in <div align='left'>"                   test_plan_details_left_align_div
-run_test "group prefix line is byte-exact"                                 test_group_prefix_byte_exact
-run_test "degraded mode: gh list fails → skip delete, still post"          test_degraded_mode_when_list_fails
+run_test "group marker + H3 prefix lines are byte-exact"                   test_group_marker_then_prefix_byte_exact
+run_test "degraded mode: gh list fails → skip orphan delete, fresh POST"   test_degraded_mode_when_list_fails
 run_test "malformed metadata file is skipped with warning"                 test_malformed_metadata_is_skipped
 run_test "envs without pr-comment-group are ignored"                       test_envs_without_group_are_ignored
 run_test "multiple groups are posted in alphabetical order"                test_multiple_groups_sorted_alphabetically
@@ -816,6 +1011,12 @@ run_test "groups-processed-json output records every action"               test_
 run_test "table step rows appear in spec order"                            test_step_row_order_byte_exact
 run_test "missing input_pr_number fails the step"                          test_missing_pr_number_fails_fast
 run_test "post failure does not abort, recorded in output"                 test_post_failure_recorded_without_aborting
+run_test "existing marker comment → PATCHed in place (stable id)"          test_existing_marker_is_patched
+run_test "duplicate markers → delete extras, PATCH oldest"                 test_duplicate_markers_delete_extras_patch_oldest
+run_test "legacy prefix-only comment → ignored (no-migration policy)"      test_legacy_prefix_only_comment_is_ignored
+run_test "body starts with marker on line 1, H3 on line 2"                 test_body_starts_with_marker_then_h3
+run_test "multiple groups: each marker patched independently"              test_multiple_groups_each_patched
+run_test "PATCH failure → fall back to POST"                               test_patch_failure_falls_back_to_post
 
 # ============================================================================
 echo ""

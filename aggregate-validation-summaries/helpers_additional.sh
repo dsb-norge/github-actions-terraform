@@ -6,11 +6,14 @@
 # by helpers.sh.
 #
 
-# Family prefix shared by every per-group comment this action manages.
-# Used both for delete-by-prefix reconciliation and to identify orphans
-# whose specific group name is no longer in the desired set.
+# Family marker shared by every per-group comment this action manages.
+# Lives on the first line of the body as an HTML comment so it's invisible
+# to readers. The per-group marker (built via _group_marker) extends this
+# with the group name and a trailing ' -->', allowing a single PR to host
+# multiple group comments and have each one upserted independently.
+# Renders to nothing in the GitHub Markdown view.
 # See docs/Workflow-pr-comments.md §2.
-declare -gr GROUP_COMMENT_FAMILY_PREFIX='### Terraform validation summary for group: '
+declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- terraform-validation-summary-group:'
 
 # Per-env comment prefix template (uses backtick-delimited env name so
 # partial matches can't collide).
@@ -20,10 +23,20 @@ function _per_env_prefix {
   echo "### Terraform validation summary for environment: \`${env_name}\`"
 }
 
-# Specific group comment prefix for one group name.
+# Specific group comment H3 heading (rendered immediately after the marker
+# at the top of the body). Kept for visible identification — users still
+# see "for group: \`<group>\`" — but no longer load-bearing for upsert
+# identity. The marker (_group_marker) is the load-bearing handle.
 function _group_prefix {
   local group_name="${1}"
-  echo "${GROUP_COMMENT_FAMILY_PREFIX}\`${group_name}\`"
+  echo "### Terraform validation summary for group: \`${group_name}\`"
+}
+
+# Per-group HTML marker. Unique per group so multiple groups on the same
+# PR can be upserted independently.
+function _group_marker {
+  local group_name="${1}"
+  echo "${GROUP_COMMENT_MARKER_FAMILY}${group_name} -->"
 }
 
 # Map a GitHub Actions step outcome string to the (emoji, title) pair used
@@ -171,4 +184,11 @@ function _gh_delete_comment {
 function _gh_post_comment {
   local repo="${1}" pr="${2}" body_file="${3}"
   gh api -X POST "repos/${repo}/issues/${pr}/comments" -F "body=@${body_file}" --jq '.id'
+}
+
+# Edits an existing comment in place. Body file convention matches
+# _gh_post_comment so callers can use the same temp file for either op.
+function _gh_patch_comment {
+  local repo="${1}" comment_id="${2}" body_file="${3}"
+  gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" -F "body=@${body_file}" --jq '.id'
 }

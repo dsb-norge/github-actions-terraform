@@ -34,8 +34,11 @@ declare -gA DESIRED_GROUPS=()
 # desired_meta[<group_name>/<env_name>]="<absolute path to metadata file>"
 declare -gA DESIRED_META=()
 
-# existing_group_comments[group_name]="<comment_id>" — one entry per
-# currently-on-PR group comment that matches our family prefix
+# existing_group_comments[group_name]="<id1>\n<id2>\n..." — newline-
+# delimited list of every PR comment currently matching our family marker
+# for that group. Multiple IDs per group can happen when an earlier run
+# orphaned duplicates; the upsert pass picks the oldest to keep (stable
+# identity) and deletes the rest.
 declare -gA EXISTING_GROUP_COMMENTS=()
 
 # per_env_anchor[env_name]="#issuecomment-<id>" — resolved at step 2,
@@ -49,9 +52,11 @@ declare -gA PER_ENV_ANCHOR=()
 # cell drops the `job log` line in that case rather than emit a wrong link.
 declare -gA PER_ENV_JOB_URL=()
 
-# Tracks degraded mode (gh api list failed). When true, reconcile (delete
-# pass) is skipped — the rendered bodies are still posted so the grouped
-# table is always visible.
+# Tracks degraded mode (gh api list failed). When true, the upsert pass
+# skips its delete branch and posts fresh bodies instead — the grouped
+# table is always visible, even if we can't be sure what's already on the
+# PR. Duplicates from this degraded mode will self-heal on the next clean
+# run (the duplicate-deleted branch of the upsert algorithm).
 DEGRADED_MODE="false"
 
 # Tracks each group processed for the groups-processed-json output.
@@ -192,7 +197,7 @@ function list_pr_state {
   local comments_json
   if ! comments_json=$(_gh_list_pr_comments "${GITHUB_REPOSITORY}" "${input_pr_number}" 2>&1); then
     log-warn "Failed to list PR comments: ${comments_json}"
-    log-warn "Entering degraded mode — reconcile (delete pass) skipped; will still post fresh bodies."
+    log-warn "Entering degraded mode — upsert will post fresh bodies instead of editing in place."
     DEGRADED_MODE="true"
     end-group
     return 0
@@ -213,26 +218,41 @@ function list_pr_state {
   total=$(echo "${normalized}" | jq 'length')
   log-info "PR has ${total} comment(s) total."
 
-  # Extract existing group comments (family prefix match).
-  # Output one line per match: "<comment_id>\t<group_name>"
-  # Group name is parsed out of the body's first line by stripping the family
-  # prefix and the surrounding backticks.
+  # Find existing group comments by HTML marker on the first line of the
+  # body: '<!-- terraform-validation-summary-group:<group> -->'. Multiple
+  # IDs per group are tolerated (and self-healed in the upsert pass).
+  # Group name is parsed by stripping the family prefix and the trailing
+  # ' -->' marker close.
+  #
+  # Legacy comments from the pre-marker era (body starts with the H3
+  # heading rather than the marker) are not matched here — they sit
+  # untouched on the PR and the upsert pass posts a fresh marked comment
+  # alongside them. This is the documented "no-migration" trade-off
+  # (docs/Workflow-pr-comments.md §2.1).
   local group_lines
   group_lines=$(echo "${normalized}" \
-    | jq -r --arg fam "${GROUP_COMMENT_FAMILY_PREFIX}" '
+    | jq -r --arg fam "${GROUP_COMMENT_MARKER_FAMILY}" '
         .[]
         | select(.body | startswith($fam))
         | .id as $id
-        | (.body | split("\n")[0] | sub($fam; "") | sub("^`"; "") | sub("`.*$"; "")) as $g
-        | "\($id)\t\($g)"
+        | .created_at as $created
+        | (.body | split("\n")[0] | sub($fam; "") | sub(" -->.*$"; "")) as $g
+        | "\($id)\t\($created)\t\($g)"
       ' 2>/dev/null) || group_lines=""
 
   if [ -n "${group_lines}" ]; then
-    local line cid gname
-    while IFS=$'\t' read -r cid gname; do
+    local line cid created gname
+    while IFS=$'\t' read -r cid created gname; do
       [ -z "${cid}" ] && continue
-      EXISTING_GROUP_COMMENTS[${gname}]="${cid}"
-      log-info "  existing group comment: '${gname}' (id=${cid})"
+      # Pack as "<created_at>|<id>" so a later 'sort' gives the oldest first
+      # — created_at is ISO-8601, lexicographically sortable. The upsert
+      # pass picks the head of the sorted list to keep, deletes the rest.
+      if [ -n "${EXISTING_GROUP_COMMENTS[${gname}]:-}" ]; then
+        EXISTING_GROUP_COMMENTS[${gname}]+=$'\n'"${created}|${cid}"
+      else
+        EXISTING_GROUP_COMMENTS[${gname}]="${created}|${cid}"
+      fi
+      log-info "  existing group comment: '${gname}' (id=${cid}, created=${created})"
     done <<<"${group_lines}"
   else
     log-info "  no existing group comments on PR"
@@ -290,7 +310,8 @@ function list_pr_state {
 function render_group_body {
   local group_name="${1}"
   local envs_nl="${2}"
-  local prefix
+  local marker prefix
+  marker=$(_group_marker "${group_name}")
   prefix=$(_group_prefix "${group_name}")
 
   local -a envs=()
@@ -356,7 +377,13 @@ function render_group_body {
   footer=$(_render_footer "${first_env_meta_file}")
 
   # ---- Assembly ----
-  printf '%s\n%s\n%s\n%s%s\n%s\n\n%s\n' \
+  # The HTML marker is line 1 and the load-bearing identity for upserts —
+  # see docs/Workflow-pr-comments.md §2. The H3 'prefix' line follows; it
+  # is still rendered (visible to readers) but no longer used for comment
+  # identification, so the H3 wording can be tweaked freely as long as
+  # the marker is unchanged.
+  printf '%s\n%s\n%s\n%s\n%s%s\n%s\n\n%s\n' \
+    "${marker}" \
     "${prefix}" \
     "${header}" \
     "${sep}" \
@@ -414,69 +441,76 @@ function _render_footer {
 }
 
 # ============================================================================
-# Step 4: Reconcile (delete pass)
+# Step 4: Orphan-delete pass — drop marker comments whose group is no
+# longer in the desired set. Desired groups themselves are handled by the
+# upsert pass below (PATCH-in-place + dedupe).
 # ============================================================================
 
-function reconcile_delete_pass {
-  start-group "Step 4: Reconcile — delete pass"
+function orphan_delete_pass {
+  start-group "Step 4: Delete orphan group comments"
 
   if [ "${DEGRADED_MODE}" = "true" ]; then
-    log-warn "Degraded mode — skipping delete pass."
+    log-warn "Degraded mode — skipping orphan delete pass."
     end-group
     return 0
   fi
 
   if [ ${#EXISTING_GROUP_COMMENTS[@]} -eq 0 ]; then
-    log-info "No existing group comments — nothing to delete."
+    log-info "No existing group comments — nothing to clean up."
     end-group
     return 0
   fi
 
-  local existing_group existing_id action
+  local existing_group entry created cid
   for existing_group in "${!EXISTING_GROUP_COMMENTS[@]}"; do
-    existing_id="${EXISTING_GROUP_COMMENTS[${existing_group}]}"
+    # Only orphan if the group is NOT in the desired set. Desired groups
+    # are kept (one survivor) by the upsert pass.
     if [ -n "${DESIRED_GROUPS[${existing_group}]:-}" ]; then
-      action="repost"
-      log-info "  deleting existing group comment '${existing_group}' (id=${existing_id}) — will be reposted"
-    else
-      action="orphan-deleted"
-      log-info "  deleting orphan group comment '${existing_group}' (id=${existing_id}) — not in desired set"
+      continue
     fi
-
-    if _gh_delete_comment "${GITHUB_REPOSITORY}" "${existing_id}" >/dev/null 2>&1; then
-      _record_processed "${existing_group}" "${existing_id}" "${action}"
-    else
-      log-warn "  failed to delete comment id=${existing_id} (group '${existing_group}') — continuing"
-    fi
+    # Delete every comment for this orphan group — markers from prior
+    # double-posts could accumulate here too.
+    while IFS= read -r entry; do
+      [ -z "${entry}" ] && continue
+      created="${entry%%|*}"
+      cid="${entry##*|}"
+      log-info "  deleting orphan group comment '${existing_group}' (id=${cid}, created=${created})"
+      if _gh_delete_comment "${GITHUB_REPOSITORY}" "${cid}" >/dev/null 2>&1; then
+        _record_processed "${existing_group}" "${cid}" "orphan-deleted"
+      else
+        log-warn "  failed to delete comment id=${cid} (group '${existing_group}') — continuing"
+      fi
+    done <<<"${EXISTING_GROUP_COMMENTS[${existing_group}]}"
   done
 
   end-group
 }
 
 # ============================================================================
-# Step 5: Post pass
+# Step 5: Upsert pass — for every desired group, either PATCH the
+# oldest existing marker comment (stable identity across runs, no
+# re-pinging of subscribers) or POST a fresh one. Duplicate marker
+# comments for the same group are deleted in the same pass so the
+# system is self-healing — if a prior run posted twice (e.g. degraded
+# mode + later recovery), the next clean run leaves exactly one comment
+# per group.
 # ============================================================================
 
-function post_pass {
-  # NOTE: one log group per group processed — no outer wrapper. GitHub Actions
-  # does not support nested log groups; the prior structure ('Step 5' outer
-  # group containing per-group 'Body for...' sub-groups) rendered confusingly
-  # in the runner log UI.
-
+function upsert_pass {
   if [ ${#DESIRED_GROUPS[@]} -eq 0 ]; then
-    log-info "Step 5: Post fresh group comments — no desired groups, nothing to post."
+    log-info "Step 5: Upsert group comments — no desired groups, nothing to upsert."
     return 0
   fi
 
-  log-info "Step 5: Post fresh group comments (${#DESIRED_GROUPS[@]} group(s))"
+  log-info "Step 5: Upsert group comments (${#DESIRED_GROUPS[@]} group(s))"
 
   # Sort group names for deterministic output ordering.
   local -a sorted_groups=()
   while IFS= read -r g; do sorted_groups+=("${g}"); done < <(printf '%s\n' "${!DESIRED_GROUPS[@]}" | sort)
 
-  local group envs_sorted body body_file new_id
+  local group envs_sorted body body_file
   for group in "${sorted_groups[@]}"; do
-    start-group "Step 5: Posting group '${group}'"
+    start-group "Step 5: Upsert group '${group}'"
 
     # Sort envs alphabetically within the group (docs/Workflow-pr-comments.md §4.2)
     envs_sorted=$(echo "${DESIRED_GROUPS[${group}]}" | sort)
@@ -489,17 +523,84 @@ function post_pass {
     log-info "Body:"
     echo "${body}"
 
-    if new_id=$(_gh_post_comment "${GITHUB_REPOSITORY}" "${input_pr_number}" "${body_file}" 2>&1); then
-      log-info "posted: comment id=${new_id}"
-      _record_processed "${group}" "${new_id}" "posted"
-    else
-      log-warn "failed to post comment for group '${group}': ${new_id}"
-      _record_processed "${group}" "0" "post-failed"
-    fi
+    _upsert_one_group "${group}" "${body_file}"
 
     rm -f "${body_file}"
     end-group
   done
+}
+
+# Upsert a single group's comment. Picks the oldest existing marker
+# comment (lowest created_at, since GitHub IDs are monotonic but the
+# created_at field is the canonical timestamp) to keep, deletes any
+# others, then PATCHes the keeper. If none exist, POSTs fresh.
+#
+# In degraded mode (PR comments listing failed) we don't know what
+# exists, so we always POST fresh — duplicates will self-heal on the
+# next clean run via this same dedupe branch.
+function _upsert_one_group {
+  local group="${1}" body_file="${2}"
+
+  if [ "${DEGRADED_MODE}" = "true" ]; then
+    log-warn "Degraded mode — posting fresh (cannot list existing comments to upsert)."
+    _post_fresh "${group}" "${body_file}"
+    return
+  fi
+
+  local entries="${EXISTING_GROUP_COMMENTS[${group}]:-}"
+  if [ -z "${entries}" ]; then
+    log-info "No existing marker comment for '${group}' — posting fresh."
+    _post_fresh "${group}" "${body_file}"
+    return
+  fi
+
+  # Sort entries by created_at (ISO-8601, lexicographic). Oldest first.
+  local sorted_entries
+  sorted_entries=$(echo "${entries}" | sort)
+  local keep_entry
+  keep_entry=$(echo "${sorted_entries}" | head -n1)
+  local keep_id="${keep_entry##*|}"
+  local keep_created="${keep_entry%%|*}"
+
+  # Delete every entry except the keeper.
+  local entry created cid
+  while IFS= read -r entry; do
+    [ -z "${entry}" ] && continue
+    created="${entry%%|*}"
+    cid="${entry##*|}"
+    if [ "${cid}" = "${keep_id}" ]; then
+      continue
+    fi
+    log-info "  duplicate '${group}' marker comment (id=${cid}, created=${created}) — deleting"
+    if _gh_delete_comment "${GITHUB_REPOSITORY}" "${cid}" >/dev/null 2>&1; then
+      _record_processed "${group}" "${cid}" "duplicate-deleted"
+    else
+      log-warn "  failed to delete duplicate id=${cid} for '${group}' — continuing"
+    fi
+  done <<<"${sorted_entries}"
+
+  # PATCH the keeper.
+  log-info "Editing existing comment in place (id=${keep_id}, created=${keep_created})."
+  if _gh_patch_comment "${GITHUB_REPOSITORY}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then
+    _record_processed "${group}" "${keep_id}" "patched"
+  else
+    log-warn "PATCH failed for '${group}' (id=${keep_id}) — posting fresh as fallback."
+    _post_fresh "${group}" "${body_file}"
+  fi
+}
+
+# Internal: POST a fresh comment for a group. Used by _upsert_one_group
+# on the "no existing comment" and "degraded mode" branches.
+function _post_fresh {
+  local group="${1}" body_file="${2}"
+  local new_id
+  if new_id=$(_gh_post_comment "${GITHUB_REPOSITORY}" "${input_pr_number}" "${body_file}" 2>&1); then
+    log-info "posted: comment id=${new_id}"
+    _record_processed "${group}" "${new_id}" "posted"
+  else
+    log-warn "failed to post comment for group '${group}': ${new_id}"
+    _record_processed "${group}" "0" "post-failed"
+  fi
 }
 
 # ============================================================================
@@ -534,8 +635,8 @@ function main {
 
   build_desired_set
   list_pr_state
-  reconcile_delete_pass
-  post_pass
+  orphan_delete_pass
+  upsert_pass
 
   set-multiline-output "groups-processed-json" "${PROCESSED_RESULTS_JSON}"
   log-info "Done. Processed ${#DESIRED_GROUPS[@]} group(s)."
