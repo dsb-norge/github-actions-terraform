@@ -117,14 +117,21 @@ run_test() {
     failures+="  exit code: expected 0, got ${exit_code}\n"
   fi
 
-  # Get outputs
+  # Get outputs (split: head-summary + plan-extract). Most assertions look
+  # for substring presence/absence and are agnostic to which output a thing
+  # lives in — we pass them a `summary` that concatenates both. Byte-exact
+  # golden tests use the explicit head/plan args (3 and 4) instead.
+  local actual_head actual_plan
+  actual_head=$(get_output "head-summary")
+  actual_plan=$(get_output "plan-extract")
   local actual_prefix actual_summary
-  actual_prefix=$(get_output "prefix")
-  actual_summary=$(get_output "summary")
+  actual_prefix=$(echo "${actual_head}" | head -n1)
+  actual_summary="${actual_head}
+${actual_plan}"
 
   # Run assertion callback
   local assert_result
-  assert_result=$("${assert_fn}" "${actual_prefix}" "${actual_summary}" 2>&1)
+  assert_result=$("${assert_fn}" "${actual_prefix}" "${actual_summary}" "${actual_head}" "${actual_plan}" 2>&1)
   local assert_exit=$?
 
   if [[ ${assert_exit} -ne 0 ]]; then
@@ -572,9 +579,11 @@ run_test "Prefix is byte-exact '### Terraform validation summary for environment
 assert_full_body_golden_all_success_no_plan() {
   local prefix="${1}"
   local summary="${2}"
-  # don't touch the indentation / newlines in the heredoc below
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  # don't touch the indentation / newlines in the heredocs below
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
@@ -586,14 +595,23 @@ assert_full_body_golden_all_success_no_plan() {
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
-Plan not available 🤷‍♀️
-
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan not available 🤷‍♀️
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
@@ -1072,18 +1090,29 @@ run_test "Grouped mode: Plan Details row is omitted even when include-plan-detai
 assert_grouped_full_body_golden() {
   local prefix="${1}"
   local summary="${2}"
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
-
-Plan not available 🤷‍♀️
 
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: grouped mode byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan not available 🤷‍♀️
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: grouped mode byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: grouped mode byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
@@ -1254,8 +1283,10 @@ run_test "count-total=0 + no plan file → 'Plan not available' wins" assert_no_
 assert_golden_no_changes_body() {
   local prefix="${1}"
   local summary="${2}"
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
@@ -1267,14 +1298,23 @@ assert_golden_no_changes_body() {
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
-Plan: no changes ✅
-
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: golden no-changes body byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan: no changes ✅
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: golden no-changes byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: golden no-changes byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
