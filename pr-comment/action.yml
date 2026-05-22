@@ -1,0 +1,114 @@
+name: "Upsert or delete a single PR/issue comment by HTML marker"
+description: |
+  Generic, terraform-agnostic primitive for managing a single PR or issue
+  comment, identified by an HTML marker substring on the comment body.
+
+  See docs/Workflow-pr-comments.md for the model this implements — heads
+  (long-lived, marker-identified, PATCHed in place) vs tags (run-scoped,
+  marker embeds run-id, GC'd between runs). This action handles a single
+  comment in either class.
+
+  Modes:
+    - upsert: find by marker; PATCH if exists, POST if not. Self-heals
+      duplicates (multiple comments with the same marker → keep oldest by
+      created_at, DELETE the rest). Embeds a content-hash on line 2 of
+      the body so re-runs with identical content skip the PATCH entirely
+      (no subscriber re-ping).
+    - delete: DELETE every comment whose body contains the marker.
+
+  No event/fork/PR-context guards — those live in the caller workflow.
+  Pass `repo`, `issue-number`, and `github-token` explicitly.
+
+author: "Peder Schmedling"
+
+inputs:
+  repo:
+    description: |
+      Owner/name of the repository hosting the PR or issue (e.g. `owner/repo`).
+      Typically `${{ github.repository }}`.
+    required: true
+  issue-number:
+    description: |
+      PR or issue number whose comment thread to operate on.
+      For a PR, typically `${{ github.event.pull_request.number }}`.
+    required: true
+  github-token:
+    description: |
+      Token used by the `gh` CLI to call the GitHub API. Needs `pull-requests: write`
+      (and `issues: write` if the thread is on a plain issue).
+
+      No default is provided: the `github` context is not available inside a
+      composite action's `inputs.<name>.default`, so the caller must pass the
+      token explicitly. From a reusable workflow, the canonical value is
+      `${{ github.token }}` (or `secrets.GITHUB_TOKEN`).
+    required: true
+  mode:
+    description: |
+      One of:
+        - `upsert` — POST a new comment if no marker match exists, else PATCH
+          the oldest matching comment in place. Duplicates are deleted in the
+          same pass. Hash short-circuits no-op updates.
+        - `delete` — DELETE every comment whose body contains the marker.
+    required: true
+  marker:
+    description: |
+      HTML comment marker substring used as stable identity (e.g.
+      `<!-- tf:head:env:prod -->`). The action treats this as opaque — match
+      is by substring `contains`, so any unique-enough string works. The
+      marker is automatically prepended to the body on upsert.
+    required: true
+  body:
+    description: |
+      Markdown body to post or patch. Required when `mode=upsert`; ignored
+      for `delete`.
+
+      The action prepends two lines to whatever you pass:
+        <line 1>  the `marker` value
+        <line 2>  `<!-- comment-hash:<sha256-of-body> -->` (auto-computed)
+        <line 3>  blank
+      Followed by your body verbatim.
+
+      Pass multi-line bodies via a YAML literal block scalar (`|`).
+    required: false
+    default: ""
+
+outputs:
+  comment-id:
+    description: |
+      ID of the comment created, updated, or deleted (last id for multi-match
+      delete). Empty string when no comment was acted on (`not-found` /
+      `post-failed`).
+    value: ${{ steps.pr-comment.outputs.comment-id }}
+  action:
+    description: |
+      One of: `created`, `updated`, `skipped`, `deleted`, `not-found`, `post-failed`.
+        - `skipped` — upsert short-circuited because the existing comment's
+          embedded hash matches the new body.
+        - `not-found` — delete found no matching comment.
+        - `post-failed` — upsert tried to POST but the API call errored.
+    value: ${{ steps.pr-comment.outputs.action }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: pr-comment
+      shell: bash
+      env:
+        input_repo: ${{ inputs.repo }}
+        input_issue_number: ${{ inputs.issue-number }}
+        input_mode: ${{ inputs.mode }}
+        input_marker: ${{ inputs.marker }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # Pass body via heredoc to preserve multi-line markdown without
+        # subjecting it to YAML's ${{ }} interpolation rules in env-list.
+        input_body=$(cat <<'EOF_PR_COMMENT_BODY'
+        ${{ inputs.body }}
+        EOF_PR_COMMENT_BODY
+        )
+        export input_body
+        set -o allexport
+        source "${{ github.action_path }}/step_pr_comment.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
