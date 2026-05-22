@@ -340,9 +340,110 @@ jobs:
         with:
           inputs-json: ${{ toJSON(inputs) }}
 
+  # Pre-allocate per-group and per-env "head" comments at the top of the PR
+  # conversation in a deterministic order. Heads are PATCHed in place across
+  # runs (created_at fixes their position from run 1 onwards), so seeding here
+  # — before any matrix job starts — is what guarantees the comment order
+  # never flips between runs. Plan-extract "tag" comments from prior runs are
+  # GC'd in the same step so the conversation doesn't accumulate stale plans.
+  # See docs/Workflow-pr-comments.md for the full heads + tags model.
+  seed-pr-comments:
+    if: |
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.fork == false
+      && github.event.action != 'closed'
+      && github.event.action != 'converted_to_draft'
+    name: "Seed PR comment heads"
+    needs: create-matrix
+    runs-on: ${{ inputs.runs-on }} # global setting
+    permissions:
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📋 Compose head manifest from matrix"
+        id: compose
+        env:
+          MATRIX_JSON: ${{ needs.create-matrix.outputs.matrix-json }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Build heads as JSON first (easy to manipulate via jq), then
+          # convert to YAML for the reconcile action's heads-yml input.
+          # Order matters: reconcile POSTs sequentially so declared order
+          # becomes the created_at order on a fresh PR — group summaries
+          # POSTed first, per-env after.
+          set -euo pipefail
+
+          heads_json='[]'
+
+          # Group heads (distinct non-empty pr-comment-group values).
+          while IFS= read -r g; do
+            [ -z "${g}" ] && continue
+            body=$(printf '%s\n\n%s' \
+              "### Terraform validation summary for group: \`${g}\`" \
+              "⏳ Running (run #${RUN_ID})…")
+            heads_json=$(jq -n \
+              --argjson cur "${heads_json}" \
+              --arg marker "<!-- tf:head:group:${g} -->" \
+              --arg body "${body}" \
+              '$cur + [{marker: $marker, body: $body}]')
+          done < <(echo "${MATRIX_JSON}" | jq -r '
+            .include
+            | map(select(.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true))
+            | map(.vars["pr-comment-group"] // "")
+            | map(select(. != "" and . != null))
+            | unique
+            | .[]
+          ')
+
+          # Per-env heads (one per env with add-pr-comment=true).
+          while IFS= read -r e; do
+            [ -z "${e}" ] && continue
+            body=$(printf '%s\n\n%s' \
+              "### Terraform validation summary for environment: \`${e}\`" \
+              "⏳ Running (run #${RUN_ID})…")
+            heads_json=$(jq -n \
+              --argjson cur "${heads_json}" \
+              --arg marker "<!-- tf:head:env:${e} -->" \
+              --arg body "${body}" \
+              '$cur + [{marker: $marker, body: $body}]')
+          done < <(echo "${MATRIX_JSON}" | jq -r '
+            .include
+            | map(select(.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true))
+            | .[].vars["github-environment"]
+          ')
+
+          # JSON is valid YAML, so we can hand the JSON straight to the
+          # reconcile action. Pretty-print via yq for nicer logs.
+          heads_yml=$(echo "${heads_json}" | yq -P '.')
+
+          echo "Composed heads-yml:"
+          printf '%s\n' "${heads_yml}"
+
+          delim=$(echo $RANDOM | md5sum | head -c 20)
+          {
+            echo "heads-yml<<${delim}"
+            printf '%s' "${heads_yml}"
+            echo
+            echo "${delim}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: "🌱 Seed heads + GC stale plan tags"
+        uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          heads-yml: ${{ steps.compose.outputs.heads-yml }}
+          gc-yml: |
+            - marker-prefix: "<!-- tf:tag:plan:"
+              keep-marker-substring: "run-id-${{ github.run_id }}"
+        continue-on-error: true # never fail the workflow over PR comment seeding
+
   terraform-ci-cd:
     name: "Terraform"
-    needs: create-matrix
+    needs: [create-matrix, seed-pr-comments]
     runs-on: ${{ matrix.vars.runs-on }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
@@ -520,17 +621,41 @@ jobs:
           plan-time: ${{ steps.plan.outputs.plan-time }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      - name: 🏷️ Add validation summary as pull request comment
-        id: validation-summary-on-pr
+      - name: 🏷️ Upsert per-env head comment
+        id: upsert-head
         # always() so that, paired with the always() on create-validation-summary
-        # above, the per-env comment refreshes even when an earlier
-        # infrastructure step fails. Without it the per-env comment would stay
-        # frozen at whatever the previous run posted.
+        # above, the per-env head refreshes even when an earlier infrastructure
+        # step fails. Without it the head would stay frozen at the previous run's
+        # state. Marker-based upsert (PATCH-in-place) preserves created_at so
+        # the head keeps its position at the top of the PR conversation across
+        # runs. See docs/Workflow-pr-comments.md.
         if: always() && steps.create-validation-summary.outcome == 'success'
-        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
-          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
-          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:head:env:${{ matrix.vars.github-environment }} -->"
+          body: ${{ steps.create-validation-summary.outputs.head-summary }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: 📋 Post per-env plan-extract tag
+        id: post-plan-tag
+        # Tag comments are run-scoped (marker embeds run-id) and posted via
+        # upsert — fresh marker each run means POST-fresh in practice. The
+        # seed job's GC sweep deleted prior-run plan tags before this step
+        # ran, so the new tag lands at the bottom of the conversation without
+        # competing with stale content.
+        if: always() && steps.create-validation-summary.outcome == 'success'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }} -->"
+          body: ${{ steps.create-validation-summary.outputs.plan-extract }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       # Terminate the job with 'failure' if any validation check did not succeed.
