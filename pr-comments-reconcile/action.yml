@@ -25,12 +25,12 @@ inputs:
   repo:
     description: |
       Owner/name of the repository hosting the PR or issue.
-      Typically `${{ github.repository }}`.
+      Typically `github.repository`.
     required: true
   issue-number:
     description: |
       PR or issue number whose comment thread to reconcile.
-      For a PR, typically `${{ github.event.pull_request.number }}`.
+      For a PR, typically `github.event.pull_request.number`.
     required: true
   github-token:
     description: |
@@ -39,7 +39,7 @@ inputs:
 
       No default provided (the `github` context is not available inside a
       composite action's `inputs.<name>.default`). From a reusable workflow,
-      pass `${{ github.token }}` or `secrets.GITHUB_TOKEN`.
+      pass `github.token` or `secrets.GITHUB_TOKEN`.
     required: true
   heads-yml:
     description: |
@@ -99,7 +99,7 @@ runs:
         )
         export input_heads_yml input_gc_yml
         set -o allexport
-        source "${{ github.action_path }}/step_reconcile.sh"
+        source "github.action_path/step_reconcile.sh"
         exit_code=$?
         set +o allexport
         exit ${exit_code}

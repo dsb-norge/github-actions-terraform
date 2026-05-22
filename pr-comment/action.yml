@@ -25,12 +25,12 @@ inputs:
   repo:
     description: |
       Owner/name of the repository hosting the PR or issue (e.g. `owner/repo`).
-      Typically `${{ github.repository }}`.
+      Typically `github.repository`.
     required: true
   issue-number:
     description: |
       PR or issue number whose comment thread to operate on.
-      For a PR, typically `${{ github.event.pull_request.number }}`.
+      For a PR, typically `github.event.pull_request.number`.
     required: true
   github-token:
     description: |
@@ -40,7 +40,7 @@ inputs:
       No default is provided: the `github` context is not available inside a
       composite action's `inputs.<name>.default`, so the caller must pass the
       token explicitly. From a reusable workflow, the canonical value is
-      `${{ github.token }}` (or `secrets.GITHUB_TOKEN`).
+      `github.token` (or `secrets.GITHUB_TOKEN`).
     required: true
   mode:
     description: |
@@ -108,7 +108,7 @@ runs:
         )
         export input_body
         set -o allexport
-        source "${{ github.action_path }}/step_pr_comment.sh"
+        source "github.action_path/step_pr_comment.sh"
         exit_code=$?
         set +o allexport
         exit ${exit_code}
