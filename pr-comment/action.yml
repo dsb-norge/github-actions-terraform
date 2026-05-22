@@ -100,8 +100,9 @@ runs:
         input_marker: ${{ inputs.marker }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        # Pass body via heredoc to preserve multi-line markdown without
-        # subjecting it to YAML's ${{ }} interpolation rules in env-list.
+        # Body is passed via a heredoc with a quoted delimiter so multi-line
+        # markdown is preserved verbatim, not subjected to YAML expression
+        # interpolation as it would be in the env: list above.
         input_body=$(cat <<'EOF_PR_COMMENT_BODY'
         ${{ inputs.body }}
         EOF_PR_COMMENT_BODY
