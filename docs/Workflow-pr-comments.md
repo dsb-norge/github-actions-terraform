@@ -6,25 +6,34 @@ Out of scope: deployment-environment UI, status checks, workflow run summaries �
 
 ## 1. When are comments posted
 
-Comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. The mechanism is identical regardless of which job posts the comment: each comment carries a deterministic Markdown heading (the "prefix") and every post does a delete-by-prefix + post — so comments update in place across re-runs, never duplicate.
+Comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Each comment carries a deterministic identity handle so re-runs update in place rather than duplicating. The two families use different mechanisms — see §2.
 
 Comments are suppressed when either:
 
 - the workflow input `add-pr-comment: false` is set (globally), or
 - a per-environment `add-pr-comment: false` override is set in `environments-yml` (per env).
 
-Both controls only affect the per-environment comments. The per-group reconcile job runs unconditionally on PR events; see §6 for why and the cost analysis.
+Both controls only affect the per-environment comments. The per-group aggregator job runs unconditionally on PR events; see §6 for why and the cost analysis.
 
 ## 2. The two comment families
 
-| Family | Identity prefix | Posted by | Cardinality |
-|---|---|---|---|
-| Per-environment | `` ### Terraform validation summary for environment: `<env>` `` | matrix job for that env, via `comment-on-pr@v2` | one per env per workflow run |
-| Per-group | `` ### Terraform validation summary for group: `<group>` `` | `pr-comment-aggregator` job, via `aggregate-validation-summaries` | one per distinct non-empty `pr-comment-group` value |
+| Family | Identity handle | Lifecycle | Posted by | Cardinality |
+|---|---|---|---|---|
+| Per-environment | H3 heading `` ### Terraform validation summary for environment: `<env>` `` (first line of body) | delete-by-prefix + post | matrix job for that env, via `comment-on-pr@v2` | one per env per workflow run |
+| Per-group | HTML marker `<!-- terraform-validation-summary-group:<group> -->` (first line of body) | upsert-by-marker (PATCH-in-place or POST) | `pr-comment-aggregator` job, via `aggregate-validation-summaries` | one per distinct non-empty `pr-comment-group` value |
 
-Both families share the prefix-based identity contract: the family prefix uniquely identifies the comment within a PR, the action lists existing comments via `gh api`, deletes any whose body starts with the matching specific prefix, and posts the freshly-built body. Bodies always start with their full prefix (heading line) so substring matching is unambiguous.
+The two families use **different identity contracts** because they have different lifecycles:
 
-Per-env prefixes use backtick-delimited env names so partial matches can't collide (e.g. `dev` doesn't match `dev-2`).
+- **Per-env** uses a visible H3 prefix as the load-bearing handle. Each run does delete-by-prefix + post, so per-env comments get a new comment id every run (subscribers re-pinged). Cheap and simple for a one-shot job.
+- **Per-group** uses an invisible HTML marker as the load-bearing handle. Each run does PATCH-in-place on the oldest existing marker comment for that group (stable comment id, no re-ping), and deletes any duplicate markers in the same pass — self-healing against past races or degraded runs. Comments without the marker are ignored (see §2.1 below). Per-group markers are unique per group name so multiple groups on the same PR are upserted independently.
+
+The H3 line `` ### Terraform validation summary for group: `<group>` `` still appears (visible to readers, line 2 of the body) but is no longer load-bearing — only the HTML marker is. The H3 wording can be tweaked freely as long as the marker is unchanged.
+
+Per-env prefixes use backtick-delimited env names so partial matches can't collide (e.g. `dev` doesn't match `dev-2`). Per-group markers don't need this since the colon + ` -->` close make the boundary unambiguous.
+
+### 2.1 No migration policy
+
+When `aggregate-validation-summaries` rolls out, existing per-group comments from prior versions don't yet carry the HTML marker — they only have the H3 heading. The new code ignores those legacy comments rather than deleting them: the next run posts a fresh marked comment alongside, and operators clean up the legacy one by hand if they want. This is an intentional trade-off — adding marker detection on the legacy H3 path would require a transitional shim, and given how rare PR-runs-after-release are for a given PR, the one-time double-post is the simpler choice. Subsequent runs upsert the marked comment normally.
 
 ## 3. Per-environment comments
 
@@ -177,6 +186,7 @@ Every PR run triggers the `pr-comment-aggregator` job once. It downloads all `ma
 Raw markdown:
 
 ````markdown
+<!-- terraform-validation-summary-group:dev -->
 ### Terraform validation summary for group: `dev`
 
 |  | Step | sub-a-dev | sub-b-dev | sub-c-dev |
@@ -263,37 +273,41 @@ Per-env-comment lookup edge cases:
 
 If the Jobs API call itself fails (rate limit, transient 5xx), every env's `job log` line is dropped and a single warning is logged; the grouped table still renders.
 
-### 4.7 Reconcile algorithm
+### 4.7 Upsert algorithm
 
-The aggregator action runs every PR event. Its job is to make the set of group comments on the PR equal to the desired set computed from the current run's metadata:
+The aggregator action runs every PR event. Its job is to make the set of marked group comments on the PR equal to the desired set computed from the current run's metadata, **editing in place** rather than recreating, so subscribers aren't re-pinged on every push.
 
 1. **Build desired set.** Read every `matrix-job-meta-*.json` artifact downloaded by `actions/download-artifact@v4`. Group entries by `matrix_context.vars.pr-comment-group`, dropping empty-string values. The desired set may be empty (no env declares a group).
 2. **List PR + run state.** Two paginated `gh api` calls:
     - `repos/$REPO/issues/$PR/comments` — from the result, build two maps:
-      - existing group comments (body starts with `### Terraform validation summary for group: `)
+      - existing group comments (body **starts with** `<!-- terraform-validation-summary-group:`). The group name is parsed out of the marker. Multiple matches per group are retained as a list of `(created_at, id)` pairs.
       - existing per-env comments (body starts with the exact backtick-delimited per-env prefix from §2)
-    - `repos/$REPO/actions/runs/$RUN_ID/jobs` — used to resolve each env's matrix job URL for the Links row (§4.6). Match by GitHub-rendered job name pattern `^Terraform \(<env>\)$`. Either call may fail independently: a Jobs API failure drops `job log` links from every Links cell; a PR-comments failure triggers degraded mode (skip reconcile delete pass, still post fresh bodies, will re-reconcile on next run).
-3. **Render desired.** For each desired group, sort envs alphabetically and build the prefix + body per §4.1. The Links row uses the per-env comment map (step 2) to resolve `log extract` anchors.
-4. **Reconcile (delete pass).** Walk the existing group comments:
-    - prefix not in desired set → DELETE (orphan from a removed/renamed group)
-    - prefix in desired set → DELETE (will be reposted with fresh body in step 5)
-5. **Post pass.** For each desired group, POST the rendered body.
-6. **Emit `groups-processed-json`** for logs/tests.
+    - `repos/$REPO/actions/runs/$RUN_ID/jobs` — used to resolve each env's matrix job URL for the Links row (§4.6). Match by GitHub-rendered job name pattern `^Terraform \(<env>\)$`. Either call may fail independently: a Jobs API failure drops `job log` links from every Links cell; a PR-comments failure triggers degraded mode (see below).
+3. **Render desired.** For each desired group, sort envs alphabetically and build the marker + H3 prefix + body per §4.1. The Links row uses the per-env comment map (step 2) to resolve `log extract` anchors.
+4. **Orphan delete pass.** Walk the existing marker comments. For each group **not** in the desired set, DELETE every matching marker comment (an orphan from a removed/renamed group can have accumulated duplicates).
+5. **Upsert pass.** For each desired group:
+    - **0 existing marker comments** → POST a fresh marked body.
+    - **1 existing** → PATCH that comment in place. Same comment id across runs, so subscribers don't get re-notified.
+    - **2+ existing** (duplicates from past races or degraded runs) → sort by `created_at` ascending, DELETE every entry except the oldest, then PATCH the oldest. The system is self-healing: one clean run collapses duplicates.
+    - **PATCH failure** (transient 5xx, comment removed mid-run, etc.) → fall back to POST so the comment is still visible on the PR.
+6. **Emit `groups-processed-json`** with one entry per action (`patched`, `posted`, `orphan-deleted`, `duplicate-deleted`, `post-failed`) for logs/tests.
 
-Four scenarios collapse into the same path:
+Scenarios:
 
-| Desired groups | Existing group comments | Outcome |
+| Desired groups | Existing marker comments | Outcome |
 |---|---|---|
 | 0 | 0 | no-op |
 | 0 | N | sweep N orphans (caller disabled grouping) |
-| M | 0 | post M (first run with grouping enabled) |
-| M | N (any overlap) | sweep mismatched, repost matched, post new |
+| M | 0 | post M (first run with grouping enabled, or no-migration legacy: see §2.1) |
+| M | M, 1 marker each | PATCH M in place (no new comment ids, no re-ping) |
+| M | M+K (duplicates) | PATCH oldest M, delete K dupes |
+| M | N (mixed: some desired, some orphan) | PATCH desired, delete orphans |
 
-Self-healing: at most one PR run is needed after toggling grouping on/off or renaming groups; no manual cleanup procedure.
+Self-healing: at most one PR run is needed after toggling grouping on/off, renaming groups, or recovering from a degraded run.
 
 #### Degraded mode
 
-If `gh api` fails (rate limit, transient 5xx), the action logs a warning, treats the existing-comments map as empty, renders bodies with Links rows showing `job log` only (no `log extract` anchors), and attempts to post. Subsequent runs reconcile any duplicates left behind. The grouped table itself always renders.
+If `gh api` listing fails (rate limit, transient 5xx), the action can't tell what already exists on the PR. It logs a warning, skips the orphan delete pass, and the upsert pass POSTs fresh bodies (no PATCH attempt). Any duplicates left behind are collapsed on the next clean run via step 5's "2+ existing" branch. The grouped table itself always renders.
 
 #### Failure isolation
 
@@ -349,7 +363,7 @@ Quick map from spec section to implementing code:
 | §3.1 Ungrouped per-env comment body | [`create-validation-summary/step_create_validation_summary.sh`](../create-validation-summary/step_create_validation_summary.sh) |
 | §3.2 Grouped per-env comment body | same file, branched on `pr-comment-group` |
 | §3 Posting/replacing per-env comments | [`dsb-norge/github-actions/ci-cd/comment-on-pr@v2`](https://github.com/dsb-norge/github-actions/tree/main/ci-cd/comment-on-pr) |
-| §4 Per-group comment body + reconcile | [`aggregate-validation-summaries/step_aggregate.sh`](../aggregate-validation-summaries/step_aggregate.sh) |
+| §4 Per-group comment body + upsert | [`aggregate-validation-summaries/step_aggregate.sh`](../aggregate-validation-summaries/step_aggregate.sh) |
 | §4.7 Source artifacts | [`capture-matrix-job-meta/step_capture.sh`](../capture-matrix-job-meta/step_capture.sh) |
 | §5 Input plumbing & per-env defaults | [`create-tf-vars-matrix/action.yml`](../create-tf-vars-matrix/action.yml) |
 | Workflow wiring | [`.github/workflows/terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) |
