@@ -6,14 +6,14 @@
 # by helpers.sh.
 #
 
-# Family marker shared by every per-group comment this action manages.
+# Family marker shared by every per-group head comment this action manages.
 # Lives on the first line of the body as an HTML comment so it's invisible
 # to readers. The per-group marker (built via _group_marker) extends this
 # with the group name and a trailing ' -->', allowing a single PR to host
 # multiple group comments and have each one upserted independently.
 # Renders to nothing in the GitHub Markdown view.
-# See docs/Workflow-pr-comments.md §2.
-declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- terraform-validation-summary-group:'
+# See docs/Workflow-pr-comments.md for the heads + tags model.
+declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- tf:head:group:'
 
 # Per-env comment prefix template (uses backtick-delimited env name so
 # partial matches can't collide).

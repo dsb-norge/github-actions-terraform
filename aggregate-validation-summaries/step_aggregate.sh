@@ -219,16 +219,9 @@ function list_pr_state {
   log-info "PR has ${total} comment(s) total."
 
   # Find existing group comments by HTML marker on the first line of the
-  # body: '<!-- terraform-validation-summary-group:<group> -->'. Multiple
-  # IDs per group are tolerated (and self-healed in the upsert pass).
-  # Group name is parsed by stripping the family prefix and the trailing
-  # ' -->' marker close.
-  #
-  # Legacy comments from the pre-marker era (body starts with the H3
-  # heading rather than the marker) are not matched here — they sit
-  # untouched on the PR and the upsert pass posts a fresh marked comment
-  # alongside them. This is the documented "no-migration" trade-off
-  # (docs/Workflow-pr-comments.md §2.1).
+  # body: '<!-- tf:head:group:<group> -->'. Multiple IDs per group are
+  # tolerated (and self-healed in the upsert pass). Group name is parsed
+  # by stripping the family prefix and the trailing ' -->' marker close.
   local group_lines
   group_lines=$(echo "${normalized}" \
     | jq -r --arg fam "${GROUP_COMMENT_MARKER_FAMILY}" '

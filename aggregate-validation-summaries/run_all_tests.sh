@@ -269,7 +269,7 @@ test_empty_desired_empty_existing_is_noop() {
 test_sweep_only_orphans() {
   # No desired groups, but PR has an existing marker comment from a prior run
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -316,8 +316,8 @@ test_mixed_orphan_delete_and_patch() {
   write_meta "alpha-dev" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"},
-  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete-group -->\n### Terraform validation summary for group: `obsolete-group`\norphan body"}
+  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"},
+  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:obsolete-group -->\n### Terraform validation summary for group: `obsolete-group`\norphan body"}
 ]
 JSON
   run_step
@@ -650,8 +650,8 @@ test_group_marker_then_prefix_byte_exact() {
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   # Body line 1 must be the HTML marker (load-bearing for upsert identity).
   # Body line 2 must be the byte-exact group H3 (still visible to readers).
-  if ! grep -q '^<!-- terraform-validation-summary-group:dev -->$' "${TEST_DIR}/step.log"; then
-    echo "expected byte-exact marker line '<!-- terraform-validation-summary-group:dev -->'"
+  if ! grep -q '^<!-- tf:head:group:dev -->$' "${TEST_DIR}/step.log"; then
+    echo "expected byte-exact marker line '<!-- tf:head:group:dev -->'"
     return 1
   fi
   if ! grep -q '^### Terraform validation summary for group: `dev`$' "${TEST_DIR}/step.log"; then
@@ -745,7 +745,7 @@ test_groups_processed_json_output() {
   # 'obsolete' has an existing marker but is not desired → orphan-deleted.
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 8001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete -->\n### Terraform validation summary for group: `obsolete`\n"}]
+[{"id": 8001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:obsolete -->\n### Terraform validation summary for group: `obsolete`\n"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -897,7 +897,7 @@ test_plan_time_row_position() {
 test_existing_marker_is_patched() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 6001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+[{"id": 6001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -929,9 +929,9 @@ test_duplicate_markers_delete_extras_patch_oldest() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 6100, "created_at": "2026-02-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nmid-age dup"},
-  {"id": 6200, "created_at": "2026-03-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nnewest dup"},
-  {"id": 6050, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\noldest — should be kept"}
+  {"id": 6100, "created_at": "2026-02-01T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nmid-age dup"},
+  {"id": 6200, "created_at": "2026-03-01T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nnewest dup"},
+  {"id": 6050, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\noldest — should be kept"}
 ]
 JSON
   run_step
@@ -996,7 +996,7 @@ test_body_starts_with_marker_then_h3() {
   local body_lines
   body_lines=$(awk '/Body:$/ {flag=1; next} flag && NF {print; if (++n == 2) exit}' "${TEST_DIR}/step.log")
   local expected
-  expected=$'<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`'
+  expected=$'<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`'
   if [[ "${body_lines}" != "${expected}" ]]; then
     echo "expected marker + H3 as first two body lines (byte-exact)"
     echo "expected: ${expected//$'\n'/ \\n }"
@@ -1014,8 +1014,8 @@ test_multiple_groups_each_patched() {
   write_meta "envB" "prod"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 6400, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold dev"},
-  {"id": 6500, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:prod -->\n### Terraform validation summary for group: `prod`\nold prod"}
+  {"id": 6400, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold dev"},
+  {"id": 6500, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:prod -->\n### Terraform validation summary for group: `prod`\nold prod"}
 ]
 JSON
   run_step
@@ -1039,7 +1039,7 @@ JSON
 test_patch_failure_falls_back_to_post() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 6600, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+[{"id": 6600, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
 JSON
   export GH_FAKE_PATCH_EXIT=22
   run_step
