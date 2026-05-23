@@ -65,7 +65,7 @@ The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflo
 
 Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Running…` placeholder body.
 
-In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- tf:tag:plan:` whose body does not also contain `run-id-<current-run-id>` — i.e. plan tags from prior runs. The seed job is added to `terraform-ci-cd`'s `needs:` chain so matrix jobs can't race ahead and POST their head updates before the seed manifest lands.
+In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- tf:tag:plan:` whose body does not also contain `run-id-<current-run-id>` — i.e. plan tags from prior runs. The GC sweep runs **before** the heads reconcile so stale plan output disappears from the PR conversation as early as possible during a re-run; outdated plan content is more misleading than the brief window of "stale final" heads that precedes their PATCH to a Running placeholder. The seed job is added to `terraform-ci-cd`'s `needs:` chain so matrix jobs can't race ahead and POST their head updates before the seed manifest lands.
 
 ### 3.2 Matrix phase
 

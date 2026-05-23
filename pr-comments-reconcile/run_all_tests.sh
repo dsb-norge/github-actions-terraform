@@ -328,6 +328,42 @@ JSON
   return 0
 }
 
+test_gc_runs_before_heads() {
+  # GC must DELETE stale tags BEFORE any heads PATCH/POST so outdated plan
+  # output disappears as early as possible during a re-run. Verify by
+  # checking the order of API calls in the gh log: every DELETE that
+  # comes from the GC pass must appear before any PATCH or POST.
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 10001, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- h:existing -->\nold body"},
+  {"id": 10002, "created_at": "2026-01-02T00:00:00Z", "body": "<!-- tf:tag:plan:dev:run-id-100 -->\nstale"}
+]
+JSON
+  export input_heads_yml='- marker: "<!-- h:existing -->"
+  body: "fresh"'
+  export input_gc_yml='- marker-prefix: "<!-- tf:tag:plan:"
+  keep-marker-substring: "run-id-200"'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+
+  # Capture line numbers in the gh call log.
+  local first_delete first_write
+  first_delete=$(grep -n -- "-X DELETE" "${GH_FAKE_CALL_LOG}" | head -n1 | cut -d: -f1)
+  first_write=$(grep -nE -- "-X (PATCH|POST)" "${GH_FAKE_CALL_LOG}" | head -n1 | cut -d: -f1)
+
+  if [ -z "${first_delete}" ] || [ -z "${first_write}" ]; then
+    echo "expected at least one DELETE and one PATCH/POST in the call log"
+    cat "${GH_FAKE_CALL_LOG}"
+    return 1
+  fi
+  if [ "${first_delete}" -ge "${first_write}" ]; then
+    echo "expected DELETE (line ${first_delete}) BEFORE first PATCH/POST (line ${first_write})"
+    cat "${GH_FAKE_CALL_LOG}"
+    return 1
+  fi
+  return 0
+}
+
 test_degraded_mode_heads_posted_gc_skipped() {
   export GH_FAKE_LIST_EXIT=1
   export input_heads_yml='- marker: "<!-- h:a -->"
@@ -412,6 +448,7 @@ run_test "GC: no prefix matches → no DELETEs"                            test_
 run_test "empty gc-yml → skip GC even when matching comments exist"      test_empty_gc_yml_skips_gc_even_with_matching_comments
 run_test "empty heads-yml → skip heads pass even when matches exist"     test_empty_heads_yml_skips_heads_pass
 run_test "heads + GC together → both passes work"                        test_heads_and_gc_together
+run_test "GC runs BEFORE heads (stale tags vanish first)"                test_gc_runs_before_heads
 run_test "degraded (list fails) → heads POSTed best-effort, GC skipped"  test_degraded_mode_heads_posted_gc_skipped
 run_test "malformed heads-yml → fail-fast"                               test_malformed_heads_yml_fails_fast
 run_test "reconcile-json output records every head action"               test_reconcile_json_contains_all_actions

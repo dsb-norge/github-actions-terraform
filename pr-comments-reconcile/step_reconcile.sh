@@ -301,8 +301,14 @@ function main {
   validate_inputs || return 1
   parse_yaml_inputs || return 1
   list_existing_comments
-  heads_pass
+  # GC runs BEFORE heads so stale tags (e.g. plan-extract comments from
+  # prior runs) disappear from the PR conversation as early as possible
+  # during a re-run — outdated plan output is a worse signal than the
+  # transient "stale final" state on heads (which we briefly show before
+  # PATCHing them to a Running placeholder). Also robust to partial
+  # failures: even if heads_pass crashes later, stale tags are gone.
   gc_pass
+  heads_pass
 
   set-multiline-output "reconcile-json" "${RECONCILE_RESULTS}"
   log-info "Done."
