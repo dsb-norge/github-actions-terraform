@@ -251,21 +251,22 @@ function list_pr_state {
     log-info "  no existing group comments on PR"
   fi
 
-  # Build per-env anchor map. For each env in any desired group, look for a
-  # comment whose body starts with the env's exact per-env prefix. If 2+
-  # match (rare; should self-heal via comment-on-pr@v2's delete-by-prefix on
-  # the next per-env run), pick the comment with the highest numeric id
-  # (newest, GitHub IDs are monotonic) and log a warning.
+  # Build per-env anchor map. For each env in any desired group, look for
+  # this run's per-env plan tag by its HTML marker substring; anchor the
+  # group head's Links column at that comment so reviewers jump to the
+  # env's plan output. The marker is run-id-scoped so duplicates from
+  # overlapping runs aren't expected — if 2+ match anyway, pick the
+  # comment with the highest numeric id (newest, monotonic) and warn.
   local group env
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
-      local per_env_prefix
-      per_env_prefix=$(_per_env_prefix "${env}")
+      local plan_tag_marker
+      plan_tag_marker="<!-- tf:tag:plan:${env}:run-id-${GITHUB_RUN_ID:-} -->"
 
       local matched_ids
       matched_ids=$(echo "${normalized}" \
-        | jq -r --arg p "${per_env_prefix}" '.[] | select(.body | startswith($p)) | .id' \
+        | jq -r --arg m "${plan_tag_marker}" '.[] | select(.body | contains($m)) | .id' \
           2>/dev/null) || matched_ids=""
 
       # Count lines safely: grep -c returns exit 1 with no matches which
@@ -276,7 +277,7 @@ function list_pr_state {
       fi
 
       if [ "${count}" = "0" ]; then
-        log-debug "  env '${env}': no per-env comment posted — Links cell will show only job log"
+        log-debug "  env '${env}': no plan tag for run-id ${GITHUB_RUN_ID:-} — Links cell will show only job log"
       elif [ "${count}" = "1" ]; then
         PER_ENV_ANCHOR[${env}]="#issuecomment-${matched_ids}"
         log-info "  env '${env}': resolved log-extract anchor to ${PER_ENV_ANCHOR[${env}]}"
@@ -284,7 +285,7 @@ function list_pr_state {
         local newest
         newest=$(echo "${matched_ids}" | sort -nr | head -n1)
         PER_ENV_ANCHOR[${env}]="#issuecomment-${newest}"
-        log-warn "  env '${env}': ${count} per-env comments match (race / stale duplicates); using newest id=${newest}"
+        log-warn "  env '${env}': ${count} plan tags match (race / stale duplicates); using newest id=${newest}"
       fi
     done <<<"${DESIRED_GROUPS[${group}]}"
   done
@@ -445,10 +446,10 @@ function _first_meta_file_for_group {
   echo "${DESIRED_META[${group}/${first_env}]:-}"
 }
 
-# Render the footer line. Mirrors create-validation-summary's v0.24+ footer
-# (docs/Workflow-pr-comments.md §4.1): a single [Job log](url) line. The
-# pusher/action/workflow data is discoverable on the linked run page and in
-# the PR conversation timeline — restating it on every comment was noise.
+# Render the footer line for the per-group head: a single [Workflow log](url)
+# pointing at the workflow run page. The per-env heads' [Job log] footer
+# (in create-validation-summary) targets a specific job's #logs anchor; this
+# one targets the run page that aggregates every job, so the label differs.
 function _render_footer {
   local file="${1}"
   local run_id=""
@@ -457,7 +458,7 @@ function _render_footer {
   fi
   run_id="${run_id:-${GITHUB_RUN_ID:-0}}"
   local run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-  echo "[Job log](${run_url})"
+  echo "[Workflow log](${run_url})"
 }
 
 # ============================================================================

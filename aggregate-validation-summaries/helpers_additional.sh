@@ -15,14 +15,6 @@
 # See docs/Workflow-pr-comments.md for the heads + tags model.
 declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- tf:head:group:'
 
-# Per-env comment prefix template (uses backtick-delimited env name so
-# partial matches can't collide).
-# See docs/Workflow-pr-comments.md §2.
-function _per_env_prefix {
-  local env_name="${1}"
-  echo "### Terraform validation summary for environment: \`${env_name}\`"
-}
-
 # Specific group comment H3 heading (rendered immediately after the marker
 # at the top of the body). Kept for visible identification — users still
 # see "for group: \`<group>\`" — but no longer load-bearing for upsert

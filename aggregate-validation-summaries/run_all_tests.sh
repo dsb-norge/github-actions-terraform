@@ -359,7 +359,7 @@ test_alphabetical_column_order() {
 test_per_env_anchor_resolved() {
   write_meta "myenv" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 4242, "body": "### Terraform validation summary for environment: `myenv`\nbody"}]
+[{"id": 4242, "body": "<!-- tf:tag:plan:myenv:run-id-999 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -415,7 +415,7 @@ test_both_anchor_and_job_url_resolved_shows_both_with_br() {
   write_meta "envX" "g"
   with_jobs_for "envX"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 7777, "body": "### Terraform validation summary for environment: `envX`\n"}]
+[{"id": 7777, "body": "<!-- tf:tag:plan:envX:run-id-999 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -514,18 +514,24 @@ JSON
   return 0
 }
 
-test_grouped_footer_is_condensed_v024() {
-  # v0.24+: footer is a single [Job log](url) line. Pusher/action/workflow
-  # data was dropped — already visible in the PR conversation header and on
-  # the linked run page.
+test_grouped_footer_is_workflow_log() {
+  # Per-group head footer is a single [Workflow log](url) line pointing at
+  # the workflow run page. (Per-env head's [Job log] footer targets a job-
+  # specific URL — different shape, different file.)
   write_meta "envA" "g"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   # Body content was emitted to the step log (see post_pass).
   # Must contain the new footer and NOT contain any of the legacy fields.
-  if ! grep -q '\[Job log\](https://github.com/dsb-norge/test-repo/actions/runs/999)' "${TEST_DIR}/step.log"; then
-    echo "expected '[Job log](url)' footer with run URL"
-    grep '\[Job log\]' "${TEST_DIR}/step.log" || true
+  if ! grep -q '\[Workflow log\](https://github.com/dsb-norge/test-repo/actions/runs/999)' "${TEST_DIR}/step.log"; then
+    echo "expected '[Workflow log](url)' footer with run URL"
+    grep '\[Workflow log\]' "${TEST_DIR}/step.log" || true
+    return 1
+  fi
+  # Guard: the per-group head must not regress to '[Job log]' (that label is
+  # reserved for per-env heads where the URL is the job page, not the run).
+  if grep -q '\[Job log\]' "${TEST_DIR}/step.log"; then
+    echo "per-group head footer must not say '[Job log]'"
     return 1
   fi
   for stale in 'Pusher: @' 'Action: `pull_request`' 'Workflow: `'; do
@@ -568,9 +574,9 @@ test_per_env_anchor_picks_newest_when_duplicates() {
   write_meta "dup" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 100, "body": "### Terraform validation summary for environment: `dup`\nold"},
-  {"id": 999, "body": "### Terraform validation summary for environment: `dup`\nnewer"},
-  {"id": 500, "body": "### Terraform validation summary for environment: `dup`\nmid"}
+  {"id": 100, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nold"},
+  {"id": 999, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nnewer"},
+  {"id": 500, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nmid"}
 ]
 JSON
   run_step
@@ -1087,7 +1093,7 @@ run_test "job URL resolution handles 'caller / Terraform (env)' prefix"   test_j
 run_test "job URL resolution handles bare 'Terraform (env)' too"          test_job_url_resolution_handles_bare_name
 run_test "job URL resolution skips non-matrix jobs"                       test_job_url_resolution_skips_non_matrix_jobs
 run_test "upsert pass does NOT nest log groups"                            test_upsert_pass_does_not_nest_log_groups
-run_test "grouped comment footer is condensed v0.24 [Job log] only"       test_grouped_footer_is_condensed_v024
+run_test "grouped head footer is [Workflow log] (workflow run URL)"       test_grouped_footer_is_workflow_log
 run_test "per-env anchor picks newest comment id when duplicates exist"    test_per_env_anchor_picks_newest_when_duplicates
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
