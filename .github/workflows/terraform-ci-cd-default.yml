@@ -640,12 +640,85 @@ jobs:
           plan-time: ${{ steps.plan.outputs.plan-time }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
+      - name: 📋 Post per-env plan-extract tag
+        id: post-plan-tag
+        # Tag comments are run-scoped (marker embeds run-id) and posted via
+        # upsert — fresh marker each run means POST-fresh in practice. The
+        # seed job's GC sweep deleted prior-run plan tags before this step
+        # ran, so the new tag lands at the bottom of the conversation without
+        # competing with stale content. Posted BEFORE the per-env head so
+        # the head's Links row can anchor at this comment's id.
+        if: always() && steps.create-validation-summary.outcome == 'success'
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/pr-comment@pr-comments-overhaul
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }} -->"
+          body: ${{ steps.create-validation-summary.outputs.plan-extract }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: 📝 Re-render validation summary with Links row
+        id: create-validation-summary-final
+        # Second invocation of create-validation-summary, this time with the
+        # just-POSTed plan-extract tag's comment id supplied. The action
+        # responds by appending a Links row to the head-summary table
+        # ([log extract] → plan tag, [job log] → this job's #logs anchor)
+        # and dropping the standalone [Job log] footer. See
+        # docs/Workflow-pr-comments.md §6.1.
+        #
+        # Only ungrouped envs need this — grouped envs have no per-env head
+        # so the head-summary output is unused. The plan-extract output of
+        # this second call is identical to the first call's and is ignored.
+        if: |
+          always()
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+          && matrix.vars.pr-comment-group == ''
+        # TODO revert to @v0
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@pr-comments-overhaul
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          plan-console-file: ${{ steps.plan.outputs.console-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-verify-lock: ${{ steps.verify-lock.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
+          pr-comment-group: ${{ matrix.vars.pr-comment-group }}
+          include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
+          plan-time: ${{ steps.plan.outputs.plan-time }}
+          # The single input that differs from the first call. Triggers the
+          # Links row branch in render_head_summary.
+          plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
+        continue-on-error: true
+
       - name: 🏷️ Upsert per-env head comment
         id: upsert-head
         # Only ungrouped envs get a per-env head; grouped envs are
         # represented in their per-group head and skip this step (every env
-        # still gets its plan-extract tag below). See
+        # still gets its plan-extract tag above). See
         # docs/Workflow-pr-comments.md §6.1 grouped mode.
+        #
+        # Consumes head-summary from the *second* create-validation-summary
+        # call (which carries the Links row). Falls back to the first call's
+        # head-summary if the second call didn't run (e.g. degraded), so a
+        # transient failure mid-pipeline still updates the head with the
+        # best body we have.
         #
         # always() so that, paired with the always() on create-validation-summary
         # above, the per-env head refreshes even when an earlier infrastructure
@@ -665,26 +738,7 @@ jobs:
           github-token: ${{ github.token }}
           mode: upsert
           marker: "<!-- tf:head:env:${{ matrix.vars.github-environment }} -->"
-          body: ${{ steps.create-validation-summary.outputs.head-summary }}
-        continue-on-error: true # allow job to continue, step outcome is ignored
-
-      - name: 📋 Post per-env plan-extract tag
-        id: post-plan-tag
-        # Tag comments are run-scoped (marker embeds run-id) and posted via
-        # upsert — fresh marker each run means POST-fresh in practice. The
-        # seed job's GC sweep deleted prior-run plan tags before this step
-        # ran, so the new tag lands at the bottom of the conversation without
-        # competing with stale content.
-        if: always() && steps.create-validation-summary.outcome == 'success'
-        # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/pr-comment@pr-comments-overhaul
-        with:
-          repo: ${{ github.repository }}
-          issue-number: ${{ github.event.pull_request.number }}
-          github-token: ${{ github.token }}
-          mode: upsert
-          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }} -->"
-          body: ${{ steps.create-validation-summary.outputs.plan-extract }}
+          body: ${{ steps.create-validation-summary-final.outputs.head-summary || steps.create-validation-summary.outputs.head-summary }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       # Terminate the job with 'failure' if any validation check did not succeed.

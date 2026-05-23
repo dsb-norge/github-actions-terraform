@@ -117,9 +117,12 @@ Effect: when nothing has changed (e.g. CI re-run on the same commit), no `update
 | 🧹 | TFLint | `success` |
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
-
-[Job log](<url>)
+| 🔗 | Links | [log extract](#issuecomment-<plan-tag-id>)<br>[job log](<job-url>) |
 ```
+
+The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§6.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§6.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
+
+The Links row is rendered by `create-validation-summary` when its `plan-tag-comment-id` input is supplied. The matrix calls `create-validation-summary` twice for ungrouped envs: once initially to get `plan-extract` (used to POST the plan tag), then again with the resulting comment id supplied to re-render `head-summary` with the Links row. Grouped envs only call it once (their `head-summary` output is unused — see §6.1 grouped mode below).
 
 Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
