@@ -194,8 +194,13 @@ with_jobs_for() {
 
 # Run the step. Captures stdout to ${TEST_DIR}/step.log; reads GITHUB_OUTPUT
 # for assertions.
+#
+# Match production: action.yml shim sources step under 'bash -eo pipefail'.
+# Without -eo pipefail the harness silently tolerates bugs (failed
+# subcommand, broken pipeline) that would crash the step in CI.
 run_step() {
   (
+    set -eo pipefail
     set -o allexport
     source "${_this_script_dir}/step_aggregate.sh"
   ) > "${TEST_DIR}/step.log" 2>&1
@@ -898,6 +903,91 @@ test_plan_time_row_position() {
 # Marker-based upsert behaviour
 # --------------------------------------------------------------------------
 
+# Hash short-circuit: existing comment already carries the
+# `<!-- comment-hash:<sha> -->` marker matching the body the aggregator is
+# about to write → skip the PATCH (no API write, no subscriber re-ping).
+# Strategy: capture the rendered user-body from a first run, hash it, then
+# pre-seed a second test's existing-comment fixture with that hash and
+# verify the PATCH is skipped.
+test_hash_unchanged_skips_patch() {
+  # First run: render-only, no existing comment, no fixture body to seed.
+  write_meta "envA" "dev"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "first run step exit ${STEP_EXIT_CODE}"; return 1; }
+
+  # Pull the user-body that render_group_body produced. It's the lines
+  # between 'Body:' and the next blank line; the assembled body in the log
+  # has marker on line 1, hash-marker on line 2, blank line on line 3,
+  # then the user body. Slice from line 4 onward up to (but not including)
+  # the trailing blank line emitted by `echo`.
+  local user_body
+  user_body=$(awk '
+    /Body:$/ {flag=1; n=0; next}
+    flag {
+      n++
+      if (n <= 2) next        # skip marker + hash-marker
+      if (n == 3 && $0 == "") next   # skip blank separator
+      # Stop at the next log/group line — the trailing blank line from
+      # the upsert loops echo is between body and the next log entry,
+      # so the next non-blank log prefix is the right boundary.
+      if (/^aggregate-validation-summaries:/) exit
+      if (/^WARN: aggregate-validation-summaries:/) exit
+      if (/^DEBUG: aggregate-validation-summaries:/) exit
+      if (/^::(end)?group::/) exit
+      print
+    }
+  ' "${TEST_DIR}/step.log")
+
+  if [ -z "${user_body}" ]; then
+    echo "could not capture rendered user-body from first run"
+    return 1
+  fi
+
+  # Compute the expected hash by sourcing the action's helpers inside a
+  # subshell — keeps the readonly 'declare -gr' in helpers_additional.sh
+  # contained so it doesn't conflict with the next run_step subshell.
+  # helpers.sh logs `'helpers.sh' loaded.` to stdout on source; redirect
+  # the source step's stdout to stderr so only _compute_body_hash's output
+  # reaches our capture.
+  local expected_hash
+  expected_hash=$(
+    GITHUB_ACTION_PATH="${_this_script_dir}" \
+      bash -c "source '${_this_script_dir}/helpers.sh' >&2 && _compute_body_hash \"\$1\"" _ "${user_body}"
+  )
+  if [ -z "${expected_hash}" ]; then
+    echo "failed to compute expected hash"
+    return 1
+  fi
+
+  # Second run: existing comment carries the same hash → PATCH must be
+  # skipped, action recorded as 'skipped'. Clear gh log + GITHUB_OUTPUT
+  # so we don't read the first run's output through get_processed_json.
+  : > "${GH_FAKE_CALL_LOG}"
+  : > "${GITHUB_OUTPUT}"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<JSON
+[{"id": 8888, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n<!-- comment-hash:${expected_hash} -->\n\nany previous body content here — content doesn't matter, only the hash does"}]
+JSON
+
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "second run step exit ${STEP_EXIT_CODE}"; return 1; }
+
+  if grep -q -- 'PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "expected PATCH to be skipped when existing hash matches"
+    grep -E 'PATCH|POST|DELETE' "${GH_FAKE_CALL_LOG}" || true
+    return 1
+  fi
+  if ! grep -q 'Hash unchanged' "${TEST_DIR}/step.log"; then
+    echo "expected 'Hash unchanged' log line"
+    return 1
+  fi
+  if ! get_processed_json | jq -e '.[] | select(.group == "dev" and .action == "skipped")' >/dev/null; then
+    echo "expected groups-processed-json record with action=skipped for 'dev'"
+    get_processed_json || true
+    return 1
+  fi
+  return 0
+}
+
 # Existing single marker comment for desired group → PATCHed in place
 # (stable comment id; no fresh POST, no DELETE).
 test_existing_marker_is_patched() {
@@ -989,25 +1079,36 @@ JSON
   return 0
 }
 
-# Marker comment body line 1 must be the per-group marker; line 2 the H3.
-# Pinning byte-level shape so accidental drift in render_group_body breaks
-# this test (and only this test).
-test_body_starts_with_marker_then_h3() {
+# Marker comment body line 1 must be the per-group marker; line 2 must be
+# the inline comment-hash marker emitted by _render_full_body; line 3 the
+# visible H3. Pinning byte-level shape so accidental drift in
+# render_group_body or _render_full_body breaks this test (and only this
+# test).
+test_body_starts_with_marker_then_hash_then_h3() {
   write_meta "envA" "dev"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
-  # The rendered body is echoed into the step log right after a
-  # 'aggregate-validation-summaries: Body:' line; capture the next two
-  # non-blank lines (marker + H3).
+  # The assembled body is echoed into the step log right after a
+  # 'aggregate-validation-summaries: Body:' line; capture the next three
+  # non-blank lines (marker + comment-hash + H3).
   local body_lines
-  body_lines=$(awk '/Body:$/ {flag=1; next} flag && NF {print; if (++n == 2) exit}' "${TEST_DIR}/step.log")
-  local expected
-  expected=$'<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`'
-  if [[ "${body_lines}" != "${expected}" ]]; then
-    echo "expected marker + H3 as first two body lines (byte-exact)"
-    echo "expected: ${expected//$'\n'/ \\n }"
-    echo "got:      ${body_lines//$'\n'/ \\n }"
-    return 1
+  body_lines=$(awk '/Body:$/ {flag=1; next} flag && NF {print; if (++n == 3) exit}' "${TEST_DIR}/step.log")
+  local marker_line='<!-- tf:head:group:dev -->'
+  local h3_line='### Terraform validation summary for group: `dev`'
+
+  local seen_marker seen_hash seen_h3
+  seen_marker=$(echo "${body_lines}" | sed -n '1p')
+  seen_hash=$(echo "${body_lines}" | sed -n '2p')
+  seen_h3=$(echo "${body_lines}" | sed -n '3p')
+
+  if [[ "${seen_marker}" != "${marker_line}" ]]; then
+    echo "expected line 1 = '${marker_line}', got '${seen_marker}'"; return 1
+  fi
+  if [[ ! "${seen_hash}" =~ ^\<!--\ comment-hash:[a-f0-9]+\ --\>$ ]]; then
+    echo "expected line 2 = '<!-- comment-hash:<sha> -->', got '${seen_hash}'"; return 1
+  fi
+  if [[ "${seen_h3}" != "${h3_line}" ]]; then
+    echo "expected line 3 = '${h3_line}', got '${seen_h3}'"; return 1
   fi
   return 0
 }
@@ -1111,10 +1212,11 @@ run_test "Plan time row reflects per-env values across multi-env group"    test_
 run_test "Plan time row sits between Plan details and Links rows"           test_plan_time_row_position
 run_test "missing input_pr_number fails the step"                          test_missing_pr_number_fails_fast
 run_test "post failure does not abort, recorded in output"                 test_post_failure_recorded_without_aborting
+run_test "hash short-circuit: existing hash matches → skip PATCH"          test_hash_unchanged_skips_patch
 run_test "existing marker comment → PATCHed in place (stable id)"          test_existing_marker_is_patched
 run_test "duplicate markers → delete extras, PATCH oldest"                 test_duplicate_markers_delete_extras_patch_oldest
 run_test "legacy prefix-only comment → ignored (no-migration policy)"      test_legacy_prefix_only_comment_is_ignored
-run_test "body starts with marker on line 1, H3 on line 2"                 test_body_starts_with_marker_then_h3
+run_test "body starts with marker, hash-marker, H3 on lines 1/2/3"         test_body_starts_with_marker_then_hash_then_h3
 run_test "multiple groups: each marker patched independently"              test_multiple_groups_each_patched
 run_test "PATCH failure → fall back to POST"                               test_patch_failure_falls_back_to_post
 

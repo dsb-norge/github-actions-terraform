@@ -52,6 +52,12 @@ declare -gA PER_ENV_ANCHOR=()
 # cell drops the `job log` line in that case rather than emit a wrong link.
 declare -gA PER_ENV_JOB_URL=()
 
+# Full PR comments list as a flat JSON array. Populated by list_pr_state
+# and read back in _upsert_one_group to look up an existing comment's body
+# by id for the content-hash short-circuit. Empty array when listing fails
+# (degraded mode) or before list_pr_state runs.
+declare -g ALL_COMMENTS_JSON='[]'
+
 # Tracks degraded mode (gh api list failed). When true, the upsert pass
 # skips its delete branch and posts fresh bodies instead — the grouped
 # table is always visible, even if we can't be sure what's already on the
@@ -205,14 +211,15 @@ function list_pr_state {
 
   # When --paginate returns multiple pages concatenated, the result may be
   # multiple separate JSON arrays. Combine via jq -s 'add' to get a single
-  # flat array regardless.
-  local normalized
-  if ! normalized=$(echo "${comments_json}" | jq -s 'add // []' 2>/dev/null); then
+  # flat array regardless. Promote to a module-level global so the upsert
+  # pass can read existing bodies for the hash short-circuit.
+  if ! ALL_COMMENTS_JSON=$(echo "${comments_json}" | jq -s 'add // []' 2>/dev/null); then
     log-warn "Failed to normalize PR comments JSON — entering degraded mode"
     DEGRADED_MODE="true"
     end-group
     return 0
   fi
+  local normalized="${ALL_COMMENTS_JSON}"
 
   local total
   total=$(echo "${normalized}" | jq 'length')
@@ -297,15 +304,18 @@ function list_pr_state {
 # Step 3: Render one group's comment body
 # ============================================================================
 
-# Renders the full body for one group. Writes to stdout.
+# Renders the user-visible portion of one group's body (H3 + table + footer).
+# Writes to stdout. The caller wraps this with the HTML marker + a
+# `<!-- comment-hash:<sha> -->` line via _render_full_body before
+# POSTing/PATCHing, so re-runs with unchanged content hash-short-circuit
+# the PATCH and don't re-ping subscribers.
 # Args:
 #   $1  - group name
 #   $2  - newline-delimited list of envs (already alphabetically sorted)
 function render_group_body {
   local group_name="${1}"
   local envs_nl="${2}"
-  local marker prefix
-  marker=$(_group_marker "${group_name}")
+  local prefix
   prefix=$(_group_prefix "${group_name}")
 
   local -a envs=()
@@ -382,15 +392,13 @@ function render_group_body {
   footer=$(_render_footer "${first_env_meta_file}")
 
   # ---- Assembly ----
-  # The HTML marker is line 1 and the load-bearing identity for upserts —
-  # see docs/Workflow-pr-comments.md §2. The H3 'prefix' line follows; it
-  # is still rendered (visible to readers) but no longer used for comment
-  # identification, so the H3 wording can be tweaked freely as long as
-  # the marker is unchanged.
+  # Returns the user-visible portion (H3 + table + footer). The HTML
+  # marker (load-bearing for upsert identity, see Workflow-pr-comments.md
+  # §2) and the inline comment-hash line are prepended by _render_full_body
+  # in _upsert_one_group / _post_fresh.
   # 'rows' ends with a trailing newline; the rest are plain rows with no
   # trailing newline, so the format string supplies the line breaks.
-  printf '%s\n%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
-    "${marker}" \
+  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
@@ -529,7 +537,7 @@ function upsert_pass {
   local -a sorted_groups=()
   while IFS= read -r g; do sorted_groups+=("${g}"); done < <(printf '%s\n' "${!DESIRED_GROUPS[@]}" | sort)
 
-  local group envs_sorted body body_file
+  local group envs_sorted marker body
   for group in "${sorted_groups[@]}"; do
     start-group "Step 5: Upsert group '${group}'"
 
@@ -537,16 +545,18 @@ function upsert_pass {
     envs_sorted=$(echo "${DESIRED_GROUPS[${group}]}" | sort)
     log-info "Rendering (envs: $(echo "${envs_sorted}" | tr '\n' ',' | sed 's/,$//'))"
 
+    marker=$(_group_marker "${group}")
     body=$(render_group_body "${group}" "${envs_sorted}")
-    body_file=$(mktemp)
-    printf '%s' "${body}" >"${body_file}"
 
+    # Log the assembled body (marker + hash marker + user body) so the
+    # ##[group] block shows exactly what gets written on PATCH/POST and
+    # so byte-exact tests can grep the marker line in step output.
     log-info "Body:"
-    echo "${body}"
+    _render_full_body "${marker}" "${body}"
+    echo
 
-    _upsert_one_group "${group}" "${body_file}"
+    _upsert_one_group "${group}" "${marker}" "${body}"
 
-    rm -f "${body_file}"
     end-group
   done
 }
@@ -554,24 +564,27 @@ function upsert_pass {
 # Upsert a single group's comment. Picks the oldest existing marker
 # comment (lowest created_at, since GitHub IDs are monotonic but the
 # created_at field is the canonical timestamp) to keep, deletes any
-# others, then PATCHes the keeper. If none exist, POSTs fresh.
+# others, then PATCHes the keeper. If none exist, POSTs fresh. Skips the
+# PATCH entirely when the existing comment's embedded comment-hash
+# matches the new body — no updated_at churn, no subscriber re-ping on
+# no-op runs.
 #
 # In degraded mode (PR comments listing failed) we don't know what
 # exists, so we always POST fresh — duplicates will self-heal on the
 # next clean run via this same dedupe branch.
 function _upsert_one_group {
-  local group="${1}" body_file="${2}"
+  local group="${1}" marker="${2}" user_body="${3}"
 
   if [ "${DEGRADED_MODE}" = "true" ]; then
     log-warn "Degraded mode — posting fresh (cannot list existing comments to upsert)."
-    _post_fresh "${group}" "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
     return
   fi
 
   local entries="${EXISTING_GROUP_COMMENTS[${group}]:-}"
   if [ -z "${entries}" ]; then
     log-info "No existing marker comment for '${group}' — posting fresh."
-    _post_fresh "${group}" "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
     return
   fi
 
@@ -600,20 +613,45 @@ function _upsert_one_group {
     fi
   done <<<"${sorted_entries}"
 
-  # PATCH the keeper.
+  # Hash short-circuit. Skip PATCH if the keeper already carries the
+  # same content-hash as the body we're about to write. Empty existing
+  # hash (legacy body without the marker) falls through to PATCH.
+  local new_hash existing_body existing_hash
+  new_hash=$(_compute_body_hash "${user_body}")
+  existing_body=$(echo "${ALL_COMMENTS_JSON}" \
+    | jq -r --arg id "${keep_id}" '.[] | select((.id|tostring) == $id) | .body' 2>/dev/null)
+  existing_hash=$(_extract_existing_hash "${existing_body}")
+  if [ -n "${existing_hash}" ] && [ "${existing_hash}" = "${new_hash}" ]; then
+    log-info "Hash unchanged (${new_hash}) — skipping PATCH for '${group}' (id=${keep_id})."
+    _record_processed "${group}" "${keep_id}" "skipped"
+    return
+  fi
+
+  # Compose the full body (marker + comment-hash + user body) and PATCH.
+  local body_file
+  body_file=$(mktemp)
+  _render_full_body "${marker}" "${user_body}" >"${body_file}"
+
   log-info "Editing existing comment in place (id=${keep_id}, created=${keep_created})."
   if _gh_patch_comment "${GITHUB_REPOSITORY}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then
     _record_processed "${group}" "${keep_id}" "patched"
   else
     log-warn "PATCH failed for '${group}' (id=${keep_id}) — posting fresh as fallback."
-    _post_fresh "${group}" "${body_file}"
+    rm -f "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
+    return
   fi
+  rm -f "${body_file}"
 }
 
 # Internal: POST a fresh comment for a group. Used by _upsert_one_group
-# on the "no existing comment" and "degraded mode" branches.
+# on the "no existing comment", "degraded mode", and "PATCH-failed
+# fallback" branches.
 function _post_fresh {
-  local group="${1}" body_file="${2}"
+  local group="${1}" marker="${2}" user_body="${3}"
+  local body_file
+  body_file=$(mktemp)
+  _render_full_body "${marker}" "${user_body}" >"${body_file}"
   local new_id
   if new_id=$(_gh_post_comment "${GITHUB_REPOSITORY}" "${input_pr_number}" "${body_file}" 2>&1); then
     log-info "posted: comment id=${new_id}"
@@ -622,6 +660,7 @@ function _post_fresh {
     log-warn "failed to post comment for group '${group}': ${new_id}"
     _record_processed "${group}" "0" "post-failed"
   fi
+  rm -f "${body_file}"
 }
 
 # ============================================================================

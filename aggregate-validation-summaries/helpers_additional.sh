@@ -203,3 +203,52 @@ function _gh_patch_comment {
   local repo="${1}" comment_id="${2}" body_file="${3}"
   gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" -F "body=@${body_file}" --jq '.id'
 }
+
+# ============================================================================
+# Hash short-circuit helpers
+# ============================================================================
+#
+# Mirror of pr-comment / pr-comments-reconcile helpers — kept duplicated per
+# the action-implementation-guide.md self-containment convention. When
+# touching one, audit the others (pr-comment/helpers_additional.sh,
+# pr-comments-reconcile/helpers_additional.sh).
+#
+# Embedding a 'comment-hash' marker on line 2 of every PATCH body lets the
+# next upsert detect no-op runs and skip the PATCH entirely — no
+# updated_at churn, no subscriber re-ping when nothing changed.
+
+declare -gr COMMENT_HASH_MARKER_PREFIX='<!-- comment-hash:'
+
+# Canonical hash of a body. Strips a single trailing newline before hashing
+# so heredoc/yaml whitespace drift doesn't bust the hash.
+function _compute_body_hash {
+  local body="${1}"
+  printf '%s' "${body%$'\n'}" | sha256sum | awk '{print $1}'
+}
+
+# Render the inline hash marker for a given body hash.
+function _hash_marker {
+  local hash="${1}"
+  echo "${COMMENT_HASH_MARKER_PREFIX}${hash} -->"
+}
+
+# Assemble the full rendered body: <user-marker>\n<hash-marker>\n\n<user-body>
+function _render_full_body {
+  local marker="${1}"
+  local user_body="${2}"
+  local hash
+  hash=$(_compute_body_hash "${user_body}")
+  printf '%s\n%s\n\n%s' "${marker}" "$(_hash_marker "${hash}")" "${user_body}"
+}
+
+# Extract the hash from an existing comment body. Empty when no
+# '<!-- comment-hash:<sha> -->' marker is present (legacy bodies, or bodies
+# written by tools that don't emit the marker). Uses a bash regex match
+# instead of a grep pipeline so the no-match case stays pipefail-safe.
+function _extract_existing_hash {
+  local body="${1}"
+  local re="${COMMENT_HASH_MARKER_PREFIX}([a-f0-9]+) -->"
+  if [[ "${body}" =~ ${re} ]]; then
+    echo "${BASH_REMATCH[1]}"
+  fi
+}
