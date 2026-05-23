@@ -97,9 +97,9 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 
 The net visual effect on a re-run: stale plan tags vanish first, then heads briefly show "Running" while matrix executes, then heads update to final state and fresh plan tags appear at the bottom of the conversation.
 
-## 6. Comment body shapes
+## 5. Comment body shapes
 
-### 6.1 Per-env head
+### 5.1 Per-env head
 
 ```markdown
 ### Terraform validation summary for environment: `<env>`
@@ -115,9 +115,9 @@ The net visual effect on a re-run: stale plan tags vanish first, then heads brie
 | 🔗 | Links | [log extract](#issuecomment-<plan-tag-id>)<br>[job log](<job-url>) |
 ```
 
-The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§6.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§6.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
+The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§5.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§5.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
 
-The Links row is rendered by `create-validation-summary` when its `plan-tag-comment-id` input is supplied. The matrix calls `create-validation-summary` twice for ungrouped envs: once initially to get `plan-extract` (used to POST the plan tag), then again with the resulting comment id supplied to re-render `head-summary` with the Links row. Grouped envs only call it once (their `head-summary` output is unused — see §6.1 grouped mode below).
+The Links row is rendered by `create-validation-summary` when its `plan-tag-comment-id` input is supplied. The matrix calls `create-validation-summary` twice for ungrouped envs: once initially to get `plan-extract` (used to POST the plan tag), then again with the resulting comment id supplied to re-render `head-summary` with the Links row. Grouped envs only call it once (their `head-summary` output is unused — see §5.1 grouped mode below).
 
 Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
@@ -133,9 +133,9 @@ Optional badges (move / import / remove) are appended `<br>`-separated when the 
 
 #### Grouped mode
 
-When `pr-comment-group` is non-empty, the env has **no per-env head at all** — its row in the per-group head's table is the env's summary surface, and its plan output still gets its own per-env plan tag (§6.2). The seed manifest excludes grouped envs from per-env head seeding, and the matrix-job step that PATCHes the per-env head is skipped via an `if:` guard on `matrix.vars.pr-comment-group`. Reviewers reach the grouped env's plan output via the per-group head's Links column.
+When `pr-comment-group` is non-empty, the env has **no per-env head at all** — its row in the per-group head's table is the env's summary surface, and its plan output still gets its own per-env plan tag (§5.2). The seed manifest excludes grouped envs from per-env head seeding, and the matrix-job step that PATCHes the per-env head is skipped via an `if:` guard on `matrix.vars.pr-comment-group`. Reviewers reach the grouped env's plan output via the per-group head's Links column.
 
-### 6.2 Per-env plan tag
+### 5.2 Per-env plan tag
 
 ```markdown
 ### Terraform plan for environment: `<env>`
@@ -153,7 +153,7 @@ When `pr-comment-group` is non-empty, the env has **no per-env head at all** —
 
 All `<details>` shapes wrap the plan text in a `` ```terraform `` code fence. The plan text is capped at 65000 characters (tail-trimmed) to stay under GitHub's 65536-char comment limit.
 
-### 6.3 Per-group head
+### 5.3 Per-group head
 
 The rolled-up grouped table aggregates every env in the group (alphabetical column order):
 
@@ -182,9 +182,9 @@ Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missi
 
 Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag for the current run, located by the `tf:tag:plan:<env>:run-id-<run-id>` marker substring) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
-The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§6.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
+The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§5.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
-## 7. Configuration
+## 6. Configuration
 
 Workflow inputs:
 
@@ -197,7 +197,7 @@ Triggering rules: comments are only posted when the workflow runs against a `pul
 
 Required token permission: `pull-requests: write` (and `issues: write` if the comment thread is a plain issue). Declared at the top of `terraform-ci-cd-default.yml`.
 
-## 8. Ordering guarantees
+## 7. Ordering guarantees
 
 On a fresh PR (run #1), the seed job POSTs in declared order, so the conversation timeline becomes:
 
@@ -219,13 +219,13 @@ On a fresh PR (run #1), the seed job POSTs in declared order, so the conversatio
 
 On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags from prior runs are GC'd and new ones POSTed at the bottom of the conversation. Order between heads never changes.
 
-## 9. Concurrency caveat
+## 8. Concurrency caveat
 
 When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), the second run's seed-job GC pass will delete the first run's plan tags (their run-id is no longer "current"). The first run's later POST may then land at an unexpected position, or — if the first run's matrix job has already completed and POSTed — its plan tag is deleted before being read.
 
 Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
 
-## 10. Degraded mode
+## 9. Degraded mode
 
 If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment`](../pr-comment/) and [`pr-comments-reconcile`](../pr-comments-reconcile/) enter degraded mode:
 
@@ -235,7 +235,7 @@ If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment
 
 Duplicates from degraded runs self-heal on the next clean run: the upsert path always sorts marker matches by `created_at` ASC, keeps the oldest, and deletes the rest in the same call.
 
-## 11. Action references
+## 10. Action references
 
 | Spec section | Implementing action / step |
 |---|---|
@@ -243,5 +243,5 @@ Duplicates from degraded runs self-heal on the next clean run: the upsert path a
 | §3.2 Matrix phase per-env head | matrix step "Upsert per-env head comment" calling [`pr-comment`](../pr-comment/) (mode `upsert`) |
 | §3.2 Matrix phase plan tag | matrix step "Post per-env plan-extract tag" calling [`pr-comment`](../pr-comment/) (mode `upsert`, run-id-scoped marker) |
 | §3.3 Aggregator phase | `pr-comment-aggregator` job in the workflow, calling [`aggregate-validation-summaries`](../aggregate-validation-summaries/) |
-| §6.1, §6.2 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary` + `plan-extract` |
-| §6.3 grouped body rendering | [`aggregate-validation-summaries`](../aggregate-validation-summaries/) `render_group_body` |
+| §5.1, §5.2 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary` + `plan-extract` |
+| §5.3 grouped body rendering | [`aggregate-validation-summaries`](../aggregate-validation-summaries/) `render_group_body` |
