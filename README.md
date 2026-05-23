@@ -12,9 +12,11 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── create-test-report            --> creates comment report with terraform test action results
 ├── create-tf-vars-matrix         --> creates common DSB terraform CI/CD variables
 ├── create-tftest-matrix          --> creates matrix for running terraform module test
-├── create-validation-summary     --> creates summary comment in table format
+├── create-validation-summary     --> renders per-env head + plan-extract bodies for PR comments
 ├── export-env-vars               --> export environment variables for use in subsequent action steps
 ├── lint-with-tflint              --> run linting of terraform code with TFLint
+├── pr-comment                    --> upsert/delete a single PR/issue comment by HTML marker
+├── pr-comments-reconcile         --> bulk seed + GC PR/issue comments by HTML marker
 ├── setup-terraform-plugin-cache  --> setup and configure plugin cache on runners
 ├── setup-tflint                  --> install TFLint and make available to subsequent action steps
 ├── terraform-docs                --> inject terraform-docs config and terraform module documentation into README.md
