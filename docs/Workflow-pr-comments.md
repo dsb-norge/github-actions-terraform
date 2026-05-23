@@ -20,7 +20,7 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 | Marker | Class | Cardinality | Posted/refreshed by |
 |---|---|---|---|
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
-| `<!-- tf:head:env:<env> -->` | Head | One per env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
+| `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
 | `<!-- tf:tag:plan:<env>:run-id-<run-id> -->` | Tag | One per env per run | Matrix job for that env |
 
 Marker name conventions:
@@ -61,7 +61,7 @@ Markers are treated as opaque substrings by the underlying actions: matching is 
 The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) composes a `heads-yml` manifest from `create-matrix` outputs:
 
 1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value.
-2. One `tf:head:env:<env>` head per env with `add-pr-comment: true`.
+2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table.
 
 Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Running…` placeholder body.
 
@@ -135,15 +135,7 @@ Optional badges (move / import / remove) are appended `<br>`-separated when the 
 
 #### Grouped mode
 
-When `pr-comment-group` is non-empty, the head body omits the validation table — that table lives on the per-group head instead. The per-env head body becomes:
-
-```markdown
-### Terraform validation summary for environment: `<env>`
-
-[Job log](<url>)
-```
-
-The H3 heading is byte-identical to ungrouped mode. There is no back-pointer to the group summary; the group's Links column anchors back to each env's head.
+When `pr-comment-group` is non-empty, the env has **no per-env head at all** — its row in the per-group head's table is the env's summary surface, and its plan output still gets its own per-env plan tag (§6.2). The seed manifest excludes grouped envs from per-env head seeding, and the matrix-job step that PATCHes the per-env head is skipped via an `if:` guard on `matrix.vars.pr-comment-group`. Reviewers reach the grouped env's plan output via the per-group head's Links column.
 
 ### 6.2 Per-env plan tag
 
@@ -181,7 +173,7 @@ The rolled-up grouped table aggregates every env in the group (alphabetical colu
 | <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> | <span title="mm:ss (minutes:seconds)">—</span> | … |
 | <span title="Links">🔗</span> | Links | [log extract](#issuecomment-…)<br>[job log](…) | … | … |
 
-[Job log](<aggregator-run-url>)
+[Workflow log](<run-url>)
 ```
 
 Status cells map outcomes to emoji + tooltip: ✅ / ❌ / 🚫 / ⏭️ / — (empty outcome).
@@ -190,7 +182,9 @@ Plan Details cells stack the count badges in a `<div align="left">` so they anch
 
 Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
-Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the per-env head comment, when resolvable) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
+Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag for the current run, located by the `tf:tag:plan:<env>:run-id-<run-id>` marker substring) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
+
+The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§6.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
 ## 7. Configuration
 
