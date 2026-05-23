@@ -34,10 +34,18 @@ function _render_full_body {
   printf '%s\n%s\n\n%s' "${marker}" "$(_hash_marker "${hash}")" "${user_body}"
 }
 
-# Extract the hash from an existing comment body. Empty if absent.
+# Extract the hash from an existing comment body. Empty when no
+# '<!-- comment-hash:<sha> -->' marker is present (e.g. legacy bodies, or
+# bodies written by other tools that don't emit the marker). Uses a bash
+# regex match instead of a grep pipeline so the no-match case stays
+# pipefail-safe — the shim runs under `bash -eo pipefail`, so a non-zero
+# grep exit would otherwise kill the whole step.
 function _extract_existing_hash {
   local body="${1}"
-  echo "${body}" | grep -oE "${COMMENT_HASH_MARKER_PREFIX}[a-f0-9]+ -->" | head -n1 | sed -E "s|${COMMENT_HASH_MARKER_PREFIX}([a-f0-9]+) -->|\1|"
+  local re="${COMMENT_HASH_MARKER_PREFIX}([a-f0-9]+) -->"
+  if [[ "${body}" =~ ${re} ]]; then
+    echo "${BASH_REMATCH[1]}"
+  fi
 }
 
 # gh-api wrappers. Tests shadow these by putting a fake `gh` script on PATH

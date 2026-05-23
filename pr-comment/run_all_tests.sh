@@ -104,7 +104,11 @@ teardown() {
 }
 
 run_step() {
+  # Match production: action.yml shim sources step under 'bash -eo pipefail'.
+  # Without -eo pipefail the harness silently tolerates bugs (failed
+  # subcommand, broken pipeline) that would crash the step in CI.
   (
+    set -eo pipefail
     set -o allexport
     source "${_this_script_dir}/step_pr_comment.sh"
   ) > "${TEST_DIR}/step.log" 2>&1
