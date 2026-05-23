@@ -50,7 +50,7 @@ inputs:
         - marker: '<!-- some:stable:identifier -->'  # any unique substring
           body:   |
             arbitrary multi-line markdown body
-            (the marker + a content-hash marker get prepended automatically)
+            (the marker is automatically prepended on line 1)
 
       Empty list (default) → heads pass is a no-op.
     required: false
@@ -73,7 +73,7 @@ outputs:
   reconcile-json:
     description: |
       JSON array of objects describing each head action taken:
-        {marker: <string>, action: created|updated|skipped|post-failed, "comment-id": <string>}
+        {marker: <string>, action: created|updated|post-failed, "comment-id": <string>}
       GC actions are not included.
     value: ${{ steps.reconcile.outputs.reconcile-json }}
 

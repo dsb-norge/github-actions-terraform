@@ -52,12 +52,6 @@ declare -gA PER_ENV_ANCHOR=()
 # cell drops the `job log` line in that case rather than emit a wrong link.
 declare -gA PER_ENV_JOB_URL=()
 
-# Full PR comments list as a flat JSON array. Populated by list_pr_state
-# and read back in _upsert_one_group to look up an existing comment's body
-# by id for the content-hash short-circuit. Empty array when listing fails
-# (degraded mode) or before list_pr_state runs.
-declare -g ALL_COMMENTS_JSON='[]'
-
 # Tracks degraded mode (gh api list failed). When true, the upsert pass
 # skips its delete branch and posts fresh bodies instead — the grouped
 # table is always visible, even if we can't be sure what's already on the
@@ -211,15 +205,14 @@ function list_pr_state {
 
   # When --paginate returns multiple pages concatenated, the result may be
   # multiple separate JSON arrays. Combine via jq -s 'add' to get a single
-  # flat array regardless. Promote to a module-level global so the upsert
-  # pass can read existing bodies for the hash short-circuit.
-  if ! ALL_COMMENTS_JSON=$(echo "${comments_json}" | jq -s 'add // []' 2>/dev/null); then
+  # flat array regardless.
+  local normalized
+  if ! normalized=$(echo "${comments_json}" | jq -s 'add // []' 2>/dev/null); then
     log-warn "Failed to normalize PR comments JSON — entering degraded mode"
     DEGRADED_MODE="true"
     end-group
     return 0
   fi
-  local normalized="${ALL_COMMENTS_JSON}"
 
   local total
   total=$(echo "${normalized}" | jq 'length')
@@ -613,21 +606,7 @@ function _upsert_one_group {
     fi
   done <<<"${sorted_entries}"
 
-  # Hash short-circuit. Skip PATCH if the keeper already carries the
-  # same content-hash as the body we're about to write. Empty existing
-  # hash (legacy body without the marker) falls through to PATCH.
-  local new_hash existing_body existing_hash
-  new_hash=$(_compute_body_hash "${user_body}")
-  existing_body=$(echo "${ALL_COMMENTS_JSON}" \
-    | jq -r --arg id "${keep_id}" '.[] | select((.id|tostring) == $id) | .body' 2>/dev/null)
-  existing_hash=$(_extract_existing_hash "${existing_body}")
-  if [ -n "${existing_hash}" ] && [ "${existing_hash}" = "${new_hash}" ]; then
-    log-info "Hash unchanged (${new_hash}) — skipping PATCH for '${group}' (id=${keep_id})."
-    _record_processed "${group}" "${keep_id}" "skipped"
-    return
-  fi
-
-  # Compose the full body (marker + comment-hash + user body) and PATCH.
+  # Compose the full body (marker + blank + user body) and PATCH.
   local body_file
   body_file=$(mktemp)
   _render_full_body "${marker}" "${user_body}" >"${body_file}"

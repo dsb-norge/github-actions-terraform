@@ -187,27 +187,11 @@ JSON
   return 0
 }
 
-test_upsert_match_same_hash_skips() {
-  # Compute the real hash of the default input_body
-  local body="${input_body}"
-  local real_hash
-  real_hash=$(printf '%s' "${body%$'\n'}" | sha256sum | awk '{print $1}')
-  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<JSON
-[{"id": 1001, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- tf:head:env:dev -->\n<!-- comment-hash:${real_hash} -->\n\nany body content here"}]
-JSON
-  run_step
-  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
-  [[ "$(count_calls PATCH)" -eq 0 ]] || { echo "expected 0 PATCH, got $(count_calls PATCH)"; return 1; }
-  [[ "$(count_calls POST)" -eq 0 ]] || { echo "expected 0 POST"; return 1; }
-  [[ "$(count_calls DELETE)" -eq 0 ]] || { echo "expected 0 DELETE"; return 1; }
-  [[ "$(get_output action)" == "skipped" ]] || { echo "action='$(get_output action)', expected 'skipped'"; return 1; }
-  return 0
-}
-
-test_upsert_legacy_no_hash_patches() {
-  # Existing comment has marker but no hash marker → treat as hash-miss, PATCH.
+test_upsert_match_arbitrary_body_patches() {
+  # Existing comment carries the marker — content underneath doesn't matter.
+  # Every match triggers a PATCH (no hash short-circuit anymore).
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 2002, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- tf:head:env:dev -->\nlegacy body without hash marker"}]
+[{"id": 2002, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- tf:head:env:dev -->\nany existing body content"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -381,26 +365,6 @@ JSON
   return 0
 }
 
-test_hash_normalization_trailing_newline() {
-  # Verify directly: same body with vs without trailing newline → same hash
-  source "${_this_script_dir}/helpers.sh"
-  local h1 h2
-  h1=$(_compute_body_hash "hello world")
-  h2=$(_compute_body_hash $'hello world\n')
-  if [ "${h1}" != "${h2}" ]; then
-    echo "hash differs across trailing-newline variants: '${h1}' vs '${h2}'"
-    return 1
-  fi
-  # And differs for genuinely different content
-  local h3
-  h3=$(_compute_body_hash "hello WORLD")
-  if [ "${h1}" = "${h3}" ]; then
-    echo "expected different hash for different content"
-    return 1
-  fi
-  return 0
-}
-
 test_marker_substring_match_not_anchored() {
   # The action uses 'contains' so the marker can appear anywhere in the body.
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
@@ -420,8 +384,7 @@ JSON
 
 run_test "upsert: no match → POST fresh"                                test_upsert_no_match_posts_fresh
 run_test "upsert: match, different hash → PATCH"                        test_upsert_match_different_hash_patches
-run_test "upsert: match, same hash → skip (no API writes)"              test_upsert_match_same_hash_skips
-run_test "upsert: legacy match without hash marker → PATCH"             test_upsert_legacy_no_hash_patches
+run_test "upsert: match (any body shape) → PATCH"                       test_upsert_match_arbitrary_body_patches
 run_test "upsert: duplicates → keep oldest, PATCH it, DELETE others"    test_upsert_duplicates_keep_oldest
 run_test "upsert: PATCH fail → fallback POST fresh"                     test_upsert_patch_fail_falls_back_to_post
 run_test "delete: no match → not-found, 0 DELETEs"                      test_delete_no_match
@@ -435,7 +398,6 @@ run_test "validation: invalid mode value → fail-fast"                   test_i
 run_test "validation: upsert + missing input_body → fail-fast"          test_input_validation_upsert_missing_body
 run_test "delete does NOT require input_body"                           test_delete_does_not_require_body
 run_test "pagination: multi-page list flattened before scan"            test_pagination_flattens_multiple_pages
-run_test "hash normalization: trailing-newline variants → same hash"    test_hash_normalization_trailing_newline
 run_test "marker match uses contains() — not anchored to line 1"        test_marker_substring_match_not_anchored
 
 # ============================================================================

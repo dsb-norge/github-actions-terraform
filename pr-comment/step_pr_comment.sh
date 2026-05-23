@@ -127,12 +127,6 @@ function list_and_find_candidates {
   end-group
 }
 
-# Return the body of a comment by id (from COMMENTS_JSON). Empty if not found.
-function _get_comment_body {
-  local cid="${1}"
-  echo "${COMMENTS_JSON}" | jq -r --arg id "${cid}" '.[] | select((.id|tostring) == $id) | .body' 2>/dev/null || true
-}
-
 # ============================================================================
 # Upsert mode
 # ============================================================================
@@ -140,10 +134,8 @@ function _get_comment_body {
 function do_upsert {
   start-group "Upsert"
 
-  local full_body new_hash
+  local full_body
   full_body=$(_render_full_body "${input_marker}" "${input_body}")
-  new_hash=$(_compute_body_hash "${input_body}")
-  log-info "New body hash: ${new_hash}"
 
   local body_file
   body_file=$(mktemp)
@@ -188,22 +180,7 @@ function do_upsert {
     fi
   done <<<"${sorted}"
 
-  # Hash short-circuit on the keeper.
-  local existing_body existing_hash
-  existing_body=$(_get_comment_body "${keep_id}")
-  existing_hash=$(_extract_existing_hash "${existing_body}")
-  log-info "Keeper (id=${keep_id}, created=${keep_created}); existing-hash='${existing_hash}'"
-
-  if [ -n "${existing_hash}" ] && [ "${existing_hash}" = "${new_hash}" ]; then
-    log-info "Existing hash matches new body — skipping PATCH (no subscriber re-ping)."
-    OUTPUT_COMMENT_ID="${keep_id}"
-    OUTPUT_ACTION="skipped"
-    rm -f "${body_file}"
-    end-group
-    return 0
-  fi
-
-  log-info "Patching keeper (id=${keep_id}) in place."
+  log-info "Patching keeper (id=${keep_id}, created=${keep_created})."
   if _gh_patch_comment "${input_repo}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then
     OUTPUT_COMMENT_ID="${keep_id}"
     OUTPUT_ACTION="updated"

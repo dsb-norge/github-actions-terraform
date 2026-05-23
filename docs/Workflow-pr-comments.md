@@ -84,23 +84,18 @@ Both calls are guarded by `always()` so the head refreshes even when an earlier 
 
 ### Heads
 
-1. Seed phase PATCHes each head body to `⏳ Running (run #N)…` (existing comment, content-hash differs → PATCH lands).
+1. Seed phase PATCHes each head body to `⏳ Running (run #N)…`.
 2. Matrix / aggregator phase PATCHes each head body to its final state.
-3. If the final body's content-hash matches the existing comment's embedded hash (no-op run), the PATCH is skipped — subscribers are not re-pinged. See §5.
+
+Heads keep their original `created_at` across runs (PATCH preserves it). Their position at the top of the conversation is fixed from the first POST onwards.
 
 ### Tags
 
-1. Seed phase GC sweep deletes plan tags from prior runs.
+1. Seed phase GC sweep deletes plan tags from prior runs *first* (before any heads are touched) so outdated plan output disappears as early as possible during a re-run.
 2. Matrix phase POSTs fresh plan tags (their markers carry the current run id).
 3. Next run repeats: GC deletes these, POSTs new ones.
 
-The net visual effect on a re-run: heads stay in place but their content briefly shows "Running" then updates to final; plan tags disappear, then new ones appear at the bottom of the conversation.
-
-## 5. Content-hash short-circuit
-
-Every body the action writes carries an inline marker `<!-- comment-hash:<sha256> -->` on line 2, computed from the body content with a single trailing newline normalized away. On upsert, if the existing comment's embedded hash matches the hash of the new body, the PATCH call is skipped entirely.
-
-Effect: when nothing has changed (e.g. CI re-run on the same commit), no `updated_at` churn, no notification emails to PR subscribers. Subscribers only get pinged when a comment's content actually changed.
+The net visual effect on a re-run: stale plan tags vanish first, then heads briefly show "Running" while matrix executes, then heads update to final state and fresh plan tags appear at the bottom of the conversation.
 
 ## 6. Comment body shapes
 
@@ -248,6 +243,5 @@ Duplicates from degraded runs self-heal on the next clean run: the upsert path a
 | §3.2 Matrix phase per-env head | matrix step "Upsert per-env head comment" calling [`pr-comment`](../pr-comment/) (mode `upsert`) |
 | §3.2 Matrix phase plan tag | matrix step "Post per-env plan-extract tag" calling [`pr-comment`](../pr-comment/) (mode `upsert`, run-id-scoped marker) |
 | §3.3 Aggregator phase | `pr-comment-aggregator` job in the workflow, calling [`aggregate-validation-summaries`](../aggregate-validation-summaries/) |
-| §5 Content-hash | implemented inside [`pr-comment`](../pr-comment/) and [`pr-comments-reconcile`](../pr-comments-reconcile/) (`_compute_body_hash` + `<!-- comment-hash:<sha> -->` marker on line 2 of every written body) |
 | §6.1, §6.2 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary` + `plan-extract` |
 | §6.3 grouped body rendering | [`aggregate-validation-summaries`](../aggregate-validation-summaries/) `render_group_body` |

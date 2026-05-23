@@ -220,15 +220,12 @@ JSON
   return 0
 }
 
-test_all_heads_exist_same_hash_all_skipped() {
-  # Compute the real hash that the action will produce for each body
-  local hash_a hash_b
-  hash_a=$(printf '%s' "body a" | sha256sum | awk '{print $1}')
-  hash_b=$(printf '%s' "body b" | sha256sum | awk '{print $1}')
-  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<JSON
+test_all_heads_exist_all_patched() {
+  # Every matching head triggers a PATCH — no hash short-circuit.
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 5001, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- h:a -->\n<!-- comment-hash:${hash_a} -->\n\nbody a"},
-  {"id": 5002, "created_at": "2026-01-02T00:00:00Z", "body": "<!-- h:b -->\n<!-- comment-hash:${hash_b} -->\n\nbody b"}
+  {"id": 5001, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- h:a -->\nbody a"},
+  {"id": 5002, "created_at": "2026-01-02T00:00:00Z", "body": "<!-- h:b -->\nbody b"}
 ]
 JSON
   export input_heads_yml='- marker: "<!-- h:a -->"
@@ -238,11 +235,11 @@ JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   [[ "$(count_calls POST)" -eq 0 ]] || { echo "expected 0 POST"; return 1; }
-  [[ "$(count_calls PATCH)" -eq 0 ]] || { echo "expected 0 PATCH (all hashes match)"; return 1; }
+  [[ "$(count_calls PATCH)" -eq 2 ]] || { echo "expected 2 PATCH, got $(count_calls PATCH)"; return 1; }
   local json
   json=$(get_reconcile_json)
-  [[ "$(echo "${json}" | jq '[.[] | select(.action == "skipped")] | length')" -eq 2 ]] || {
-    echo "expected 2 skipped, got: ${json}"; return 1
+  [[ "$(echo "${json}" | jq '[.[] | select(.action == "updated")] | length')" -eq 2 ]] || {
+    echo "expected 2 updated, got: ${json}"; return 1
   }
   return 0
 }
@@ -409,7 +406,7 @@ test_missing_required_input_fails_fast() {
 run_test "empty inputs → no-op (list only)"                              test_empty_inputs_noop
 run_test "empty PR + 3 heads → 3 POST in declared order"                 test_empty_pr_three_heads_posts_in_order
 run_test "1 of 3 heads exists, different hash → 1 PATCH, 2 POST"         test_one_head_exists_different_hash_others_new
-run_test "all heads exist, same hash → all skipped"                      test_all_heads_exist_same_hash_all_skipped
+run_test "all heads exist → all PATCHed"                                 test_all_heads_exist_all_patched
 run_test "GC: deletes non-matching, keeps current and unrelated"         test_gc_deletes_non_matching
 run_test "GC: no prefix matches → no DELETEs"                            test_gc_no_matches_is_noop
 run_test "empty gc-yml → skip GC even when matching comments exist"      test_empty_gc_yml_skips_gc_even_with_matching_comments

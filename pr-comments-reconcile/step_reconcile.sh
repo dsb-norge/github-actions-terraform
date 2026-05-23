@@ -153,9 +153,8 @@ function heads_pass {
 function _upsert_head {
   local marker="${1}" user_body="${2}"
 
-  local full_body new_hash body_file
+  local full_body body_file
   full_body=$(_render_full_body "${marker}" "${user_body}")
-  new_hash=$(_compute_body_hash "${user_body}")
   body_file=$(mktemp)
   printf '%s' "${full_body}" >"${body_file}"
 
@@ -195,18 +194,6 @@ function _upsert_head {
     _gh_delete_comment "${input_repo}" "${cid}" >/dev/null 2>&1 \
       || log-warn "  failed to delete duplicate id=${cid}"
   done <<<"${sorted}"
-
-  # Hash short-circuit.
-  local existing_body existing_hash
-  existing_body=$(echo "${COMMENTS_JSON}" \
-    | jq -r --arg id "${keep_id}" '.[] | select((.id|tostring) == $id) | .body' 2>/dev/null)
-  existing_hash=$(_extract_existing_hash "${existing_body}")
-  if [ -n "${existing_hash}" ] && [ "${existing_hash}" = "${new_hash}" ]; then
-    log-info "  hash unchanged (${new_hash}) — skipping PATCH."
-    _record_result "${marker}" "skipped" "${keep_id}"
-    rm -f "${body_file}"
-    return
-  fi
 
   log-info "  patching keeper (id=${keep_id})"
   if _gh_patch_comment "${input_repo}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then

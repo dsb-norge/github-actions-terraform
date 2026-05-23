@@ -11,9 +11,7 @@ description: |
   Modes:
     - upsert: find by marker; PATCH if exists, POST if not. Self-heals
       duplicates (multiple comments with the same marker → keep oldest by
-      created_at, DELETE the rest). Embeds a content-hash on line 2 of
-      the body so re-runs with identical content skip the PATCH entirely
-      (no subscriber re-ping).
+      created_at, DELETE the rest).
     - delete: DELETE every comment whose body contains the marker.
 
   No event/fork/PR-context guards — those live in the caller workflow.
@@ -62,11 +60,8 @@ inputs:
       Markdown body to post or patch. Required when `mode=upsert`; ignored
       for `delete`.
 
-      The action prepends two lines to whatever you pass:
-        <line 1>  the `marker` value
-        <line 2>  `<!-- comment-hash:<sha256-of-body> -->` (auto-computed)
-        <line 3>  blank
-      Followed by your body verbatim.
+      The action prepends the marker as line 1 and a blank line as line 2,
+      then the body verbatim from line 3 onward.
 
       Pass multi-line bodies via a YAML literal block scalar (`|`).
     required: false
@@ -81,9 +76,7 @@ outputs:
     value: ${{ steps.pr-comment.outputs.comment-id }}
   action:
     description: |
-      One of: `created`, `updated`, `skipped`, `deleted`, `not-found`, `post-failed`.
-        - `skipped` — upsert short-circuited because the existing comment's
-          embedded hash matches the new body.
+      One of: `created`, `updated`, `deleted`, `not-found`, `post-failed`.
         - `not-found` — delete found no matching comment.
         - `post-failed` — upsert tried to POST but the API call errored.
     value: ${{ steps.pr-comment.outputs.action }}
