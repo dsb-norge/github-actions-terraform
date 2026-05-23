@@ -97,6 +97,23 @@ inputs:
       when not provided — matches the convention used by `plan-count-*`.
     required: false
     default: "N/A"
+  plan-tag-comment-id:
+    description: |
+      GitHub comment id of the per-env plan-extract tag for this run, used
+      to render a Links row inside the per-env head's table:
+
+        | 🔗 | Links | [log extract](#issuecomment-<id>)<br>[job log](<url>) |
+
+      When supplied and the env is ungrouped (`pr-comment-group` empty), the
+      Links row is appended to the validation table and the standalone
+      `[Job log]` footer is dropped (the same link lives inside the table).
+      When empty, `head-summary` renders with the legacy footer style.
+
+      Callers post the plan-extract tag first to obtain its comment id, then
+      re-render `head-summary` with the id supplied to get the Links shape.
+      See docs/Workflow-pr-comments.md §6.1 (per-env head, Links row).
+    required: false
+    default: ""
 outputs:
   prefix:
     description: |
@@ -156,6 +173,7 @@ runs:
         input_plan_count_total: ${{ inputs.plan-count-total }}
         input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
         input_plan_time: ${{ inputs.plan-time }}
+        input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
         set -o allexport

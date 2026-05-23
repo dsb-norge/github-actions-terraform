@@ -105,11 +105,30 @@ function render_head_summary {
     # don't touch the indenting here
     head="${head}
 | ⏱ | Plan time | <span title=\"mm:ss (minutes:seconds)\">\`${input_plan_time:-N/A}\`</span> |"
+
+    # Links row — only rendered when the caller supplied
+    # plan-tag-comment-id (typically the id of this run's per-env plan tag,
+    # captured from pr-comment's POST output). Mirrors the per-group head's
+    # Links column (docs/Workflow-pr-comments.md §6.3) so reviewers learn
+    # one navigation pattern.
+    # When the Links row is rendered, the standalone '[Job log]' footer
+    # below the table is dropped — the same link sits inside the cell.
+    if [ -n "${input_plan_tag_comment_id:-}" ]; then
+      # don't touch the indenting here
+      head="${head}
+| 🔗 | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
+    fi
   fi
 
-  head="${head}
+  if [ -z "${input_plan_tag_comment_id:-}" ] || [ -n "${input_pr_comment_group}" ]; then
+    # Legacy / grouped path: keep the standalone '[Job log]' footer outside
+    # the table. Grouped mode still uses it (table is omitted entirely, so
+    # the footer is all that's there); ungrouped without a plan-tag-id
+    # supplied keeps the old shape for backwards compatibility.
+    head="${head}
 
 [Job log](${job_url})"
+  fi
 
   printf '%s' "${head}"
 }
