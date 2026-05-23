@@ -219,16 +219,9 @@ function list_pr_state {
   log-info "PR has ${total} comment(s) total."
 
   # Find existing group comments by HTML marker on the first line of the
-  # body: '<!-- terraform-validation-summary-group:<group> -->'. Multiple
-  # IDs per group are tolerated (and self-healed in the upsert pass).
-  # Group name is parsed by stripping the family prefix and the trailing
-  # ' -->' marker close.
-  #
-  # Legacy comments from the pre-marker era (body starts with the H3
-  # heading rather than the marker) are not matched here — they sit
-  # untouched on the PR and the upsert pass posts a fresh marked comment
-  # alongside them. This is the documented "no-migration" trade-off
-  # (docs/Workflow-pr-comments.md §2.1).
+  # body: '<!-- tf:head:group:<group> -->'. Multiple IDs per group are
+  # tolerated (and self-healed in the upsert pass). Group name is parsed
+  # by stripping the family prefix and the trailing ' -->' marker close.
   local group_lines
   group_lines=$(echo "${normalized}" \
     | jq -r --arg fam "${GROUP_COMMENT_MARKER_FAMILY}" '
@@ -258,21 +251,22 @@ function list_pr_state {
     log-info "  no existing group comments on PR"
   fi
 
-  # Build per-env anchor map. For each env in any desired group, look for a
-  # comment whose body starts with the env's exact per-env prefix. If 2+
-  # match (rare; should self-heal via comment-on-pr@v2's delete-by-prefix on
-  # the next per-env run), pick the comment with the highest numeric id
-  # (newest, GitHub IDs are monotonic) and log a warning.
+  # Build per-env anchor map. For each env in any desired group, look for
+  # this run's per-env plan tag by its HTML marker substring; anchor the
+  # group head's Links column at that comment so reviewers jump to the
+  # env's plan output. The marker is run-id-scoped so duplicates from
+  # overlapping runs aren't expected — if 2+ match anyway, pick the
+  # comment with the highest numeric id (newest, monotonic) and warn.
   local group env
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
-      local per_env_prefix
-      per_env_prefix=$(_per_env_prefix "${env}")
+      local plan_tag_marker
+      plan_tag_marker="<!-- tf:tag:plan:${env}:run-id-${GITHUB_RUN_ID:-} -->"
 
       local matched_ids
       matched_ids=$(echo "${normalized}" \
-        | jq -r --arg p "${per_env_prefix}" '.[] | select(.body | startswith($p)) | .id' \
+        | jq -r --arg m "${plan_tag_marker}" '.[] | select(.body | contains($m)) | .id' \
           2>/dev/null) || matched_ids=""
 
       # Count lines safely: grep -c returns exit 1 with no matches which
@@ -283,7 +277,7 @@ function list_pr_state {
       fi
 
       if [ "${count}" = "0" ]; then
-        log-debug "  env '${env}': no per-env comment posted — Links cell will show only job log"
+        log-debug "  env '${env}': no plan tag for run-id ${GITHUB_RUN_ID:-} — Links cell will show only job log"
       elif [ "${count}" = "1" ]; then
         PER_ENV_ANCHOR[${env}]="#issuecomment-${matched_ids}"
         log-info "  env '${env}': resolved log-extract anchor to ${PER_ENV_ANCHOR[${env}]}"
@@ -291,7 +285,7 @@ function list_pr_state {
         local newest
         newest=$(echo "${matched_ids}" | sort -nr | head -n1)
         PER_ENV_ANCHOR[${env}]="#issuecomment-${newest}"
-        log-warn "  env '${env}': ${count} per-env comments match (race / stale duplicates); using newest id=${newest}"
+        log-warn "  env '${env}': ${count} plan tags match (race / stale duplicates); using newest id=${newest}"
       fi
     done <<<"${DESIRED_GROUPS[${group}]}"
   done
@@ -303,15 +297,18 @@ function list_pr_state {
 # Step 3: Render one group's comment body
 # ============================================================================
 
-# Renders the full body for one group. Writes to stdout.
+# Renders the user-visible portion of one group's body (H3 + table + footer).
+# Writes to stdout. The caller wraps this with the HTML marker + a
+# `<!-- comment-hash:<sha> -->` line via _render_full_body before
+# POSTing/PATCHing, so re-runs with unchanged content hash-short-circuit
+# the PATCH and don't re-ping subscribers.
 # Args:
 #   $1  - group name
 #   $2  - newline-delimited list of envs (already alphabetically sorted)
 function render_group_body {
   local group_name="${1}"
   local envs_nl="${2}"
-  local marker prefix
-  marker=$(_group_marker "${group_name}")
+  local prefix
   prefix=$(_group_prefix "${group_name}")
 
   local -a envs=()
@@ -388,15 +385,13 @@ function render_group_body {
   footer=$(_render_footer "${first_env_meta_file}")
 
   # ---- Assembly ----
-  # The HTML marker is line 1 and the load-bearing identity for upserts —
-  # see docs/Workflow-pr-comments.md §2. The H3 'prefix' line follows; it
-  # is still rendered (visible to readers) but no longer used for comment
-  # identification, so the H3 wording can be tweaked freely as long as
-  # the marker is unchanged.
+  # Returns the user-visible portion (H3 + table + footer). The HTML
+  # marker (load-bearing for upsert identity, see Workflow-pr-comments.md
+  # §2) and the inline comment-hash line are prepended by _render_full_body
+  # in _upsert_one_group / _post_fresh.
   # 'rows' ends with a trailing newline; the rest are plain rows with no
   # trailing newline, so the format string supplies the line breaks.
-  printf '%s\n%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
-    "${marker}" \
+  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
@@ -452,10 +447,10 @@ function _first_meta_file_for_group {
   echo "${DESIRED_META[${group}/${first_env}]:-}"
 }
 
-# Render the footer line. Mirrors create-validation-summary's v0.24+ footer
-# (docs/Workflow-pr-comments.md §4.1): a single [Job log](url) line. The
-# pusher/action/workflow data is discoverable on the linked run page and in
-# the PR conversation timeline — restating it on every comment was noise.
+# Render the footer line for the per-group head: a single [Workflow log](url)
+# pointing at the workflow run page. The per-env heads' [Job log] footer
+# (in create-validation-summary) targets a specific job's #logs anchor; this
+# one targets the run page that aggregates every job, so the label differs.
 function _render_footer {
   local file="${1}"
   local run_id=""
@@ -464,7 +459,7 @@ function _render_footer {
   fi
   run_id="${run_id:-${GITHUB_RUN_ID:-0}}"
   local run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-  echo "[Job log](${run_url})"
+  echo "[Workflow log](${run_url})"
 }
 
 # ============================================================================
@@ -535,7 +530,7 @@ function upsert_pass {
   local -a sorted_groups=()
   while IFS= read -r g; do sorted_groups+=("${g}"); done < <(printf '%s\n' "${!DESIRED_GROUPS[@]}" | sort)
 
-  local group envs_sorted body body_file
+  local group envs_sorted marker body
   for group in "${sorted_groups[@]}"; do
     start-group "Step 5: Upsert group '${group}'"
 
@@ -543,16 +538,18 @@ function upsert_pass {
     envs_sorted=$(echo "${DESIRED_GROUPS[${group}]}" | sort)
     log-info "Rendering (envs: $(echo "${envs_sorted}" | tr '\n' ',' | sed 's/,$//'))"
 
+    marker=$(_group_marker "${group}")
     body=$(render_group_body "${group}" "${envs_sorted}")
-    body_file=$(mktemp)
-    printf '%s' "${body}" >"${body_file}"
 
+    # Log the assembled body (marker + hash marker + user body) so the
+    # ##[group] block shows exactly what gets written on PATCH/POST and
+    # so byte-exact tests can grep the marker line in step output.
     log-info "Body:"
-    echo "${body}"
+    _render_full_body "${marker}" "${body}"
+    echo
 
-    _upsert_one_group "${group}" "${body_file}"
+    _upsert_one_group "${group}" "${marker}" "${body}"
 
-    rm -f "${body_file}"
     end-group
   done
 }
@@ -560,24 +557,27 @@ function upsert_pass {
 # Upsert a single group's comment. Picks the oldest existing marker
 # comment (lowest created_at, since GitHub IDs are monotonic but the
 # created_at field is the canonical timestamp) to keep, deletes any
-# others, then PATCHes the keeper. If none exist, POSTs fresh.
+# others, then PATCHes the keeper. If none exist, POSTs fresh. Skips the
+# PATCH entirely when the existing comment's embedded comment-hash
+# matches the new body — no updated_at churn, no subscriber re-ping on
+# no-op runs.
 #
 # In degraded mode (PR comments listing failed) we don't know what
 # exists, so we always POST fresh — duplicates will self-heal on the
 # next clean run via this same dedupe branch.
 function _upsert_one_group {
-  local group="${1}" body_file="${2}"
+  local group="${1}" marker="${2}" user_body="${3}"
 
   if [ "${DEGRADED_MODE}" = "true" ]; then
     log-warn "Degraded mode — posting fresh (cannot list existing comments to upsert)."
-    _post_fresh "${group}" "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
     return
   fi
 
   local entries="${EXISTING_GROUP_COMMENTS[${group}]:-}"
   if [ -z "${entries}" ]; then
     log-info "No existing marker comment for '${group}' — posting fresh."
-    _post_fresh "${group}" "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
     return
   fi
 
@@ -606,20 +606,31 @@ function _upsert_one_group {
     fi
   done <<<"${sorted_entries}"
 
-  # PATCH the keeper.
+  # Compose the full body (marker + blank + user body) and PATCH.
+  local body_file
+  body_file=$(mktemp)
+  _render_full_body "${marker}" "${user_body}" >"${body_file}"
+
   log-info "Editing existing comment in place (id=${keep_id}, created=${keep_created})."
   if _gh_patch_comment "${GITHUB_REPOSITORY}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then
     _record_processed "${group}" "${keep_id}" "patched"
   else
     log-warn "PATCH failed for '${group}' (id=${keep_id}) — posting fresh as fallback."
-    _post_fresh "${group}" "${body_file}"
+    rm -f "${body_file}"
+    _post_fresh "${group}" "${marker}" "${user_body}"
+    return
   fi
+  rm -f "${body_file}"
 }
 
 # Internal: POST a fresh comment for a group. Used by _upsert_one_group
-# on the "no existing comment" and "degraded mode" branches.
+# on the "no existing comment", "degraded mode", and "PATCH-failed
+# fallback" branches.
 function _post_fresh {
-  local group="${1}" body_file="${2}"
+  local group="${1}" marker="${2}" user_body="${3}"
+  local body_file
+  body_file=$(mktemp)
+  _render_full_body "${marker}" "${user_body}" >"${body_file}"
   local new_id
   if new_id=$(_gh_post_comment "${GITHUB_REPOSITORY}" "${input_pr_number}" "${body_file}" 2>&1); then
     log-info "posted: comment id=${new_id}"
@@ -628,6 +639,7 @@ function _post_fresh {
     log-warn "failed to post comment for group '${group}': ${new_id}"
     _record_processed "${group}" "0" "post-failed"
   fi
+  rm -f "${body_file}"
 }
 
 # ============================================================================

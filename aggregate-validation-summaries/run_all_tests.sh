@@ -194,8 +194,13 @@ with_jobs_for() {
 
 # Run the step. Captures stdout to ${TEST_DIR}/step.log; reads GITHUB_OUTPUT
 # for assertions.
+#
+# Match production: action.yml shim sources step under 'bash -eo pipefail'.
+# Without -eo pipefail the harness silently tolerates bugs (failed
+# subcommand, broken pipeline) that would crash the step in CI.
 run_step() {
   (
+    set -eo pipefail
     set -o allexport
     source "${_this_script_dir}/step_aggregate.sh"
   ) > "${TEST_DIR}/step.log" 2>&1
@@ -269,7 +274,7 @@ test_empty_desired_empty_existing_is_noop() {
 test_sweep_only_orphans() {
   # No desired groups, but PR has an existing marker comment from a prior run
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -316,8 +321,8 @@ test_mixed_orphan_delete_and_patch() {
   write_meta "alpha-dev" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"},
-  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete-group -->\n### Terraform validation summary for group: `obsolete-group`\norphan body"}
+  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"},
+  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:obsolete-group -->\n### Terraform validation summary for group: `obsolete-group`\norphan body"}
 ]
 JSON
   run_step
@@ -359,7 +364,7 @@ test_alphabetical_column_order() {
 test_per_env_anchor_resolved() {
   write_meta "myenv" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 4242, "body": "### Terraform validation summary for environment: `myenv`\nbody"}]
+[{"id": 4242, "body": "<!-- tf:tag:plan:myenv:run-id-999 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -415,7 +420,7 @@ test_both_anchor_and_job_url_resolved_shows_both_with_br() {
   write_meta "envX" "g"
   with_jobs_for "envX"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 7777, "body": "### Terraform validation summary for environment: `envX`\n"}]
+[{"id": 7777, "body": "<!-- tf:tag:plan:envX:run-id-999 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -514,18 +519,24 @@ JSON
   return 0
 }
 
-test_grouped_footer_is_condensed_v024() {
-  # v0.24+: footer is a single [Job log](url) line. Pusher/action/workflow
-  # data was dropped — already visible in the PR conversation header and on
-  # the linked run page.
+test_grouped_footer_is_workflow_log() {
+  # Per-group head footer is a single [Workflow log](url) line pointing at
+  # the workflow run page. (Per-env head's [Job log] footer targets a job-
+  # specific URL — different shape, different file.)
   write_meta "envA" "g"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   # Body content was emitted to the step log (see post_pass).
   # Must contain the new footer and NOT contain any of the legacy fields.
-  if ! grep -q '\[Job log\](https://github.com/dsb-norge/test-repo/actions/runs/999)' "${TEST_DIR}/step.log"; then
-    echo "expected '[Job log](url)' footer with run URL"
-    grep '\[Job log\]' "${TEST_DIR}/step.log" || true
+  if ! grep -q '\[Workflow log\](https://github.com/dsb-norge/test-repo/actions/runs/999)' "${TEST_DIR}/step.log"; then
+    echo "expected '[Workflow log](url)' footer with run URL"
+    grep '\[Workflow log\]' "${TEST_DIR}/step.log" || true
+    return 1
+  fi
+  # Guard: the per-group head must not regress to '[Job log]' (that label is
+  # reserved for per-env heads where the URL is the job page, not the run).
+  if grep -q '\[Job log\]' "${TEST_DIR}/step.log"; then
+    echo "per-group head footer must not say '[Job log]'"
     return 1
   fi
   for stale in 'Pusher: @' 'Action: `pull_request`' 'Workflow: `'; do
@@ -568,9 +579,9 @@ test_per_env_anchor_picks_newest_when_duplicates() {
   write_meta "dup" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 100, "body": "### Terraform validation summary for environment: `dup`\nold"},
-  {"id": 999, "body": "### Terraform validation summary for environment: `dup`\nnewer"},
-  {"id": 500, "body": "### Terraform validation summary for environment: `dup`\nmid"}
+  {"id": 100, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nold"},
+  {"id": 999, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nnewer"},
+  {"id": 500, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nmid"}
 ]
 JSON
   run_step
@@ -650,8 +661,8 @@ test_group_marker_then_prefix_byte_exact() {
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   # Body line 1 must be the HTML marker (load-bearing for upsert identity).
   # Body line 2 must be the byte-exact group H3 (still visible to readers).
-  if ! grep -q '^<!-- terraform-validation-summary-group:dev -->$' "${TEST_DIR}/step.log"; then
-    echo "expected byte-exact marker line '<!-- terraform-validation-summary-group:dev -->'"
+  if ! grep -q '^<!-- tf:head:group:dev -->$' "${TEST_DIR}/step.log"; then
+    echo "expected byte-exact marker line '<!-- tf:head:group:dev -->'"
     return 1
   fi
   if ! grep -q '^### Terraform validation summary for group: `dev`$' "${TEST_DIR}/step.log"; then
@@ -745,7 +756,7 @@ test_groups_processed_json_output() {
   # 'obsolete' has an existing marker but is not desired → orphan-deleted.
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 8001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:obsolete -->\n### Terraform validation summary for group: `obsolete`\n"}]
+[{"id": 8001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:obsolete -->\n### Terraform validation summary for group: `obsolete`\n"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -897,7 +908,7 @@ test_plan_time_row_position() {
 test_existing_marker_is_patched() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 6001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+[{"id": 6001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -929,9 +940,9 @@ test_duplicate_markers_delete_extras_patch_oldest() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 6100, "created_at": "2026-02-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nmid-age dup"},
-  {"id": 6200, "created_at": "2026-03-01T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nnewest dup"},
-  {"id": 6050, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\noldest — should be kept"}
+  {"id": 6100, "created_at": "2026-02-01T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nmid-age dup"},
+  {"id": 6200, "created_at": "2026-03-01T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nnewest dup"},
+  {"id": 6050, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\noldest — should be kept"}
 ]
 JSON
   run_step
@@ -983,25 +994,30 @@ JSON
   return 0
 }
 
-# Marker comment body line 1 must be the per-group marker; line 2 the H3.
-# Pinning byte-level shape so accidental drift in render_group_body breaks
-# this test (and only this test).
+# Marker comment body line 1 must be the per-group marker; line 2 blank;
+# line 3 the visible H3. Pinning byte-level shape so accidental drift in
+# render_group_body or _render_full_body breaks this test (and only this
+# test).
 test_body_starts_with_marker_then_h3() {
   write_meta "envA" "dev"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
-  # The rendered body is echoed into the step log right after a
-  # 'aggregate-validation-summaries: Body:' line; capture the next two
-  # non-blank lines (marker + H3).
-  local body_lines
-  body_lines=$(awk '/Body:$/ {flag=1; next} flag && NF {print; if (++n == 2) exit}' "${TEST_DIR}/step.log")
-  local expected
-  expected=$'<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`'
-  if [[ "${body_lines}" != "${expected}" ]]; then
-    echo "expected marker + H3 as first two body lines (byte-exact)"
-    echo "expected: ${expected//$'\n'/ \\n }"
-    echo "got:      ${body_lines//$'\n'/ \\n }"
-    return 1
+  # The assembled body is echoed into the step log right after a
+  # 'aggregate-validation-summaries: Body:' line; capture the first three
+  # lines after that — marker, blank, H3.
+  local seen_marker seen_h3
+  seen_marker=$(awk '/Body:$/ {flag=1; next} flag {print; exit}' "${TEST_DIR}/step.log")
+  # H3 is the next non-blank line.
+  seen_h3=$(awk '/Body:$/ {flag=1; n=0; next} flag {n++; if (n>=2 && NF) {print; exit}}' "${TEST_DIR}/step.log")
+
+  local marker_line='<!-- tf:head:group:dev -->'
+  local h3_line='### Terraform validation summary for group: `dev`'
+
+  if [[ "${seen_marker}" != "${marker_line}" ]]; then
+    echo "expected line 1 = '${marker_line}', got '${seen_marker}'"; return 1
+  fi
+  if [[ "${seen_h3}" != "${h3_line}" ]]; then
+    echo "expected first non-blank line after marker = '${h3_line}', got '${seen_h3}'"; return 1
   fi
   return 0
 }
@@ -1014,8 +1030,8 @@ test_multiple_groups_each_patched() {
   write_meta "envB" "prod"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 6400, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold dev"},
-  {"id": 6500, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- terraform-validation-summary-group:prod -->\n### Terraform validation summary for group: `prod`\nold prod"}
+  {"id": 6400, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold dev"},
+  {"id": 6500, "created_at": "2026-01-15T10:00:00Z", "body": "<!-- tf:head:group:prod -->\n### Terraform validation summary for group: `prod`\nold prod"}
 ]
 JSON
   run_step
@@ -1039,7 +1055,7 @@ JSON
 test_patch_failure_falls_back_to_post() {
   write_meta "envA" "dev"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 6600, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- terraform-validation-summary-group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
+[{"id": 6600, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:dev -->\n### Terraform validation summary for group: `dev`\nold body"}]
 JSON
   export GH_FAKE_PATCH_EXIT=22
   run_step
@@ -1087,7 +1103,7 @@ run_test "job URL resolution handles 'caller / Terraform (env)' prefix"   test_j
 run_test "job URL resolution handles bare 'Terraform (env)' too"          test_job_url_resolution_handles_bare_name
 run_test "job URL resolution skips non-matrix jobs"                       test_job_url_resolution_skips_non_matrix_jobs
 run_test "upsert pass does NOT nest log groups"                            test_upsert_pass_does_not_nest_log_groups
-run_test "grouped comment footer is condensed v0.24 [Job log] only"       test_grouped_footer_is_condensed_v024
+run_test "grouped head footer is [Workflow log] (workflow run URL)"       test_grouped_footer_is_workflow_log
 run_test "per-env anchor picks newest comment id when duplicates exist"    test_per_env_anchor_picks_newest_when_duplicates
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
@@ -1108,7 +1124,7 @@ run_test "post failure does not abort, recorded in output"                 test_
 run_test "existing marker comment → PATCHed in place (stable id)"          test_existing_marker_is_patched
 run_test "duplicate markers → delete extras, PATCH oldest"                 test_duplicate_markers_delete_extras_patch_oldest
 run_test "legacy prefix-only comment → ignored (no-migration policy)"      test_legacy_prefix_only_comment_is_ignored
-run_test "body starts with marker on line 1, H3 on line 2"                 test_body_starts_with_marker_then_h3
+run_test "body starts with marker on line 1, H3 next non-blank"            test_body_starts_with_marker_then_h3
 run_test "multiple groups: each marker patched independently"              test_multiple_groups_each_patched
 run_test "PATCH failure → fall back to POST"                               test_patch_failure_falls_back_to_post
 
