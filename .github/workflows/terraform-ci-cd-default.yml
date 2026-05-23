@@ -398,7 +398,10 @@ jobs:
             | .[]
           ')
 
-          # Per-env heads (one per env with add-pr-comment=true).
+          # Per-env heads (one per UNGROUPED env with add-pr-comment=true).
+          # Grouped envs are represented in their per-group head's table — no
+          # standalone per-env head is seeded for them. See
+          # docs/Workflow-pr-comments.md §6.1 grouped mode.
           while IFS= read -r e; do
             [ -z "${e}" ] && continue
             body=$(printf '%s\n\n%s' \
@@ -411,7 +414,10 @@ jobs:
               '$cur + [{marker: $marker, body: $body}]')
           done < <(echo "${MATRIX_JSON}" | jq -r '
             .include
-            | map(select(.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true))
+            | map(select(
+                (.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true)
+                and ((.vars["pr-comment-group"] // "") == "")
+              ))
             | .[].vars["github-environment"]
           ')
 
@@ -636,13 +642,21 @@ jobs:
 
       - name: 🏷️ Upsert per-env head comment
         id: upsert-head
+        # Only ungrouped envs get a per-env head; grouped envs are
+        # represented in their per-group head and skip this step (every env
+        # still gets its plan-extract tag below). See
+        # docs/Workflow-pr-comments.md §6.1 grouped mode.
+        #
         # always() so that, paired with the always() on create-validation-summary
         # above, the per-env head refreshes even when an earlier infrastructure
         # step fails. Without it the head would stay frozen at the previous run's
         # state. Marker-based upsert (PATCH-in-place) preserves created_at so
         # the head keeps its position at the top of the PR conversation across
-        # runs. See docs/Workflow-pr-comments.md.
-        if: always() && steps.create-validation-summary.outcome == 'success'
+        # runs.
+        if: |
+          always()
+          && steps.create-validation-summary.outcome == 'success'
+          && matrix.vars.pr-comment-group == ''
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/pr-comment@pr-comments-overhaul
         with:
