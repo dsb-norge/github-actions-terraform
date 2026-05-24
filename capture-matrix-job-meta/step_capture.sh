@@ -156,8 +156,28 @@ function main {
   log-info "Captured ${step_count} steps from workflow"
   end-group
 
-  # Build the final JSON structure
+  # Build the final JSON structure.
+  #
+  # Route the three JSON blobs through tempfiles (via --slurpfile) instead
+  # of inlining them with --argjson. --argjson puts the value as a single
+  # argv element on the jq exec — and steps_json carries the
+  # create-validation-summary outputs (head-summary + plan-extract +
+  # legacy summary), comfortably exceeding Linux's per-string execve
+  # limit (MAX_ARG_STRLEN = 128k on Ubuntu). With --argjson, jq fails to
+  # start with exit 126 / "Argument list too long" on the env with the
+  # biggest plan. --slurpfile reads from disk, so argv stays small.
+  #
+  # --slurpfile wraps the parsed value in a single-element array; the
+  # builder dereferences with [0] to get the original object back.
   start-group "Building result file"
+
+  local matrix_context_file github_context_file steps_json_file
+  matrix_context_file=$(mktemp)
+  github_context_file=$(mktemp)
+  steps_json_file=$(mktemp)
+  printf '%s' "${matrix_context}" >"${matrix_context_file}"
+  printf '%s' "${github_context}" >"${github_context_file}"
+  printf '%s' "${steps_json}" >"${steps_json_file}"
 
   jq -n \
     --arg environment "${environment_name}" \
@@ -171,9 +191,9 @@ function main {
     --arg github_event_name "${GITHUB_EVENT_NAME:-}" \
     --arg github_ref "${GITHUB_REF:-}" \
     --arg github_sha "${GITHUB_SHA:-}" \
-    --argjson matrix_context "${matrix_context}" \
-    --argjson github_context "${github_context}" \
-    --argjson steps "${steps_json}" \
+    --slurpfile matrix_context "${matrix_context_file}" \
+    --slurpfile github_context "${github_context_file}" \
+    --slurpfile steps "${steps_json_file}" \
     '{
       "metadata": {
         "environment": $environment,
@@ -191,10 +211,12 @@ function main {
         "ref": $github_ref,
         "sha": $github_sha
       },
-      "matrix_context": $matrix_context,
-      "github_context": $github_context,
-      "steps": $steps
+      "matrix_context": $matrix_context[0],
+      "github_context": $github_context[0],
+      "steps": $steps[0]
     }' > "${result_file}"
+
+  rm -f "${matrix_context_file}" "${github_context_file}" "${steps_json_file}"
 
   log-info "Result file written to: ${result_file}"
   end-group

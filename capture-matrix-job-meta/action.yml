@@ -54,7 +54,21 @@ runs:
       env:
         input_environment_name: ${{ inputs.environment-name }}
       run: |
-        # JSON inputs require special handling (heredocs)
+        # JSON inputs are captured into shell-local variables (heredocs)
+        # and intentionally NOT exported. step_capture.sh is sourced from
+        # this same shell so it reads them as locals — they stay out of
+        # envp.
+        #
+        # Why this matters: the steps context for an env with a non-trivial
+        # plan carries the full create-validation-summary `plan-extract`
+        # output (capped at ~65k chars). Exporting that pushed every
+        # subsequent fork's envp past ARG_MAX — helpers.sh's first fork
+        # (basename/dirname on line 4) died with E2BIG, the capture
+        # sub-step silently failed, the upload-artifact sub-step skipped
+        # on its `if:` guard, and that env's matrix-job-meta-*.json was
+        # missing from the aggregator's input — its column dropped from
+        # the per-group summary table. Observed in production on the env
+        # with the largest plan output of the matrix.
         input_matrix_context_json=$(cat <<'EOF'
         ${{ inputs.matrix-context-json }}
         EOF
@@ -67,10 +81,6 @@ runs:
         ${{ inputs.steps-context-json }}
         EOF
         )
-
-        export input_matrix_context_json
-        export input_github_context_json
-        export input_steps_context_json
 
         source "${GITHUB_ACTION_PATH}/step_capture.sh"
         exit_code=$?
