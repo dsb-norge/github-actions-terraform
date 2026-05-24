@@ -6,22 +6,14 @@
 # by helpers.sh.
 #
 
-# Family marker shared by every per-group comment this action manages.
+# Family marker shared by every per-group head comment this action manages.
 # Lives on the first line of the body as an HTML comment so it's invisible
 # to readers. The per-group marker (built via _group_marker) extends this
 # with the group name and a trailing ' -->', allowing a single PR to host
 # multiple group comments and have each one upserted independently.
 # Renders to nothing in the GitHub Markdown view.
-# See docs/Workflow-pr-comments.md §2.
-declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- terraform-validation-summary-group:'
-
-# Per-env comment prefix template (uses backtick-delimited env name so
-# partial matches can't collide).
-# See docs/Workflow-pr-comments.md §2.
-function _per_env_prefix {
-  local env_name="${1}"
-  echo "### Terraform validation summary for environment: \`${env_name}\`"
-}
+# See docs/Workflow-pr-comments.md for the heads + tags model.
+declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- tf:head:group:'
 
 # Specific group comment H3 heading (rendered immediately after the marker
 # at the top of the body). Kept for visible identification — users still
@@ -210,4 +202,22 @@ function _gh_post_comment {
 function _gh_patch_comment {
   local repo="${1}" comment_id="${2}" body_file="${3}"
   gh api -X PATCH "repos/${repo}/issues/comments/${comment_id}" -F "body=@${body_file}" --jq '.id'
+}
+
+# ============================================================================
+# Body assembly helper
+# ============================================================================
+#
+# Mirror of pr-comment / pr-comments-reconcile — kept duplicated per the
+# action-implementation-guide.md self-containment convention. When
+# touching one, audit the others (pr-comment/helpers_additional.sh,
+# pr-comments-reconcile/helpers_additional.sh).
+
+# Assemble the full rendered body: <marker>\n\n<user-body>. The HTML
+# marker is line 1 (load-bearing for upsert identity); a blank separator
+# line follows; then the visible body.
+function _render_full_body {
+  local marker="${1}"
+  local user_body="${2}"
+  printf '%s\n\n%s' "${marker}" "${user_body}"
 }
