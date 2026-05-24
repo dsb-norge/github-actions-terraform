@@ -9,7 +9,7 @@ Default DSB CI/CD workflow for terraform projects that performs various operatio
 5. Run `terraform validate`
 6. Perform linitng with TFLint
 7. If `terraform init` was successful, run `terraform plan`
-8. If called from `pull_request` event, add validation summary as comment on the PR (see [Workflow-pr-comments.md](./Workflow-pr-comments.md) for the full PR comment spec, including the optional `pr-comment-group` field that collapses several envs into one combined-table comment)
+8. If called from `pull_request` event, reconcile PR comments (per-env validation summaries and a per-env plan extract, plus optional per-group rolled-up tables). Heads are pre-allocated at the top of the run in deterministic order and PATCHed in place across runs; plan tags are GC'd between runs. See [Workflow-pr-comments.md](./Workflow-pr-comments.md) for the full spec, including the heads + tags model and the optional `pr-comment-group` field that collapses several envs into one combined-table head
 9. If any of the steps `init`, `format`, `validate`, `lint` or  `plan` failed, stop the  workflow with a failure
 10. If called from either of events `push` or `workflow_dispatch` on the default branch of the calling repo and `plan` step was successful, run `terraform apply`. I.e. the default is to perform terraform apply when merging PRs.
 
