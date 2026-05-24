@@ -176,5 +176,14 @@ runs:
         input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
-        set -o allexport
+        # No `set -o allexport` on purpose. step_create_validation_summary.sh
+        # captures up to ~65k chars of plan output into `plan_out` (and an
+        # equally large `legacy_summary` that re-concatenates head + plan).
+        # Under allexport those would auto-export, and a single env var at
+        # that size sits just under Linux's per-string execve limit
+        # (MAX_ARG_STRLEN = 128k on Ubuntu) — zero headroom for the next
+        # subprocess fork. Keeping the script's vars shell-local removes
+        # the only realistic ARG_MAX exposure here; inputs still arrive
+        # via the env: block above, outputs still flow through
+        # $GITHUB_OUTPUT, so nothing in this action actually needs envp.
         source "${{ github.action_path }}/step_create_validation_summary.sh"

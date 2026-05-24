@@ -152,10 +152,11 @@ function render_head_summary {
 function render_plan_extract {
   local plan="### Terraform plan for environment: \`${input_environment_name}\`"
 
-  # Cap at 65k characters to fit within GitHub's comment limit. Read from
-  # file via tail/sed to avoid loading the entire file into a shell variable
-  # (under `set -o allexport`, large variables export to env and can hit
-  # ARG_MAX when forking external commands).
+  # Cap at 65k characters to fit within GitHub's 65536-byte comment limit
+  # — and, as a side benefit, to keep the value a comfortable distance
+  # under Linux's per-string execve limit (MAX_ARG_STRLEN, 128k on Ubuntu)
+  # in case this variable ever ends up in envp. tail/sed read directly
+  # from disk so the full file is never materialised in shell memory.
   local plan_out=""
   if [ -f "${input_plan_txt_output_file}" ]; then
     plan_out=$(tail -c 65000 "${input_plan_txt_output_file}")
