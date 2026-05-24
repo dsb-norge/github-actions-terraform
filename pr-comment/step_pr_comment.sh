@@ -38,8 +38,15 @@ OUTPUT_ACTION=""
 # safely identify existing comments.
 DEGRADED_MODE="false"
 
-# JSON array of all comments on the thread, flattened across pagination pages.
-COMMENTS_JSON='[]'
+# Path to a temp file holding the normalized PR-comments JSON (flat array
+# across pagination pages). We route the comments list through a file
+# instead of a shell variable because under 'set -o allexport' (the shim's
+# default), every variable is exported to the env of subsequent subprocess
+# forks — and a PR with a few plan-tag comments (each up to 65k chars)
+# can easily push envp past ARG_MAX, causing the next `jq` fork to
+# exit 126 with "Argument list too long". Same trap as create-validation-
+# summary's plan-extract block (which already uses tail -c into a file).
+COMMENTS_FILE=""
 
 # Newline-delimited "created_at|id" entries matching the marker substring.
 MATCHING_ENTRIES=""
@@ -86,37 +93,44 @@ function validate_inputs {
 function list_and_find_candidates {
   start-group "List PR comments and find marker matches"
 
-  local raw
-  if ! raw=$(_gh_list_pr_comments "${input_repo}" "${input_issue_number}" 2>&1); then
-    log-warn "Failed to list comments: ${raw}"
+  # Route through tempfiles, never shell variables — see COMMENTS_FILE
+  # comment above for the ARG_MAX rationale.
+  local raw_file
+  raw_file=$(mktemp)
+  if ! _gh_list_pr_comments "${input_repo}" "${input_issue_number}" >"${raw_file}" 2>&1; then
+    log-warn "Failed to list comments: $(cat "${raw_file}")"
     log-warn "Entering degraded mode."
     DEGRADED_MODE="true"
+    rm -f "${raw_file}"
     end-group
     return 0
   fi
 
   # --paginate yields multiple separate JSON arrays when there are multiple
   # pages. jq -s 'add // []' flattens them into a single array.
-  if ! COMMENTS_JSON=$(echo "${raw}" | jq -s 'add // []' 2>/dev/null); then
+  COMMENTS_FILE=$(mktemp)
+  if ! jq -s 'add // []' <"${raw_file}" >"${COMMENTS_FILE}" 2>/dev/null; then
     log-warn "Failed to normalize comments JSON — entering degraded mode."
     DEGRADED_MODE="true"
+    rm -f "${raw_file}" "${COMMENTS_FILE}"
+    COMMENTS_FILE=""
     end-group
     return 0
   fi
+  rm -f "${raw_file}"
 
   local total
-  total=$(echo "${COMMENTS_JSON}" | jq 'length')
+  total=$(jq 'length' <"${COMMENTS_FILE}")
   log-info "Thread has ${total} comment(s) total."
 
   # Match by marker substring (anywhere in body). Tag as "<created_at>|<id>"
   # so a subsequent lexicographic sort gives oldest-first (created_at is
   # ISO-8601 and lex-sortable).
-  MATCHING_ENTRIES=$(echo "${COMMENTS_JSON}" \
-    | jq -r --arg m "${input_marker}" '
-        .[]
-        | select(.body | contains($m))
-        | "\(.created_at)|\(.id)"
-      ' 2>/dev/null) || MATCHING_ENTRIES=""
+  MATCHING_ENTRIES=$(jq -r --arg m "${input_marker}" '
+      .[]
+      | select(.body | contains($m))
+      | "\(.created_at)|\(.id)"
+    ' <"${COMMENTS_FILE}" 2>/dev/null) || MATCHING_ENTRIES=""
 
   local count=0
   if [ -n "${MATCHING_ENTRIES}" ]; then
@@ -269,6 +283,9 @@ function main {
   set-output "comment-id" "${OUTPUT_COMMENT_ID}"
   set-output "action" "${OUTPUT_ACTION}"
   log-info "Done. action=${OUTPUT_ACTION} comment-id=${OUTPUT_COMMENT_ID}"
+
+  # Clean up the temp file holding the normalized PR-comments JSON.
+  [ -n "${COMMENTS_FILE:-}" ] && rm -f "${COMMENTS_FILE}"
   return 0
 }
 

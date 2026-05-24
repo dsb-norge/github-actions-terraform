@@ -25,8 +25,13 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # State
 # ============================================================================
 
-# JSON array of all comments on the thread, flattened across pagination.
-COMMENTS_JSON='[]'
+# Path to a temp file holding the normalized PR-comments JSON (flat array
+# across pagination pages). Routed via file (not a shell variable) because
+# under 'set -o allexport' (the shim's default), every variable is exported
+# to the env of subsequent subprocess forks — and a PR with a few plan-tag
+# comments (each up to 65k chars) can push envp past ARG_MAX, causing the
+# next `jq` fork to exit 126 with "Argument list too long".
+COMMENTS_FILE=""
 
 # JSON arrays parsed from input_heads_yml / input_gc_yml.
 HEADS_JSON='[]'
@@ -96,24 +101,32 @@ function parse_yaml_inputs {
 function list_existing_comments {
   start-group "List PR comments"
 
-  local raw
-  if ! raw=$(_gh_list_pr_comments "${input_repo}" "${input_issue_number}" 2>&1); then
-    log-warn "Failed to list comments: ${raw}"
+  # Route through tempfiles, never shell variables — see COMMENTS_FILE
+  # comment above for the ARG_MAX rationale.
+  local raw_file
+  raw_file=$(mktemp)
+  if ! _gh_list_pr_comments "${input_repo}" "${input_issue_number}" >"${raw_file}" 2>&1; then
+    log-warn "Failed to list comments: $(cat "${raw_file}")"
     log-warn "Entering degraded mode — heads will be POSTed best-effort; GC skipped."
     DEGRADED_MODE="true"
+    rm -f "${raw_file}"
     end-group
     return 0
   fi
 
-  if ! COMMENTS_JSON=$(echo "${raw}" | jq -s 'add // []' 2>/dev/null); then
+  COMMENTS_FILE=$(mktemp)
+  if ! jq -s 'add // []' <"${raw_file}" >"${COMMENTS_FILE}" 2>/dev/null; then
     log-warn "Failed to normalize comments JSON — entering degraded mode"
     DEGRADED_MODE="true"
+    rm -f "${raw_file}" "${COMMENTS_FILE}"
+    COMMENTS_FILE=""
     end-group
     return 0
   fi
+  rm -f "${raw_file}"
 
   local total
-  total=$(echo "${COMMENTS_JSON}" | jq 'length')
+  total=$(jq 'length' <"${COMMENTS_FILE}")
   log-info "Thread has ${total} comment(s) total."
 
   end-group
@@ -149,7 +162,8 @@ function heads_pass {
 
 # Upsert a single head. Mirrors the single-comment primitive in pr-comment,
 # kept as an internal function here so reconcile can operate on the
-# already-fetched COMMENTS_JSON (one list call for the whole pass).
+# already-fetched comments list (one list call for the whole pass) — via
+# the COMMENTS_FILE temp file.
 function _upsert_head {
   local marker="${1}" user_body="${2}"
 
@@ -167,9 +181,8 @@ function _upsert_head {
 
   # Find matches by marker substring.
   local entries
-  entries=$(echo "${COMMENTS_JSON}" \
-    | jq -r --arg m "${marker}" '.[] | select(.body | contains($m)) | "\(.created_at)|\(.id)"' \
-      2>/dev/null) || entries=""
+  entries=$(jq -r --arg m "${marker}" '.[] | select(.body | contains($m)) | "\(.created_at)|\(.id)"' \
+      <"${COMMENTS_FILE}" 2>/dev/null) || entries=""
 
   if [ -z "${entries}" ]; then
     log-info "  no existing match — POST fresh."
@@ -264,13 +277,12 @@ function _gc_one_rule {
   local victims
   if [ -z "${keep}" ]; then
     # No keep substring: prune EVERY comment matching the prefix.
-    victims=$(echo "${COMMENTS_JSON}" \
-      | jq -r --arg p "${prefix}" '.[] | select(.body | contains($p)) | .id' 2>/dev/null) || victims=""
+    victims=$(jq -r --arg p "${prefix}" '.[] | select(.body | contains($p)) | .id' \
+      <"${COMMENTS_FILE}" 2>/dev/null) || victims=""
   else
-    victims=$(echo "${COMMENTS_JSON}" \
-      | jq -r --arg p "${prefix}" --arg k "${keep}" \
-          '.[] | select((.body | contains($p)) and (.body | contains($k) | not)) | .id' \
-          2>/dev/null) || victims=""
+    victims=$(jq -r --arg p "${prefix}" --arg k "${keep}" \
+        '.[] | select((.body | contains($p)) and (.body | contains($k) | not)) | .id' \
+        <"${COMMENTS_FILE}" 2>/dev/null) || victims=""
   fi
 
   if [ -z "${victims}" ]; then
@@ -312,6 +324,9 @@ function main {
 
   set-multiline-output "reconcile-json" "${RECONCILE_RESULTS}"
   log-info "Done."
+
+  # Clean up the temp file holding the normalized PR-comments JSON.
+  [ -n "${COMMENTS_FILE:-}" ] && rm -f "${COMMENTS_FILE}"
   return 0
 }
 

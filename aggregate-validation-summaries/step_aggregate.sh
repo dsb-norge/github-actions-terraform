@@ -145,23 +145,32 @@ function _resolve_per_env_job_urls {
     return 0
   fi
 
-  local jobs_raw
-  if ! jobs_raw=$(_gh_list_run_jobs "${GITHUB_REPOSITORY}" "${run_id}" 2>&1); then
-    log-warn "Failed to list run jobs (id=${run_id}): ${jobs_raw}"
+  # Route through tempfiles, never shell variables — under 'set -o
+  # allexport' a large captured response gets exported to subprocess env
+  # and pushes envp past ARG_MAX on the next `jq` fork (exit 126,
+  # "Argument list too long").
+  local jobs_raw_file
+  jobs_raw_file=$(mktemp)
+  if ! _gh_list_run_jobs "${GITHUB_REPOSITORY}" "${run_id}" >"${jobs_raw_file}" 2>&1; then
+    log-warn "Failed to list run jobs (id=${run_id}): $(cat "${jobs_raw_file}")"
     log-warn "Links row will omit the 'job log' line for all envs."
+    rm -f "${jobs_raw_file}"
     return 0
   fi
 
   # _gh_list_run_jobs uses --paginate with --jq '.jobs', so multi-page
   # output is one JSON array per page. jq -s flattens these.
-  local all_jobs
-  if ! all_jobs=$(echo "${jobs_raw}" | jq -s 'add // []' 2>/dev/null); then
+  local all_jobs_file
+  all_jobs_file=$(mktemp)
+  if ! jq -s 'add // []' <"${jobs_raw_file}" >"${all_jobs_file}" 2>/dev/null; then
     log-warn "Failed to parse jobs JSON; Links row will omit 'job log' for all envs."
+    rm -f "${jobs_raw_file}" "${all_jobs_file}"
     return 0
   fi
+  rm -f "${jobs_raw_file}"
 
   local total
-  total=$(echo "${all_jobs}" | jq 'length')
+  total=$(jq 'length' <"${all_jobs_file}")
   log-info "Resolving per-env job URLs from ${total} job record(s) in run ${run_id}..."
 
   local line name html_url env
@@ -177,7 +186,8 @@ function _resolve_per_env_job_urls {
       PER_ENV_JOB_URL[${env}]="${html_url}#logs"
       log-debug "  env '${env}' → ${PER_ENV_JOB_URL[${env}]}"
     fi
-  done < <(echo "${all_jobs}" | jq -r '.[] | "\(.name)\t\(.html_url)"' 2>/dev/null)
+  done < <(jq -r '.[] | "\(.name)\t\(.html_url)"' <"${all_jobs_file}" 2>/dev/null)
+  rm -f "${all_jobs_file}"
 
   log-info "Resolved ${#PER_ENV_JOB_URL[@]} per-env job URL(s)."
 }
@@ -194,28 +204,39 @@ function list_pr_state {
   # Links row's `job log` line).
   _resolve_per_env_job_urls
 
-  local comments_json
-  if ! comments_json=$(_gh_list_pr_comments "${GITHUB_REPOSITORY}" "${input_pr_number}" 2>&1); then
-    log-warn "Failed to list PR comments: ${comments_json}"
+  # Route through tempfiles, never shell variables — under 'set -o
+  # allexport' a large captured response gets exported to subprocess env
+  # and pushes envp past ARG_MAX on the next `jq` fork (exit 126,
+  # "Argument list too long"). Real symptom on production PR with
+  # multiple plan-tag comments approaching the 65k-per-body cap.
+  local comments_raw_file
+  comments_raw_file=$(mktemp)
+  if ! _gh_list_pr_comments "${GITHUB_REPOSITORY}" "${input_pr_number}" >"${comments_raw_file}" 2>&1; then
+    log-warn "Failed to list PR comments: $(cat "${comments_raw_file}")"
     log-warn "Entering degraded mode — upsert will post fresh bodies instead of editing in place."
     DEGRADED_MODE="true"
+    rm -f "${comments_raw_file}"
     end-group
     return 0
   fi
 
   # When --paginate returns multiple pages concatenated, the result may be
   # multiple separate JSON arrays. Combine via jq -s 'add' to get a single
-  # flat array regardless.
-  local normalized
-  if ! normalized=$(echo "${comments_json}" | jq -s 'add // []' 2>/dev/null); then
+  # flat array regardless. Result kept on disk; only the path travels as
+  # a shell variable.
+  local normalized_file
+  normalized_file=$(mktemp)
+  if ! jq -s 'add // []' <"${comments_raw_file}" >"${normalized_file}" 2>/dev/null; then
     log-warn "Failed to normalize PR comments JSON — entering degraded mode"
     DEGRADED_MODE="true"
+    rm -f "${comments_raw_file}" "${normalized_file}"
     end-group
     return 0
   fi
+  rm -f "${comments_raw_file}"
 
   local total
-  total=$(echo "${normalized}" | jq 'length')
+  total=$(jq 'length' <"${normalized_file}")
   log-info "PR has ${total} comment(s) total."
 
   # Find existing group comments by HTML marker on the first line of the
@@ -223,15 +244,14 @@ function list_pr_state {
   # tolerated (and self-healed in the upsert pass). Group name is parsed
   # by stripping the family prefix and the trailing ' -->' marker close.
   local group_lines
-  group_lines=$(echo "${normalized}" \
-    | jq -r --arg fam "${GROUP_COMMENT_MARKER_FAMILY}" '
-        .[]
-        | select(.body | startswith($fam))
-        | .id as $id
-        | .created_at as $created
-        | (.body | split("\n")[0] | sub($fam; "") | sub(" -->.*$"; "")) as $g
-        | "\($id)\t\($created)\t\($g)"
-      ' 2>/dev/null) || group_lines=""
+  group_lines=$(jq -r --arg fam "${GROUP_COMMENT_MARKER_FAMILY}" '
+      .[]
+      | select(.body | startswith($fam))
+      | .id as $id
+      | .created_at as $created
+      | (.body | split("\n")[0] | sub($fam; "") | sub(" -->.*$"; "")) as $g
+      | "\($id)\t\($created)\t\($g)"
+    ' <"${normalized_file}" 2>/dev/null) || group_lines=""
 
   if [ -n "${group_lines}" ]; then
     local line cid created gname
@@ -265,9 +285,8 @@ function list_pr_state {
       plan_tag_marker="<!-- tf:tag:plan:${env}:run-id-${GITHUB_RUN_ID:-} -->"
 
       local matched_ids
-      matched_ids=$(echo "${normalized}" \
-        | jq -r --arg m "${plan_tag_marker}" '.[] | select(.body | contains($m)) | .id' \
-          2>/dev/null) || matched_ids=""
+      matched_ids=$(jq -r --arg m "${plan_tag_marker}" '.[] | select(.body | contains($m)) | .id' \
+          <"${normalized_file}" 2>/dev/null) || matched_ids=""
 
       # Count lines safely: grep -c returns exit 1 with no matches which
       # would otherwise trigger a fallback that appends a stray "0".
@@ -290,6 +309,7 @@ function list_pr_state {
     done <<<"${DESIRED_GROUPS[${group}]}"
   done
 
+  rm -f "${normalized_file}"
   end-group
 }
 
