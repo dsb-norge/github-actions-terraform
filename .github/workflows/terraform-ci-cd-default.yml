@@ -478,6 +478,34 @@ jobs:
       - name: "⬇ Checkout"
         uses: actions/checkout@v6
 
+      # First post-checkout step so prior runs' plan-extract comments are
+      # gone from the PR conversation within seconds of this attempt
+      # starting, not after init+plan finishes. The heads sit at "Awaiting
+      # results" (from the seed job) and the stale plan output disappears
+      # immediately under them — instead of lingering for several minutes
+      # while terraform-plan runs. Trade-off: if a later step crashes
+      # before the post-plan-tag step runs, the env has no plan tag for
+      # this attempt at all. Acceptable — stale plan output is a worse
+      # signal than no plan output. Env-scoped marker prefix wipes plan
+      # tags from any prior run AND any prior attempt of the current run.
+      # Idempotent: pr-comment records action=not-found and returns
+      # cleanly when there's nothing to delete (fresh first attempt).
+      - name: 🧹 Purge prior plan tags for this env
+        id: purge-plan-tags
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:"
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
       - name: "🎰 Export environment variables and secrets"
         uses: dsb-norge/github-actions-terraform/export-env-vars@v0
         with:
@@ -638,41 +666,16 @@ jobs:
           plan-time: ${{ steps.plan.outputs.plan-time }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      - name: 🧹 Purge prior plan tags for this env
-        id: purge-plan-tags
-        # Delete every existing 'tf:tag:plan:<env>:*' comment for this env
-        # before posting the current run's tag. Marker here is the
-        # env-scoped prefix (no run-id, no attempt) so pr-comment's
-        # substring match wipes plan tags from any prior run AND any
-        # prior attempt of the current run. Idempotent: when there's
-        # nothing to delete (fresh run / first attempt), pr-comment
-        # records action=not-found and returns cleanly.
-        #
-        # This is what makes "Re-run failed jobs" work: the seed job
-        # may not re-run on that path (it's skipped when previously
-        # successful), so plan-tag cleanup has to live here — on the
-        # matrix job that's about to post a new tag. Envs whose matrix
-        # job doesn't re-run keep their prior plan tag untouched
-        # (correct: their plan output didn't change either).
-        if: always() && steps.create-validation-summary.outcome == 'success'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v0
-        with:
-          repo: ${{ github.repository }}
-          issue-number: ${{ github.event.pull_request.number }}
-          github-token: ${{ github.token }}
-          mode: delete
-          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:"
-        continue-on-error: true # allow job to continue, step outcome is ignored
-
       - name: 📋 Post per-env plan-extract tag
         id: post-plan-tag
-        # POST fresh — the prior step just deleted every prior tag for
-        # this env, so pr-comment's upsert resolves to a fresh POST.
-        # Marker is run-id + attempt scoped so the per-group head's
-        # Links anchor (resolved by aggregate-validation-summaries via
-        # env-prefix lookup) can find this specific run/attempt's tag.
-        # Posted BEFORE the per-env head so the head's Links row can
-        # anchor at this comment's id.
+        # POST fresh — the 'Purge prior plan tags' step at the top of the
+        # matrix job wiped every existing plan tag for this env minutes
+        # ago, so pr-comment's upsert resolves to a fresh POST here.
+        # Marker is run-id + attempt scoped so the per-group head's Links
+        # anchor (resolved by aggregate-validation-summaries via env-prefix
+        # lookup) can find this specific run/attempt's tag. Posted BEFORE
+        # the per-env head so the head's Links row can anchor at this
+        # comment's id.
         if: always() && steps.create-validation-summary.outcome == 'success'
         uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:

@@ -72,13 +72,15 @@ The seed job does **not** GC plan tags — that work happens per-env in the matr
 
 ### 3.2 Matrix phase
 
-Each env's matrix job runs the validation pipeline, calls [`create-validation-summary`](../create-validation-summary/) to render the head + plan-extract bodies, and posts comments in three ordered steps:
+Each env's matrix job runs the validation pipeline and emits comments in the following order:
 
-1. **Purge prior plan tags** — `pr-comment` delete with marker `<!-- tf:tag:plan:<env>:`. Substring match wipes every existing plan-tag for this env regardless of run-id or attempt token. Idempotent: a fresh first-attempt run finds nothing to delete (records `action=not-found`); a re-run wipes the attempt(s) it's about to supersede. Envs whose matrix job *doesn't* re-run (e.g. on "Re-run failed jobs") are untouched — their plan tags stay, which is correct because their plan output didn't change either.
-2. **Plan tag** — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->`. The prior delete just wiped everything, so the upsert resolves to a fresh POST.
+1. **Purge prior plan tags** (runs as the **first** post-checkout step, before init/plan/etc.) — `pr-comment` delete with marker `<!-- tf:tag:plan:<env>:`. Substring match wipes every existing plan-tag for this env regardless of run-id or attempt token. Running at the top of the job means prior runs' outdated plan output disappears from the PR conversation within seconds of the new attempt starting — not after init+plan finishes 4-5 minutes in. Idempotent: a fresh first-attempt run finds nothing to delete (records `action=not-found`); a re-run wipes the attempt(s) it's about to supersede. Envs whose matrix job *doesn't* re-run (e.g. on "Re-run failed jobs") are untouched — their plan tags stay, which is correct because their plan output didn't change either.
+2. **Plan tag** (after [`create-validation-summary`](../create-validation-summary/) has rendered the bodies) — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->`. The purge step at the top of the job already wiped everything, so the upsert resolves to a fresh POST.
 3. **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->` (ungrouped envs only). Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Awaiting results…` placeholder with the validation table + Links row.
 
-All three calls are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed.
+Steps 2 and 3 are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed.
+
+Trade-off of the early-purge placement: if the matrix job crashes between the purge and step 2, the env has no plan tag for this attempt at all. Acceptable — stale plan output from a prior attempt is a worse signal than no plan output. The per-env head still refreshes (step 3 has `always()`), and the per-group head's Links column drops the `log extract` line for unanchored envs rather than rendering a wrong link.
 
 ### 3.3 Aggregator phase
 
@@ -95,13 +97,13 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 
 ### Tags
 
-1. Each matrix job's **first** commenting step deletes any existing plan tag for its own env (`<!-- tf:tag:plan:<env>:` substring match, regardless of run-id or attempt). This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
-2. Matrix phase then POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
+1. Each matrix job's **first** post-checkout step deletes any existing plan tag for its own env (`<!-- tf:tag:plan:<env>:` substring match, regardless of run-id or attempt). This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
+2. The matrix job then runs the validation pipeline (init → fmt → validate → lint → plan), and after that POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
 3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
 
-The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing. Each env's matrix job, on entering its commenting phase, wipes its own stale plan tag before posting the new one. Envs that aren't being re-run keep their existing tags showing the right state.
+The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing, and the prior attempt's plan tags disappear from the conversation within seconds of each matrix job starting. Envs that aren't being re-run keep their existing tags showing the right state.
 
-A consequence: there's a brief window early in matrix execution where a re-run's heads show "Awaiting results" while the prior attempt's plan tags are still visible underneath. The tags disappear one-by-one as each env's matrix job reaches its purge step — usually within the first 10-30 seconds of matrix runtime. This is the cost of supporting "Re-run failed jobs" cleanly (the seed job can't pre-empt the cleanup because it might not re-run on that path).
+This works because the purge happens before init — not after `create-validation-summary` — so stale plan output isn't visible for the ~4 minutes that init + plan take to run. The cost: if the matrix job crashes between purge and post, the env has no plan tag for this attempt. We accept that trade-off (stale > none).
 
 ## 5. Comment body shapes
 
