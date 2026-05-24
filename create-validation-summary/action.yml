@@ -97,13 +97,56 @@ inputs:
       when not provided — matches the convention used by `plan-count-*`.
     required: false
     default: "N/A"
+  plan-tag-comment-id:
+    description: |
+      GitHub comment id of the per-env plan-extract tag for this run, used
+      to render a Links row inside the per-env head's table:
+
+        | 🔗 | Links | [log extract](#issuecomment-<id>)<br>[job log](<url>) |
+
+      When supplied and the env is ungrouped (`pr-comment-group` empty), the
+      Links row is appended to the validation table and the standalone
+      `[Job log]` footer is dropped (the same link lives inside the table).
+      When empty, `head-summary` renders with the legacy footer style.
+
+      Callers post the plan-extract tag first to obtain its comment id, then
+      re-render `head-summary` with the id supplied to get the Links shape.
+      See docs/Workflow-pr-comments.md §6.1 (per-env head, Links row).
+    required: false
+    default: ""
 outputs:
   prefix:
-    description: Validation summary prefix string.
+    description: |
+      DEPRECATED. The H3 prefix line "### Terraform validation summary for
+      environment: `<env>`". Kept for callers still using the legacy
+      delete-by-prefix commenting flow (terraform-module-ci via
+      comment-on-pr@v2). Use marker-based upsert via the `pr-comment` action
+      instead. Removed once those callers migrate.
     value: ${{ steps.create-validation-summary.outputs.prefix }}
   summary:
-    description: Validation summary content string.
+    description: |
+      DEPRECATED. Concatenation of `head-summary` and `plan-extract` (the
+      pre-overhaul combined per-env comment body). Kept for callers still
+      using the legacy delete-by-prefix commenting flow. Use the two new
+      outputs (`head-summary` + `plan-extract`) with `pr-comment` instead.
     value: ${{ steps.create-validation-summary.outputs.summary }}
+  head-summary:
+    description: |
+      Body for the per-env "head" comment — long-lived, identified by an
+      HTML marker on the PR, PATCHed in place across runs. Contains the
+      H3 heading, the validation table (ungrouped mode only), and a job-log
+      footer. Posted with marker `<!-- tf:head:env:<env-name> -->` via the
+      `pr-comment` action.
+    value: ${{ steps.create-validation-summary.outputs.head-summary }}
+  plan-extract:
+    description: |
+      Body for the per-env "plan tag" comment — run-scoped, posted with a
+      marker that embeds the run-id (`<!-- tf:tag:plan:<env>:run-id-<id> -->`),
+      and GC'd by `pr-comments-reconcile` at the start of the next run.
+      Contains the H3 heading and the plan-block (`<details>` collapser or
+      its short-circuit variants). Empty plan output renders as
+      'Plan not available 🤷‍♀️'.
+    value: ${{ steps.create-validation-summary.outputs.plan-extract }}
 runs:
   using: "composite"
   steps:
@@ -130,7 +173,17 @@ runs:
         input_plan_count_total: ${{ inputs.plan-count-total }}
         input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
         input_plan_time: ${{ inputs.plan-time }}
+        input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
-        set -o allexport
+        # No `set -o allexport` on purpose. step_create_validation_summary.sh
+        # captures up to ~65k chars of plan output into `plan_out` (and an
+        # equally large `legacy_summary` that re-concatenates head + plan).
+        # Under allexport those would auto-export, and a single env var at
+        # that size sits just under Linux's per-string execve limit
+        # (MAX_ARG_STRLEN = 128k on Ubuntu) — zero headroom for the next
+        # subprocess fork. Keeping the script's vars shell-local removes
+        # the only realistic ARG_MAX exposure here; inputs still arrive
+        # via the env: block above, outputs still flow through
+        # $GITHUB_OUTPUT, so nothing in this action actually needs envp.
         source "${{ github.action_path }}/step_create_validation_summary.sh"
