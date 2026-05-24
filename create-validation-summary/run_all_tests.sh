@@ -78,6 +78,9 @@ reset_defaults() {
   # plan-time: default 'N/A' matches the action.yml default and is what the
   # Plan time row renders when terraform-plan didn't supply a duration.
   export input_plan_time="N/A"
+  # plan-tag-comment-id: empty default → legacy footer-style head body.
+  # Tests that exercise the Links-row branch override this with a fake id.
+  export input_plan_tag_comment_id=""
   export input_job_check_run_id="87654321"
 
   export GITHUB_SERVER_URL="https://github.com"
@@ -117,14 +120,21 @@ run_test() {
     failures+="  exit code: expected 0, got ${exit_code}\n"
   fi
 
-  # Get outputs
+  # Get outputs (split: head-summary + plan-extract). Most assertions look
+  # for substring presence/absence and are agnostic to which output a thing
+  # lives in — we pass them a `summary` that concatenates both. Byte-exact
+  # golden tests use the explicit head/plan args (3 and 4) instead.
+  local actual_head actual_plan
+  actual_head=$(get_output "head-summary")
+  actual_plan=$(get_output "plan-extract")
   local actual_prefix actual_summary
-  actual_prefix=$(get_output "prefix")
-  actual_summary=$(get_output "summary")
+  actual_prefix=$(echo "${actual_head}" | head -n1)
+  actual_summary="${actual_head}
+${actual_plan}"
 
   # Run assertion callback
   local assert_result
-  assert_result=$("${assert_fn}" "${actual_prefix}" "${actual_summary}" 2>&1)
+  assert_result=$("${assert_fn}" "${actual_prefix}" "${actual_summary}" "${actual_head}" "${actual_plan}" 2>&1)
   local assert_exit=$?
 
   if [[ ${assert_exit} -ne 0 ]]; then
@@ -572,9 +582,11 @@ run_test "Prefix is byte-exact '### Terraform validation summary for environment
 assert_full_body_golden_all_success_no_plan() {
   local prefix="${1}"
   local summary="${2}"
-  # don't touch the indentation / newlines in the heredoc below
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  # don't touch the indentation / newlines in the heredocs below
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
@@ -586,14 +598,23 @@ assert_full_body_golden_all_success_no_plan() {
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
-Plan not available 🤷‍♀️
-
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan not available 🤷‍♀️
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
@@ -1072,18 +1093,29 @@ run_test "Grouped mode: Plan Details row is omitted even when include-plan-detai
 assert_grouped_full_body_golden() {
   local prefix="${1}"
   local summary="${2}"
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
-
-Plan not available 🤷‍♀️
 
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: grouped mode byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan not available 🤷‍♀️
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: grouped mode byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: grouped mode byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
@@ -1254,8 +1286,10 @@ run_test "count-total=0 + no plan file → 'Plan not available' wins" assert_no_
 assert_golden_no_changes_body() {
   local prefix="${1}"
   local summary="${2}"
-  local expected
-  expected=$(cat <<'EOF'
+  local head="${3}"
+  local plan="${4}"
+  local expected_head expected_plan
+  expected_head=$(cat <<'EOF'
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
@@ -1267,14 +1301,23 @@ assert_golden_no_changes_body() {
 | 📖 | Plan | `success` |
 | ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
 
-Plan: no changes ✅
-
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
 )
-  if [[ "${summary}" != "${expected}" ]]; then
-    echo "  summary: golden no-changes body byte-exact mismatch (diff below)"
-    diff <(echo "${expected}") <(echo "${summary}") | sed 's/^/    /'
+  expected_plan=$(cat <<'EOF'
+### Terraform plan for environment: `dev`
+
+Plan: no changes ✅
+EOF
+)
+  if [[ "${head}" != "${expected_head}" ]]; then
+    echo "  head-summary: golden no-changes byte-exact mismatch (diff below)"
+    diff <(echo "${expected_head}") <(echo "${head}") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${plan}" != "${expected_plan}" ]]; then
+    echo "  plan-extract: golden no-changes byte-exact mismatch (diff below)"
+    diff <(echo "${expected_plan}") <(echo "${plan}") | sed 's/^/    /'
     return 1
   fi
   return 0
@@ -1485,6 +1528,114 @@ export input_plan_count_change="0"
 export input_plan_count_destroy="0"
 export input_plan_time="3:14"
 run_test "Plan time row appears after Plan Details when both rendered" assert_plan_time_after_plan_details
+
+# --------------------------------------------------
+# Links row inside the per-env head table (added when caller supplies
+# plan-tag-comment-id). Mirrors the per-group head's Links column shape
+# so reviewers learn one navigation pattern. When the Links row is
+# rendered, the standalone [Job log] footer is dropped (the same link
+# lives inside the table cell).
+# --------------------------------------------------
+
+assert_links_row_rendered_ungrouped() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local expected_cell='| 🔗 | Links | [log extract](#issuecomment-99887766)<br>[job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs) |'
+  if [[ "${head}" != *"${expected_cell}"* ]]; then
+    echo "  head-summary: expected Links row with anchor + job log:"
+    echo "    expected substring: ${expected_cell}"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_tag_comment_id="99887766"
+run_test "Links row rendered in ungrouped head when plan-tag-comment-id supplied" assert_links_row_rendered_ungrouped
+
+assert_footer_dropped_when_links_row_rendered() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" == *'[Job log]('* ]]; then
+    echo "  head-summary: '[Job log]' footer must NOT appear when Links row is rendered"
+    echo "  (the same link lives inside the Links cell)"
+    return 1
+  fi
+  # The job log URL should STILL be in the head — but inside the Links row cell.
+  if [[ "${head}" != *'[job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)'* ]]; then
+    echo "  head-summary: expected '[job log](url)' inside the Links cell"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_tag_comment_id="99887766"
+run_test "[Job log] footer dropped when Links row is rendered" assert_footer_dropped_when_links_row_rendered
+
+assert_links_row_omitted_when_no_id() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" == *'| 🔗 | Links |'* ]]; then
+    echo "  head-summary: Links row must NOT be rendered when plan-tag-comment-id is empty"
+    return 1
+  fi
+  # Legacy footer must be there in this case
+  if [[ "${head}" != *'[Job log]('* ]]; then
+    echo "  head-summary: expected legacy '[Job log]' footer when no plan-tag-comment-id"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+# input_plan_tag_comment_id intentionally left at default ("")
+run_test "Links row omitted (legacy footer kept) when plan-tag-comment-id is empty" assert_links_row_omitted_when_no_id
+
+assert_links_row_omitted_in_grouped_mode() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  # In grouped mode the validation table is omitted entirely, so the Links
+  # row has no table to live in. Caller supplies the id anyway (matrix
+  # passes it uniformly) — action must ignore it for grouped envs and
+  # keep the legacy minimal grouped-mode body (H3 + footer).
+  if [[ "${head}" == *'| 🔗 | Links |'* ]]; then
+    echo "  head-summary: Links row must NOT appear in grouped mode"
+    return 1
+  fi
+  if [[ "${head}" != *'[Job log]('* ]]; then
+    echo "  head-summary: grouped mode still emits the [Job log] footer"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+export input_plan_tag_comment_id="99887766"
+run_test "Links row omitted in grouped mode even when plan-tag-comment-id supplied" assert_links_row_omitted_in_grouped_mode
+
+assert_links_row_appears_after_plan_time() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local pt_pos lk_pos
+  pt_pos=$(echo "${head}" | grep -n '| ⏱ | Plan time |' | head -n1 | cut -d: -f1)
+  lk_pos=$(echo "${head}" | grep -n '| 🔗 | Links |'   | head -n1 | cut -d: -f1)
+  if [ -z "${pt_pos}" ] || [ -z "${lk_pos}" ]; then
+    echo "  expected both Plan time and Links rows present (pt=${pt_pos}, lk=${lk_pos})"
+    return 1
+  fi
+  if [ "${lk_pos}" -le "${pt_pos}" ]; then
+    echo "  Links row (line ${lk_pos}) must appear AFTER Plan time (line ${pt_pos})"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_plan_tag_comment_id="42424242"
+export input_plan_time="0:45"
+run_test "Links row sits after Plan time row" assert_links_row_appears_after_plan_time
 
 # --------------------------------------------------
 # Summary

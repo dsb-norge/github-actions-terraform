@@ -2,8 +2,13 @@
 #
 # Source for the create-validation-summary step
 #
-# Creates a pull request comment with a summary of terraform validation results
-# and the last 65k characters of terraform plan output.
+# Renders the per-env head and plan-extract bodies for a single environment's
+# matrix run. Emitted as two outputs so the caller workflow can post them as
+# two separate PR comments: a stable "head" (PATCHed in place across runs,
+# pre-allocated by the seed job) and a run-scoped "plan tag" (GC'd at next
+# run's seed and re-POSTed).
+#
+# See docs/Workflow-pr-comments.md for the model.
 #
 # Required environment variables:
 #   input_environment_name     - Name of the current deployment environment
@@ -40,28 +45,34 @@ set +o nounset # allow unset variables (graceful handling of defaults)
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 # ============================================================================
-# Main Logic
+# head-summary renderer
 # ============================================================================
+#
+# Body shape:
+#   ### Terraform validation summary for environment: `<env>`
+#   <validation table — ungrouped mode only>
+#   <blank>
+#   [Job log](<url>)
+#
+# In grouped mode (input_pr_comment_group non-empty), the validation table
+# is omitted — it lives on the per-group head posted by
+# aggregate-validation-summaries.
 
-function main {
-  log-info "creating pull request comment ..."
+function render_head_summary {
+  local job_url="${1}"
 
-  local comment_prefix="### Terraform validation summary for environment: \`${input_environment_name}\`"
-  local comment_content="${comment_prefix}"
+  local head="### Terraform validation summary for environment: \`${input_environment_name}\`"
 
-  # Branch on grouped vs ungrouped mode (docs/Workflow-pr-comments.md §3).
-  # Grouped mode (pr-comment-group is non-empty): omit the validation table —
-  # it appears in the per-group comment posted by aggregate-validation-summaries.
-  # The H3 prefix above is unchanged in both modes (§6.2 prefix-continuity
-  # invariant). No back-pointer to the group summary is rendered; the grouped
-  # summary itself anchor-links to every per-env comment via its Links row.
+  # Logs go to stderr so they don't pollute the captured stdout when this
+  # function is called via $(). Same trick the rest of the action uses for
+  # diagnostic output.
   if [ -n "${input_pr_comment_group}" ]; then
-    log-info "grouped mode active (group='${input_pr_comment_group}') — omitting validation table"
+    log-info "grouped mode active (group='${input_pr_comment_group}') — head omits validation table" 1>&2
   else
-    log-info "ungrouped mode — rendering full validation table"
+    log-info "ungrouped mode — head includes full validation table" 1>&2
 
     # don't touch the indenting here
-    comment_content="${comment_content}
+    head="${head}
 |  | Step | Result |
 |:---:|---|---|
 | ⚙️ | Initialization | $(format-status "${input_status_init}") |
@@ -71,87 +82,102 @@ function main {
 | 🧹 | TFLint | $(format-status "${input_status_lint}") |
 | 📖 | Plan | $(format-status "${input_status_plan}") |"
 
-    # Add plan details if enabled
     if [ "${input_include_plan_details}" == 'true' ]; then
 
       # don't touch the indenting here
-      comment_content="${comment_content}
+      head="${head}
 | 📊 | Plan Details | <span title=\"Resources to be added\">\`💫 ${input_plan_count_add}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_plan_count_change}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_plan_count_destroy}\` destroy</span>"
 
       if [ "${input_plan_count_move}" != '0' ]; then
-        comment_content="${comment_content}<br><span title=\"Resources to be moved\">\`🔀 ${input_plan_count_move}\` move</span>"
+        head="${head}<br><span title=\"Resources to be moved\">\`🔀 ${input_plan_count_move}\` move</span>"
       fi
-
       if [ "${input_plan_count_import}" != '0' ]; then
-        comment_content="${comment_content}<br><span title=\"Resources to be imported\">\`📥 ${input_plan_count_import}\` import</span>"
+        head="${head}<br><span title=\"Resources to be imported\">\`📥 ${input_plan_count_import}\` import</span>"
       fi
-
       if [ "${input_plan_count_remove}" != '0' ]; then
-        comment_content="${comment_content}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_plan_count_remove}\` remove</span>"
+        head="${head}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_plan_count_remove}\` remove</span>"
       fi
 
-      # end of table row
-      comment_content="${comment_content} |"
+      head="${head} |"
     fi
 
-    # Plan time row — always rendered (after Plan Details if it was included,
-    # otherwise directly after the Plan row). 'N/A' when the upstream
-    # 'terraform-plan' action didn't supply a value, matching the
-    # plan-count-* defaults. The <span title> wrapper surfaces the format
-    # hint on desktop hover, matching the badge convention used by the
-    # Plan Details row.
+    # Plan time row — same shape as before.
     # don't touch the indenting here
-    comment_content="${comment_content}
+    head="${head}
 | ⏱ | Plan time | <span title=\"mm:ss (minutes:seconds)\">\`${input_plan_time:-N/A}\`</span> |"
+
+    # Links row — only rendered when the caller supplied
+    # plan-tag-comment-id (typically the id of this run's per-env plan tag,
+    # captured from pr-comment's POST output). Mirrors the per-group head's
+    # Links column (docs/Workflow-pr-comments.md §6.3) so reviewers learn
+    # one navigation pattern.
+    # When the Links row is rendered, the standalone '[Job log]' footer
+    # below the table is dropped — the same link sits inside the cell.
+    if [ -n "${input_plan_tag_comment_id:-}" ]; then
+      # don't touch the indenting here
+      head="${head}
+| 🔗 | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
+    fi
   fi
 
-  # Build the link to this env's job log (used in the footer).
-  local job_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${input_job_check_run_id}#logs"
+  if [ -z "${input_plan_tag_comment_id:-}" ] || [ -n "${input_pr_comment_group}" ]; then
+    # Legacy / grouped path: keep the standalone '[Job log]' footer outside
+    # the table. Grouped mode still uses it (table is omitted entirely, so
+    # the footer is all that's there); ungrouped without a plan-tag-id
+    # supplied keeps the old shape for backwards compatibility.
+    head="${head}
 
-  # ---- Plan extract block ----
-  # Rendering modes:
-  #   1. plan-count-total numeric 0 AND not output-only → 'Plan: no changes ✅' (plain text)
-  #   2. plan-count-total numeric 0 AND output-only     → '<details><summary>Plan: output-only changes ℹ️</summary>…'
-  #   3. plan-count-total numeric > 0                   → '<details><summary>Plan: N changes ℹ️</summary>…'
-  #   4. plan-count-total missing/'?'                   → fallback to pre-v0.24 'Show Plan (last 65k characters)'
-  # When no plan output is available at all, render the 'Plan not available 🤷‍♀️'
-  # short-circuit regardless of count-total.
+[Job log](${job_url})"
+  fi
 
+  printf '%s' "${head}"
+}
+
+# ============================================================================
+# plan-extract renderer
+# ============================================================================
+#
+# Body shape:
+#   ### Terraform plan for environment: `<env>`
+#   <blank>
+#   <plan-block — one of the four shapes documented below>
+#
+# Plan-block shapes:
+#   1. plan-count-total numeric 0 AND not output-only → 'Plan: no changes ✅'
+#   2. plan-count-total numeric 0 AND output-only     → '<details>Plan: output-only changes ℹ️…'
+#   3. plan-count-total numeric > 0                   → '<details>Plan: N changes ℹ️…'
+#   4. plan-count-total missing/'?'                   → '<details>Show Plan (last 65k characters)…'
+# When plan output is entirely absent, render 'Plan not available 🤷‍♀️'.
+
+function render_plan_extract {
+  local plan="### Terraform plan for environment: \`${input_environment_name}\`"
+
+  # Cap at 65k characters to fit within GitHub's 65536-byte comment limit
+  # — and, as a side benefit, to keep the value a comfortable distance
+  # under Linux's per-string execve limit (MAX_ARG_STRLEN, 128k on Ubuntu)
+  # in case this variable ever ends up in envp. tail/sed read directly
+  # from disk so the full file is never materialised in shell memory.
   local plan_out=""
   if [ -f "${input_plan_txt_output_file}" ]; then
-    # Prefer the plan output generated by terraform itself.
-    # Cap at 65k characters to fit within GitHub comment limits.
-    # Read directly from file using tail/sed to avoid loading the entire file into
-    # a shell variable. With 'set -o allexport' active, large variables are exported
-    # to the environment, which can exceed ARG_MAX and cause 'Argument list too long'
-    # errors when forking external commands.
     plan_out=$(tail -c 65000 "${input_plan_txt_output_file}")
   elif [ -f "${input_plan_console_file}" ]; then
-    # Fall back to the captured console output.
-    # Strip state refresh lines and cap at 65k characters in a single pipeline.
     plan_out=$(sed -n '/Terraform used the selected providers to generate the following execution/,$p' "${input_plan_console_file}" | tail -c 65000)
   fi
 
-  # Decide which plan-block shape to emit.
   local total="${input_plan_count_total:-}"
   local output_only="${input_plan_has_output_only_changes:-false}"
+
   if [ -z "${plan_out}" ]; then
-    # No plan output available — short-circuit message overrides everything.
-    comment_content="${comment_content}
+    plan="${plan}
 
 Plan not available 🤷‍♀️"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" != 'true' ]; then
-    # Confirmed zero-change plan AND no output-only changes: skip the
-    # <details> collapse entirely — there's literally nothing to look at.
-    comment_content="${comment_content}
+    plan="${plan}
 
 Plan: no changes ✅"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" = 'true' ]; then
-    # Output-only changes: resource counts are all 0 but the plan still has
-    # interesting content (Changes to Outputs section). Keep the <details>
-    # so reviewers can expand and see the diff.
     # don't touch the indenting here
-    comment_content="${comment_content}
+    plan="${plan}
 
 <details><summary>Plan: output-only changes ℹ️</summary>
 
@@ -160,10 +186,8 @@ ${plan_out}
 \`\`\`
 </details>"
   elif [[ "${total}" =~ ^[0-9]+$ ]]; then
-    # Known non-zero change count: include it in the <details> summary
-    # so reviewers see the scale before expanding.
     # don't touch the indenting here
-    comment_content="${comment_content}
+    plan="${plan}
 
 <details><summary>Plan: ${total} changes ℹ️</summary>
 
@@ -172,10 +196,8 @@ ${plan_out}
 \`\`\`
 </details>"
   else
-    # Fallback: count-total is missing or '?' (parse failed). Preserve the
-    # historical summary so behavior is well-defined when count is unavailable.
     # don't touch the indenting here
-    comment_content="${comment_content}
+    plan="${plan}
 
 <details><summary>Show Plan (last 65k characters)</summary>
 
@@ -185,24 +207,43 @@ ${plan_out}
 </details>"
   fi
 
-  # Footer: just the per-env job log link. Pusher/event/workflow data is
-  # discoverable in the PR conversation timeline header and on the linked
-  # job page — restating it on every comment is noise.
-  comment_content="${comment_content}
+  printf '%s' "${plan}"
+}
 
-[Job log](${job_url})"
+# ============================================================================
+# Main
+# ============================================================================
 
-  log-info "Final validation summary prefix: ${comment_prefix}"
-  log-multiline "Final validation summary " "${comment_content}"
+function main {
+  log-info "rendering per-env head + plan-extract bodies ..."
 
-  set-output 'prefix' "${comment_prefix}"
-  set-multiline-output 'summary' "${comment_content}"
+  local job_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${input_job_check_run_id}#logs"
+
+  local head_summary plan_extract
+  head_summary=$(render_head_summary "${job_url}")
+  plan_extract=$(render_plan_extract)
+
+  log-multiline "head-summary " "${head_summary}"
+  log-multiline "plan-extract " "${plan_extract}"
+
+  # Back-compat outputs: the legacy `summary` + `prefix` outputs are kept so
+  # callers still on the pre-overhaul commenting flow (e.g. terraform-module-ci
+  # via comment-on-pr@v2's delete-by-prefix mechanism) continue to work.
+  # Both outputs are deprecated and will be dropped once those callers migrate
+  # to head-summary/plan-extract + the pr-comment action.
+  local legacy_prefix="### Terraform validation summary for environment: \`${input_environment_name}\`"
+  local legacy_summary
+  legacy_summary=$(printf '%s\n%s' "${head_summary}" "${plan_extract}")
+
+  set-multiline-output 'head-summary' "${head_summary}"
+  set-multiline-output 'plan-extract' "${plan_extract}"
+  set-output 'prefix' "${legacy_prefix}"
+  set-multiline-output 'summary' "${legacy_summary}"
 
   log-info "create-validation-summary completed."
   return 0
 }
 
-# Run main function
 main
 _main_exit_code=$?
 exit ${_main_exit_code}
