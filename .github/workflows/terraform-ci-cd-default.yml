@@ -5,6 +5,11 @@ name: "DSB terraform CI/CD workflow"
 #     id-token: write       # required for Azure password-less auth
 #     contents: read        # required for actions/checkout
 #     pull-requests: write  # required for commenting on PRs
+#     actions: read         # required by aggregate-validation-summaries to call
+#                           # the Jobs API and resolve [job log] URLs for the
+#                           # per-group head's Links column. Without it the
+#                           # [log extract] anchor still works (it's based on
+#                           # PR comment ids), but the [job log] line is dropped.
 #
 # Additionally for the workflow to have access to secrets (required when using the input 'extra-envs-from-secrets-yml'),
 # all secrets available to the calling workflow must be passed down to this one by:
@@ -382,7 +387,7 @@ jobs:
             [ -z "${g}" ] && continue
             body=$(printf '%s\n\n%s' \
               "### Terraform validation summary for group: \`${g}\`" \
-              "⏳ Running (run #${RUN_ID})…")
+              "⏳ Awaiting results (run #${RUN_ID})…")
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
               --arg marker "<!-- tf:head:group:${g} -->" \
@@ -405,7 +410,7 @@ jobs:
             [ -z "${e}" ] && continue
             body=$(printf '%s\n\n%s' \
               "### Terraform validation summary for environment: \`${e}\`" \
-              "⏳ Running (run #${RUN_ID})…")
+              "⏳ Awaiting results (run #${RUN_ID})…")
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
               --arg marker "<!-- tf:head:env:${e} -->" \
@@ -887,6 +892,10 @@ jobs:
     name: "PR comment aggregator"
     needs: [create-matrix, terraform-ci-cd]
     runs-on: ${{ inputs.runs-on }} # global setting
+    permissions:
+      pull-requests: write # PATCH the per-group head comment
+      actions: read        # call the Jobs API to resolve [job log] URLs
+                           # for the per-group head's Links column
     defaults:
       run:
         shell: bash

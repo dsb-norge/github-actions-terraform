@@ -63,7 +63,7 @@ The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflo
 1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value.
 2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table.
 
-Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Running…` placeholder body.
+Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body.
 
 In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- tf:tag:plan:` whose body does not also contain `run-id-<current-run-id>` — i.e. plan tags from prior runs. The GC sweep runs **before** the heads reconcile so stale plan output disappears from the PR conversation as early as possible during a re-run; outdated plan content is more misleading than the brief window of "stale final" heads that precedes their PATCH to a Running placeholder. The seed job is added to `terraform-ci-cd`'s `needs:` chain so matrix jobs can't race ahead and POST their head updates before the seed manifest lands.
 
@@ -71,7 +71,7 @@ In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- 
 
 Each env's matrix job runs the validation pipeline, calls [`create-validation-summary`](../create-validation-summary/) to render two bodies, then posts both:
 
-- **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->`. Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Running…` placeholder with the validation table + footer.
+- **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->`. Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Awaiting results…` placeholder with the validation table + footer.
 - **Plan tag** — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id> -->`. The marker is run-scoped so it never matches anything from the seed phase or prior runs; effectively a POST-fresh.
 
 Both calls are guarded by `always()` so the head refreshes even when an earlier step (init, tflint, etc.) failed.
@@ -84,7 +84,7 @@ Both calls are guarded by `always()` so the head refreshes even when an earlier 
 
 ### Heads
 
-1. Seed phase PATCHes each head body to `⏳ Running (run #N)…`.
+1. Seed phase PATCHes each head body to `⏳ Awaiting results (run #N)…`.
 2. Matrix / aggregator phase PATCHes each head body to its final state.
 
 Heads keep their original `created_at` across runs (PATCH preserves it). Their position at the top of the conversation is fixed from the first POST onwards.
