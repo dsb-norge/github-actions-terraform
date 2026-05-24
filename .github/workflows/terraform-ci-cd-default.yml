@@ -372,6 +372,7 @@ jobs:
         env:
           MATRIX_JSON: ${{ needs.create-matrix.outputs.matrix-json }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           # Build heads as JSON first (easy to manipulate via jq), then
           # convert to YAML for the reconcile action's heads-yml input.
@@ -387,7 +388,7 @@ jobs:
             [ -z "${g}" ] && continue
             body=$(printf '%s\n\n%s' \
               "### Terraform validation summary for group: \`${g}\`" \
-              "⏳ Awaiting results (run #${RUN_ID})…")
+              "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
               --arg marker "<!-- tf:head:group:${g} -->" \
@@ -410,7 +411,7 @@ jobs:
             [ -z "${e}" ] && continue
             body=$(printf '%s\n\n%s' \
               "### Terraform validation summary for environment: \`${e}\`" \
-              "⏳ Awaiting results (run #${RUN_ID})…")
+              "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
               --arg marker "<!-- tf:head:env:${e} -->" \
@@ -440,16 +441,21 @@ jobs:
             echo "${delim}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: "🌱 Seed heads + GC stale plan tags"
+      - name: "🌱 Seed heads"
         uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@v0
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
           heads-yml: ${{ steps.compose.outputs.heads-yml }}
-          gc-yml: |
-            - marker-prefix: "<!-- tf:tag:plan:"
-              keep-marker-substring: "run-id-${{ github.run_id }}"
+          # Plan-tag GC is intentionally NOT done here. Each matrix job
+          # purges its own env's prior plan tags as its first commenting
+          # step — that works regardless of whether seed re-runs (e.g. on
+          # "Re-run failed jobs", seed is skipped if it previously
+          # succeeded, but the failed envs' matrix still re-runs and
+          # cleans up their tags). Doing GC here would over-delete on
+          # "Re-run failed jobs": envs that didn't re-run still have
+          # valid plan tags that should be preserved.
         continue-on-error: true # never fail the workflow over PR comment seeding
 
   terraform-ci-cd:
@@ -632,14 +638,41 @@ jobs:
           plan-time: ${{ steps.plan.outputs.plan-time }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
+      - name: 🧹 Purge prior plan tags for this env
+        id: purge-plan-tags
+        # Delete every existing 'tf:tag:plan:<env>:*' comment for this env
+        # before posting the current run's tag. Marker here is the
+        # env-scoped prefix (no run-id, no attempt) so pr-comment's
+        # substring match wipes plan tags from any prior run AND any
+        # prior attempt of the current run. Idempotent: when there's
+        # nothing to delete (fresh run / first attempt), pr-comment
+        # records action=not-found and returns cleanly.
+        #
+        # This is what makes "Re-run failed jobs" work: the seed job
+        # may not re-run on that path (it's skipped when previously
+        # successful), so plan-tag cleanup has to live here — on the
+        # matrix job that's about to post a new tag. Envs whose matrix
+        # job doesn't re-run keep their prior plan tag untouched
+        # (correct: their plan output didn't change either).
+        if: always() && steps.create-validation-summary.outcome == 'success'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:"
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
       - name: 📋 Post per-env plan-extract tag
         id: post-plan-tag
-        # Tag comments are run-scoped (marker embeds run-id) and posted via
-        # upsert — fresh marker each run means POST-fresh in practice. The
-        # seed job's GC sweep deleted prior-run plan tags before this step
-        # ran, so the new tag lands at the bottom of the conversation without
-        # competing with stale content. Posted BEFORE the per-env head so
-        # the head's Links row can anchor at this comment's id.
+        # POST fresh — the prior step just deleted every prior tag for
+        # this env, so pr-comment's upsert resolves to a fresh POST.
+        # Marker is run-id + attempt scoped so the per-group head's
+        # Links anchor (resolved by aggregate-validation-summaries via
+        # env-prefix lookup) can find this specific run/attempt's tag.
+        # Posted BEFORE the per-env head so the head's Links row can
+        # anchor at this comment's id.
         if: always() && steps.create-validation-summary.outcome == 'success'
         uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
@@ -647,7 +680,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
           mode: upsert
-          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }} -->"
+          marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }}:attempt-${{ github.run_attempt }} -->"
           body: ${{ steps.create-validation-summary.outputs.plan-extract }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 

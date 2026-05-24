@@ -21,12 +21,12 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 |---|---|---|---|
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
 | `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
-| `<!-- tf:tag:plan:<env>:run-id-<run-id> -->` | Tag | One per env per run | Matrix job for that env |
+| `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt | Matrix job for that env |
 
 Marker name conventions:
 
 - Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env`.
-- Tags: `tf:tag:<kind>:<scope-key>:run-id-<run-id>` — the run-id token is what the GC sweep matches on to keep current-run tags.
+- Tags: `tf:tag:<kind>:<scope-key>:run-id-<run-id>:attempt-<run-attempt>`. The run-id distinguishes workflow runs; the attempt token distinguishes re-runs of the same run (`run-id` is stable across attempts, only `run-attempt` increments). Both are needed so re-runs — including "Re-run failed jobs" — get fresh tags without colliding with the prior attempt's.
 
 Markers are treated as opaque substrings by the underlying actions: matching is `body.contains(marker)`. The exact format is enforced by convention in this doc, not by the actions themselves — any unique-enough string works.
 
@@ -38,14 +38,17 @@ Markers are treated as opaque substrings by the underlying actions: matching is 
                           │                                              │
    create-matrix ───────► │  seed-pr-comments job:                       │
                           │   - reconcile heads (POST/PATCH per marker)  │
-                          │   - GC stale plan tags (run-id != current)   │
+                          │   - (heads only; plan-tag GC lives in the    │
+                          │      matrix, see §3.2)                       │
                           └─────────────────┬────────────────────────────┘
                                             │
                           ┌─────────────────▼────────────────────────────┐
                           │  Matrix jobs (parallel, one per env)         │
                           │                                              │
+                          │   - DELETE prior `tf:tag:plan:<env>:*`       │
                           │   - PATCH `tf:head:env:<env>` with results   │
-                          │   - POST `tf:tag:plan:<env>:run-id-<id>`     │
+                          │   - POST `tf:tag:plan:<env>:run-id-<id>:`    │
+                          │     `attempt-<n>` with fresh plan-extract    │
                           └─────────────────┬────────────────────────────┘
                                             │
                           ┌─────────────────▼────────────────────────────┐
@@ -65,16 +68,17 @@ The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflo
 
 Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body.
 
-In the same call, a GC sweep deletes every comment matching marker-prefix `<!-- tf:tag:plan:` whose body does not also contain `run-id-<current-run-id>` — i.e. plan tags from prior runs. The GC sweep runs **before** the heads reconcile so stale plan output disappears from the PR conversation as early as possible during a re-run; outdated plan content is more misleading than the brief window of "stale final" heads that precedes their PATCH to a Running placeholder. The seed job is added to `terraform-ci-cd`'s `needs:` chain so matrix jobs can't race ahead and POST their head updates before the seed manifest lands.
+The seed job does **not** GC plan tags — that work happens per-env in the matrix (§3.2). This is what makes "Re-run failed jobs" behave correctly: when a previous attempt's seed already succeeded, GitHub skips it on the re-run, so any cleanup hooked into the seed phase wouldn't fire. Each matrix job purges its own env's plan tags as its first commenting step, which works whether the seed re-ran or not. The seed is `terraform-ci-cd`'s `needs:` dependency so matrix jobs still can't race ahead of head seeding.
 
 ### 3.2 Matrix phase
 
-Each env's matrix job runs the validation pipeline, calls [`create-validation-summary`](../create-validation-summary/) to render two bodies, then posts both:
+Each env's matrix job runs the validation pipeline, calls [`create-validation-summary`](../create-validation-summary/) to render the head + plan-extract bodies, and posts comments in three ordered steps:
 
-- **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->`. Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Awaiting results…` placeholder with the validation table + footer.
-- **Plan tag** — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id> -->`. The marker is run-scoped so it never matches anything from the seed phase or prior runs; effectively a POST-fresh.
+1. **Purge prior plan tags** — `pr-comment` delete with marker `<!-- tf:tag:plan:<env>:`. Substring match wipes every existing plan-tag for this env regardless of run-id or attempt token. Idempotent: a fresh first-attempt run finds nothing to delete (records `action=not-found`); a re-run wipes the attempt(s) it's about to supersede. Envs whose matrix job *doesn't* re-run (e.g. on "Re-run failed jobs") are untouched — their plan tags stay, which is correct because their plan output didn't change either.
+2. **Plan tag** — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->`. The prior delete just wiped everything, so the upsert resolves to a fresh POST.
+3. **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->` (ungrouped envs only). Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Awaiting results…` placeholder with the validation table + Links row.
 
-Both calls are guarded by `always()` so the head refreshes even when an earlier step (init, tflint, etc.) failed.
+All three calls are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed.
 
 ### 3.3 Aggregator phase
 
@@ -91,11 +95,13 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 
 ### Tags
 
-1. Seed phase GC sweep deletes plan tags from prior runs *first* (before any heads are touched) so outdated plan output disappears as early as possible during a re-run.
-2. Matrix phase POSTs fresh plan tags (their markers carry the current run id).
-3. Next run repeats: GC deletes these, POSTs new ones.
+1. Each matrix job's **first** commenting step deletes any existing plan tag for its own env (`<!-- tf:tag:plan:<env>:` substring match, regardless of run-id or attempt). This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
+2. Matrix phase then POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
+3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
 
-The net visual effect on a re-run: stale plan tags vanish first, then heads briefly show "Running" while matrix executes, then heads update to final state and fresh plan tags appear at the bottom of the conversation.
+The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing. Each env's matrix job, on entering its commenting phase, wipes its own stale plan tag before posting the new one. Envs that aren't being re-run keep their existing tags showing the right state.
+
+A consequence: there's a brief window early in matrix execution where a re-run's heads show "Awaiting results" while the prior attempt's plan tags are still visible underneath. The tags disappear one-by-one as each env's matrix job reaches its purge step — usually within the first 10-30 seconds of matrix runtime. This is the cost of supporting "Re-run failed jobs" cleanly (the seed job can't pre-empt the cleanup because it might not re-run on that path).
 
 ## 5. Comment body shapes
 
@@ -180,7 +186,7 @@ Plan Details cells stack the count badges in a `<div align="left">` so they anch
 
 Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
-Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag for the current run, located by the `tf:tag:plan:<env>:run-id-<run-id>` marker substring) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
+Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag, located by the `<!-- tf:tag:plan:<env>:` marker-prefix substring — matches whichever attempt's tag is currently live for that env) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
 The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§5.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
@@ -210,18 +216,18 @@ On a fresh PR (run #1), the seed job POSTs in declared order, so the conversatio
 │  tf:head:env:<env-a>          (per-env head)             │
 │  tf:head:env:<env-b>          (per-env head)             │
 │  …                                                       │
-│  tf:tag:plan:<env-a>:run-id-N (plan extract tag)         │
-│  tf:tag:plan:<env-b>:run-id-N (plan extract tag)         │
+│  tf:tag:plan:<env-a>:run-id-N:attempt-1 (plan extract)   │
+│  tf:tag:plan:<env-b>:run-id-N:attempt-1 (plan extract)   │
 │  …                                                       │
 │  <human reviewer comments interleaved chronologically>   │
 └──────────────────────────────────────────────────────────┘
 ```
 
-On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags from prior runs are GC'd and new ones POSTed at the bottom of the conversation. Order between heads never changes.
+On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags are wiped per-env by the matrix delete-first step and re-POSTed at the bottom of the conversation. Order between heads never changes.
 
 ## 8. Concurrency caveat
 
-When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), the second run's seed-job GC pass will delete the first run's plan tags (their run-id is no longer "current"). The first run's later POST may then land at an unexpected position, or — if the first run's matrix job has already completed and POSTed — its plan tag is deleted before being read.
+When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), each run's matrix delete-first step will wipe plan tags from the env it's about to post for — including any in-flight tag the other run just POSTed. The result is some plan tags briefly disappearing and reappearing while both runs are in flight. The aggregator's env-prefix anchor lookup picks the newest match, so the per-group head's Links column still resolves correctly once everything settles.
 
 Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
 
@@ -231,9 +237,9 @@ If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment
 
 - `upsert` → POST a fresh comment best-effort, even though it may duplicate an existing one.
 - `delete` → no-op (we can't safely identify victims).
-- GC pass → skipped entirely.
+- Reconcile's GC pass → skipped entirely.
 
-Duplicates from degraded runs self-heal on the next clean run: the upsert path always sorts marker matches by `created_at` ASC, keeps the oldest, and deletes the rest in the same call.
+Duplicates from degraded runs self-heal on the next clean run: the matrix's per-env delete-first step wipes all plan tags for that env (any leftover duplicates included) before posting the new one. For heads, the upsert path sorts marker matches by `created_at` ASC, keeps the oldest, and deletes the rest in the same call.
 
 ## 10. Action references
 

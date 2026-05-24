@@ -575,13 +575,16 @@ test_upsert_pass_does_not_nest_log_groups() {
   return 0
 }
 
-test_per_env_anchor_picks_newest_when_duplicates() {
+test_per_env_anchor_picks_newest_when_multiple_attempts() {
+  # Two attempts of the same run leave two plan tags for the same env
+  # (different attempt tokens). Aggregator's env-prefix lookup matches
+  # both — newest comment id wins.
   write_meta "dup" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
-  {"id": 100, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nold"},
-  {"id": 999, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nnewer"},
-  {"id": 500, "body": "<!-- tf:tag:plan:dup:run-id-999 -->\nmid"}
+  {"id": 100, "body": "<!-- tf:tag:plan:dup:run-id-999:attempt-1 -->\nattempt-1 plan"},
+  {"id": 999, "body": "<!-- tf:tag:plan:dup:run-id-999:attempt-2 -->\nattempt-2 plan"},
+  {"id": 500, "body": "<!-- tf:tag:plan:dup:run-id-998:attempt-1 -->\nfrom an earlier run, not GC'd"}
 ]
 JSON
   run_step
@@ -590,8 +593,8 @@ JSON
     echo "expected anchor to point at newest id 999"
     return 1
   fi
-  if ! grep -q 'duplicates' "${TEST_DIR}/step.log"; then
-    echo "expected warning about duplicates"
+  if ! grep -q 'plan tags match for env-prefix' "${TEST_DIR}/step.log"; then
+    echo "expected warning about multiple plan tags matching env-prefix"
     return 1
   fi
   return 0
@@ -1104,7 +1107,7 @@ run_test "job URL resolution handles bare 'Terraform (env)' too"          test_j
 run_test "job URL resolution skips non-matrix jobs"                       test_job_url_resolution_skips_non_matrix_jobs
 run_test "upsert pass does NOT nest log groups"                            test_upsert_pass_does_not_nest_log_groups
 run_test "grouped head footer is [Workflow log] (workflow run URL)"       test_grouped_footer_is_workflow_log
-run_test "per-env anchor picks newest comment id when duplicates exist"    test_per_env_anchor_picks_newest_when_duplicates
+run_test "per-env anchor picks newest comment id across multiple attempts" test_per_env_anchor_picks_newest_when_multiple_attempts
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
 run_test "Plan Details cell wraps in <div align='left'>"                   test_plan_details_left_align_div
