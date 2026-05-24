@@ -96,11 +96,18 @@ runs:
         # Body is passed via a heredoc with a quoted delimiter so multi-line
         # markdown is preserved verbatim, not subjected to YAML expression
         # interpolation as it would be in the env: list above.
+        #
+        # Intentionally NOT exported. step_pr_comment.sh is sourced from
+        # this same shell and reads ${input_body} as a shell-local, so it
+        # never needs to be in envp. Bodies carry the plan-extract output
+        # (~65k chars, capped); a single env var that size sits just under
+        # Linux's per-string execve limit (MAX_ARG_STRLEN = 128k). Keeping
+        # it out of envp removes the only realistic ARG_MAX exposure on
+        # this action's surface.
         input_body=$(cat <<'EOF_PR_COMMENT_BODY'
         ${{ inputs.body }}
         EOF_PR_COMMENT_BODY
         )
-        export input_body
         set -o allexport
         source "${{ github.action_path }}/step_pr_comment.sh"
         exit_code=$?
