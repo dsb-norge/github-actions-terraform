@@ -364,7 +364,7 @@ test_alphabetical_column_order() {
 test_per_env_anchor_resolved() {
   write_meta "myenv" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 4242, "body": "<!-- tf:tag:plan:myenv:run-id-999 -->\nplan extract body"}]
+[{"id": 4242, "body": "<!-- tf:tag:plan:myenv:run-id-999:attempt-1 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -420,7 +420,7 @@ test_both_anchor_and_job_url_resolved_shows_both_with_br() {
   write_meta "envX" "g"
   with_jobs_for "envX"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
-[{"id": 7777, "body": "<!-- tf:tag:plan:envX:run-id-999 -->\nplan extract body"}]
+[{"id": 7777, "body": "<!-- tf:tag:plan:envX:run-id-999:attempt-1 -->\nplan extract body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
@@ -577,24 +577,30 @@ test_upsert_pass_does_not_nest_log_groups() {
 
 test_per_env_anchor_picks_newest_when_multiple_attempts() {
   # Two attempts of the same run leave two plan tags for the same env
-  # (different attempt tokens). Aggregator's env-prefix lookup matches
-  # both — newest comment id wins.
+  # (different attempt tokens). The run-id-scoped lookup matches both
+  # — newest comment id wins. The third fixture is a stale plan tag
+  # from a *prior* run that should be ignored entirely by the run-id
+  # scoping (proves the scope does what it says).
   write_meta "dup" "g"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [
   {"id": 100, "body": "<!-- tf:tag:plan:dup:run-id-999:attempt-1 -->\nattempt-1 plan"},
   {"id": 999, "body": "<!-- tf:tag:plan:dup:run-id-999:attempt-2 -->\nattempt-2 plan"},
-  {"id": 500, "body": "<!-- tf:tag:plan:dup:run-id-998:attempt-1 -->\nfrom an earlier run, not GC'd"}
+  {"id": 5000, "body": "<!-- tf:tag:plan:dup:run-id-998:attempt-1 -->\nfrom an earlier run, not GC'd"}
 ]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   if ! grep -q '#issuecomment-999' "${TEST_DIR}/step.log"; then
-    echo "expected anchor to point at newest id 999"
+    echo "expected anchor to point at newest id 999 (attempt-2 of run-id-999)"
     return 1
   fi
-  if ! grep -q 'plan tags match for env-prefix' "${TEST_DIR}/step.log"; then
-    echo "expected warning about multiple plan tags matching env-prefix"
+  if grep -q '#issuecomment-5000' "${TEST_DIR}/step.log"; then
+    echo "stale tag from run-id-998 must not be selected as the anchor"
+    return 1
+  fi
+  if ! grep -q 'plan tags match for run 999' "${TEST_DIR}/step.log"; then
+    echo "expected warning about multiple plan tags matching for run 999"
     return 1
   fi
   return 0

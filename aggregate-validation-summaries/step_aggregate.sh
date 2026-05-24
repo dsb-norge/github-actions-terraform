@@ -274,18 +274,19 @@ function list_pr_state {
   # Build per-env anchor map. For each env in any desired group, look for
   # the env's per-env plan tag by HTML marker substring; anchor the group
   # head's Links column at that comment so reviewers jump to the env's
-  # plan output. Match by env-prefix only — not run-id, not attempt —
-  # because "Re-run failed jobs" leaves the plan tags of non-re-running
-  # envs at their previous attempt's marker. Env-prefix lookup finds
-  # whichever attempt is current for each env. Multiple matches are
-  # vanishingly unlikely with the matrix's delete-first step, but the
-  # newest-by-id tiebreaker handles them defensively.
+  # plan output. Scope by env + GITHUB_RUN_ID (matches any attempt of the
+  # current run) so stale tags from prior runs that escaped cleanup don't
+  # mis-anchor the Links row. Within a single run, multiple attempts of
+  # the same env should leave just one tag (the matrix job's delete-first
+  # step purges prior ones before POSTing), but the newest-by-id
+  # tiebreaker handles the unlikely case where two coexist.
+  local run_id="${GITHUB_RUN_ID:-0}"
   local group env
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
       local plan_tag_prefix
-      plan_tag_prefix="<!-- tf:tag:plan:${env}:"
+      plan_tag_prefix="<!-- tf:tag:plan:${env}:run-id-${run_id}:"
 
       local matched_ids
       matched_ids=$(jq -r --arg m "${plan_tag_prefix}" '.[] | select(.body | contains($m)) | .id' \
@@ -299,7 +300,7 @@ function list_pr_state {
       fi
 
       if [ "${count}" = "0" ]; then
-        log-debug "  env '${env}': no plan tag found — Links cell will show only job log"
+        log-debug "  env '${env}': no plan tag found for run ${run_id} — Links cell will show only job log"
       elif [ "${count}" = "1" ]; then
         PER_ENV_ANCHOR[${env}]="#issuecomment-${matched_ids}"
         log-info "  env '${env}': resolved log-extract anchor to ${PER_ENV_ANCHOR[${env}]}"
@@ -307,7 +308,7 @@ function list_pr_state {
         local newest
         newest=$(echo "${matched_ids}" | sort -nr | head -n1)
         PER_ENV_ANCHOR[${env}]="#issuecomment-${newest}"
-        log-warn "  env '${env}': ${count} plan tags match for env-prefix; using newest id=${newest}"
+        log-warn "  env '${env}': ${count} plan tags match for run ${run_id}; using newest id=${newest}"
       fi
     done <<<"${DESIRED_GROUPS[${group}]}"
   done
