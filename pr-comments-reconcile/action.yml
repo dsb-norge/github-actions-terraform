@@ -1,0 +1,105 @@
+name: "Bulk reconcile (seed + GC) PR/issue comments by HTML marker"
+description: |
+  Generic, terraform-agnostic bulk primitive for managing a set of PR or issue
+  comments identified by HTML marker. Two passes in one call:
+
+    1. Heads pass — for each `{marker, body}` in `heads-yml` (declared order),
+       PATCH the existing match (oldest, with duplicates self-healed) or POST
+       fresh. Hash short-circuits no-op PATCHes (no subscriber re-ping for
+       unchanged content). When seeding a fresh PR, POSTs happen sequentially
+       in declared order so the comments' `created_at` ordering follows the
+       declared order — useful for keeping a deterministic set of "summary"
+       comments at the top of the conversation.
+
+    2. GC pass — for each `{marker-prefix, keep-marker-substring}` rule in
+       `gc-yml`, DELETE every comment whose body contains the prefix but does
+       NOT contain the keep-substring. Used to prune run-scoped "tag" comments
+       from prior runs (embed the run-id as the keep-substring).
+
+  See docs/Workflow-pr-comments.md for the heads + tags model this implements.
+  No event/fork/PR-context guards — those live in the caller workflow.
+
+author: "Peder Schmedling"
+
+inputs:
+  repo:
+    description: |
+      Owner/name of the repository hosting the PR or issue.
+      Typically `github.repository`.
+    required: true
+  issue-number:
+    description: |
+      PR or issue number whose comment thread to reconcile.
+      For a PR, typically `github.event.pull_request.number`.
+    required: true
+  github-token:
+    description: |
+      Token used by the `gh` CLI to call the GitHub API. Needs `pull-requests: write`
+      (and `issues: write` if the thread is on a plain issue).
+
+      No default provided (the `github` context is not available inside a
+      composite action's `inputs.<name>.default`). From a reusable workflow,
+      pass `github.token` or `secrets.GITHUB_TOKEN`.
+    required: true
+  heads-yml:
+    description: |
+      YAML list of head entries to reconcile. Declared order is preserved when
+      POSTing new heads (so `created_at` follows declared order on the PR).
+
+      Each entry:
+        - marker: '<!-- some:stable:identifier -->'  # any unique substring
+          body:   |
+            arbitrary multi-line markdown body
+            (the marker is automatically prepended on line 1)
+
+      Empty list (default) → heads pass is a no-op.
+    required: false
+    default: "[]"
+  gc-yml:
+    description: |
+      YAML list of GC rules. Each rule:
+        - marker-prefix:         '<!-- some:tag:prefix:'
+          keep-marker-substring: 'run-id-12345'
+
+      A comment is deleted when its body contains `marker-prefix` AND does NOT
+      contain `keep-marker-substring`. Pass an empty `keep-marker-substring` to
+      delete every comment matching the prefix.
+
+      Empty list (default) → GC pass is a no-op.
+    required: false
+    default: "[]"
+
+outputs:
+  reconcile-json:
+    description: |
+      JSON array of objects describing each head action taken:
+        {marker: <string>, action: created|updated|post-failed, "comment-id": <string>}
+      GC actions are not included.
+    value: ${{ steps.reconcile.outputs.reconcile-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: reconcile
+      shell: bash
+      env:
+        input_repo: ${{ inputs.repo }}
+        input_issue_number: ${{ inputs.issue-number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # heads-yml + gc-yml are passed via heredoc so multi-line YAML is
+        # preserved verbatim (env-list interpolation would mangle newlines).
+        input_heads_yml=$(cat <<'EOF_RECONCILE_HEADS'
+        ${{ inputs.heads-yml }}
+        EOF_RECONCILE_HEADS
+        )
+        input_gc_yml=$(cat <<'EOF_RECONCILE_GC'
+        ${{ inputs.gc-yml }}
+        EOF_RECONCILE_GC
+        )
+        export input_heads_yml input_gc_yml
+        set -o allexport
+        source "${{ github.action_path }}/step_reconcile.sh"
+        exit_code=$?
+        set +o allexport
+        exit ${exit_code}
