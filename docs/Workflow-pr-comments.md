@@ -131,6 +131,8 @@ Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd
 
 Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan@v0` `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to `N/A` when the upstream action didn't supply a value.
 
+Warnings row is rendered between `📖 Plan` and `📊 Plan Details` when `warning-count > 0`. Shape: `| ⚠️ | Warnings | <span title="Warnings from init+validate+plan">⚠️ N</span> |`. Absent when count is 0, missing, or `?`. The warning bodies live in the plan-tag comment (§5.2), not the head. See [Plan-warnings.md](Plan-warnings.md).
+
 Plan Details row is rendered only when `include-plan-details=true`. Shape:
 
 ```markdown
@@ -161,6 +163,8 @@ When `pr-comment-group` is non-empty, the env has **no per-env head at all** —
 
 All `<details>` shapes wrap the plan text in a `` ```terraform `` code fence. The plan text is capped at 65000 characters (tail-trimmed) to stay under GitHub's 65536-char comment limit.
 
+When `warning-count > 0`, a sibling `<details><summary>⚠️ N warnings</summary>…</details>` collapser is appended after the `<plan-block>` inside the same plan-tag comment. The two collapsers are siblings, not nested; the warnings collapser is **not** a sixth `<plan-block>` shape. See [Plan-warnings.md §5–§6](Plan-warnings.md) for the budgeting algorithm (warnings have priority over plan output when the combined body would exceed 65000 chars) and the rendered shape.
+
 ### 5.3 Per-group head
 
 The rolled-up grouped table aggregates every env in the group (alphabetical column order):
@@ -185,6 +189,8 @@ The rolled-up grouped table aggregates every env in the group (alphabetical colu
 Status cells map outcomes to emoji + tooltip: ✅ / ❌ / 🚫 / ⏭️ / — (empty outcome).
 
 Plan Details cells stack the count badges in a `<div align="left">` so they anchor left in the otherwise center-aligned column. The badges (`💫 N add`, `🛠️ N change`, `💥 N destroy`) always render; `🔀 move`, `📥 import`, `⛓️‍💥 remove` are appended only when non-zero.
+
+Warnings row is rendered between the step rows and `📊 Plan details`. Cell: `⚠️ N` when `N > 0`, em-dash `—` when 0 or empty. Mirrors Plan time's empty-state convention rather than Plan details' "always render" — warnings absence is "not interesting" not "not applicable". See [Plan-warnings.md](Plan-warnings.md).
 
 Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
