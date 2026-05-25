@@ -31,6 +31,8 @@
 #   input_plan_count_total     - Sum across categories ('' or '?' = not available; ≥0 numeric otherwise)
 #   input_plan_has_output_only_changes - 'true' when plan changes outputs only (no resource changes)
 #   input_plan_time            - Wall-clock duration of 'terraform plan' formatted as mm:ss (defaults to 'N/A')
+#   input_warning_count        - Total warning count across init+validate+plan (numeric; 0/missing/'?' suppresses the row + collapser)
+#   input_warnings_markdown_file - Path to rendered warnings markdown; appended as a sibling <details> after the plan-block when non-empty
 #   input_job_check_run_id     - The check run ID for the current job
 #
 # Standard GitHub environment variables used:
@@ -81,6 +83,16 @@ function render_head_summary {
 | ✔ | Validate | $(format-status "${input_status_validate}") |
 | 🧹 | TFLint | $(format-status "${input_status_lint}") |
 | 📖 | Plan | $(format-status "${input_status_plan}") |"
+
+    # Warnings row — between Plan and Plan Details. Only when count is a
+    # positive integer; 0 / unset / '?' suppress it (matches the
+    # 'absent when uninteresting' convention used for the per-env head's
+    # plan-details vs plan-time rows). The bodies live in the plan-tag
+    # comment via render_plan_extract; the head only carries the count.
+    if [[ "${input_warning_count:-0}" =~ ^[0-9]+$ ]] && [ "${input_warning_count}" -gt 0 ]; then
+      head="${head}
+| ⚠️ | Warnings | <span title=\"Warnings from init+validate+plan\">⚠️ ${input_warning_count}</span> |"
+    fi
 
     if [ "${input_include_plan_details}" == 'true' ]; then
 
@@ -149,19 +161,99 @@ function render_head_summary {
 #   4. plan-count-total missing/'?'                   → '<details>Show Plan (last 65k characters)…'
 # When plan output is entirely absent, render 'Plan not available 🤷‍♀️'.
 
+# --- helpers used by render_plan_extract ---
+
+# Byte-budgeted tail that always lands on a line boundary. Two motivations:
+#  (a) UTF-8 safety: 'tail -c <N>' can cut mid-codepoint when the file
+#      contains multi-byte chars; the resulting partial-codepoint at the
+#      start of the slice corrupts the rendered comment.
+#  (b) Readability: cutting mid-line leaves a dangling fragment at the
+#      top of the plan block; reviewers see ' ... whatever_var = '.
+# Strategy: 'tail -c <budget>' is byte-safe wrt the total length; piping
+# through 'sed 1d' discards the first (possibly-partial) line, which is
+# always whole bytes since a newline is a single ASCII byte. The result
+# is guaranteed to be line-aligned, slightly under the byte budget.
+# Files smaller than the budget pass through unchanged.
+function line_anchored_tail {
+  local file="$1"
+  local budget="$2"
+  [ "${budget}" -le 0 ] && return 0
+  [ -z "${file}" ] && return 0
+  [ ! -f "${file}" ] && return 0
+  local file_size
+  file_size=$(wc -c <"${file}")
+  if [ "${file_size}" -le "${budget}" ]; then
+    cat "${file}"
+    return
+  fi
+  tail -c "${budget}" "${file}" | sed '1d'
+}
+
+# Reads the warnings markdown file, capping its size at WARN_CAP. Block
+# boundary in our rendered markdown is "\n---\n" between every warning,
+# so we cut at a newline boundary (same UTF-8 trick as line_anchored_tail)
+# and append a clear "(truncated)" footer so reviewers know to look at
+# the job log for the full list. Empty / missing file returns empty.
+function load_warnings_md {
+  local file="$1"
+  local cap="$2"
+  [ -z "${file}" ] && return 0
+  [ ! -s "${file}" ] && return 0
+  local file_size
+  file_size=$(wc -c <"${file}")
+  if [ "${file_size}" -le "${cap}" ]; then
+    cat "${file}"
+    return
+  fi
+  local truncated
+  truncated=$(head -c "${cap}" "${file}")
+  # Strip the partial trailing line (cut may land mid-line).
+  if [[ "${truncated}" == *$'\n'* ]]; then
+    truncated="${truncated%$'\n'*}"
+    truncated="${truncated}"$'\n'
+  fi
+  printf '%s\n_(truncated, warnings exceed %d bytes — see job log)_\n' \
+    "${truncated}" "${cap}"
+}
+
 function render_plan_extract {
   local plan="### Terraform plan for environment: \`${input_environment_name}\`"
 
-  # Cap at 65k characters to fit within GitHub's 65536-byte comment limit
-  # — and, as a side benefit, to keep the value a comfortable distance
-  # under Linux's per-string execve limit (MAX_ARG_STRLEN, 128k on Ubuntu)
-  # in case this variable ever ends up in envp. tail/sed read directly
-  # from disk so the full file is never materialised in shell memory.
+  # GitHub's comment-body limit is 65536; we cap at 65000 to leave headroom
+  # under that AND under Linux's per-string execve limit (MAX_ARG_STRLEN,
+  # 128k on Ubuntu) in case this output ever ends up in envp.
+  # Budget model: warnings have priority over plan extract — when both
+  # can't fit, plan extract is trimmed first. See docs/Plan-warnings.md §5.
+  local HARD_LIMIT=65000
+  local OVERHEAD=500   # headers, <details> wrappers, blank-line separators
+  local WARN_CAP=60000 # warnings get most-but-not-all of the budget
+
+  local warnings_md=""
+  warnings_md=$(load_warnings_md "${input_warnings_markdown_file:-}" "${WARN_CAP}")
+  local warnings_size
+  warnings_size=$(printf '%s' "${warnings_md}" | wc -c)
+
+  local plan_budget=$((HARD_LIMIT - OVERHEAD - warnings_size))
+  [ "${plan_budget}" -lt 0 ] && plan_budget=0
+
+  # Pick the source file for plan output. txt-output-file is the post-
+  # 'terraform show' rendering (cleanest); console file is the raw tee.
+  # For the console file, slice out everything below the "Terraform used
+  # the selected providers…" header so we drop init/refresh noise above.
+  local source_file=""
+  local sliced_console=""
+  if [ -f "${input_plan_txt_output_file:-}" ]; then
+    source_file="${input_plan_txt_output_file}"
+  elif [ -f "${input_plan_console_file:-}" ]; then
+    sliced_console="${RUNNER_TEMP:-/tmp}/plan-sliced-$$.txt"
+    sed -n '/Terraform used the selected providers to generate the following execution/,$p' \
+      "${input_plan_console_file}" >"${sliced_console}"
+    source_file="${sliced_console}"
+  fi
+
   local plan_out=""
-  if [ -f "${input_plan_txt_output_file}" ]; then
-    plan_out=$(tail -c 65000 "${input_plan_txt_output_file}")
-  elif [ -f "${input_plan_console_file}" ]; then
-    plan_out=$(sed -n '/Terraform used the selected providers to generate the following execution/,$p' "${input_plan_console_file}" | tail -c 65000)
+  if [ -n "${source_file}" ] && [ -s "${source_file}" ]; then
+    plan_out=$(line_anchored_tail "${source_file}" "${plan_budget}")
   fi
 
   local total="${input_plan_count_total:-}"
@@ -206,6 +298,24 @@ ${plan_out}
 \`\`\`
 </details>"
   fi
+
+  # Warnings collapser — sibling of the plan-block, appended after it.
+  # Rendered regardless of plan-block shape, including 'no changes ✅' —
+  # warnings are interesting even when the plan itself is.
+  if [ -n "${warnings_md}" ]; then
+    local warning_count="${input_warning_count:-0}"
+    [[ "${warning_count}" =~ ^[0-9]+$ ]] || warning_count=0
+    # don't touch the indenting here
+    plan="${plan}
+
+<details><summary>⚠️ ${warning_count} warnings</summary>
+
+${warnings_md}
+</details>"
+  fi
+
+  # Clean up the per-call temp slice if we made one.
+  [ -n "${sliced_console}" ] && [ -f "${sliced_console}" ] && rm -f "${sliced_console}"
 
   printf '%s' "${plan}"
 }
