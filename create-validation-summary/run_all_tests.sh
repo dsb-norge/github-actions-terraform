@@ -1638,6 +1638,343 @@ export input_plan_time="0:45"
 run_test "Links row sits after Plan time row" assert_links_row_appears_after_plan_time
 
 # --------------------------------------------------
+# Warnings row in head + warnings <details> collapser in plan-extract.
+# See docs/Plan-warnings.md §6 for the rendered shape.
+# --------------------------------------------------
+
+# Helper that writes the same canned warnings markdown to a temp file and
+# returns the path, suitable for input_warnings_markdown_file.
+make_warnings_md() {
+  local content="${1:-default}"
+  local tmp
+  tmp=$(mktemp)
+  case "${content}" in
+    default)
+      cat >"${tmp}" <<'MD'
+### From terraform plan
+
+**Warning: Deprecated attribute**
+- source: `.terraform/modules/foo/main.tf:176`
+
+> The attribute is deprecated.
+
+---
+
+MD
+      ;;
+    multi)
+      cat >"${tmp}" <<'MD'
+### From terraform init
+
+**Warning: Provider deprecation**
+
+> The provider is deprecated.
+
+---
+
+### From terraform plan
+
+**Warning: Deprecated attribute**
+- source: `main.tf:42`
+
+> Body.
+
+---
+
+MD
+      ;;
+    huge)
+      # >60k of dummy warning blocks to exercise the WARN_CAP truncation
+      # (WARN_CAP = 60000; each block here is ~95 chars, 1000 blocks ≈ 95k).
+      local i
+      {
+        printf '### From terraform plan\n\n'
+        for i in $(seq 1 1000); do
+          printf '**Warning: deprecated attribute number %d**\n\n> body line one of warning %d\n> body line two of warning %d\n\n---\n\n' "${i}" "${i}" "${i}"
+        done
+      } >"${tmp}"
+      ;;
+  esac
+  echo "${tmp}"
+}
+
+# Per-test cleanup: created markdown / plan files left in tmp space, fine
+# under CI.
+
+assert_warnings_row_present_when_count_positive() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" != *'| ⚠️ | Warnings |'* ]]; then
+    echo "  head-summary: expected '⚠️ Warnings' row to be present"
+    return 1
+  fi
+  if [[ "${head}" != *'⚠️ 3</span>'* ]]; then
+    echo "  head-summary: expected count badge '⚠️ 3'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="3"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "Warnings row rendered in ungrouped head when warning-count > 0" assert_warnings_row_present_when_count_positive
+
+assert_warnings_row_absent_when_count_zero() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+    echo "  head-summary: warnings row must be absent when count is 0"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="0"
+export input_warnings_markdown_file=""
+run_test "Warnings row absent when warning-count is 0" assert_warnings_row_absent_when_count_zero
+
+assert_warnings_row_absent_when_count_unset() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+    echo "  head-summary: warnings row must be absent when count is unset"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+unset input_warning_count
+unset input_warnings_markdown_file
+run_test "Warnings row absent when warning-count is unset" assert_warnings_row_absent_when_count_unset
+
+assert_warnings_row_absent_when_count_question_mark() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+    echo "  head-summary: warnings row must be absent when count is '?'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="?"
+run_test "Warnings row absent when warning-count is '?'" assert_warnings_row_absent_when_count_question_mark
+
+assert_warnings_row_omitted_in_grouped_mode() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  # Grouped mode skips the entire validation table; the warnings row sits
+  # inside that table so it must be absent. The warnings collapser still
+  # appears in plan-extract though — checked separately below.
+  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+    echo "  head-summary: warnings row must NOT appear in grouped mode"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+export input_warning_count="3"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "Warnings row omitted in grouped mode" assert_warnings_row_omitted_in_grouped_mode
+
+assert_warnings_collapser_in_plan_extract() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  if [[ "${plan}" != *'<details><summary>⚠️ 3 warnings</summary>'* ]]; then
+    echo "  plan-extract: expected '<details><summary>⚠️ 3 warnings</summary>'"
+    return 1
+  fi
+  if [[ "${plan}" != *'From terraform plan'* ]]; then
+    echo "  plan-extract: warning body content missing"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="3"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "Warnings collapser appended to plan-extract" assert_warnings_collapser_in_plan_extract
+
+assert_warnings_collapser_absent_when_file_empty() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  if [[ "${plan}" == *'⚠️'*' warnings</summary>'* ]]; then
+    echo "  plan-extract: warnings collapser must be absent when markdown file is empty"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="0"
+export input_warnings_markdown_file=$(mktemp)  # empty file
+run_test "Warnings collapser absent when markdown file empty" assert_warnings_collapser_absent_when_file_empty
+
+assert_warnings_collapser_rendered_in_grouped_mode() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  # Per docs/Workflow-pr-comments.md §5.2 the plan-extract is still posted
+  # for grouped envs — only the per-env head's validation table is dropped.
+  # Warnings collapser must still appear inside plan-extract.
+  if [[ "${plan}" != *'⚠️ 2 warnings</summary>'* ]]; then
+    echo "  plan-extract: warnings collapser must still appear in grouped mode"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+export input_warning_count="2"
+export input_warnings_markdown_file=$(make_warnings_md multi)
+run_test "Warnings collapser appears in plan-extract even in grouped mode" assert_warnings_collapser_rendered_in_grouped_mode
+
+assert_combined_body_under_65k_with_huge_warnings() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  # When warnings exceed WARN_CAP they must be truncated with a clear
+  # marker. plan-extract size (the largest of the two outputs) must
+  # stay under 65000.
+  local plan_size
+  plan_size=$(printf '%s' "${plan}" | wc -c)
+  if [ "${plan_size}" -gt 65000 ]; then
+    echo "  plan-extract size ${plan_size} > 65000 (hard limit)"
+    return 1
+  fi
+  if [[ "${plan}" != *'truncated, warnings exceed'* ]]; then
+    echo "  plan-extract: expected truncation marker '_(truncated, warnings exceed …)'"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="700"
+export input_warnings_markdown_file=$(make_warnings_md huge)
+run_test "Combined body stays under 65k even with huge warnings (warnings truncated)" assert_combined_body_under_65k_with_huge_warnings
+
+assert_plan_trimmed_when_warnings_present() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  # Construct a 50k plan extract + ~5k warnings. Combined raw would be
+  # 55k+. Budgeting must shrink the plan-extract to fit; warnings stay
+  # intact.
+  local plan_size
+  plan_size=$(printf '%s' "${plan}" | wc -c)
+  if [ "${plan_size}" -gt 65000 ]; then
+    echo "  plan-extract size ${plan_size} > 65000"
+    return 1
+  fi
+  # The warnings markdown ("Deprecated attribute") must be intact.
+  if [[ "${plan}" != *'Deprecated attribute'* ]]; then
+    echo "  warnings markdown should survive budgeting"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+# Build a ~50k plan extract
+_huge_plan_file=$(mktemp)
+{
+  echo "Terraform used the selected providers to generate the following execution plan"
+  yes "  + foo_resource.bar = \"some value here that pads each line to a comfortable width\"" | head -n 1000
+  echo "Plan: 1 to add, 0 to change, 0 to destroy."
+} >"${_huge_plan_file}"
+export input_plan_txt_output_file="${_huge_plan_file}"
+export input_plan_count_total="1"
+export input_warning_count="3"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "Plan extract trimmed first when warnings + plan together exceed budget" assert_plan_trimmed_when_warnings_present
+
+assert_warnings_collapser_after_plan_block() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  # Warnings collapser is a SIBLING of the plan-block, positioned AFTER.
+  # Find both positions in plan-extract output.
+  local plan_block_pos warnings_pos
+  plan_block_pos=$(printf '%s' "${plan}" | grep -n 'Plan: no changes ✅' | head -n1 | cut -d: -f1)
+  warnings_pos=$(printf '%s' "${plan}" | grep -n '⚠️ 1 warnings</summary>' | head -n1 | cut -d: -f1)
+  if [ -z "${plan_block_pos}" ] || [ -z "${warnings_pos}" ]; then
+    echo "  expected both plan-block ('Plan: no changes ✅' line ${plan_block_pos:-?}) and warnings collapser (line ${warnings_pos:-?})"
+    return 1
+  fi
+  if [ "${warnings_pos}" -le "${plan_block_pos}" ]; then
+    echo "  warnings collapser (line ${warnings_pos}) must appear AFTER plan-block (line ${plan_block_pos})"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+# 'No changes' plan-block (count-total=0, no output-only). The shape is
+# only produced when plan_out is non-empty AND count-total=0 — supply a
+# minimal plan file so render_plan_extract doesn't fall back to
+# "Plan not available 🤷‍♀️".
+_no_changes_plan_file=$(mktemp)
+echo "No changes. Your infrastructure matches the configuration." >"${_no_changes_plan_file}"
+export input_plan_txt_output_file="${_no_changes_plan_file}"
+export input_plan_count_total="0"
+export input_warning_count="1"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "Warnings collapser sits AFTER plan-block in plan-extract" assert_warnings_collapser_after_plan_block
+
+assert_warnings_included_in_legacy_summary() {
+  local prefix="${1}"
+  local summary="${2}"
+  if [[ "${summary}" != *'⚠️ 2 warnings</summary>'* ]]; then
+    echo "  legacy 'summary' output must include the warnings collapser"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+export input_warning_count="2"
+export input_warnings_markdown_file=$(make_warnings_md multi)
+run_test "Legacy 'summary' output includes warnings collapser" assert_warnings_included_in_legacy_summary
+
+assert_utf8_preserved_at_truncation_boundary() {
+  local prefix="${1}"
+  local summary="${2}"
+  local head="${3}"
+  local plan="${4}"
+  # The plan extract must contain valid UTF-8 throughout. If the tail-cut
+  # lands mid-codepoint without the line-anchored fix, iconv would fail.
+  if ! printf '%s' "${plan}" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+    echo "  plan-extract is not valid UTF-8 (truncation likely cut mid-codepoint)"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+# A plan file padded with em-dashes (3 bytes each in UTF-8) so a naive
+# tail -c is overwhelmingly likely to cut mid-codepoint.
+_utf8_plan_file=$(mktemp)
+{
+  echo "Terraform used the selected providers to generate the following execution plan"
+  yes "— — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — — —" | head -n 1500
+  echo "Plan: 1 to add, 0 to change, 0 to destroy."
+} >"${_utf8_plan_file}"
+export input_plan_txt_output_file="${_utf8_plan_file}"
+export input_plan_count_total="1"
+export input_warning_count="3"
+export input_warnings_markdown_file=$(make_warnings_md default)
+run_test "UTF-8 preserved at truncation boundary" assert_utf8_preserved_at_truncation_boundary
+
+# --------------------------------------------------
 # Summary
 # --------------------------------------------------
 echo ""

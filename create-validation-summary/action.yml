@@ -97,6 +97,28 @@ inputs:
       when not provided — matches the convention used by `plan-count-*`.
     required: false
     default: "N/A"
+  warning-count:
+    description: |
+      Total terraform warning count across init+validate+plan (typically
+      summed in the caller workflow from three parse-terraform-warnings
+      invocations). When numeric and > 0, the per-env head-summary table
+      gets a "⚠️ Warnings" row between the "📖 Plan" and "📊 Plan Details"
+      rows. When 0 / unset / '?', the row is omitted. See
+      docs/Plan-warnings.md.
+    required: false
+    default: "0"
+  warnings-markdown-file:
+    description: |
+      Absolute path to a markdown file containing rendered warning bodies
+      (typically the concatenation of the three parse-terraform-warnings
+      output files for init+validate+plan). When non-empty and the file
+      has content, a `<details>⚠️ N warnings</summary>…</details>`
+      collapser is appended to the plan-extract output AFTER the existing
+      plan-block. Warnings have priority over the plan extract in the 65k
+      char budget — when both can't fit, plan extract is trimmed first.
+      See docs/Plan-warnings.md §5 for the budgeting algorithm.
+    required: false
+    default: ""
   plan-tag-comment-id:
     description: |
       GitHub comment id of the per-env plan-extract tag for this run, used
@@ -173,6 +195,8 @@ runs:
         input_plan_count_total: ${{ inputs.plan-count-total }}
         input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
         input_plan_time: ${{ inputs.plan-time }}
+        input_warning_count: ${{ inputs.warning-count }}
+        input_warnings_markdown_file: ${{ inputs.warnings-markdown-file }}
         input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
