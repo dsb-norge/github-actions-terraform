@@ -130,12 +130,24 @@ teardown() {
 # Empty / unset preserves the pre-plan-time fixture shape so older tests
 # stay backwards-compatible.
 write_meta() {
-  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}"
+  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}"
   local counts_default='{"count-add":"0","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
   local counts_use="${counts:-${counts_default}}"
   local plan_outputs='{}'
   if [ -n "${plan_time}" ]; then
     plan_outputs="{\"plan-time\": \"${plan_time}\"}"
+  fi
+  # parse-*-warnings step entries are emitted only when the caller passed
+  # a non-empty warnings spec. Format: "<init>:<validate>:<plan>" where each
+  # field is either a number or empty (empty = step entry omitted entirely
+  # so we can test the "step did not run" branch of _extract_warning_count).
+  local parse_warnings_json=""
+  if [ -n "${warnings}" ]; then
+    local w_init w_validate w_plan
+    IFS=':' read -r w_init w_validate w_plan <<< "${warnings}"
+    [ -n "${w_init}" ]     && parse_warnings_json+=",\"parse-init-warnings\":     {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${w_init}\"}}"
+    [ -n "${w_validate}" ] && parse_warnings_json+=",\"parse-validate-warnings\": {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${w_validate}\"}}"
+    [ -n "${w_plan}" ]     && parse_warnings_json+=",\"parse-plan-warnings\":     {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${w_plan}\"}}"
   fi
   cat > "${TEST_DIR}/matrix-job-meta-${env}.json" <<JSON
 {
@@ -153,7 +165,7 @@ write_meta() {
     "validate":    {"outcome": "success", "conclusion": "success", "outputs": {}},
     "lint":        {"outcome": "success", "conclusion": "success", "outputs": {}},
     "plan":        {"outcome": "success", "conclusion": "success", "outputs": ${plan_outputs}},
-    "parse-plan":  {"outcome": "success", "conclusion": "success", "outputs": ${counts_use}}
+    "parse-plan":  {"outcome": "success", "conclusion": "success", "outputs": ${counts_use}}${parse_warnings_json}
   }
 }
 JSON
@@ -664,6 +676,120 @@ test_plan_details_left_align_div() {
   return 0
 }
 
+# Warnings row in the grouped table. Sums warning-count outputs from
+# parse-init-warnings + parse-validate-warnings + parse-plan-warnings step
+# entries in each env's meta file. See docs/Plan-warnings.md §6.
+
+test_warnings_row_renders_sum_across_three_steps() {
+  # 1 init + 2 validate + 3 plan = 6 warnings for envA
+  write_meta "envA" "g" "success" "" "" "1:2:3"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  if ! grep -q '<span title="Warnings">⚠️</span> | Warnings' "${log}"; then
+    echo "expected Warnings row in the grouped table"
+    return 1
+  fi
+  if ! grep -q '⚠️ 6</span>' "${log}"; then
+    echo "expected cell '⚠️ 6' (sum of 1+2+3)"
+    return 1
+  fi
+  return 0
+}
+
+test_warnings_row_renders_em_dash_when_zero() {
+  write_meta "envA" "g" "success" "" "" "0:0:0"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  # Row must still appear (consistent shape across envs) but cell shows "—".
+  if ! grep -q '<span title="Warnings">⚠️</span> | Warnings' "${log}"; then
+    echo "expected Warnings row even when all zero"
+    return 1
+  fi
+  # Find the warnings row specifically and verify the env cell shows the em-dash
+  local row
+  row=$(grep '| Warnings |' "${log}" | head -n1)
+  if [[ "${row}" != *'—</span>'* ]]; then
+    echo "expected cell '—' on the Warnings row when all-zero, got: ${row}"
+    return 1
+  fi
+  return 0
+}
+
+test_warnings_row_renders_em_dash_when_steps_missing() {
+  # No 6th arg → no parse-*-warnings step entries written at all. This is
+  # the back-compat path: meta files captured before this feature shipped
+  # should still render correctly.
+  write_meta "envA" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  if ! grep -q '<span title="Warnings">⚠️</span> | Warnings' "${log}"; then
+    echo "expected Warnings row even when parse-*-warnings step entries absent"
+    return 1
+  fi
+  local row
+  row=$(grep '| Warnings |' "${log}" | head -n1)
+  if [[ "${row}" != *'—</span>'* ]]; then
+    echo "expected cell '—' on the Warnings row when parse-warnings steps absent, got: ${row}"
+    return 1
+  fi
+  return 0
+}
+
+test_warnings_row_sums_when_some_steps_missing() {
+  # Only init + plan ran (validate didn't emit a parse-warnings step).
+  # Sum should be 2 + 5 = 7.
+  write_meta "envA" "g" "success" "" "" "2::5"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  if ! grep -q '⚠️ 7</span>' "${log}"; then
+    echo "expected '⚠️ 7' (sum across present steps; missing step counts as 0)"
+    return 1
+  fi
+  return 0
+}
+
+test_warnings_row_mixed_envs() {
+  # Multi-env group: env-a has warnings, env-b has none. Both cells must
+  # render correctly side-by-side.
+  write_meta "env-a" "g" "success" "" "" "1:0:2"
+  write_meta "env-b" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  local row
+  row=$(grep '| Warnings |' "${log}" | head -n1)
+  # env-a is alphabetically first → cell 1 = "⚠️ 3", cell 2 = "—".
+  if [[ "${row}" != *'⚠️ 3</span>'*'—</span>'* ]]; then
+    echo "expected envA cell '⚠️ 3' and envB cell '—' in the Warnings row, got: ${row}"
+    return 1
+  fi
+  return 0
+}
+
+test_warnings_row_position_between_plan_and_plan_details() {
+  write_meta "envA" "g" "success" "" "" "1:0:0"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  local plan_line warn_line details_line
+  plan_line=$(grep -n '<span title="Plan">'         "${log}" | head -n1 | cut -d: -f1)
+  warn_line=$(grep -n '<span title="Warnings">'     "${log}" | head -n1 | cut -d: -f1)
+  details_line=$(grep -n '<span title="Plan details">' "${log}" | head -n1 | cut -d: -f1)
+  if [ -z "${plan_line}" ] || [ -z "${warn_line}" ] || [ -z "${details_line}" ]; then
+    echo "missing one or more rows (plan=${plan_line:-?}, warn=${warn_line:-?}, details=${details_line:-?})"
+    return 1
+  fi
+  if [ "${warn_line}" -le "${plan_line}" ] || [ "${warn_line}" -ge "${details_line}" ]; then
+    echo "Warnings row (line ${warn_line}) must sit between Plan (${plan_line}) and Plan details (${details_line})"
+    return 1
+  fi
+  return 0
+}
+
 test_group_marker_then_prefix_byte_exact() {
   write_meta "envA" "dev"
   run_step
@@ -791,13 +917,14 @@ test_step_row_order_byte_exact() {
   local log="${TEST_DIR}/step.log"
   # Extract just the table body rows in order
   local lines
-  lines=$(grep -oE '^\| <span title="[^"]+">' "${log}" | head -9)
+  lines=$(grep -oE '^\| <span title="[^"]+">' "${log}" | head -10)
   local expected='| <span title="Initialization">
 | <span title="Lock file">
 | <span title="Format and Style">
 | <span title="Validate">
 | <span title="TFLint">
 | <span title="Plan">
+| <span title="Warnings">
 | <span title="Plan details">
 | <span title="Plan time">
 | <span title="Links">'
@@ -1117,6 +1244,12 @@ run_test "per-env anchor picks newest comment id across multiple attempts" test_
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
 run_test "Plan Details cell wraps in <div align='left'>"                   test_plan_details_left_align_div
+run_test "Warnings row sums across init+validate+plan step outputs"        test_warnings_row_renders_sum_across_three_steps
+run_test "Warnings row renders em-dash when all three counts are 0"        test_warnings_row_renders_em_dash_when_zero
+run_test "Warnings row renders em-dash when parse-warnings steps missing"  test_warnings_row_renders_em_dash_when_steps_missing
+run_test "Warnings row sums correctly when some parse-warnings steps absent" test_warnings_row_sums_when_some_steps_missing
+run_test "Warnings row renders mixed envs (some with warnings, some without)" test_warnings_row_mixed_envs
+run_test "Warnings row sits between Plan and Plan details in grouped table" test_warnings_row_position_between_plan_and_plan_details
 run_test "group marker + H3 prefix lines are byte-exact"                   test_group_marker_then_prefix_byte_exact
 run_test "degraded mode: gh list fails → skip orphan delete, fresh POST"   test_degraded_mode_when_list_fails
 run_test "malformed metadata file is skipped with warning"                 test_malformed_metadata_is_skipped
