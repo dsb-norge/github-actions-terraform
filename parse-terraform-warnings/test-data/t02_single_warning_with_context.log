@@ -1,0 +1,9 @@
+Plan: 1 to add, 1 to change, 0 to destroy.
+
+Warning: Deprecated attribute
+
+  on .terraform/modules/foo/main.tf line 176, in resource "azurerm_windows_virtual_machine" "this":
+ 176:       vm_agent_platform_updates_enabled # Added property to ignore_changes as it continues to detect change in state.
+
+The attribute "vm_agent_platform_updates_enabled" is deprecated. Refer to the
+provider documentation for details.

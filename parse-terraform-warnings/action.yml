@@ -1,0 +1,53 @@
+name: "Parse terraform Warning: diagnostics"
+description: |
+  Scans a terraform console-output file for 'Warning:' diagnostic blocks.
+  Emits one ::warning workflow-command annotation per block (with file/line
+  source context when terraform printed it) so warnings appear inline in
+  the GitHub UI. Renders a markdown summary file for embedding in the PR
+  plan-tag comment via create-validation-summary.
+
+  See docs/Plan-warnings.md for the full data flow and budgeting model.
+author: "Peder Schmedling"
+inputs:
+  console-output-file:
+    description: |
+      Absolute path to the file to scan (e.g. tf-plan-console-output-<env>.txt
+      from terraform-plan, tf-init-console-output-<env>.txt from
+      terraform-init). Missing/empty files are not an error: count=0 and an
+      empty markdown file is produced.
+    required: true
+  step-label:
+    description: |
+      Which terraform sub-step the input file came from: 'init', 'validate',
+      or 'plan'. Used as a subheader in the rendered markdown and in the
+      annotation title prefix.
+    required: true
+  environment-name:
+    description: |
+      Name of the deployment environment; used in the rendered markdown
+      file's name so multiple matrix jobs don't collide.
+    required: true
+outputs:
+  warning-count:
+    description: |
+      Total warning count, including the suppressed entries from
+      '(and N more similar warnings elsewhere)' aggregator suffixes
+      terraform emits.
+    value: ${{ steps.parse.outputs.warning-count }}
+  warnings-markdown-file:
+    description: |
+      Absolute path to the rendered markdown file (always populated; the
+      file is empty when warning-count is 0).
+    value: ${{ steps.parse.outputs.warnings-markdown-file }}
+runs:
+  using: "composite"
+  steps:
+    - id: parse
+      shell: bash
+      env:
+        input_console_output_file: ${{ inputs.console-output-file }}
+        input_step_label: ${{ inputs.step-label }}
+        input_environment_name: ${{ inputs.environment-name }}
+      run: |
+        set -o allexport
+        source "${{ github.action_path }}/step_parse_warnings.sh"

@@ -1,0 +1,18 @@
+Initializing the backend...
+
+Initializing modules...
+
+Initializing provider plugins...
+- Reusing previous version of hashicorp/azurerm from the dependency lock file
+- Reusing previous version of hashicorp/random from the dependency lock file
+
+Warning: Version constraints inside provider configuration blocks are deprecated
+
+  on .terraform/modules/main.network/providers.tf line 8, in provider "azurerm":
+   8:   version = "~> 3.0"
+
+Terraform 0.13 and earlier required these constraints to be set inside
+provider configuration blocks. Going forward, version constraints should be
+declared in the required_providers block.
+
+Terraform has been successfully initialized!

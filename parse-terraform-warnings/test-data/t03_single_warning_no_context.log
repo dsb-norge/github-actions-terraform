@@ -1,0 +1,10 @@
+Initializing the backend...
+
+Warning: Provider deprecation notice
+
+The provider hashicorp/azurerm version 3.x is deprecated. Please migrate to
+the 4.x line before the next major release.
+
+Initializing provider plugins...
+
+Terraform has been successfully initialized!

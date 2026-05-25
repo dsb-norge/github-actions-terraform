@@ -1,0 +1,27 @@
+Plan: 1 to add, 1 to change, 5 to destroy.
+
+Warning: Deprecated attribute
+
+  on .terraform/modules/main.compute/main.windows_vm.tf line 176, in resource "azurerm_windows_virtual_machine" "this":
+ 176:       vm_agent_platform_updates_enabled
+
+The attribute "vm_agent_platform_updates_enabled" is deprecated. Refer to the
+provider documentation for details.
+
+(and 2 more similar warnings elsewhere)
+
+Warning: Argument is deprecated
+
+  with module.main.module.admin_key_vault["network-monitor"].azurerm_key_vault.this,
+  on .terraform/modules/main.admin_key_vault/main.tf line 7, in resource "azurerm_key_vault" "this":
+   7:   enable_rbac_authorization       = !var.legacy_access_policies_enabled
+
+This property has been renamed to `rbac_authorization_enabled` and will be
+removed in v5.0 of the provider
+
+(and 2 more similar warnings elsewhere)
+
+Warning: Some objects will no longer be managed by Terraform
+
+If you apply this plan, Terraform will discard its tracking information for
+the following objects, but it will not delete them.
