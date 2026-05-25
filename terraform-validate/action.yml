@@ -1,11 +1,25 @@
 name: "Run terraform validate in directory"
 description: |
-  Runs 'terraform validate' in a given directory.
+  Runs 'terraform validate' in a given directory and tees stdout/stderr to
+  a console-output file ('tf-validate-console-output-<env>.txt') so
+  downstream steps can scan for diagnostics.
 author: "Peder Schmedling"
 inputs:
   working-directory:
     description: From what directory to invoke terraform.
     required: true
+  environment-name:
+    description: |
+      Name of the current deployment environment. Used when naming the
+      console-output file ('tf-validate-console-output-<env>.txt').
+    required: false
+    default: ""
+outputs:
+  console-output-file:
+    description: |
+      Absolute path of the file containing the captured stdout/stderr
+      from 'terraform validate'.
+    value: ${{ steps.validate.outputs.tf-validate-console-output-file }}
 runs:
   using: "composite"
   steps:
@@ -24,14 +38,12 @@ runs:
           log-info "using $(terraform version)"
         fi
         end-group
+
     - id: validate
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      env:
+        input_working_directory: ${{ inputs.working-directory }}
+        input_environment_name: ${{ inputs.environment-name }}
       run: |
-        # run terraform validate in a given directory
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        start-group "running 'terraform validate' in '$(ws-path $(pwd))'"
-        terraform validate
-        end-group
+        set -o allexport
+        source "${{ github.action_path }}/step_validate.sh"
