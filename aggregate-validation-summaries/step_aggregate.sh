@@ -367,6 +367,20 @@ function render_group_body {
     rows+="${row}"$'\n'
   done
 
+  # ---- Warnings row ----
+  # Positioned between step rows and Plan details so reviewers scan
+  # top-to-bottom: "did each step pass" → "any warnings" → "what changes
+  # are planned". Cell shape is "⚠️ N" (or "—" for zero/missing); the
+  # warning bodies themselves live in the per-env plan-tag comment via
+  # create-validation-summary. See docs/Plan-warnings.md §6.
+  local warnings_row="| $(_render_step_icon_cell "⚠️" "Warnings") | Warnings |"
+  for env in "${envs[@]}"; do
+    local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
+    local wc
+    wc=$(_extract_warning_count "${meta_file}")
+    warnings_row+=" $(_render_warning_count_cell "${wc}") |"
+  done
+
   # ---- Plan Details row ----
   local plan_details_row="| $(_render_step_icon_cell "📊" "Plan details") | Plan details |"
   for env in "${envs[@]}"; do
@@ -415,11 +429,12 @@ function render_group_body {
   # in _upsert_one_group / _post_fresh.
   # 'rows' ends with a trailing newline; the rest are plain rows with no
   # trailing newline, so the format string supplies the line breaks.
-  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n\n%s\n' \
+  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
     "${rows}" \
+    "${warnings_row}" \
     "${plan_details_row}" \
     "${plan_time_row}" \
     "${links_row}" \
@@ -447,6 +462,25 @@ function _extract_plan_count {
   val=$(jq -r --arg k "${key}" '.steps["parse-plan"].outputs[$k] // ""' "${file}" 2>/dev/null || echo "")
   [ "${val}" = "null" ] && val=""
   echo "${val}"
+}
+
+# Extract the total warning count across all three parse-terraform-warnings
+# invocations (init / validate / plan) from a matrix-job-meta file. Returns
+# the sum as a string. Missing step outputs are treated as 0. Returns "0"
+# when the meta file is missing entirely or none of the steps ran — the
+# rendering helper (_render_warning_count_cell) then displays "—".
+#
+# Step IDs are 'parse-init-warnings', 'parse-validate-warnings',
+# 'parse-plan-warnings' — must match the IDs set in
+# .github/workflows/terraform-ci-cd-default.yml.
+function _extract_warning_count {
+  local file="${1}"
+  [ -z "${file}" ] || [ ! -f "${file}" ] && { echo "0"; return; }
+  jq -r '
+    (.steps["parse-init-warnings"].outputs["warning-count"] // "0" | tonumber? // 0) +
+    (.steps["parse-validate-warnings"].outputs["warning-count"] // "0" | tonumber? // 0) +
+    (.steps["parse-plan-warnings"].outputs["warning-count"] // "0" | tonumber? // 0)
+  ' "${file}" 2>/dev/null || echo "0"
 }
 
 # Extract the plan-time (mm:ss) emitted by terraform-plan from the metadata

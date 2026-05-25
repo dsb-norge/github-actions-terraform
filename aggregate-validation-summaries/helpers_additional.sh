@@ -118,6 +118,22 @@ function _render_plan_details_cell {
   echo "${cell}"
 }
 
+# Render the Warnings cell for a single env in the grouped table.
+# Empty input (no parse-warnings data) → "—" (matches the not-applicable
+# fallback used by _render_plan_time_cell and _status_emoji_and_title's
+# default branch). 0 → "—" too, since "no warnings" is not interesting.
+# Non-zero numeric → "⚠️ N" inside a tooltip-bearing span so the row
+# stays scannable in the grouped table.
+function _render_warning_count_cell {
+  local v="${1:-}"
+  local title='Warnings from init+validate+plan'
+  if [ -z "${v}" ] || [ "${v}" = "0" ]; then
+    echo "<span title=\"${title}\">—</span>"
+    return
+  fi
+  echo "<span title=\"${title}\">⚠️ ${v}</span>"
+}
+
 # Render the Plan time cell for a single env in the grouped table.
 # Empty input → "—" (matches the existing 'not applicable' fallback from
 # _status_emoji_and_title for missing data). Non-empty values are wrapped
