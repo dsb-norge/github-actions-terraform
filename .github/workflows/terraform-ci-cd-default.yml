@@ -463,6 +463,19 @@ jobs:
   terraform-ci-cd:
     name: "Terraform"
     needs: [create-matrix, seed-pr-comments]
+    # seed-pr-comments only fires on pull_request events. On push / dispatch /
+    # schedule it is correctly skipped — but GitHub Actions' implicit
+    # `if: success()` for a job with no explicit `if:` requires every `needs:`
+    # dep to be `success`, and a skipped dep doesn't satisfy that. Without
+    # this guard, push-to-main runs skip the entire matrix and everything
+    # downstream cascades to 'skipped'. Allow seed to be either success or
+    # skipped while still requiring create-matrix actually succeeded, and
+    # propagate cancellation explicitly via !cancelled() so a cancelled
+    # upstream still cancels this matrix.
+    if: |
+      !cancelled()
+      && needs.create-matrix.result == 'success'
+      && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
     runs-on: ${{ matrix.vars.runs-on }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
