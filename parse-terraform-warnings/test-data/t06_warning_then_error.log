@@ -1,0 +1,15 @@
+Plan: 0 to add, 0 to change, 0 to destroy.
+
+Warning: Deprecated attribute
+
+  on .terraform/modules/foo/main.tf line 12, in resource "azurerm_key_vault" "this":
+   12:   enable_rbac_authorization       = true
+
+This property has been renamed to `rbac_authorization_enabled`.
+
+Error: Reference to undeclared resource
+
+  on main.tf line 30, in resource "azurerm_storage_account" "this":
+   30:   resource_group_name = azurerm_resource_group.does_not_exist.name
+
+A managed resource "azurerm_resource_group" "does_not_exist" has not been declared.

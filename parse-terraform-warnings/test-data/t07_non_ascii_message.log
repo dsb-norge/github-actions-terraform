@@ -1,0 +1,10 @@
+Plan: 0 to add, 0 to change, 0 to destroy.
+
+Warning: Deprecated attribute
+
+  on main.tf line 5, in resource "azurerm_key_vault" "this":
+   5:   enable_rbac_authorization = true
+
+This property — formerly known as `enable_rbac_authorization` — has been
+renamed to `rbac_authorization_enabled` (note the change). Migrate before
+v5.0 of the provider.
