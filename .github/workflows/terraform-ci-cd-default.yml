@@ -568,6 +568,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-init@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
+          environment-name: ${{ matrix.vars.github-environment }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -605,6 +606,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-validate@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
+          environment-name: ${{ matrix.vars.github-environment }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧹 Lint with TFLint
@@ -631,6 +633,83 @@ jobs:
         with:
           plan-console-file: ${{ steps.plan.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
+
+      # Warning extraction — one parse-terraform-warnings invocation per step
+      # whose console output got captured. Three invocations rather than one
+      # consolidated scan so each gets its own 10-annotation GHA budget;
+      # consolidating would mean a noisy init crowds out plan-warning
+      # annotations. Each emits one ::warning per detected block (with
+      # file=/line= when source context is present) and writes a markdown
+      # body file for embedding in the PR plan-tag comment.
+      # See docs/Plan-warnings.md.
+      - name: "⚠️ Parse init warnings"
+        id: parse-init-warnings
+        if: always() && steps.init.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.init.outputs.console-output-file }}
+          step-label: init
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: "⚠️ Parse validate warnings"
+        id: parse-validate-warnings
+        if: always() && steps.validate.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.validate.outputs.console-output-file }}
+          step-label: validate
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true
+
+      - name: "⚠️ Parse plan warnings"
+        id: parse-plan-warnings
+        if: always() && steps.plan.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.plan.outputs.console-output-file }}
+          step-label: plan
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true
+
+      # Aggregate the three per-step parse-terraform-warnings outputs into
+      # a single markdown file (init → validate → plan order) plus a single
+      # warning-count integer that's the sum across all three steps.
+      # Done as one shell step because GHA workflow expressions don't
+      # support arithmetic — '+' between fromJSON() calls is rejected by
+      # the expression parser. Empty / missing per-step files are skipped
+      # so the concatenation also works when an upstream step didn't run
+      # (e.g. plan skipped because init failed).
+      - name: "⚠️ Aggregate warnings (concat + sum)"
+        id: concat-warnings-md
+        if: always()
+        shell: bash
+        env:
+          init_md: ${{ steps.parse-init-warnings.outputs.warnings-markdown-file }}
+          validate_md: ${{ steps.parse-validate-warnings.outputs.warnings-markdown-file }}
+          plan_md: ${{ steps.parse-plan-warnings.outputs.warnings-markdown-file }}
+          init_count: ${{ steps.parse-init-warnings.outputs.warning-count }}
+          validate_count: ${{ steps.parse-validate-warnings.outputs.warning-count }}
+          plan_count: ${{ steps.parse-plan-warnings.outputs.warning-count }}
+          env_name: ${{ matrix.vars.github-environment }}
+        run: |
+          out="${GITHUB_WORKSPACE}/tf-warnings-${env_name}.md"
+          : > "${out}"
+          for f in "${init_md}" "${validate_md}" "${plan_md}"; do
+            if [ -n "${f}" ] && [ -s "${f}" ]; then
+              cat "${f}" >> "${out}"
+            fi
+          done
+          # Sum the per-step counts. Treat empty/non-numeric values as 0
+          # so a missing step output never breaks the arithmetic.
+          total=0
+          for c in "${init_count}" "${validate_count}" "${plan_count}"; do
+            if [[ "${c}" =~ ^[0-9]+$ ]]; then
+              total=$((total + c))
+            fi
+          done
+          echo "warnings-markdown-file=${out}" >> "${GITHUB_OUTPUT}"
+          echo "warning-count=${total}" >> "${GITHUB_OUTPUT}"
 
       - name: 📝 Create validation summary
         id: create-validation-summary
@@ -679,6 +758,14 @@ jobs:
           # Plan time row in the PR comment surfaces "slow + failing" at a
           # glance instead of forcing a click into the job log.
           plan-time: ${{ steps.plan.outputs.plan-time }}
+          # Warning surfaces — see docs/Plan-warnings.md. warning-count is the
+          # sum across init+validate+plan (each parse-terraform-warnings
+          # invocation emits its own count). The markdown file holds the
+          # rendered warning bodies; create-validation-summary appends them
+          # as a <details> collapser inside the plan-tag comment, with
+          # warnings taking priority over plan-extract in the 65k budget.
+          warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
+          warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 📋 Post per-env plan-extract tag
@@ -743,6 +830,12 @@ jobs:
           plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
           plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
           plan-time: ${{ steps.plan.outputs.plan-time }}
+          # Mirror the warning inputs from the first invocation so the
+          # re-rendered head also carries the ⚠️ Warnings row. Without this
+          # the second render would drop the warnings row from the head
+          # body that ultimately PATCHes the per-env head.
+          warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
+          warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
           # The single input that differs from the first call. Triggers the
           # Links row branch in render_head_summary.
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
