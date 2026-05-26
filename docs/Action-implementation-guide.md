@@ -195,7 +195,7 @@ For inputs that are simple strings, pass them as environment variables. Use `set
 
 ### Step shim pattern — JSON inputs
 
-JSON values passed from GitHub Actions expressions can contain special characters that break normal variable assignment. Use heredocs. The `set -o allexport` pattern still applies:
+JSON values passed from GitHub Actions expressions can contain special characters that break normal variable assignment. Use heredocs. **Do NOT `export` the heredoc-captured variable** — the step script is `source`d in the same shell and reads it as a shell-local, so it never needs to be in envp. Exporting it would push the JSON into envp for every subsequent fork and risk an ARG_MAX crash on big inputs — see [Anti-pattern: exporting heredoc-captured JSON](#anti-pattern-exporting-heredoc-captured-json) below for the full rationale.
 
 ```yaml
 - id: my-step
@@ -203,17 +203,18 @@ JSON values passed from GitHub Actions expressions can contain special character
   env:
     input_simple_var: ${{ inputs.simple-var }}
   run: |
-    # JSON inputs require special handling (heredocs)
+    # Heredoc capture (special chars survive verbatim). Intentionally NOT
+    # exported — step_my_step.sh reads it as a shell-local via `source`.
     input_json_data=$(cat <<'EOF'
     ${{ inputs.json-data }}
     EOF
     )
 
-    export input_json_data
-
     set -o allexport
     source "${{ github.action_path }}/step_my_step.sh"
 ```
+
+> Note the order: the heredoc capture happens **before** `set -o allexport`. That keeps `input_json_data` from being auto-exported. Variables set later by the step script (under allexport) still get the export attribute, which is what allexport is there for.
 
 ### Naming convention for step IDs
 
@@ -556,6 +557,70 @@ main
 _main_exit_code=$?
 exit ${_main_exit_code}
 ```
+
+---
+
+## Anti-pattern: exporting heredoc-captured JSON
+
+**Don't do this:**
+
+```yaml
+run: |
+  input_json_data=$(cat <<'EOF'
+  ${{ inputs.json-data }}
+  EOF
+  )
+  export input_json_data           # ← anti-pattern
+  source "${{ github.action_path }}/step_my_step.sh"
+```
+
+Equally bad — capturing under allexport:
+
+```yaml
+run: |
+  set -o allexport
+  input_json_data=$(cat <<'EOF'    # ← variables created under allexport are auto-exported
+  ${{ inputs.json-data }}
+  EOF
+  )
+  source "${{ github.action_path }}/step_my_step.sh"
+```
+
+### Why it breaks
+
+Under either form, `input_json_data` is in the shell's exported-variable set. At the next `fork+execve` — any time the step calls `jq`, `gh`, `terraform`, or any other external command — bash builds `envp` from the exported set. Linux enforces two limits on `envp`:
+
+- `ARG_MAX` (~2 MB total across argv + envp), and
+- `MAX_ARG_STRLEN` (128 KB per individual string on Ubuntu).
+
+The 128 KB per-string limit is the closer one in practice — a single big JSON input (a long PR body in `github.event`, a 65 KB plan extract, the full `toJSON(steps)` for a busy matrix job) trips it. The fork fails with exit 126 "Argument list too long". The original step looks like it succeeded; whatever it forks dies. The bug is **size-dependent**, so it doesn't appear in tests and only surfaces in production on a calling repo with a big-enough input.
+
+### Why it bites repeatedly
+
+The pattern looks reasonable: the script is sourced from the shim, so why wouldn't you "make sure" the variable is visible by exporting it? But sourcing a script means it runs in the **same shell** — the script already sees the caller's variable table without `export`. The `export` only changes what reaches forked subprocesses, which is exactly where the danger lives. Once you internalize "source sees locals" the temptation to `export` evaporates.
+
+This repo has been bitten by this exact bug multiple times: `capture-matrix-job-meta` (steps context with embedded plan extracts), `aggregate-validation-summaries` (paginated `gh api` responses), `pr-comment` (user-supplied comment body), `auto-merge-pr` (`github.event` JSON on PRs with long descriptions). Each fix was a one-line removal of the `export` (plus, in the more sophisticated cases, an internal switch from `--argjson` to `--slurpfile` for jq). Reference implementations are in the corresponding action directories.
+
+### The safe pattern (recap)
+
+```yaml
+run: |
+  # Heredoc capture, NOT exported.
+  input_json_data=$(cat <<'EOF'
+  ${{ inputs.json-data }}
+  EOF
+  )
+
+  # set -o allexport AFTER the heredoc so this variable isn't auto-exported.
+  set -o allexport
+  source "${{ github.action_path }}/step_my_step.sh"
+```
+
+Inside the step script: read `${input_json_data}` directly, or — if it might be very large and needs to be passed to a forked tool — write it to a tempfile and pass the path (`jq --slurpfile`, `gh api -F body=@<file>`, etc). See [CLAUDE.md → "Watch for ARG_MAX in step scripts"](../CLAUDE.md) for the in-tree reference patterns.
+
+### When to actually export
+
+`export FOO=value` is correct when you need an external command (e.g., `terraform`) to see `FOO` via the environment. In that case the data is bounded (a directory path, a flag, a token) and won't trip ARG_MAX. The anti-pattern is specifically about exporting **large user-supplied content** that the step only reads.
 
 ---
 
