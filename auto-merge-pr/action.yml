@@ -70,13 +70,19 @@ runs:
         input_repo_ref: ${{ github.repository }}
         input_pr_number: ${{ github.event.number }}
       run: |
-        # JSON inputs require special handling (heredocs)
+        # Heredoc capture (special chars in github.event JSON survive verbatim).
+        # Intentionally NOT exported — step_auto_merge_pr.sh is sourced from
+        # this same shell and reads ${input_github_event_context_json} as a
+        # shell-local, so it never needs to be in envp. github.event for PR
+        # events can be 30-100+ KB (long descriptions, large reviewer lists,
+        # labels). Exporting that pushed every subsequent gh / jq fork past
+        # MAX_ARG_STRLEN (128 KB per envp string on Ubuntu); see
+        # docs/Action-implementation-guide.md §"Anti-pattern: exporting
+        # heredoc-captured JSON".
         input_github_event_context_json=$(cat <<'EOF'
         ${{ inputs.github-event-context-json }}
         EOF
         )
-
-        export input_github_event_context_json
 
         source "${GITHUB_ACTION_PATH}/step_auto_merge_pr.sh"
         exit_code=$?
