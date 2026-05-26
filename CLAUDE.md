@@ -64,6 +64,17 @@ run: |
   source "${{ github.action_path }}/step_<name>.sh"
 ```
 
+### Watch for ARG_MAX in step scripts
+
+Under `set -o allexport`, any shell variable holding large data (file contents, `gh api` responses, plan extracts) gets exported to envp; once envp crosses Linux's `ARG_MAX` (~2 MB total) or `MAX_ARG_STRLEN` (128 KB per string), the next `fork+execve` — typically `jq`, `bash -c`, or another helper — fails with exit 126 "Argument list too long". The bug correlates with PR/data size so it stays silent in tests and only surfaces in production on a calling repo with a big-enough plan or comment thread.
+
+**Rule:** never assign large captured data to a shell variable while allexport is in scope. Route through `mktemp` files (or read straight from disk) and pass via stdin / `-f` / `-F body=@file` / `jq --slurpfile`. Four in-tree reference patterns to copy from when authoring or reviewing a step script:
+
+- File tails — `tail -c 65000 "<path>"` directly into the capture, never via an intermediate var (`create-validation-summary/step_create_validation_summary.sh`).
+- `gh api` responses — write the response to `mktemp`, then `jq` reads it (`aggregate-validation-summaries/step_aggregate.sh`, both `_resolve_per_env_job_urls` and `list_pr_state`).
+- Large JSON merge — `jq --slurpfile` (not `--argjson`, which puts the JSON on argv) and dereference with `[0]` (`capture-matrix-job-meta/step_capture.sh`).
+- Large gh CLI inputs — heredoc the body into a tempfile, post via `gh api -F body=@<tempfile>` (`pr-comment/action.yml`).
+
 ### PRs are gated by per-action test suites
 
 `.github/workflows/action-tests.yml` runs every action's `run_all_tests.sh` in parallel on each PR and exposes a single `tests-conclusion` check (intended to be required by branch protection). Result is reported as a PR comment, run-page annotations, and a `$GITHUB_STEP_SUMMARY` block — all three driven by the result-JSON artifacts each matrix job uploads.
