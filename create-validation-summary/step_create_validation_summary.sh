@@ -59,6 +59,15 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # In grouped mode (input_pr_comment_group non-empty), the validation table
 # is omitted — it lives on the per-group head posted by
 # aggregate-validation-summaries.
+#
+# Kept in sync with the grouped head (aggregate-validation-summaries'
+# render_group_body): same row set, labels, col-1 icon tooltips (via
+# _render_step_icon_cell), and Plan-details / Plan-time / Warnings cell
+# conventions and row-presence rules. Two differences are intentional, not
+# drift: (1) step-status cells here use text (`success` / <kbd>failure</kbd>
+# via format-status) vs emoji in the grouped head — a column-width
+# adaptation; (2) the header shape and footer scope differ. See
+# docs/Workflow-pr-comments.md §5.1/§5.3.
 
 function render_head_summary {
   local job_url="${1}"
@@ -77,28 +86,34 @@ function render_head_summary {
     head="${head}
 |  | Step | Result |
 |:---:|---|---|
-| ⚙️ | Initialization | $(format-status "${input_status_init}") |
-| 🔒 | Lock file | $(format-status "${input_status_verify_lock}") |
-| 🖌 | Format and Style | $(format-status "${input_status_fmt}") |
-| ✔ | Validate | $(format-status "${input_status_validate}") |
-| 🧹 | TFLint | $(format-status "${input_status_lint}") |
-| 📖 | Plan | $(format-status "${input_status_plan}") |"
+| $(_render_step_icon_cell "⚙️" "Initialization") | Initialization | $(format-status "${input_status_init}") |
+| $(_render_step_icon_cell "🔒" "Lock file") | Lock file | $(format-status "${input_status_verify_lock}") |
+| $(_render_step_icon_cell "🖌" "Format and Style") | Format and Style | $(format-status "${input_status_fmt}") |
+| $(_render_step_icon_cell "✔" "Validate") | Validate | $(format-status "${input_status_validate}") |
+| $(_render_step_icon_cell "🧹" "TFLint") | TFLint | $(format-status "${input_status_lint}") |
+| $(_render_step_icon_cell "📖" "Plan") | Plan | $(format-status "${input_status_plan}") |"
 
-    # Warnings row — between Plan and Plan Details. Only when count is a
+    # Warnings row — between Plan and Plan details. Only when count is a
     # positive integer; 0 / unset / '?' suppress it (matches the
     # 'absent when uninteresting' convention used for the per-env head's
-    # plan-details vs plan-time rows). The bodies live in the plan-tag
-    # comment via render_plan_extract; the head only carries the count.
+    # plan-details vs plan-time rows, and the grouped head's Warnings row).
+    # The bodies live in the plan-tag comment via render_plan_extract; the
+    # head only carries the count.
     if [[ "${input_warning_count:-0}" =~ ^[0-9]+$ ]] && [ "${input_warning_count}" -gt 0 ]; then
       head="${head}
-| ⚠️ | Warnings | <span title=\"Warnings from init+validate+plan\">⚠️ ${input_warning_count}</span> |"
+| $(_render_step_icon_cell "⚠️" "Warnings") | Warnings | <span title=\"Warnings from init+validate+plan\">⚠️ ${input_warning_count}</span> |"
     fi
 
     if [ "${input_include_plan_details}" == 'true' ]; then
 
+      # Cell wrapped in <div align="left"> to match the grouped head's
+      # Plan-details cell byte-for-byte (the grouped table's columns are
+      # center-aligned and need the div to anchor the badge stack left; the
+      # per-env Result column is already left-aligned so it's a visual
+      # no-op, but kept identical for sync).
       # don't touch the indenting here
       head="${head}
-| 📊 | Plan Details | <span title=\"Resources to be added\">\`💫 ${input_plan_count_add}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_plan_count_change}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_plan_count_destroy}\` destroy</span>"
+| $(_render_step_icon_cell "📊" "Plan details") | Plan details | <div align=\"left\"><span title=\"Resources to be added\">\`💫 ${input_plan_count_add}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_plan_count_change}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_plan_count_destroy}\` destroy</span>"
 
       if [ "${input_plan_count_move}" != '0' ]; then
         head="${head}<br><span title=\"Resources to be moved\">\`🔀 ${input_plan_count_move}\` move</span>"
@@ -110,13 +125,23 @@ function render_head_summary {
         head="${head}<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_plan_count_remove}\` remove</span>"
       fi
 
-      head="${head} |"
+      head="${head}</div> |"
     fi
 
-    # Plan time row — same shape as before.
+    # Plan time row. Default is the em-dash '—' (not backtick-wrapped),
+    # matching the grouped head's _render_plan_time_cell: a real duration is
+    # backtick-wrapped, an absent/N-A one renders as '—'. The action.yml
+    # input default is the literal 'N/A', so treat both empty and 'N/A' as
+    # absent here.
     # don't touch the indenting here
+    local plan_time_cell
+    if [ -z "${input_plan_time:-}" ] || [ "${input_plan_time}" = 'N/A' ]; then
+      plan_time_cell="<span title=\"mm:ss (minutes:seconds)\">—</span>"
+    else
+      plan_time_cell="<span title=\"mm:ss (minutes:seconds)\">\`${input_plan_time}\`</span>"
+    fi
     head="${head}
-| ⏱ | Plan time | <span title=\"mm:ss (minutes:seconds)\">\`${input_plan_time:-N/A}\`</span> |"
+| $(_render_step_icon_cell "⏱" "Plan time") | Plan time | ${plan_time_cell} |"
 
     # Links row — only rendered when the caller supplied
     # plan-tag-comment-id (typically the id of this run's per-env plan tag,
@@ -128,7 +153,7 @@ function render_head_summary {
     if [ -n "${input_plan_tag_comment_id:-}" ]; then
       # don't touch the indenting here
       head="${head}
-| 🔗 | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
+| $(_render_step_icon_cell "🔗" "Links") | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
     fi
   fi
 

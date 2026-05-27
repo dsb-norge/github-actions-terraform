@@ -227,9 +227,9 @@ assert_plan_details_basic() {
   local summary="${2}"
   local fails=""
 
-  # Should contain the Plan Details row
-  if [[ "${summary}" != *"Plan Details"* ]]; then
-    fails+="  summary: expected to contain 'Plan Details'\n"
+  # Should contain the Plan details row
+  if [[ "${summary}" != *"Plan details"* ]]; then
+    fails+="  summary: expected to contain 'Plan details'\n"
   fi
 
   # Should contain add/change/destroy counts
@@ -293,9 +293,9 @@ assert_no_plan_details() {
   local summary="${2}"
   local fails=""
 
-  # Should NOT contain the Plan Details row
-  if [[ "${summary}" == *"Plan Details"* ]]; then
-    fails+="  summary: should not contain 'Plan Details' when disabled\n"
+  # Should NOT contain the Plan details row
+  if [[ "${summary}" == *"Plan details"* ]]; then
+    fails+="  summary: should not contain 'Plan details' when disabled\n"
   fi
 
   if [[ -n "${fails}" ]]; then
@@ -522,7 +522,7 @@ assert_lock_row_success() {
   local prefix="${1}"
   local summary="${2}"
   local fails=""
-  if [[ "${summary}" != *"| 🔒 | Lock file | \`success\` |"* ]]; then
+  if [[ "${summary}" != *'| <span title="Lock file">🔒</span> | Lock file | `success` |'* ]]; then
     fails+="  summary: expected lock file row with success status\n"
   fi
   if [[ -n "${fails}" ]]; then
@@ -539,7 +539,7 @@ assert_lock_row_failure() {
   local prefix="${1}"
   local summary="${2}"
   local fails=""
-  if [[ "${summary}" != *"| 🔒 | Lock file | <kbd>failure</kbd> |"* ]]; then
+  if [[ "${summary}" != *'| <span title="Lock file">🔒</span> | Lock file | <kbd>failure</kbd> |'* ]]; then
     fails+="  summary: expected lock file row with <kbd>failure</kbd>\n"
   fi
   if [[ -n "${fails}" ]]; then
@@ -590,13 +590,13 @@ assert_full_body_golden_all_success_no_plan() {
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
-| ⚙️ | Initialization | `success` |
-| 🔒 | Lock file | `success` |
-| 🖌 | Format and Style | `success` |
-| ✔ | Validate | `success` |
-| 🧹 | TFLint | `success` |
-| 📖 | Plan | `success` |
-| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
+| <span title="Initialization">⚙️</span> | Initialization | `success` |
+| <span title="Lock file">🔒</span> | Lock file | `success` |
+| <span title="Format and Style">🖌</span> | Format and Style | `success` |
+| <span title="Validate">✔</span> | Validate | `success` |
+| <span title="TFLint">🧹</span> | TFLint | `success` |
+| <span title="Plan">📖</span> | Plan | `success` |
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">—</span> |
 
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
@@ -628,13 +628,13 @@ assert_all_row_labels_byte_exact() {
   local summary="${2}"
   local fails=""
   local rows=(
-    "| ⚙️ | Initialization | "
-    "| 🔒 | Lock file | "
-    "| 🖌 | Format and Style | "
-    "| ✔ | Validate | "
-    "| 🧹 | TFLint | "
-    "| 📖 | Plan | "
-    "| ⏱ | Plan time | "
+    '| <span title="Initialization">⚙️</span> | Initialization | '
+    '| <span title="Lock file">🔒</span> | Lock file | '
+    '| <span title="Format and Style">🖌</span> | Format and Style | '
+    '| <span title="Validate">✔</span> | Validate | '
+    '| <span title="TFLint">🧹</span> | TFLint | '
+    '| <span title="Plan">📖</span> | Plan | '
+    '| <span title="Plan time">⏱</span> | Plan time | '
   )
   for row in "${rows[@]}"; do
     if [[ "${summary}" != *"${row}"* ]]; then
@@ -672,9 +672,9 @@ assert_plan_details_row_byte_exact() {
   local prefix="${1}"
   local summary="${2}"
   local fails=""
-  local expected='| 📊 | Plan Details | <span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span> |'
+  local expected='| <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> |'
   if [[ "${summary}" != *"${expected}"* ]]; then
-    fails+="  summary: Plan Details row not byte-exact\n"
+    fails+="  summary: Plan details row not byte-exact\n"
     fails+="    expected substring: ${expected}\n"
   fi
   if [[ -n "${fails}" ]]; then
@@ -941,12 +941,12 @@ assert_grouped_table_omitted() {
   local fails=""
   # No standard row labels should appear
   local forbidden_rows=(
-    "| ⚙️ | Initialization |"
-    "| 🔒 | Lock file |"
-    "| 🖌 | Format and Style |"
-    "| ✔ | Validate |"
-    "| 🧹 | TFLint |"
-    "| 📖 | Plan |"
+    '| <span title="Initialization">⚙️</span> | Initialization |'
+    '| <span title="Lock file">🔒</span> | Lock file |'
+    '| <span title="Format and Style">🖌</span> | Format and Style |'
+    '| <span title="Validate">✔</span> | Validate |'
+    '| <span title="TFLint">🧹</span> | TFLint |'
+    '| <span title="Plan">📖</span> | Plan |'
     "|  | Step | Result |"
     "|:---:|---|---|"
   )
@@ -1074,8 +1074,8 @@ run_test "Grouped mode: footer is byte-exact (same as ungrouped)" assert_grouped
 assert_grouped_plan_details_row_omitted() {
   local prefix="${1}"
   local summary="${2}"
-  if [[ "${summary}" == *"Plan Details"* ]]; then
-    echo "  summary: grouped mode must NOT render the Plan Details row even when include-plan-details=true"
+  if [[ "${summary}" == *"Plan details"* ]]; then
+    echo "  summary: grouped mode must NOT render the Plan details row even when include-plan-details=true"
     return 1
   fi
   return 0
@@ -1131,7 +1131,7 @@ assert_empty_group_acts_ungrouped() {
   local summary="${2}"
   local fails=""
   # Must contain the full table (ungrouped shape)
-  if [[ "${summary}" != *"| ⚙️ | Initialization |"* ]]; then
+  if [[ "${summary}" != *'| <span title="Initialization">⚙️</span> | Initialization |'* ]]; then
     fails+="  summary: empty pr-comment-group must render full validation table (got grouped shape?)\n"
   fi
   # Must NOT contain the grouped "Part of group" note
@@ -1248,7 +1248,7 @@ assert_grouped_no_changes_short_circuit() {
     return 1
   fi
   # And still no validation table (it's in the per-group comment)
-  if [[ "${summary}" == *'| ⚙️ | Initialization'* ]]; then
+  if [[ "${summary}" == *'| <span title="Initialization">⚙️</span> | Initialization'* ]]; then
     echo "  summary: grouped mode must still omit validation table"
     return 1
   fi
@@ -1293,13 +1293,13 @@ assert_golden_no_changes_body() {
 ### Terraform validation summary for environment: `dev`
 |  | Step | Result |
 |:---:|---|---|
-| ⚙️ | Initialization | `success` |
-| 🔒 | Lock file | `success` |
-| 🖌 | Format and Style | `success` |
-| ✔ | Validate | `success` |
-| 🧹 | TFLint | `success` |
-| 📖 | Plan | `success` |
-| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |
+| <span title="Initialization">⚙️</span> | Initialization | `success` |
+| <span title="Lock file">🔒</span> | Lock file | `success` |
+| <span title="Format and Style">🖌</span> | Format and Style | `success` |
+| <span title="Validate">✔</span> | Validate | `success` |
+| <span title="TFLint">🧹</span> | TFLint | `success` |
+| <span title="Plan">📖</span> | Plan | `success` |
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">—</span> |
 
 [Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)
 EOF
@@ -1409,7 +1409,7 @@ assert_grouped_output_only_keeps_details() {
     return 1
   fi
   # No validation table (group mode invariant)
-  if [[ "${summary}" == *'| ⚙️ | Initialization'* ]]; then
+  if [[ "${summary}" == *'| <span title="Initialization">⚙️</span> | Initialization'* ]]; then
     echo "  summary: grouped mode must still omit the validation table"
     return 1
   fi
@@ -1436,7 +1436,7 @@ rm -f "${_plan_file}"
 assert_plan_time_row_with_value() {
   local prefix="${1}"
   local summary="${2}"
-  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |'* ]]; then
+  if [[ "${summary}" != *'| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |'* ]]; then
     echo "  summary: expected backtick-wrapped value cell with format tooltip"
     return 1
   fi
@@ -1446,21 +1446,22 @@ reset_defaults
 export input_plan_time="1:23"
 run_test "Plan time row renders backtick-wrapped mm:ss value with tooltip" assert_plan_time_row_with_value
 
-# Plan time row: defaults to N/A when caller passes nothing (matches
-# the create-validation-summary input default and plan-count-* convention).
-# Tooltip wrapper applies to the N/A branch too so hover-discovery works
-# even when there's no timing recorded.
+# Plan time row: defaults to the em-dash '—' (not backtick-wrapped) when
+# caller passes nothing — matching the grouped head's _render_plan_time_cell.
+# The action.yml input default is the literal 'N/A', which the renderer maps
+# to '—'. Tooltip wrapper applies to the em-dash branch too so hover-
+# discovery works even when there's no timing recorded.
 assert_plan_time_row_default_na() {
   local prefix="${1}"
   local summary="${2}"
-  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`N/A`</span> |'* ]]; then
-    echo "  summary: expected default N/A cell with format tooltip"
+  if [[ "${summary}" != *'| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">—</span> |'* ]]; then
+    echo "  summary: expected default em-dash cell with format tooltip"
     return 1
   fi
   return 0
 }
 reset_defaults
-run_test "Plan time row defaults to 'N/A' with tooltip when input not supplied" assert_plan_time_row_default_na
+run_test "Plan time row defaults to em-dash with tooltip when input not supplied" assert_plan_time_row_default_na
 
 # Plan time row: rendered even when Plan Details is off (Plan time row is
 # always emitted in ungrouped mode; Plan Details row is conditional).
@@ -1468,11 +1469,11 @@ assert_plan_time_without_plan_details() {
   local prefix="${1}"
   local summary="${2}"
   local fails=""
-  if [[ "${summary}" != *'| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`0:45`</span> |'* ]]; then
-    fails+="  summary: expected Plan time row (with tooltip) to render without Plan Details\n"
+  if [[ "${summary}" != *'| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:45`</span> |'* ]]; then
+    fails+="  summary: expected Plan time row (with tooltip) to render without Plan details\n"
   fi
-  if [[ "${summary}" == *"Plan Details"* ]]; then
-    fails+="  summary: Plan Details row should NOT appear when include-plan-details=false\n"
+  if [[ "${summary}" == *"Plan details"* ]]; then
+    fails+="  summary: Plan details row should NOT appear when include-plan-details=false\n"
   fi
   if [[ -n "${fails}" ]]; then
     echo -e "${fails}"
@@ -1509,14 +1510,14 @@ assert_plan_time_after_plan_details() {
   # Extract the bit between Plan Details opener and the blank line that
   # closes the table. Plan time row must be after Plan Details in that span.
   local pd_pos pt_pos
-  pd_pos=$(echo "${summary}" | grep -n '| 📊 | Plan Details |' | head -n1 | cut -d: -f1)
-  pt_pos=$(echo "${summary}" | grep -n '| ⏱ | Plan time |'   | head -n1 | cut -d: -f1)
+  pd_pos=$(echo "${summary}" | grep -n '| Plan details |' | head -n1 | cut -d: -f1)
+  pt_pos=$(echo "${summary}" | grep -n '| Plan time |'   | head -n1 | cut -d: -f1)
   if [ -z "${pd_pos}" ] || [ -z "${pt_pos}" ]; then
-    echo "  summary: expected both Plan Details and Plan time rows present (pd=${pd_pos}, pt=${pt_pos})"
+    echo "  summary: expected both Plan details and Plan time rows present (pd=${pd_pos}, pt=${pt_pos})"
     return 1
   fi
   if [ "${pt_pos}" -le "${pd_pos}" ]; then
-    echo "  summary: Plan time row (line ${pt_pos}) must appear AFTER Plan Details (line ${pd_pos})"
+    echo "  summary: Plan time row (line ${pt_pos}) must appear AFTER Plan details (line ${pd_pos})"
     return 1
   fi
   return 0
@@ -1541,7 +1542,7 @@ assert_links_row_rendered_ungrouped() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  local expected_cell='| 🔗 | Links | [log extract](#issuecomment-99887766)<br>[job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs) |'
+  local expected_cell='| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-99887766)<br>[job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs) |'
   if [[ "${head}" != *"${expected_cell}"* ]]; then
     echo "  head-summary: expected Links row with anchor + job log:"
     echo "    expected substring: ${expected_cell}"
@@ -1577,7 +1578,7 @@ assert_links_row_omitted_when_no_id() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  if [[ "${head}" == *'| 🔗 | Links |'* ]]; then
+  if [[ "${head}" == *'| <span title="Links">🔗</span> | Links |'* ]]; then
     echo "  head-summary: Links row must NOT be rendered when plan-tag-comment-id is empty"
     return 1
   fi
@@ -1600,7 +1601,7 @@ assert_links_row_omitted_in_grouped_mode() {
   # row has no table to live in. Caller supplies the id anyway (matrix
   # passes it uniformly) — action must ignore it for grouped envs and
   # keep the legacy minimal grouped-mode body (H3 + footer).
-  if [[ "${head}" == *'| 🔗 | Links |'* ]]; then
+  if [[ "${head}" == *'| <span title="Links">🔗</span> | Links |'* ]]; then
     echo "  head-summary: Links row must NOT appear in grouped mode"
     return 1
   fi
@@ -1620,8 +1621,8 @@ assert_links_row_appears_after_plan_time() {
   local summary="${2}"
   local head="${3}"
   local pt_pos lk_pos
-  pt_pos=$(echo "${head}" | grep -n '| ⏱ | Plan time |' | head -n1 | cut -d: -f1)
-  lk_pos=$(echo "${head}" | grep -n '| 🔗 | Links |'   | head -n1 | cut -d: -f1)
+  pt_pos=$(echo "${head}" | grep -n '| Plan time |' | head -n1 | cut -d: -f1)
+  lk_pos=$(echo "${head}" | grep -n '| Links |'   | head -n1 | cut -d: -f1)
   if [ -z "${pt_pos}" ] || [ -z "${lk_pos}" ]; then
     echo "  expected both Plan time and Links rows present (pt=${pt_pos}, lk=${lk_pos})"
     return 1
@@ -1705,7 +1706,7 @@ assert_warnings_row_present_when_count_positive() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  if [[ "${head}" != *'| ⚠️ | Warnings |'* ]]; then
+  if [[ "${head}" != *'| <span title="Warnings">⚠️</span> | Warnings |'* ]]; then
     echo "  head-summary: expected '⚠️ Warnings' row to be present"
     return 1
   fi
@@ -1724,7 +1725,7 @@ assert_warnings_row_absent_when_count_zero() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+  if [[ "${head}" == *'| <span title="Warnings">⚠️</span> | Warnings |'* ]]; then
     echo "  head-summary: warnings row must be absent when count is 0"
     return 1
   fi
@@ -1739,7 +1740,7 @@ assert_warnings_row_absent_when_count_unset() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+  if [[ "${head}" == *'| <span title="Warnings">⚠️</span> | Warnings |'* ]]; then
     echo "  head-summary: warnings row must be absent when count is unset"
     return 1
   fi
@@ -1754,7 +1755,7 @@ assert_warnings_row_absent_when_count_question_mark() {
   local prefix="${1}"
   local summary="${2}"
   local head="${3}"
-  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+  if [[ "${head}" == *'| <span title="Warnings">⚠️</span> | Warnings |'* ]]; then
     echo "  head-summary: warnings row must be absent when count is '?'"
     return 1
   fi
@@ -1771,7 +1772,7 @@ assert_warnings_row_omitted_in_grouped_mode() {
   # Grouped mode skips the entire validation table; the warnings row sits
   # inside that table so it must be absent. The warnings collapser still
   # appears in plan-extract though — checked separately below.
-  if [[ "${head}" == *'| ⚠️ | Warnings |'* ]]; then
+  if [[ "${head}" == *'| <span title="Warnings">⚠️</span> | Warnings |'* ]]; then
     echo "  head-summary: warnings row must NOT appear in grouped mode"
     return 1
   fi
