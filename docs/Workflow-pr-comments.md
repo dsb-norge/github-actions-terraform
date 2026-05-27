@@ -113,15 +113,17 @@ This works because the purge happens before init — not after `create-validatio
 ### Terraform validation summary for environment: `<env>`
 |  | Step | Result |
 |:---:|---|---|
-| ⚙️ | Initialization | `success` |
-| 🔒 | Lock file | `success` |
-| 🖌 | Format and Style | `success` |
-| ✔ | Validate | `success` |
-| 🧹 | TFLint | `success` |
-| 📖 | Plan | `success` |
-| ⏱ | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
-| 🔗 | Links | [log extract](#issuecomment-<plan-tag-id>)<br>[job log](<job-url>) |
+| <span title="Initialization">⚙️</span> | Initialization | `success` |
+| <span title="Lock file">🔒</span> | Lock file | `success` |
+| <span title="Format and Style">🖌</span> | Format and Style | `success` |
+| <span title="Validate">✔</span> | Validate | `success` |
+| <span title="TFLint">🧹</span> | TFLint | `success` |
+| <span title="Plan">📖</span> | Plan | `success` |
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`1:23`</span> |
+| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-<plan-tag-id>)<br>[job log](<job-url>) |
 ```
+
+This table is kept structurally in sync with the per-group head (§5.3) — same row set, labels, col-1 icon tooltips (`<span title="…">`), and Plan-details / Plan-time / Warnings cell conventions and row-presence rules. Two differences are **intentional**, not drift: (1) step-status cells here use text (`` `success` `` / `<kbd>failure</kbd>`) vs emoji in the grouped head — a column-width adaptation (one wide Result column vs many narrow per-env columns); (2) the header shape and footer scope (`[Job log]` job-scoped here vs `[Workflow log]` run-scoped in §5.3). When changing one head's row set or cell shape, change the other to match unless it's one of these two.
 
 The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§5.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§5.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
 
@@ -129,14 +131,14 @@ The Links row is rendered by `create-validation-summary` when its `plan-tag-comm
 
 Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
-Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan@v0` `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to `N/A` when the upstream action didn't supply a value.
+Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan@v0` `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to the em-dash `—` (not backtick-wrapped) when the upstream action didn't supply a value — same empty-state convention as the per-group head (§5.3).
 
-Warnings row is rendered between `📖 Plan` and `📊 Plan Details` when `warning-count > 0`. Shape: `| ⚠️ | Warnings | <span title="Warnings from init+validate+plan">⚠️ N</span> |`. Absent when count is 0, missing, or `?`. The warning bodies live in the plan-tag comment (§5.2), not the head. See [Plan-warnings.md](Plan-warnings.md).
+Warnings row is rendered between `📖 Plan` and `📊 Plan details` when `warning-count > 0`. Shape: `| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ N</span> |`. Absent when count is 0, missing, or `?`. The warning bodies live in the plan-tag comment (§5.2), not the head. See [Plan-warnings.md](Plan-warnings.md).
 
-Plan Details row is rendered only when `include-plan-details=true`. Shape:
+Plan details row is rendered only when `include-plan-details=true`. Shape (badge stack wrapped in `<div align="left">` to match the per-group head's cell):
 
 ```markdown
-| 📊 | Plan Details | <span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span> |
+| <span title="Plan details">📊</span> | Plan details | <div align="left"><span title="Resources to be added">`💫 1` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div> |
 ```
 
 Optional badges (move / import / remove) are appended `<br>`-separated when the count is non-zero.
@@ -186,11 +188,13 @@ The rolled-up grouped table aggregates every env in the group (alphabetical colu
 [Workflow log](<run-url>)
 ```
 
+This table is kept structurally in sync with the per-env head (§5.1) — same row set, labels, col-1 icon tooltips, and cell conventions / row-presence rules. The two intentional differences are noted in §5.1: status cells use emoji here (vs text) and the footer is run-scoped `[Workflow log]` (vs job-scoped `[Job log]`).
+
 Status cells map outcomes to emoji + tooltip: ✅ / ❌ / 🚫 / ⏭️ / — (empty outcome).
 
-Plan Details cells stack the count badges in a `<div align="left">` so they anchor left in the otherwise center-aligned column. The badges (`💫 N add`, `🛠️ N change`, `💥 N destroy`) always render; `🔀 move`, `📥 import`, `⛓️‍💥 remove` are appended only when non-zero.
+Plan details cells stack the count badges in a `<div align="left">` so they anchor left in the otherwise center-aligned column. The badges (`💫 N add`, `🛠️ N change`, `💥 N destroy`) always render; `🔀 move`, `📥 import`, `⛓️‍💥 remove` are appended only when non-zero. The whole Plan details **row** is omitted when no env in the group has plan data (parse-plan didn't run anywhere) — matching the per-env head's `include-plan-details` gate. When shown, data-less envs render `N/A`.
 
-Warnings row is rendered between the step rows and `📊 Plan details`. Cell: `⚠️ N` when `N > 0`, em-dash `—` when 0 or empty. Mirrors Plan time's empty-state convention rather than Plan details' "always render" — warnings absence is "not interesting" not "not applicable". See [Plan-warnings.md](Plan-warnings.md).
+Warnings row is rendered between the step rows and `📊 Plan details`, and only when at least one env in the group has warnings — the whole row is omitted otherwise, matching the per-env head (which suppresses at `warning-count == 0`). When shown, each cell is `⚠️ N` for envs with warnings and em-dash `—` for clean envs. Keeps ⚠️ a signal rather than a permanent fixture. See [Plan-warnings.md](Plan-warnings.md).
 
 Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
