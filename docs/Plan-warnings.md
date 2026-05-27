@@ -198,13 +198,13 @@ The collapser is absent when warning-count is 0 — no empty `<details>`.
 
 ### Per-group head (§5.3)
 
-A new `⚠️ Warnings` row is added to the grouped table, positioned between the step rows and the `📊 Plan details` row:
+A `⚠️ Warnings` row is added to the grouped table, positioned between the step rows and the `📊 Plan details` row:
 
 ```markdown
 | <span title="Warnings">⚠️</span> | Warnings | ⚠️ 3 | — | ⚠️ 1 |
 ```
 
-Cell content: `⚠️ N` when `N > 0`, em-dash `—` when 0 or empty. Mirrors `Plan time`'s empty-state convention rather than `Plan details`' "always render" convention — warnings absence is "not interesting" not "not applicable".
+The whole row is **omitted** when no env in the group has warnings — keeping ⚠️ a signal rather than a permanent fixture, and matching the per-env head which also suppresses the row at zero. When the row *is* shown (at least one env has warnings), each cell is `⚠️ N` for envs with warnings and em-dash `—` for the clean envs. Both warning surfaces (per-env head row + per-env plan-tag collapser) were already conditional; this aligns the grouped table with them.
 
 ## 7. Test scenarios
 
@@ -235,8 +235,9 @@ Per-action test suites (under `<action>/run_all_tests.sh`) cover:
 `aggregate-validation-summaries/` test additions:
 
 - Per-env meta files with varying warning counts render grouped table cells correctly.
-- Mixed envs (some with warnings, some without).
-- All-zero row still rendered with `—` cells (consistent shape).
+- Mixed envs (some with warnings, some without) — row shown, clean envs render `—`.
+- All-zero group → whole Warnings row omitted (and likewise when no parse-warnings step entries are present at all).
+- Plan details row omitted when no env in the group has plan data.
 - Sum across init/validate/plan step ids when some are missing/zero in meta.
 
 ## 8. ARG_MAX caveat

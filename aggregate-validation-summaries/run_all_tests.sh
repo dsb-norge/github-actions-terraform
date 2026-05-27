@@ -676,6 +676,27 @@ test_plan_details_left_align_div() {
   return 0
 }
 
+# Plan details row is omitted when no env in the group has plan data
+# (parse-plan didn't run anywhere), mirroring the per-env head's
+# include-plan-details gate. Empty parse-plan outputs ('{}') stand in for
+# "plan didn't run" — _extract_plan_count then returns "" for every count.
+test_plan_details_row_absent_when_no_plan_data() {
+  write_meta "envA" "g" "success" "{}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local log="${TEST_DIR}/step.log"
+  if grep -q '| Plan details |' "${log}"; then
+    echo "Plan details row must be omitted when no env has plan data"
+    return 1
+  fi
+  # Plan time + Links still render (table didn't collapse).
+  if ! grep -q '| Plan time |' "${log}" || ! grep -q '| Links |' "${log}"; then
+    echo "Plan time / Links rows must still render"
+    return 1
+  fi
+  return 0
+}
+
 # Warnings row in the grouped table. Sums warning-count outputs from
 # parse-init-warnings + parse-validate-warnings + parse-plan-warnings step
 # entries in each env's meta file. See docs/Plan-warnings.md §6.
@@ -697,42 +718,34 @@ test_warnings_row_renders_sum_across_three_steps() {
   return 0
 }
 
-test_warnings_row_renders_em_dash_when_zero() {
+test_warnings_row_absent_when_all_zero() {
   write_meta "envA" "g" "success" "" "" "0:0:0"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   local log="${TEST_DIR}/step.log"
-  # Row must still appear (consistent shape across envs) but cell shows "—".
-  if ! grep -q '<span title="Warnings">⚠️</span> | Warnings' "${log}"; then
-    echo "expected Warnings row even when all zero"
+  # Whole row omitted when no env has warnings — ⚠️ stays a signal.
+  if grep -q '| Warnings |' "${log}"; then
+    echo "Warnings row must be omitted when all counts are 0"
     return 1
   fi
-  # Find the warnings row specifically and verify the env cell shows the em-dash
-  local row
-  row=$(grep '| Warnings |' "${log}" | head -n1)
-  if [[ "${row}" != *'—</span>'* ]]; then
-    echo "expected cell '—' on the Warnings row when all-zero, got: ${row}"
+  # The rest of the table must still render (didn't collapse).
+  if ! grep -q '| Plan details |' "${log}" || ! grep -q '| Plan time |' "${log}"; then
+    echo "Plan details / Plan time rows must still render"
     return 1
   fi
   return 0
 }
 
-test_warnings_row_renders_em_dash_when_steps_missing() {
+test_warnings_row_absent_when_steps_missing() {
   # No 6th arg → no parse-*-warnings step entries written at all. This is
   # the back-compat path: meta files captured before this feature shipped
-  # should still render correctly.
+  # have no warnings, so the row is correctly absent.
   write_meta "envA" "g"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   local log="${TEST_DIR}/step.log"
-  if ! grep -q '<span title="Warnings">⚠️</span> | Warnings' "${log}"; then
-    echo "expected Warnings row even when parse-*-warnings step entries absent"
-    return 1
-  fi
-  local row
-  row=$(grep '| Warnings |' "${log}" | head -n1)
-  if [[ "${row}" != *'—</span>'* ]]; then
-    echo "expected cell '—' on the Warnings row when parse-warnings steps absent, got: ${row}"
+  if grep -q '| Warnings |' "${log}"; then
+    echo "Warnings row must be omitted when parse-*-warnings step entries are absent"
     return 1
   fi
   return 0
@@ -911,7 +924,10 @@ JSON
 }
 
 test_step_row_order_byte_exact() {
-  write_meta "envA" "g"
+  # Give the env a warning AND plan data so the optional Warnings and Plan
+  # details rows both render — this test locks the full canonical row order
+  # (both rows are conditional now; their order only matters when present).
+  write_meta "envA" "g" "success" "" "" "1:0:0"
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   local log="${TEST_DIR}/step.log"
@@ -1244,9 +1260,10 @@ run_test "per-env anchor picks newest comment id across multiple attempts" test_
 run_test "status emoji map covers success/failure/cancelled/skipped"       test_status_emoji_map
 run_test "Plan Details: optional categories appear only when non-zero"     test_plan_details_optional_categories
 run_test "Plan Details cell wraps in <div align='left'>"                   test_plan_details_left_align_div
+run_test "Plan details row omitted when no env has plan data"              test_plan_details_row_absent_when_no_plan_data
 run_test "Warnings row sums across init+validate+plan step outputs"        test_warnings_row_renders_sum_across_three_steps
-run_test "Warnings row renders em-dash when all three counts are 0"        test_warnings_row_renders_em_dash_when_zero
-run_test "Warnings row renders em-dash when parse-warnings steps missing"  test_warnings_row_renders_em_dash_when_steps_missing
+run_test "Warnings row omitted when all three counts are 0"                test_warnings_row_absent_when_all_zero
+run_test "Warnings row omitted when parse-warnings steps missing"          test_warnings_row_absent_when_steps_missing
 run_test "Warnings row sums correctly when some parse-warnings steps absent" test_warnings_row_sums_when_some_steps_missing
 run_test "Warnings row renders mixed envs (some with warnings, some without)" test_warnings_row_mixed_envs
 run_test "Warnings row sits between Plan and Plan details in grouped table" test_warnings_row_position_between_plan_and_plan_details
