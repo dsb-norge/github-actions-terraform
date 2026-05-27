@@ -326,6 +326,15 @@ function list_pr_state {
 # `<!-- comment-hash:<sha> -->` line via _render_full_body before
 # POSTing/PATCHing, so re-runs with unchanged content hash-short-circuit
 # the PATCH and don't re-ping subscribers.
+#
+# Kept in sync with the per-env head (create-validation-summary's
+# render_head_summary): same row set, labels, col-1 icon tooltips, and
+# Plan-details / Plan-time / Warnings cell conventions and row-presence
+# rules. Two differences are intentional, not drift: (1) step-status cells
+# use emoji here vs text (`success` / <kbd>) in the per-env head — a
+# column-width adaptation (many narrow env columns vs one wide Result
+# column); (2) the header shape and footer scope differ. See
+# docs/Workflow-pr-comments.md §5.1/§5.3.
 # Args:
 #   $1  - group name
 #   $2  - newline-delimited list of envs (already alphabetically sorted)
@@ -370,19 +379,30 @@ function render_group_body {
   # ---- Warnings row ----
   # Positioned between step rows and Plan details so reviewers scan
   # top-to-bottom: "did each step pass" → "any warnings" → "what changes
-  # are planned". Cell shape is "⚠️ N" (or "—" for zero/missing); the
-  # warning bodies themselves live in the per-env plan-tag comment via
-  # create-validation-summary. See docs/Plan-warnings.md §6.
+  # are planned". Cell shape is "⚠️ N" (or "—" for clean envs); the warning
+  # bodies themselves live in the per-env plan-tag comment via
+  # create-validation-summary. The whole row is omitted when no env in the
+  # group has warnings (see the mid_rows assembly below) — keeps ⚠️ a signal
+  # rather than a permanent fixture, matching the per-env head which also
+  # suppresses at zero. See docs/Plan-warnings.md §6.
   local warnings_row="| $(_render_step_icon_cell "⚠️" "Warnings") | Warnings |"
+  local group_warning_total=0
   for env in "${envs[@]}"; do
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
     local wc
     wc=$(_extract_warning_count "${meta_file}")
     warnings_row+=" $(_render_warning_count_cell "${wc}") |"
+    [[ "${wc}" =~ ^[0-9]+$ ]] && group_warning_total=$((group_warning_total + wc))
   done
 
   # ---- Plan Details row ----
+  # Omitted entirely when no env in the group has plan data (parse-plan
+  # didn't run anywhere), mirroring the per-env head's include-plan-details
+  # gate and the Warnings row above. When shown, data-less envs render N/A.
+  # An env "has data" when at least one of add/change/destroy is non-empty
+  # — i.e. _render_plan_details_cell would not short-circuit to "N/A".
   local plan_details_row="| $(_render_step_icon_cell "📊" "Plan details") | Plan details |"
+  local group_has_plan_data=false
   for env in "${envs[@]}"; do
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
     local c_add c_change c_destroy c_import c_move c_remove
@@ -393,6 +413,9 @@ function render_group_body {
     c_move=$(_extract_plan_count "${meta_file}" "count-move")
     c_remove=$(_extract_plan_count "${meta_file}" "count-remove")
     plan_details_row+=" $(_render_plan_details_cell "${c_add}" "${c_change}" "${c_destroy}" "${c_import}" "${c_move}" "${c_remove}") |"
+    if [ -n "${c_add}" ] || [ -n "${c_change}" ] || [ -n "${c_destroy}" ]; then
+      group_has_plan_data=true
+    fi
   done
 
   # ---- Plan time row ----
@@ -427,17 +450,25 @@ function render_group_body {
   # marker (load-bearing for upsert identity, see Workflow-pr-comments.md
   # §2) and the inline comment-hash line are prepended by _render_full_body
   # in _upsert_one_group / _post_fresh.
-  # 'rows' ends with a trailing newline; the rest are plain rows with no
-  # trailing newline, so the format string supplies the line breaks.
-  printf '%s\n%s\n%s\n%s%s\n%s\n%s\n%s\n\n%s\n' \
+  #
+  # Optional rows (Warnings, Plan details) are assembled into mid_rows and
+  # omitted from the string entirely when their group-wide condition is
+  # unmet — an empty printf arg would still emit a blank table line, so the
+  # row must be dropped from the string, not blanked. Plan time and Links
+  # always render. 'rows' ends with a trailing newline; mid_rows has none,
+  # so the '\n\n' before the footer yields exactly one blank line.
+  local mid_rows=""
+  [ "${group_warning_total}" -gt 0 ] && mid_rows+="${warnings_row}"$'\n'
+  [ "${group_has_plan_data}" = true ] && mid_rows+="${plan_details_row}"$'\n'
+  mid_rows+="${plan_time_row}"$'\n'
+  mid_rows+="${links_row}"
+
+  printf '%s\n%s\n%s\n%s%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
     "${rows}" \
-    "${warnings_row}" \
-    "${plan_details_row}" \
-    "${plan_time_row}" \
-    "${links_row}" \
+    "${mid_rows}" \
     "${footer}"
 }
 
