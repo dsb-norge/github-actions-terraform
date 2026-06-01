@@ -32,31 +32,14 @@ Markers are treated as opaque substrings by the underlying actions: matching is 
 
 ## 3. Lifecycle of a single workflow run
 
-```text
-                          ┌──────────────────────────────────────────────┐
-                          │  Seed phase (top of workflow, before matrix) │
-                          │                                              │
-   create-matrix ───────► │  seed-pr-comments job:                       │
-                          │   - reconcile heads (POST/PATCH per marker)  │
-                          │   - (heads only; plan-tag GC lives in the    │
-                          │      matrix, see §3.2)                       │
-                          └─────────────────┬────────────────────────────┘
-                                            │
-                          ┌─────────────────▼────────────────────────────┐
-                          │  Matrix jobs (parallel, one per env)         │
-                          │                                              │
-                          │   - DELETE prior `tf:tag:plan:<env>:*`       │
-                          │   - PATCH `tf:head:env:<env>` with results   │
-                          │   - POST `tf:tag:plan:<env>:run-id-<id>:`    │
-                          │     `attempt-<n>` with fresh plan-extract    │
-                          └─────────────────┬────────────────────────────┘
-                                            │
-                          ┌─────────────────▼────────────────────────────┐
-                          │  Aggregator job (after matrix)               │
-                          │                                              │
-                          │   - PATCH each `tf:head:group:<group>` head  │
-                          │     with the rolled-up grouped table         │
-                          └──────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    cm["create-matrix"]
+    seed["Seed phase - top of workflow, before matrix<br>seed-pr-comments job<br>- reconcile heads, POST or PATCH per marker<br>- heads only; plan-tag GC lives in the matrix, see section 3.2"]
+    matrix["Matrix jobs - parallel, one per env<br>- DELETE prior tf-tag-plan-ENV-star<br>- PATCH tf-head-env-ENV with results<br>- POST tf-tag-plan-ENV-run-id-ID-attempt-N with fresh plan-extract"]
+    agg["Aggregator job - after matrix<br>- PATCH each tf-head-group-GROUP head with the rolled-up grouped table"]
+
+    cm --> seed --> matrix --> agg
 ```
 
 ### 3.1 Seed phase
@@ -219,20 +202,22 @@ Required token permission: `pull-requests: write` (and `issues: write` if the co
 
 On a fresh PR (run #1), the seed job POSTs in declared order, so the conversation timeline becomes:
 
-```text
-↑ older                                              ↓ newer
-┌──────────────────────────────────────────────────────────┐
-│  tf:head:group:<group-1>      (group summary head)       │
-│  tf:head:group:<group-2>      (group summary head)       │
-│  …                                                       │
-│  tf:head:env:<env-a>          (per-env head)             │
-│  tf:head:env:<env-b>          (per-env head)             │
-│  …                                                       │
-│  tf:tag:plan:<env-a>:run-id-N:attempt-1 (plan extract)   │
-│  tf:tag:plan:<env-b>:run-id-N:attempt-1 (plan extract)   │
-│  …                                                       │
-│  <human reviewer comments interleaved chronologically>   │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    older(["older"])
+    g1["tf-head-group-GROUP-1 - group summary head"]
+    g2["tf-head-group-GROUP-2 - group summary head"]
+    gDots["..."]
+    e1["tf-head-env-ENV-a - per-env head"]
+    e2["tf-head-env-ENV-b - per-env head"]
+    eDots["..."]
+    p1["tf-tag-plan-ENV-a-run-id-N-attempt-1 - plan extract"]
+    p2["tf-tag-plan-ENV-b-run-id-N-attempt-1 - plan extract"]
+    pDots["..."]
+    human["human reviewer comments interleaved chronologically"]
+    newer(["newer"])
+
+    older --> g1 --> g2 --> gDots --> e1 --> e2 --> eDots --> p1 --> p2 --> pDots --> human --> newer
 ```
 
 On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags are wiped per-env by the matrix delete-first step and re-POSTed at the bottom of the conversation. Order between heads never changes.

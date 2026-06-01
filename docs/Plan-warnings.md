@@ -12,54 +12,20 @@ Goal: warnings are first-class on the PR. They're counted in the summary table, 
 
 ## 2. Data flow
 
-```text
-                         ┌─────────────────────────────────────┐
-                         │  terraform-init                     │
-                         │   tees stdout/stderr →              │
-   each step             │   tf-init-console-output-<env>.txt  │
-   captures its          └────────────┬────────────────────────┘
-   own console                        │
-                         ┌─────────────────────────────────────┐
-                         │  terraform-validate                 │
-                         │   tees → tf-validate-console-…txt   │
-                         └────────────┬────────────────────────┘
-                                      │
-                         ┌─────────────────────────────────────┐
-                         │  terraform-plan                     │
-                         │   tees → tf-plan-console-output…txt │
-                         └────────────┬────────────────────────┘
-                                      │
-                  ┌───────────────────▼─────────────────────────┐
-                  │  parse-terraform-warnings (×3 per env)      │
-   one call per   │   inputs: console-output-file, step-label   │
-   step gets its  │   outputs: warning-count                    │
-   own annotation │            warnings-markdown-file           │
-   budget         │   side effect: emit ::warning::…            │
-                  └───────────────────┬─────────────────────────┘
-                                      │
-                  ┌───────────────────▼──────────┐
-                  │  concat-warnings-md          │
-                  │   inline step concatenates   │
-                  │   the three .md files in     │
-                  │   init→validate→plan order   │
-                  └───────────────────┬──────────┘
-                                      │
-            ┌─────────────────────────┴──────────────────┐
-            ▼                                            ▼
-┌──────────────────────────┐               ┌────────────────────────────┐
-│ create-validation-summary│               │  capture-matrix-job-meta   │
-│  inputs: warning-count,  │               │   (no code change — picks  │
-│   warnings-markdown-file │               │   up new step outputs via  │
-│  renders ⚠️ Warnings row │               │   toJSON(steps) automatically) │
-│  + warnings collapser    │               └─────────────┬──────────────┘
-└──────────────────────────┘                             │
-                                                         ▼
-                                       ┌─────────────────────────────────┐
-                                       │  aggregate-validation-summaries │
-                                       │   sums per-env warning counts   │
-                                       │   across three step ids,        │
-                                       │   renders grouped-table ⚠️ row  │
-                                       └─────────────────────────────────┘
+```mermaid
+flowchart TD
+    init["terraform-init<br>tees stdout/stderr to<br>tf-init-console-output-ENV.txt"]
+    validate["terraform-validate<br>tees to tf-validate-console-...txt"]
+    plan["terraform-plan<br>tees to tf-plan-console-output...txt"]
+    parse["parse-terraform-warnings (x3 per env)<br>inputs - console-output-file, step-label<br>outputs - warning-count, warnings-markdown-file<br>side effect - emits ::warning:: annotations"]
+    concat["concat-warnings-md<br>inline step concatenates the three .md files<br>in init then validate then plan order"]
+    summary["create-validation-summary<br>inputs - warning-count, warnings-markdown-file<br>renders Warnings row plus warnings collapser"]
+    capture["capture-matrix-job-meta<br>no code change - picks up new step outputs<br>via toJSON of steps automatically"]
+    aggregate["aggregate-validation-summaries<br>sums per-env warning counts across three step ids<br>renders grouped-table Warnings row"]
+
+    init --> validate --> plan --> parse --> concat
+    concat --> summary
+    concat --> capture --> aggregate
 ```
 
 ## 3. Warning-block grammar
