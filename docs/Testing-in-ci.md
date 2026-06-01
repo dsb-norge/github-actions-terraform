@@ -25,9 +25,11 @@ Out of scope: the test suites themselves (their layout is described in [Action-i
 
 Four jobs, in this order:
 
-```text
-discover  ─►  test (matrix, fan-out)  ─►  summary  ─►  tests-conclusion
-                                          (PR comment)   (required check)
+```mermaid
+flowchart LR
+    discover --> test["test - matrix fan-out"]
+    test --> summary["summary - PR comment"]
+    summary --> conclusion["tests-conclusion - required check"]
 ```
 
 ### 2.1 `discover`
