@@ -47,10 +47,16 @@ function main {
   log-info "looking for terraform modules file at '$(ws-path "${modules_file}")'"
   if [ -f "${modules_file}" ]; then
     log-info "found it, parsing directories to lint"
-    read-terraform-module-dirs lint_dirs "${modules_file}" "$(pwd)/"
+    read-terraform-module-dirs lint_dirs "${modules_file}" "$(pwd)/" || return 1
   else
     log-info "no modules file found, linting will only be performed in '$(ws-path "$(pwd)")'"
     lint_dirs=("$(pwd)")
+  fi
+
+  # Linting nothing must not report success.
+  if [ ${#lint_dirs[@]} -eq 0 ]; then
+    log-error "no directories to lint were found!"
+    return 1
   fi
 
   # Lint

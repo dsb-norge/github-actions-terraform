@@ -45,10 +45,16 @@ function main {
     fmt_dirs=("${GITHUB_WORKSPACE}")
   elif [ -f "${modules_file}" ]; then
     log-info "check will run in directories from terraform modules file '$(ws-path "${modules_file}")'"
-    read-terraform-module-dirs fmt_dirs "${modules_file}" "$(pwd)/"
+    read-terraform-module-dirs fmt_dirs "${modules_file}" "$(pwd)/" || return 1
   else
     log-info "check will run in 'project-dir' '$(pwd)'"
     fmt_dirs=("$(pwd)")
+  fi
+
+  # A format check that checked nothing must not report success.
+  if [ ${#fmt_dirs[@]} -eq 0 ]; then
+    log-error "no directories to check for formatting were found!"
+    return 1
   fi
 
   # Run check
