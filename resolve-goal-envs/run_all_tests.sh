@@ -582,6 +582,26 @@ done
 assert "contract: every file the workflow names is produced by this action" \
   test "${_all_referenced_present}" = 'true'
 
+# apply-extra-envs is duplicated verbatim into the six goal actions rather than
+# shared (docs/Per-goal-environment-variables.md §9.6, consistent with
+# helpers.sh). The copies are only useful if they stay identical, so that is
+# asserted rather than trusted.
+_goal_actions=(terraform-init terraform-validate terraform-plan terraform-fmt lint-with-tflint terraform-apply)
+
+# The apply-extra-envs function body from one action's helpers_additional.sh.
+extract_apply_extra_envs() {
+  sed -n '/^# Apply a JSON environment-variable map/,/^}$/p' \
+    "${_repo_root}/${1}/helpers_additional.sh"
+}
+
+_reference="$(extract_apply_extra_envs "${_goal_actions[0]}")"
+assert "contract: the reference copy of apply-extra-envs is non-empty" \
+  test -n "${_reference}"
+for _action in "${_goal_actions[@]:1}"; do
+  assert "contract: ${_action}'s copy of apply-extra-envs is byte-identical" \
+    bash -c "diff <(printf '%s' \"\$(sed -n '/^# Apply a JSON environment-variable map/,/^}\$/p' '${_repo_root}/${_goal_actions[0]}/helpers_additional.sh')\") <(printf '%s' \"\$(sed -n '/^# Apply a JSON environment-variable map/,/^}\$/p' '${_repo_root}/${_action}/helpers_additional.sh')\") >/dev/null"
+done
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}          step_resolve.sh SUMMARY           ${NC}"

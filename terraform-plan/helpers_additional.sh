@@ -99,6 +99,18 @@ function apply-extra-envs {
     return 1
   fi
 
+  # How many entries must end up applied. 'length' works on any jq, which is
+  # the point: it is the cross-check that catches a jq too old for
+  # --raw-output0 (ref. docs/Per-goal-environment-variables.md §9.2). Without
+  # it, such a jq makes the read loop consume nothing and the step continues
+  # having applied nothing — silently, and only on the runner images where it
+  # happens to be old.
+  local _extra_envs_expected _extra_envs_applied=0
+  if ! _extra_envs_expected=$(jq -r 'length' "${_extra_envs_file}"); then
+    log-error "unable to count the entries in '${_extra_envs_file}'!"
+    return 1
+  fi
+
   start-group "applying per-goal environment variables"
   while IFS= read -r -d '' _extra_envs_key && IFS= read -r -d '' _extra_envs_value; do
     # 'export' cannot be relied on to reject a bad name: given the key 'FOO=BAR'
@@ -126,7 +138,15 @@ function apply-extra-envs {
         return 1
       fi
     fi
+    _extra_envs_applied=$((_extra_envs_applied + 1))
   done < <(jq --raw-output0 "${_EXTRA_ENVS_FILTER}" "${_extra_envs_file}")
+
+  if [ ! "${_extra_envs_applied}" == "${_extra_envs_expected}" ]; then
+    log-error "applied ${_extra_envs_applied} of ${_extra_envs_expected} environment variable(s) from '${_extra_envs_file}'!"
+    log-error "this usually means jq is older than 1.7 and does not support '--raw-output0' — check the runner image."
+    end-group
+    return 1
+  fi
   end-group
 
   return 0
