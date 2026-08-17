@@ -295,6 +295,64 @@ assert "T25: it did not leak into the surrounding shell" \
 assert "T25: and nothing was written to \$GITHUB_ENV" \
   bash -c "[ -z \"\${GITHUB_ENV:-}\" ] || ! grep -q 'DSB_TEST_VALUE' \"\${GITHUB_ENV}\""
 
+# ----------------------------------------------------------------------
+# An unusable file must fail the step, not be silently skipped. A file that
+# applies nothing while the step carries on as if it had is the failure mode
+# this whole feature exists to avoid: the consequence surfaces as an OOM or a
+# wrong-credentials error far from its cause.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{ this is not json'
+run_step
+assert "negative: unparseable JSON fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error says it is not valid JSON" \
+  grep -q 'is not valid JSON' '/tmp/test_output_json.txt'
+
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs ''
+run_step
+assert "negative: an empty file fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error says an object was expected" \
+  grep -q 'must hold a JSON object' '/tmp/test_output_json.txt'
+
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '["not","an","object"]'
+run_step
+assert "negative: a JSON array fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the type found" \
+  grep -q "got 'array'" '/tmp/test_output_json.txt'
+
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"FOO BAR":"x"}'
+run_step
+assert "negative: a variable name with a space fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the offending key" \
+  grep -q "'FOO BAR' is not a valid environment variable name" '/tmp/test_output_json.txt'
+
+# 'export FOO=BAR=x' would otherwise assign 'BAR=x' to FOO — a different
+# variable than the caller asked for, silently.
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"FOO=BAR":"x"}'
+run_step
+assert "negative: a variable name containing '=' fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: it is rejected as a name, not silently reinterpreted" \
+  grep -q "'FOO=BAR' is not a valid environment variable name" '/tmp/test_output_json.txt'
+
+# The tool must never have run for the case above: a step that cannot apply its
+# configured environment must not proceed to invoke terraform/tflint.
+assert "negative: the tool was not invoked at all" \
+  bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}         step_plan_json.sh SUMMARY          ${NC}"
