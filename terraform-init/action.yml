@@ -30,6 +30,22 @@ inputs:
       additional-dirs init loop so providers are reused across envs.
     required: false
     default: ""
+  extra-envs-file:
+    description: |
+      Path to a JSON file with environment variables to apply to this action's
+      invocations only, as produced by the 'resolve-goal-envs' action. A JSON
+      null value unsets the variable rather than setting it to the empty
+      string.
+
+      A path rather than a payload so that the values — which may be secrets —
+      never enter argv, envp, or this step's script text.
+
+      The values are applied before this action's own exports, so an action-managed
+      variable set by the step script at runtime (e.g. TF_PLUGIN_CACHE_DIR) wins,
+      while one set in the step's env: block (e.g. TF_IN_AUTOMATION) is overridden
+      by the caller. See docs/Per-goal-environment-variables.md §6.3.
+    required: false
+    default: ""
 outputs:
   console-output-file:
     description: |
@@ -78,6 +94,7 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_environment_name: ${{ inputs.environment-name }}
         input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
+        input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         # JSON input via heredoc — keeps quotes/special chars intact and
         # out of envp (the ARG_MAX guard pattern from CLAUDE.md).

@@ -21,6 +21,9 @@
 #                                 array or empty string skips the loop.
 #
 # Optional environment variables:
+#   input_extra_envs_file - Path of a JSON file with environment variables
+#                           to apply to this step only. Empty or unset is a
+#                           no-op.
 #   input_environment_name      - Used in the console-file name. Defaults
 #                                 to empty (file becomes
 #                                 'tf-init-console-output-.txt' — ugly but
@@ -39,6 +42,10 @@ set +o nounset
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
+  # Applied first, before this action's own exports — see
+  # docs/Per-goal-environment-variables.md §6.3.
+  apply-extra-envs "${input_extra_envs_file}" || return 1
+
   local tf_bin="${TF_BIN:-terraform}"
 
   local console_file="${GITHUB_WORKSPACE}/tf-init-console-output-${input_environment_name}.txt"

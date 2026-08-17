@@ -43,7 +43,8 @@ setup_workdir() {
   : >"${ARGS_FILE}"
   export MOCK_TF_ARGS_FILE="${ARGS_FILE}"
 
-  unset MOCK_TF_EXIT MOCK_TF_FAIL_DIR
+  unset MOCK_TF_EXIT MOCK_TF_FAIL_DIR MOCK_ENV_FILE
+  unset input_extra_envs_file
 }
 
 # Write a fake modules.json. Each argument is a module 'Dir' value. The
@@ -68,6 +69,11 @@ install_stub_terraform() {
   mkdir -p "${stub_dir}"
   cat >"${stub_dir}/terraform" <<'STUB'
 #!/bin/env bash
+# Dump the environment the invocation was handed, NUL-delimited so multiline
+# values survive. Used by the per-goal environment-variable tests.
+if [ -n "${MOCK_ENV_FILE:-}" ]; then
+  env -0 >"${MOCK_ENV_FILE}"
+fi
 if [ -n "${MOCK_TF_ARGS_FILE:-}" ]; then
   printf 'INVOCATION %s\n' "${#}" >>"${MOCK_TF_ARGS_FILE}"
   printf '%s\n' "${@}" >>"${MOCK_TF_ARGS_FILE}"
@@ -226,6 +232,191 @@ run_step
 assert "Mixed results: three invocations" test "$(invocations)" -eq 3
 assert "Mixed results: step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "Mixed results: exit code is the sum (0+3+0)" test "${LAST_EXIT}" -eq 3
+
+# ======================================================================
+# Per-goal environment variables (the 'extra-envs-file' input)
+# Scenario numbering follows docs/Per-goal-environment-variables.md §10.
+# ======================================================================
+
+# Write a JSON environment map to a file and point the step at it.
+use_extra_envs() {
+  export input_extra_envs_file="${RUNNER_TEMP}/extra-envs.json"
+  printf '%s' "${1}" >"${input_extra_envs_file}"
+}
+
+# Have the stub dump the environment it was handed.
+record_env() {
+  export MOCK_ENV_FILE="${RUNNER_TEMP}/invocation-env.txt"
+  : >"${MOCK_ENV_FILE}"
+}
+
+# Exact value of one variable as the invocation saw it. Non-zero if it was
+# unset. NUL-delimited, so a multiline value comes back byte-identical.
+env_value() {
+  local name="${1}" entry
+  while IFS= read -r -d '' entry; do
+    if [[ "${entry}" == "${name}="* ]]; then
+      printf '%s' "${entry#*=}"
+      return 0
+    fi
+  done <"${MOCK_ENV_FILE}"
+  return 1
+}
+
+# Trailing newlines survive the comparison: command substitution strips them,
+# so both sides get a sentinel appended. A PEM value ends in one.
+env_eq() {
+  local var="${1}" expected="${2}" actual
+  env_value "${var}" >/dev/null || return 1
+  actual="$(env_value "${var}"; printf 'x')"
+  [[ "${actual}" == "${expected}x" ]]
+}
+
+env_is_unset() { ! env_value "${1}" >/dev/null; }
+
+# ----------------------------------------------------------------------
+# T17 — no file configured is a no-op (regression guard for every existing
+# caller: they pass nothing at all)
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+unset input_extra_envs_file
+run_step
+assert "T17: unset extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T17: nothing is injected" env_is_unset DSB_TEST_VALUE
+assert "T17: no per-goal group is opened in the log" \
+  bash -c "! grep -q 'applying per-goal environment variables' '/tmp/test_output_fmt.txt'"
+
+setup_workdir
+install_stub_terraform
+record_env
+export input_extra_envs_file=""
+run_step
+assert "T17: empty extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T17: empty path is reported as not configured" \
+  grep -q 'no per-goal environment variables file configured' '/tmp/test_output_fmt.txt'
+
+# ----------------------------------------------------------------------
+# T18 — a path that does not exist is a hard error
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export input_extra_envs_file="${RUNNER_TEMP}/nope/missing.json"
+run_step
+assert "T18: missing file, step exits non-zero" test "${LAST_EXIT}" -ne 0
+assert "T18: the error names the path" \
+  grep -q "missing.json' does not exist" '/tmp/test_output_fmt.txt'
+
+# ----------------------------------------------------------------------
+# T19 — an empty map is a no-op
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{}'
+run_step
+assert "T19: empty map, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T19: nothing is injected" env_is_unset DSB_TEST_VALUE
+
+# ----------------------------------------------------------------------
+# T20 — plain values reach the environment the invocation sees
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"GOMEMLIMIT":"12GiB","GOGC":25,"DSB_TEST_BOOL":true}'
+run_step
+assert "T20: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T20: a string value arrives verbatim" env_eq GOMEMLIMIT '12GiB'
+assert "T20: a JSON number arrives as its decimal text" env_eq GOGC '25'
+assert "T20: a JSON boolean arrives as 'true'" env_eq DSB_TEST_BOOL 'true'
+assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" '/tmp/test_output_fmt.txt'
+assert "T20: values are NOT logged" \
+  bash -c "! grep -q '12GiB' '/tmp/test_output_fmt.txt'"
+
+# ----------------------------------------------------------------------
+# T21 — a JSON null genuinely unsets, even a variable exported job-wide
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+export GOMEMLIMIT="6GiB" # stands in for a value that came via $GITHUB_ENV
+use_extra_envs '{"GOMEMLIMIT":null}'
+run_step
+assert "T21: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T21: the variable is gone from the invocation's environment" \
+  env_is_unset GOMEMLIMIT
+assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" '/tmp/test_output_fmt.txt'
+unset GOMEMLIMIT
+
+# Sanity check the other half of T21: without the null it would have been seen.
+setup_workdir
+install_stub_terraform
+record_env
+export GOMEMLIMIT="6GiB"
+unset input_extra_envs_file
+run_step
+assert "T21: control — the job-wide value is visible without an override" \
+  env_eq GOMEMLIMIT '6GiB'
+unset GOMEMLIMIT
+
+# ----------------------------------------------------------------------
+# T22 — an empty string is set-and-empty, which is NOT the same as unset
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+export GOMEMLIMIT="6GiB"
+use_extra_envs '{"GOMEMLIMIT":""}'
+run_step
+assert "T22: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T22: the variable is still present" \
+  bash -c "grep -qz '^GOMEMLIMIT=$' '${MOCK_ENV_FILE}'"
+assert "T22: and its value is the empty string" env_eq GOMEMLIMIT ''
+unset GOMEMLIMIT
+
+# ----------------------------------------------------------------------
+# T23 — a multiline value survives intact
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"DSB_TEST_PEM":"-----BEGIN RSA PRIVATE KEY-----\nline-two\n-----END RSA PRIVATE KEY-----\n"}'
+run_step
+assert "T23: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T23: the multiline value arrives byte-identical" \
+  env_eq DSB_TEST_PEM '-----BEGIN RSA PRIVATE KEY-----
+line-two
+-----END RSA PRIVATE KEY-----
+'
+
+# ----------------------------------------------------------------------
+# T24 — shell metacharacters are not interpreted anywhere on the way
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"DSB_TEST_VALUE":"a $HOME `id` \"q\" '"'"'s'"'"' * ; | & value"}'
+run_step
+assert "T24: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "T24: the value arrives verbatim, nothing expanded or executed" \
+  env_eq DSB_TEST_VALUE 'a $HOME `id` "q" '"'"'s'"'"' * ; | & value'
+
+# ----------------------------------------------------------------------
+# T25 — the values are scoped to the step's own shell and do not leak
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+use_extra_envs '{"DSB_TEST_VALUE":"only-inside-the-step"}'
+run_step
+assert "T25: the invocation did see the value" \
+  env_eq DSB_TEST_VALUE 'only-inside-the-step'
+assert "T25: it did not leak into the surrounding shell" \
+  test -z "${DSB_TEST_VALUE:-}"
+assert "T25: and nothing was written to \$GITHUB_ENV" \
+  bash -c "[ -z \"\${GITHUB_ENV:-}\" ] || ! grep -q 'DSB_TEST_VALUE' \"\${GITHUB_ENV}\""
 
 # ----------------------------------------------------------------------
 # Summary

@@ -26,6 +26,22 @@ inputs:
       Boolean as tring, if 'true' the action will exit with a non-zero exit code.
     required: false
     default: "true"
+  extra-envs-file:
+    description: |
+      Path to a JSON file with environment variables to apply to this action's
+      invocations only, as produced by the 'resolve-goal-envs' action. A JSON
+      null value unsets the variable rather than setting it to the empty
+      string.
+
+      A path rather than a payload so that the values — which may be secrets —
+      never enter argv, envp, or this step's script text.
+
+      The values are applied before this action's own exports, so an action-managed
+      variable set by the step script at runtime (e.g. TF_PLUGIN_CACHE_DIR) wins,
+      while one set in the step's env: block (e.g. TF_IN_AUTOMATION) is overridden
+      by the caller. See docs/Per-goal-environment-variables.md §6.3.
+    required: false
+    default: ""
 outputs:
   exitcode:
     description: |
@@ -74,6 +90,7 @@ runs:
         input_environment_name: ${{ inputs.environment-name }}
         input_extra_global_args: ${{ inputs.extra-global-args }}
         input_extra_plan_args: ${{ inputs.extra-plan-args }}
+        input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         set -o allexport
         source "${{ github.action_path }}/step_plan.sh"
@@ -92,6 +109,7 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_environment_name: ${{ inputs.environment-name }}
         input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
+        input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         set -o allexport
         source "${{ github.action_path }}/step_plan_show.sh"
@@ -103,6 +121,7 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_environment_name: ${{ inputs.environment-name }}
         input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
+        input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         set -o allexport
         source "${{ github.action_path }}/step_plan_json.sh"
