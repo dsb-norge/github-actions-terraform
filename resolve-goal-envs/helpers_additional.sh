@@ -118,9 +118,14 @@ function find-input-errors {
         | select(IN($goals[]) | not)
         | "\($ctx): \"\(.)\" is not a valid goal, valid goals are: \($goals | join(", "))";
 
+      # A null goal value is accepted, not rejected: writing
+      #   extra-envs-per-goal-yml: |
+      #     plan:
+      # is natural YAML for "nothing here yet", and yq renders it as null. It
+      # resolves the same as an absent key.
       def bad_goal_values($ctx):
         to_entries[]
-        | select((.value | type) != "object")
+        | select((.value != null) and ((.value | type) != "object"))
         | "\($ctx): the value of goal \"\(.key)\" must be a mapping of environment variables, got \(.value | type)";
 
       def goal_maps: to_entries[] | select((.value | type) == "object");

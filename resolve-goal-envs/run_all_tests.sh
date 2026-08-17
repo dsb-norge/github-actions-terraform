@@ -458,6 +458,74 @@ assert_eq "coverage: unconfigured goals are empty objects" \
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# An empty goal block is natural YAML for "nothing here yet" — yq renders
+#   plan:
+# as null — and must resolve the same as an absent key rather than failing.
+# ----------------------------------------------------------------------
+setup
+export input_extra_envs='{"GOGC":50}'
+export input_extra_envs_per_goal='{"plan":null,"apply":{"GOGC":25}}'
+run_step
+assert "empty goal block: step exits 0" test "${LAST_EXIT}" -eq 0
+assert_eq "empty goal block: the goal falls back to the global value" \
+  '50' "$(goal_query plan '.GOGC')"
+assert_eq "empty goal block: other goals are unaffected" \
+  '25' "$(goal_query apply '.GOGC')"
+
+setup
+export input_extra_envs_from_secrets_per_goal='{"apply":null}'
+run_step
+assert "empty goal block: accepted in the secrets map too" test "${LAST_EXIT}" -eq 0
+
+# ----------------------------------------------------------------------
+# Further negatives on the inputs
+# ----------------------------------------------------------------------
+# The secrets bag itself must be an object — anything else means the caller
+# wired up 'secrets-json' wrong, and resolving every secret to null would be
+# a silent, confusing failure.
+setup
+set_secrets '["not","an","object"]'
+run_step
+assert "negative: a non-object secrets bag is rejected" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the input" \
+  grep -q "input 'secrets-json' must be a JSON object" "${OUT_FILE}"
+
+setup
+set_secrets '{ truncated'
+run_step
+assert "negative: an unparseable secrets bag is rejected" test "${LAST_EXIT}" -ne 0
+
+# A secret NAME must be a string. A number or a boolean there is a config
+# error, not something to look up.
+setup
+export input_extra_envs_from_secrets='{"ARM_TENANT_ID":123}'
+run_step
+assert "negative: a numeric secret name is rejected" test "${LAST_EXIT}" -ne 0
+assert "negative: the error explains what is required" \
+  grep -q 'must be a non-empty string' "${OUT_FILE}"
+
+setup
+export input_extra_envs_from_secrets_per_goal='{"plan":{"ARM_TENANT_ID":null}}'
+run_step
+assert "negative: a null secret name is rejected" test "${LAST_EXIT}" -ne 0
+
+# Several problems at once: every one of them must be reported, not just the
+# first — otherwise fixing a typo turns into one round-trip per typo.
+setup
+export input_extra_envs='{"BAD NAME":"x","OBJ":{"a":1}}'
+export input_extra_envs_per_goal='{"all":{"A":"1"},"plan":{"ALSO BAD":"y"}}'
+run_step
+assert "negative: multiple problems fail the step" test "${LAST_EXIT}" -ne 0
+assert "negative: all four problems are reported together" \
+  bash -c "[ \$(grep -c 'ERROR' '${OUT_FILE}') -ge 5 ]"
+assert "negative: the invalid name is reported" grep -q '"BAD NAME"' "${OUT_FILE}"
+assert "negative: the object value is reported" grep -q '"OBJ"' "${OUT_FILE}"
+assert "negative: the unknown goal is reported" grep -q '"all"' "${OUT_FILE}"
+assert "negative: the per-goal invalid name is reported" grep -q '"ALSO BAD"' "${OUT_FILE}"
+assert "negative: no files are written when validation fails" \
+  bash -c "[ -z '${ENVS_DIR}' ] || [ ! -d '${ENVS_DIR}' ]"
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}          step_resolve.sh SUMMARY           ${NC}"
