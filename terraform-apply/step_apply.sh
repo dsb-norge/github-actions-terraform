@@ -28,7 +28,15 @@ function main {
 
   local tf_bin="${TF_BIN:-terraform}"
 
-  cd "${input_working_directory}"
+  # Guarded: an unguarded 'cd' that fails leaves the step running in whatever
+  # directory it was invoked from and operating on the wrong tree. The runner's
+  # errexit catches it in production, but only there — the test harness and the
+  # local runners do not set it, so the failure mode is invisible where it would
+  # be caught.
+  if ! cd "${input_working_directory}"; then
+    log-error "the working directory '${input_working_directory}' could not be entered!"
+    return 1
+  fi
 
   # Built as an array and invoked as "${apply_cmd[@]}": the plan-file path is
   # caller-supplied and, as an interpolated command string, was subject to

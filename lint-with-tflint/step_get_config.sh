@@ -23,7 +23,15 @@ set +o nounset
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
-  cd "${input_working_directory}"
+  # Guarded: an unguarded 'cd' that fails leaves the step running in whatever
+  # directory it was invoked from and operating on the wrong tree. The runner's
+  # errexit catches it in production, but only there — the test harness and the
+  # local runners do not set it, so the failure mode is invisible where it would
+  # be caught.
+  if ! cd "${input_working_directory}"; then
+    log-error "the working directory '${input_working_directory}' could not be entered!"
+    return 1
+  fi
 
   local configured_path="${input_config_file_path}"
   local possible_paths=(

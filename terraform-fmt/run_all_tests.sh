@@ -515,6 +515,22 @@ assert "negative: the error says nothing was found to check" \
   grep -q 'no directories to check for formatting were found' "${OUT_FILE}"
 assert "negative: terraform was never invoked" test "$(invocations)" -eq 0
 
+# ----------------------------------------------------------------------
+# A working directory that cannot be entered must fail the step. Unguarded,
+# 'cd' failing left the step running in whatever directory it was invoked
+# from — i.e. operating on the wrong tree.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
+run_step
+assert "negative: a missing working directory fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the directory" \
+  grep -q 'could not be entered' '/tmp/test_output_fmt.txt'
+assert "negative: the tool was never invoked" \
+  bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}            step_fmt.sh SUMMARY             ${NC}"

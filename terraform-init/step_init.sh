@@ -56,7 +56,15 @@ function main {
   # behaviour: "exit ${TF_INIT_SUM_EXIT_CODES}").
   declare -A TF_INIT_RESULTS
 
-  cd "${input_working_directory}"
+  # Guarded: an unguarded 'cd' that fails leaves the step running in whatever
+  # directory it was invoked from and operating on the wrong tree. The runner's
+  # errexit catches it in production, but only there — the test harness and the
+  # local runners do not set it, so the failure mode is invisible where it would
+  # be caught.
+  if ! cd "${input_working_directory}"; then
+    log-error "the working directory '${input_working_directory}' could not be entered!"
+    return 1
+  fi
 
   # Project init — tee with overwrite ('>' under tee) so re-runs of the
   # step in the same workspace start fresh.
