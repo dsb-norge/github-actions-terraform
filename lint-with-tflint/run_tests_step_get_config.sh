@@ -177,6 +177,18 @@ assert "Space in path: resolved path is intact" \
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# A working directory that cannot be entered must fail the step
+# ----------------------------------------------------------------------
+setup_workdir
+make_config "${GITHUB_WORKSPACE}/.tflint.hcl"
+export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
+run_step
+assert "negative: a missing working directory fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the directory" \
+  grep -q 'could not be entered' "${OUT_FILE}"
+assert "negative: no config file is published" test -z "$(get_output file)"
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}         step_get_config.sh SUMMARY         ${NC}"
