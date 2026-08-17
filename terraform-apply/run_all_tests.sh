@@ -510,6 +510,55 @@ run_prereqs "${WORK_DIR}"
 assert "prereqs: a directory is not accepted as a plan file" \
   test "${LAST_EXIT}" -ne 0
 
+# ----------------------------------------------------------------------
+# jq older than 1.7 has no '--raw-output0'. The runner images this repo
+# targets have 1.7.x, but 'runs-on' is caller-overridable to self-hosted
+# groups — and a jq that rejects the flag made the read loop consume nothing
+# while the step carried on having applied nothing at all.
+#
+# apply-extra-envs is byte-identical across the six goal actions
+# (docs/Per-goal-environment-variables.md §9.6), and resolve-goal-envs' suite
+# asserts that, so exercising this once here covers all six.
+# ----------------------------------------------------------------------
+install_stub_old_jq() {
+  local stub_dir="${RUNNER_TEMP}/stub-bin"
+  mkdir -p "${stub_dir}"
+  cat >"${stub_dir}/jq" <<'STUB'
+#!/bin/env bash
+# Simulates jq 1.6: every other option works, --raw-output0 does not.
+for _arg in "${@}"; do
+  if [ "${_arg}" = "--raw-output0" ]; then
+    echo "jq: Unknown option: --raw-output0" >&2
+    exit 2
+  fi
+done
+exec "${REAL_JQ}" "${@}"
+STUB
+  chmod +x "${stub_dir}/jq"
+  export REAL_JQ="$(command -v jq)"
+  OLD_JQ_PATH="${stub_dir}"
+}
+
+setup_workdir
+install_stub_terraform
+install_stub_old_jq
+record_env
+use_extra_envs '{"GOMEMLIMIT":"12GiB","GOGC":25}'
+(
+  PATH="${OLD_JQ_PATH}:${PATH}"
+  set -o allexport
+  source "${_this_script_dir}/step_apply.sh"
+) >"${OUT_FILE}" 2>&1
+LAST_EXIT=$?
+assert "old jq: the step fails rather than applying nothing" test "${LAST_EXIT}" -ne 0
+assert "old jq: the error reports how many of how many were applied" \
+  grep -q 'applied 0 of 2 environment variable(s)' "${OUT_FILE}"
+assert "old jq: the error points at the jq version" \
+  grep -q 'jq is older than 1.7' "${OUT_FILE}"
+assert "old jq: terraform was never invoked" \
+  bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+unset REAL_JQ
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}           step_apply.sh SUMMARY            ${NC}"
