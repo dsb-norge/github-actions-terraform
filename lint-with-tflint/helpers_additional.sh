@@ -20,14 +20,31 @@ function read-terraform-module-dirs {
   local -n _dirs_out="${1}"
   local _modules_file="${2}"
   local _prefix="${3}"
-  local _dir
+  local _dir _out_file _err_file
 
   _dirs_out=()
+  _out_file="$(mktemp)"
+  _err_file="$(mktemp)"
+
+  # jq's exit code is checked rather than piping straight into the read loop:
+  # an unparseable modules.json, or one without a '.Modules' array, otherwise
+  # yields zero directories and the caller reports success having checked
+  # nothing at all.
+  if ! jq --raw-output0 --arg pwd "${_prefix}" \
+    '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' \
+    "${_modules_file}" >"${_out_file}" 2>"${_err_file}"; then
+    log-error "failed to read directories from the terraform modules file '${_modules_file}':"
+    log-error "$(cat "${_err_file}")"
+    rm -f "${_out_file}" "${_err_file}"
+    return 1
+  fi
+
   while IFS= read -r -d '' _dir; do
     _dirs_out+=("${_dir}")
-  done < <(jq --raw-output0 --arg pwd "${_prefix}" \
-    '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' \
-    "${_modules_file}")
+  done <"${_out_file}"
+
+  rm -f "${_out_file}" "${_err_file}"
+  return 0
 }
 
 # Apply a JSON environment-variable map to the current shell

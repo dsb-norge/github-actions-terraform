@@ -492,6 +492,40 @@ assert "negative: it is rejected as a name, not silently reinterpreted" \
 assert "negative: the tool was not invoked at all" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
 
+# ----------------------------------------------------------------------
+# Linting nothing must not report success. Before this was guarded, an
+# unparseable modules.json made jq fail, the directory list came out empty,
+# the loop never ran and the step exited 0 — "lint passed" with nothing
+# linted.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_tflint
+mkdir -p "${WORK_DIR}/.terraform/modules"
+printf '{ this is not json' >"${WORK_DIR}/.terraform/modules/modules.json"
+run_step
+assert "negative: unparseable modules.json fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the modules file" \
+  grep -q 'failed to read directories from the terraform modules file' "${OUT_FILE}"
+assert "negative: tflint was never invoked" test "$(invocations)" -eq 0
+
+setup_workdir
+install_stub_tflint
+mkdir -p "${WORK_DIR}/.terraform/modules"
+printf '{"NotModules": []}' >"${WORK_DIR}/.terraform/modules/modules.json"
+run_step
+assert "negative: modules.json without a Modules array fails the step" \
+  test "${LAST_EXIT}" -ne 0
+assert "negative: tflint was never invoked" test "$(invocations)" -eq 0
+
+setup_workdir
+install_stub_tflint
+write_modules_file ".terraform/modules/only-vendored"
+run_step
+assert "negative: an empty directory list fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error says nothing was found to lint" \
+  grep -q 'no directories to lint were found' "${OUT_FILE}"
+assert "negative: tflint was never invoked" test "$(invocations)" -eq 0
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}            step_lint.sh SUMMARY            ${NC}"
