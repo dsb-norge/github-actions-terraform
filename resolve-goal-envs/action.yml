@@ -1,0 +1,109 @@
+name: "Resolve per-goal environment variables"
+description: |
+  Resolves the effective set of environment variables for every terraform goal
+  (init, format, validate, lint, plan, apply, destroy-plan, destroy) by merging
+  the global maps with the per-goal ones and expanding secret names to their
+  values.
+
+  Writes one JSON file per goal into a private directory under $RUNNER_TEMP and
+  outputs that directory's path. Goal actions receive the path and apply the
+  file verbatim, so secret values never enter argv, envp, or a step's
+  interpolated script text.
+
+  See docs/Per-goal-environment-variables.md for the full design.
+author: "Peder Schmedling"
+inputs:
+  extra-envs:
+    description: |
+      JSON object of environment variables that apply to every goal. Per
+      environment resolution has already happened in create-tf-vars-matrix.
+        key:    env name
+        value:  value of env, a JSON null unsets it
+    required: false
+    default: "{}"
+  extra-envs-from-secrets:
+    description: |
+      JSON object of environment variables that apply to every goal, with
+      values read from github secrets.
+        key:    env name
+        value:  name of the secret to read the value from
+    required: false
+    default: "{}"
+  extra-envs-per-goal:
+    description: |
+      JSON object of objects, keyed by goal, of environment variables that
+      apply to that goal only.
+        key:    goal name, one of init, format, validate, lint, plan, apply,
+                destroy-plan, destroy. An unknown goal is a hard error.
+        value:  JSON object as in 'extra-envs'
+    required: false
+    default: "{}"
+  extra-envs-from-secrets-per-goal:
+    description: |
+      JSON object of objects, keyed by goal, of environment variables that
+      apply to that goal only, with values read from github secrets.
+
+      NOTE: these reach the terraform/tflint process for that goal, not the
+      workflow's 'azure/login' step — that runs once, early, and reads job-wide
+      environment variables. A plan/apply cloud identity split does not work
+      through this input.
+        key:    goal name, as in 'extra-envs-per-goal'
+        value:  JSON object as in 'extra-envs-from-secrets'
+    required: false
+    default: "{}"
+  secrets-json:
+    description: |
+      All secrets available to the ci/cd workflow.
+
+      Example (replace '?' with '$'):
+        - uses: ./.github/resolve-goal-envs
+          with:
+            secrets-json: ?{{ toJSON(secrets) }}
+            ...
+    required: true
+outputs:
+  envs-dir:
+    description: |
+      Absolute path of a 0700 directory holding one 0600 '<goal>.json' file per
+      goal. Every file always exists, containing at minimum '{}'. Pass the
+      relevant file to a goal action's 'extra-envs-file' input.
+    value: ${{ steps.resolve.outputs.envs-dir }}
+runs:
+  using: "composite"
+  steps:
+    - id: resolve
+      shell: bash
+      run: |
+        # 'secrets-json' is the one genuinely large payload here — a bag holding
+        # a PEM private key is enough on its own. It goes straight to a file
+        # BEFORE 'set -o allexport', and only the path is exported. A
+        # modern-layout shim defaults to the opposite, so this has to be
+        # deliberate. Ref. docs/Per-goal-environment-variables.md §8.
+        input_secrets_file="$(mktemp "${RUNNER_TEMP:-/tmp}/secrets-bag-XXXXXXXX.json")"
+        chmod 0600 "${input_secrets_file}"
+        cat >"${input_secrets_file}" <<'EOF'
+        ${{ inputs.secrets-json }}
+        EOF
+        export input_secrets_file
+
+        # Heredoc captures (special chars survive verbatim). Intentionally NOT
+        # exported — step_resolve.sh reads them as shell-locals via 'source'.
+        input_extra_envs=$(cat <<'EOF'
+        ${{ inputs.extra-envs }}
+        EOF
+        )
+        input_extra_envs_from_secrets=$(cat <<'EOF'
+        ${{ inputs.extra-envs-from-secrets }}
+        EOF
+        )
+        input_extra_envs_per_goal=$(cat <<'EOF'
+        ${{ inputs.extra-envs-per-goal }}
+        EOF
+        )
+        input_extra_envs_from_secrets_per_goal=$(cat <<'EOF'
+        ${{ inputs.extra-envs-from-secrets-per-goal }}
+        EOF
+        )
+
+        set -o allexport
+        source "${{ github.action_path }}/step_resolve.sh"
