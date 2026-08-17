@@ -457,6 +457,59 @@ assert "negative: the error names the directory" \
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
 
+# ======================================================================
+# The inline 'check-prereqs' step.
+#
+# The implementation guide allows prerequisite checks to stay inline, and this
+# one normally would not earn a test — except that this is the only action in
+# the repo that mutates infrastructure, and the check is what stops it running
+# 'apply' against a plan file that is not there.
+# ======================================================================
+run_prereqs() {
+  local plan_file="${1}"
+  local tmp
+  tmp="$(mktemp -d)"
+  printf '%s' "${plan_file}" >"${tmp}/plan-file.txt"
+
+  python3 "${_this_script_dir}/extract_step_source.py" \
+    "${_this_script_dir}/action.yml" check-prereqs "${tmp}/step.sh" \
+    "inputs.terraform-plan-file=@${tmp}/plan-file.txt" \
+    "github.action_path=${_this_script_dir}"
+
+  # Same shell flags the runner uses, so 'exit 1' behaves as it does in CI.
+  PATH="${RUNNER_TEMP}/stub-bin:${PATH}" \
+    bash --noprofile --norc -eo pipefail "${tmp}/step.sh" >"${OUT_FILE}" 2>&1
+  LAST_EXIT=$?
+}
+
+setup_workdir
+install_stub_terraform
+run_prereqs "${PLAN_FILE}"
+assert "prereqs: an existing plan file and terraform on PATH passes" \
+  test "${LAST_EXIT}" -eq 0
+assert "prereqs: it says the plan file exists" \
+  grep -q 'the configured plan file exists' "${OUT_FILE}"
+
+setup_workdir
+install_stub_terraform
+run_prereqs "${GITHUB_WORKSPACE}/no-such-plan.plan"
+assert "prereqs: a missing plan file fails before anything is applied" \
+  test "${LAST_EXIT}" -ne 0
+assert "prereqs: the error explains why" \
+  grep -q 'the configured plan file does not exists' "${OUT_FILE}"
+
+setup_workdir
+install_stub_terraform
+run_prereqs ""
+assert "prereqs: an empty plan-file path fails" test "${LAST_EXIT}" -ne 0
+
+# A directory is not a plan file.
+setup_workdir
+install_stub_terraform
+run_prereqs "${WORK_DIR}"
+assert "prereqs: a directory is not accepted as a plan file" \
+  test "${LAST_EXIT}" -ne 0
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}           step_apply.sh SUMMARY            ${NC}"
