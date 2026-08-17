@@ -595,6 +595,21 @@ jobs:
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
           secrets-json: ${{ toJSON(secrets) }}
 
+      # Resolves the effective environment for every goal into one file per
+      # goal under $RUNNER_TEMP, and outputs that directory. The goal steps
+      # below receive a path, never a payload — see
+      # docs/Per-goal-environment-variables.md §3. This is the only step
+      # besides export-env-vars that is handed the secrets bag.
+      - name: "🎰 Resolve per-goal environment variables"
+        id: goal-envs
+        uses: dsb-norge/github-actions-terraform/resolve-goal-envs@v0
+        with:
+          extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
+          extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
+          extra-envs-per-goal: ${{ toJSON(matrix.vars.extra-envs-per-goal) }}
+          extra-envs-from-secrets-per-goal: ${{ toJSON(matrix.vars.extra-envs-from-secrets-per-goal) }}
+          secrets-json: ${{ toJSON(secrets) }}
+
       - name: "🔑 Login to Azure"
         uses: azure/login@v3
         if: env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
@@ -638,6 +653,7 @@ jobs:
           environment-name: ${{ matrix.vars.github-environment }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       # Verify the committed .terraform.lock.hcl covers all required platforms.
@@ -665,6 +681,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/format.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: ✔ Terraform Validate
@@ -674,6 +691,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/validate.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧹 Lint with TFLint
@@ -682,6 +700,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/lint-with-tflint@v0
         with:
           working-directory: ${{ matrix.vars.project-dir }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/lint.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 📖 Terraform Plan
@@ -691,6 +710,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/plan.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: "🔍 Parse terraform plan"
@@ -1032,6 +1052,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/apply.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
@@ -1045,6 +1066,7 @@ jobs:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
           extra-plan-args: -destroy
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/destroy-plan.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
@@ -1074,6 +1096,7 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
+          extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/destroy.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
@@ -1087,6 +1110,17 @@ jobs:
           github-context-json: ${{ toJSON(github) }}
           steps-context-json: ${{ toJSON(steps) }}
         continue-on-error: true # never fail the job due to metadata capture
+
+      # The resolved files hold plaintext secret values. $RUNNER_TEMP is
+      # documented as emptied per job, but 'runs-on' is caller-overridable to
+      # self-hosted groups and composite actions cannot declare 'post:' steps,
+      # so cleanup is explicit rather than delegated to runner behavior.
+      - name: "🧹 Shred resolved environment files"
+        if: always()
+        run: |
+          dir='${{ steps.goal-envs.outputs.envs-dir }}'
+          [ -n "${dir}" ] && [ -d "${dir}" ] && rm -rf "${dir}" || :
+        continue-on-error: true # never fail the job over cleanup
 
   # Reconciles per-group PR comments according to the desired set computed from
   # matrix-job-meta-*.json artifacts. Runs unconditionally on PR events (not gated
