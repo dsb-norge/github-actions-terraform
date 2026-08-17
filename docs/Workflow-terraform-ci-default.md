@@ -50,6 +50,76 @@ For _global_ values, those to be passed for all terraform environments specified
 
 For environment specific values specify **the fields** `extra-envs-yml` and `extra-envs-from-secrets-yml` for one or more environment defined in the `environments-yml` workflow input.
 
+#### Variables for a single goal
+
+`extra-envs-yml` and `extra-envs-from-secrets-yml` reach every step of the job. When the correct value differs per stage — `plan` may need a much higher `GOMEMLIMIT` than `validate`, and a `GOGC` low enough to keep `plan` inside a runner's memory would needlessly slow down `lint` — use `extra-envs-per-goal-yml` and `extra-envs-from-secrets-per-goal-yml` instead. Both exist as workflow inputs and as per-environment fields, like their global counterparts.
+
+```yaml
+      extra-envs-yml: |
+        ARM_USE_OIDC: true
+        GOGC: 50
+        GOMEMLIMIT: 6GiB
+
+      extra-envs-per-goal-yml: |
+        plan:
+          GOMEMLIMIT: 12GiB
+          GOGC: 25
+        apply:
+          GOMEMLIMIT: ~          # cleared for apply
+        lint:
+          GOGC: 400
+
+      environments-yml: |
+        - environment: dev
+        - environment: prod
+          extra-envs-per-goal-yml:
+            plan:
+              GOMEMLIMIT: 24GiB
+```
+
+Valid goal keys are the ones you write in `goals-yml`: `init`, `format`, `validate`, `lint`, `plan`, `apply`, `destroy-plan`, `destroy`. Three things to know about them:
+
+- The key is **`format`**, even though the workflow step is called `fmt`.
+- **`destroy-plan` and `destroy` are separate** from `plan` and `apply`, so a destroy plan can be tuned independently.
+- **There is no `all` key.** `all` is not a stage, it is shorthand expanded inside each step's condition, so there is nothing to attach values to — the every-goal layer is `extra-envs-yml`. Writing `all:` is a hard error rather than a silent no-op.
+
+An unknown goal key, a secret name that is not available to the workflow, an environment variable name that is not a valid one, or a value that is a list or a mapping all fail the job early, before any terraform runs.
+
+Effective value for a given (environment, goal, variable), last wins:
+
+1. global `extra-envs-yml`
+2. global `extra-envs-from-secrets-yml`
+3. per-goal `extra-envs-per-goal-yml[goal]`
+4. per-goal `extra-envs-from-secrets-per-goal-yml[goal]`
+
+So specificity beats source — a per-goal plain value overrides a global secret-sourced one for the same variable — while within one level, secret-sourced wins, which is what the global maps already did before this existed. Per-environment values are merged into the global ones first, per goal and per variable: the `prod` example above ends up with `GOMEMLIMIT: 24GiB` **and** `GOGC: 25` for `plan`.
+
+For the resulting table across the example:
+
+| | `GOGC` | `GOMEMLIMIT` |
+|---|---|---|
+| dev · init/validate/format/destroy-* | 50 | 6GiB |
+| dev · plan | 25 | 12GiB |
+| dev · lint | 400 | 6GiB |
+| dev · apply | 50 | *unset* |
+| **prod · plan** | **25** | **24GiB** |
+
+##### Clearing a variable
+
+`GOMEMLIMIT: ~` (YAML null) **unsets** the variable for that goal. `GOMEMLIMIT: ""` sets it to the empty string, which is a different thing for anything that treats an empty value as meaningful. Being able to express *unset* at all is the main functional gain over routing these through `$GITHUB_ENV`, which has no unset mechanism.
+
+##### Two caveats
+
+**Per-goal secrets do not swap cloud identity.** The values reach the terraform/tflint process for that goal — not the workflow's `Login to Azure` step, which runs once, early, and reads job-wide environment variables. A reader service principal for `plan` and a contributor for `apply` therefore does **not** work through `extra-envs-from-secrets-per-goal-yml`: handing terraform a different `ARM_CLIENT_ID` after the OIDC token was already minted for another identity changes nothing. Use it for values terraform or a provider reads directly.
+
+**Overriding a variable the workflow manages itself is allowed, and who wins depends on how the workflow sets it.** There is no reserved-name list. A variable the action exports at runtime — `TF_PLUGIN_CACHE_DIR` in `init` — wins over your value, so provider plugin caching cannot be disabled by accident. A variable set in the step's environment — `TF_IN_AUTOMATION`, and `GITHUB_TOKEN` for `lint` — is overridden by your value. The asymmetry is a consequence of when each assignment happens, not a policy.
+
+##### The cheaper alternative
+
+Terraform's own `TF_CLI_ARGS_<subcommand>` mechanism already works through plain `extra-envs-yml` with no per-goal configuration at all, and covers anything expressible as a CLI flag. Reach for it first. One caveat: `TF_CLI_ARGS_plan` applies to **both** plan invocations, `plan` and `destroy-plan`.
+
+Full design, including why the values are passed as a file path rather than as a payload: [Per-goal-environment-variables.md](./Per-goal-environment-variables.md).
+
 #### Example usage
 
 #### Basic
