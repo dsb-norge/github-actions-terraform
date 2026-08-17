@@ -38,84 +38,18 @@ runs:
         end-group
     - id: get-config
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      env:
+        input_working_directory: ${{ inputs.working-directory }}
+        input_config_file_path: ${{ inputs.config-file-path }}
       run: |
-        # locate TFLint config file
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        configured_path='${{ inputs.config-file-path }}'
-        possible_paths=(
-          "$(pwd)/.tflint.hcl"
-          "${GITHUB_WORKSPACE}/.tflint.hcl"
-        )
-
-        if [ ! -z "${configured_path}" ]; then
-          log-info "using configured TFLint config file path"
-          if [ -f "${configured_path}" ]; then
-            path_to_use="${configured_path}"
-          elif [ -f "$(pwd)/${configured_path}" ]; then
-            path_to_use="$(pwd)/${configured_path}"
-          else
-            log-error "the configured path '${configured_path}' does not exist, unable to perform linting!"
-            exit 1
-          fi
-        else
-          log-info "TFLint config file path was not configured, attempting to locate one ..."
-          for path_to_use in ${possible_paths[*]}; do
-            [ -f "${path_to_use}" ] && break || :
-          done
-          if [ ! -f "${path_to_use}" ]; then
-            log-error "could not find a TFLint config file to use, unable to perform linting!"
-            exit 1
-          fi
-        fi
-        log-info "using TFLint config file located at '$(ws-path ${path_to_use})'"
-        set-output 'file' "${path_to_use}"
+        set -o allexport
+        source "${{ github.action_path }}/step_get_config.sh"
     - id: lint
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        input_working_directory: ${{ inputs.working-directory }}
+        input_config_file: ${{ steps.get-config.outputs.file }}
       run: |
-        # determine directories to lint in and go
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        # decoration in github
-        echo "::add-matcher::${{ github.action_path }}/tflint_matcher.json"
-
-        # dirs
-        MODULES_FILE="$(pwd)/.terraform/modules/modules.json"
-        log-info "looking for terraform modules file at '$(ws-path ${MODULES_FILE})'"
-        if [ -f "${MODULES_FILE}" ]; then
-          log-info "found it, parsing directories to lint"
-          TFLINT_DIRS=$(jq -cr --arg pwd "$(pwd)/" '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' "${MODULES_FILE}")
-        else
-          log-info "no modules file found, linting will only be performed in '$(ws-path $(pwd))'"
-          TFLINT_DIRS="$(pwd)"
-        fi
-
-        # lint
-        declare -A TFLINT_RESULTS
-        for TFLINT_DIR in ${TFLINT_DIRS[*]}; do
-          start-group "directory '$(ws-path ${TFLINT_DIR})'"
-          log-info "TFLint init ..."
-          tflint --init --config="${{ steps.get-config.outputs.file }}" --chdir="${TFLINT_DIR}"
-          log-info "linting ..."
-          set +e
-          tflint --format=compact --config="${{ steps.get-config.outputs.file }}" --chdir="${TFLINT_DIR}"
-          TFLINT_RESULTS["./${TFLINT_DIR}"]=${?}
-          set -e
-          end-group
-        done
-
-        # summary
-        log-info "summary:"
-        for TFLINT_DIR in ${TFLINT_DIRS[*]}; do
-          log-info "  - $([[ ${TFLINT_RESULTS["./${TFLINT_DIR}"]} -ne 0 ]] && echo 'failure ->' || echo 'success ->') ./$(ws-path ${TFLINT_DIR})"
-        done
-
-        # exit code
-        TFLINT_SUM_EXIT_CODES=$(IFS=+; echo "$((${TFLINT_RESULTS[*]}))")
-        exit ${TFLINT_SUM_EXIT_CODES}
+        set -o allexport
+        source "${{ github.action_path }}/step_lint.sh"
