@@ -1,6 +1,7 @@
 # Per-goal environment variables
 
-Status: **spec — design decisions settled, not yet implemented**. Living document — update as implementation lands.
+Status: **implemented**. Living document — see [§13](#13-implementation-notes) for where the
+implementation deviates from what is described above, and why.
 
 Lets callers set environment variables (plain and secret-sourced) for a single
 terraform goal rather than for the whole job. Motivating case: `GOMEMLIMIT` and
@@ -477,16 +478,16 @@ and before `🔑 Login to Azure`:
 
 Then one line added to each goal step's `with:`:
 
-| step | line | added |
-|---|---|---|
-| `init` | [568](../.github/workflows/terraform-ci-cd-default.yml#L568) | `extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json` |
-| `fmt` | [597](../.github/workflows/terraform-ci-cd-default.yml#L597) | `.../format.json` |
-| `validate` | [606](../.github/workflows/terraform-ci-cd-default.yml#L606) | `.../validate.json` |
-| `lint` | [615](../.github/workflows/terraform-ci-cd-default.yml#L615) | `.../lint.json` |
-| `plan` | [623](../.github/workflows/terraform-ci-cd-default.yml#L623) | `.../plan.json` |
-| `apply` | [964](../.github/workflows/terraform-ci-cd-default.yml#L964) | `.../apply.json` |
-| `destroy-plan` | [976](../.github/workflows/terraform-ci-cd-default.yml#L976) | `.../destroy-plan.json` |
-| `destroy` | [1006](../.github/workflows/terraform-ci-cd-default.yml#L1006) | `.../destroy.json` |
+| step id | added |
+|---|---|
+| `init` | `extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json` |
+| `fmt` | `.../format.json` |
+| `validate` | `.../validate.json` |
+| `lint` | `.../lint.json` |
+| `plan` | `.../plan.json` |
+| `apply` | `.../apply.json` |
+| `destroy-plan` | `.../destroy-plan.json` |
+| `destroy` | `.../destroy.json` |
 
 Plus a cleanup step at the end of the `terraform` job:
 
@@ -876,3 +877,72 @@ Settled, recorded so they are not re-litigated:
 - **Array-built invocations** — in scope, [§6.5](#65-array-built-invocations).
 - **Single release for conversions plus feature** — [§9.9](#99-v0-force-move-blast-radius),
   [§11](#11-implementation-order).
+
+## 13. Implementation notes
+
+Where the shipped code differs from the design above, and why. Everything not
+listed here landed as described.
+
+### 13.1 `apply-extra-envs`: locals renamed, constants not `readonly`
+
+The sketch in [§6.2](#62-the-apply-extra-envs-helper) uses `local file key value`
+and `readonly` constants. Shipped as `_extra_envs_file` / `_extra_envs_key` /
+`_extra_envs_value`, with plain assignments:
+
+- Underscore-prefixed locals because `unset "${key}"` inside a function unsets a
+  local of that name before the global. A caller whose environment variable is
+  literally named `file` would have unset the helper's own state.
+- Not `readonly`, because a second `source helpers.sh` in the same shell would
+  then hard-fail on the re-assignment. Nothing does that today; the cost of
+  guarding is zero.
+
+### 13.2 Caller-supplied argument strings are still whitespace-split
+
+[§6.5](#65-array-built-invocations) lists T27 as "an argument containing a space
+reaches terraform as **one** argv element". That holds for every path the actions
+build themselves — the `-out=` plan file, `-chdir=` directories, `--config=`,
+the plan file handed to apply — and those are the argv elements that carry
+`modules.json` paths and environment names, i.e. the ones a space realistically
+turns up in.
+
+It does **not** hold for `extra-global-args` / `extra-plan-args`. Those are
+documented as strings of arguments the caller injects verbatim, and honoring
+quotes inside them would require `eval` or `xargs`. Both change behaviour for
+existing callers in ways worse than the bug they would fix — an unbalanced
+apostrophe currently passes through fine and would start failing under `xargs`.
+`split-args-to-array` therefore splits on whitespace, once and explicitly, which
+is behaviour-identical to the previous word-splitting minus the glob expansion
+and minus empty argv elements. Tests cover all four cases.
+
+### 13.3 `lint-with-tflint`: a failing `tflint --init` no longer aborts the step
+
+Previously a non-zero `tflint --init` terminated the whole step immediately,
+leaving the remaining directories unlinted and unreported. It is now recorded as
+that directory's result: the step still fails, because the exit codes are summed,
+but the other directories are linted and the summary shows which were reached.
+Same outcome for the workflow, strictly more information in the log.
+
+### 13.4 The matrix builder got a CI-facing test suite
+
+[§10](#10-test-scenarios) puts T31-T37 in `create-tf-vars-matrix`, which had no
+`run_all_tests.sh` and was excluded from `action-tests` discovery because its only
+harness (`test_action_source.sh`) needs a real tty. Rather than leave the
+deep-merge regressions untested in CI, the action now has a deterministic
+`run_all_tests.sh`: unit tests of `merge-yml-field-json` and
+`normalize-goal-keys-json`, plus fixture-driven runs of the action's real inline
+bash, extracted from `action.yml` by `extract_step_source.py`. The action is no
+longer on the exclusion list. `test_action_source.sh` stays as a manual
+debugging aid.
+
+Both merge-semantics regressions the type dispatch exists to prevent were
+verified to fail this suite before being fixed — shallow `add` breaks the
+deep-merge cases, blanket `*` breaks the array case.
+
+### 13.5 Extra validation in `resolve-goal-envs`
+
+Beyond the four checks in [§5.4](#54-validation), the action rejects any of its
+five inputs that is not a JSON object, and treats an empty, whitespace-only or
+literal-`null` input as `{}` (`toJSON(...)` renders `null` for a matrix key that
+does not exist). It also checks the validation pass's own exit code separately
+from whether it produced error lines — a jq failure would otherwise have read as
+"no problems found" and let bad input through.
