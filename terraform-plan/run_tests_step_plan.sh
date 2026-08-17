@@ -40,14 +40,34 @@ setup_workdir() {
   export input_extra_global_args=""
   export input_extra_plan_args=""
 
-  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_SLEEP MOCK_TF_ARGV_FILE
+  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_SLEEP MOCK_TF_ARGV_FILE MOCK_TF_ARGS_FILE
 }
+
+# Enable one-argument-per-line recording for the next run_step.
+record_args() {
+  export MOCK_TF_ARGS_FILE="${RUNNER_TEMP}/tf-args.txt"
+  : >"${MOCK_TF_ARGS_FILE}"
+}
+
+# Argument count as recorded by the stub.
+argc() { sed -n 's/^INVOCATION //p' "${MOCK_TF_ARGS_FILE}" | head -n1; }
+
+# Nth recorded argument (1-based).
+argn() { sed -n "$((${1} + 1))p" "${MOCK_TF_ARGS_FILE}"; }
+
+# Whether any recorded argument equals the given string exactly.
+has_arg() { grep -Fxq -- "${1}" "${MOCK_TF_ARGS_FILE}"; }
 
 # Install a stub 'terraform' binary configurable per-test via env vars.
 # Captures argv to MOCK_TF_ARGV_FILE if that variable is set when the
 # stub is invoked. Path is exported as TF_BIN so step_plan.sh picks it
 # up without needing to alter PATH (the legacy action shells out to bare
 # 'terraform'; the script reads TF_BIN to allow this seam).
+#
+# MOCK_TF_ARGS_FILE records the same invocation one argument per line,
+# preceded by the argument count. That is what makes the array-built
+# invocation assertions possible: MOCK_TF_ARGV_FILE joins argv with spaces,
+# so it cannot tell one argument containing a space from two arguments.
 install_stub_terraform() {
   local stub_dir="${RUNNER_TEMP}/stub-bin"
   mkdir -p "${stub_dir}"
@@ -56,6 +76,11 @@ install_stub_terraform() {
 # Recorded argv (one line per invocation)
 if [ -n "${MOCK_TF_ARGV_FILE:-}" ]; then
   printf '%s\n' "$*" >>"${MOCK_TF_ARGV_FILE}"
+fi
+# Recorded argv, one element per line, preceded by the argument count
+if [ -n "${MOCK_TF_ARGS_FILE:-}" ]; then
+  printf 'INVOCATION %s\n' "${#}" >>"${MOCK_TF_ARGS_FILE}"
+  printf '%s\n' "${@}" >>"${MOCK_TF_ARGS_FILE}"
 fi
 if [ -n "${MOCK_TF_STDOUT:-}" ]; then
   printf '%s\n' "${MOCK_TF_STDOUT}"
@@ -272,6 +297,79 @@ assert "argv: plan flags from script present" \
   bash -c "[[ '${argv_line}' == *'-detailed-exitcode'* && '${argv_line}' == *'-input=false'* && '${argv_line}' == *'-no-color'* ]]"
 assert "argv: plan args appear after the -out flag" \
   bash -c "[[ '${argv_line}' == *'-var foo=bar -var baz=qux' ]]"
+
+# ----------------------------------------------------------------------
+# Test: the -out path this script builds reaches terraform as ONE argv
+# element even when the environment name puts a space in it. Regression
+# guard for the string-built invocation this step used to have — see
+# docs/Per-goal-environment-variables.md §6.5.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_args
+export MOCK_TF_EXIT=0
+export input_environment_name="env with spaces"
+run_step
+assert "Space in -out: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Space in -out: exactly 5 arguments (no word-splitting)" \
+  test "$(argc)" -eq 5
+assert "Space in -out: -out arrives as one argument, verbatim" \
+  has_arg "-out=${GITHUB_WORKSPACE}/tf-plan-env with spaces.plan"
+
+# ----------------------------------------------------------------------
+# Test: an extra arg containing a glob character is not expanded against
+# the working directory
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_args
+# Files the glob would match if expansion happened.
+touch "${WORK_DIR}/decoy-a.tf" "${WORK_DIR}/decoy-b.tf"
+export MOCK_TF_EXIT=0
+export input_extra_plan_args="-var=pattern=*.tf"
+run_step
+assert "Glob in extra args: arrives unexpanded" \
+  has_arg "-var=pattern=*.tf"
+assert "Glob in extra args: exactly 6 arguments (not one per match)" \
+  test "$(argc)" -eq 6
+
+# ----------------------------------------------------------------------
+# Test: empty extra-global-args / extra-plan-args produce no empty argv
+# element
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_args
+export MOCK_TF_EXIT=0
+export input_extra_global_args=""
+export input_extra_plan_args=""
+run_step
+assert "Empty extra args: exactly 5 arguments" test "$(argc)" -eq 5
+assert "Empty extra args: first argument is 'plan'" test "$(argn 1)" = "plan"
+assert "Empty extra args: no empty argv element" \
+  bash -c "! grep -q '^\$' '${MOCK_TF_ARGS_FILE}'"
+
+# ----------------------------------------------------------------------
+# Test: whitespace-only / multi-line extra args are split into real
+# arguments and contribute no empty elements
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_args
+export MOCK_TF_EXIT=0
+export input_extra_global_args="   "
+export input_extra_plan_args=$'-refresh=false\n  -lock=false   -parallelism=5'
+run_step
+assert "Whitespace extra args: whitespace-only global args add nothing" \
+  test "$(argn 1)" = "plan"
+assert "Whitespace extra args: 8 arguments (5 + 3 plan args)" \
+  test "$(argc)" -eq 8
+assert "Whitespace extra args: newline-separated arg is picked up" \
+  has_arg "-refresh=false"
+assert "Whitespace extra args: arg after the newline is picked up" \
+  has_arg "-lock=false"
+assert "Whitespace extra args: run of spaces collapses" \
+  has_arg "-parallelism=5"
 
 # ----------------------------------------------------------------------
 # Summary

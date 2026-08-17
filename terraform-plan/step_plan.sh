@@ -49,10 +49,21 @@ function main {
   set-output 'tf-plan-console-output-file' "${plan_console_out_file}"
   set-output 'tf-plan-tf-output-file' "${plan_tf_out_file}"
 
-  # Build the command. Quote-light to match the legacy action's behavior:
-  # extra-* args are space-delimited strings that the user injects verbatim.
-  local plan_cmd="${tf_bin} ${input_extra_global_args} plan -detailed-exitcode -input=false -no-color -out=${plan_tf_out_file} ${input_extra_plan_args}"
-  log-info "command string is '${plan_cmd}'"
+  # Build the command as an array and invoke it as "${plan_cmd[@]}". The
+  # extra-* args are still whitespace-split (that is their documented
+  # contract, see split-args-to-array), but the paths this script builds —
+  # notably -out= — are no longer word-split or glob-expanded on the way to
+  # terraform.
+  local extra_global_args=() extra_plan_args=()
+  split-args-to-array extra_global_args "${input_extra_global_args}"
+  split-args-to-array extra_plan_args "${input_extra_plan_args}"
+
+  local plan_cmd=("${tf_bin}")
+  plan_cmd+=("${extra_global_args[@]}")
+  plan_cmd+=(plan -detailed-exitcode -input=false -no-color "-out=${plan_tf_out_file}")
+  plan_cmd+=("${extra_plan_args[@]}")
+
+  log-info "command string is '${plan_cmd[*]@Q}'"
   start-group "'terraform plan' in '$(ws-path "$(pwd)")'"
 
   # Needed to properly catch terraform's exit code through the pipe to tee.
@@ -67,7 +78,7 @@ function main {
   # wall-clock time spent inside terraform plan (plus the trivial overhead
   # of the surrounding shell, which is below mm:ss granularity).
   local plan_start=${SECONDS}
-  ${plan_cmd} 2>&1 | tee "${plan_console_out_file}"
+  "${plan_cmd[@]}" 2>&1 | tee "${plan_console_out_file}"
   local plan_exit_code=${?}
   local plan_duration=$((SECONDS - plan_start))
 
