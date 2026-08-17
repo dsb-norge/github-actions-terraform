@@ -45,10 +45,11 @@ call_helper() {
   )
 }
 
-# Run the action's 'create-vars' step against an inputs-json fixture.
+# Run the action's 'create-vars' step against an inputs-json fixture, or
+# against FIXTURE_OVERRIDE when set (see run_create_vars_json).
 # Populates LAST_EXIT and MATRIX_JSON.
 run_create_vars() {
-  local fixture="${_this_script_dir}/test_data/${1}_inputs-json.json"
+  local fixture="${FIXTURE_OVERRIDE:-${_this_script_dir}/test_data/${1}_inputs-json.json}"
   local branch="${2:-main}"
 
   WORK_DIR="$(mktemp -d)"
@@ -75,7 +76,10 @@ STUB
 
   (
     cd "${GITHUB_WORKSPACE}" || exit 1
-    PATH="${WORK_DIR}/stub-bin:${PATH}" bash "${WORK_DIR}/step_create_vars.sh"
+    # Same shell flags the runner uses ('bash --noprofile --norc -eo pipefail'),
+    # so a failure the runner's errexit would catch is caught here too.
+    PATH="${WORK_DIR}/stub-bin:${PATH}" \
+      bash --noprofile --norc -eo pipefail "${WORK_DIR}/step_create_vars.sh"
   ) >"${OUT_FILE}" 2>&1
   LAST_EXIT=$?
 
@@ -94,9 +98,21 @@ run_validate() {
 
   (
     cd "${GITHUB_WORKSPACE}" || exit 1
-    bash "${WORK_DIR}/step_validate.sh"
+    bash --noprofile --norc -eo pipefail "${WORK_DIR}/step_validate.sh"
   ) >"${OUT_FILE}" 2>&1
   LAST_EXIT=$?
+}
+
+# Run 'create-vars' against inline inputs-json rather than a fixture file, for
+# the one-off malformed cases the three shared fixtures should not carry.
+run_create_vars_json() {
+  local json="${1}"
+  local tmp
+  tmp="$(mktemp -d)"
+  printf '%s' "${json}" >"${tmp}/inputs.json"
+  FIXTURE_OVERRIDE="${tmp}/inputs.json"
+  run_create_vars '' ''
+  FIXTURE_OVERRIDE=""
 }
 
 # Read a multiline output (name<<"DELIM" ... "DELIM") from $GITHUB_OUTPUT.
@@ -365,6 +381,107 @@ assert "invalid yaml: error names the offending input" \
 # ======================================================================
 # Summary
 # ======================================================================
+# ======================================================================
+# Negative cases
+# ======================================================================
+
+# Minimal valid inputs-json, as a base for the malformed variants below.
+BASE_INPUTS='{
+  "environments-yml": "- environment: \"my-tf-env\"\n",
+  "goals-yml": "[all]",
+  "extra-envs-from-secrets-yml": "{}",
+  "extra-envs-yml": "{}",
+  "extra-envs-per-goal-yml": "{}",
+  "extra-envs-from-secrets-per-goal-yml": "{}",
+  "terraform-version": "latest",
+  "tflint-version": "latest",
+  "add-pr-comment": "true",
+  "verify-lock-file": "true",
+  "pr-comment-group": "",
+  "pr-auto-merge-enabled": "false",
+  "pr-auto-merge-from-actors-yml": "[]",
+  "pr-auto-merge-limits-yml": "plan-max-count-add: 0\n"
+}'
+
+# ----------------------------------------------------------------------
+# An environment entry without the one required field
+# ----------------------------------------------------------------------
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- project-dir: \".\"\n"')"
+assert "negative: an environment without 'environment' fails" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the missing property" \
+  grep -q "Missing property 'environment' in environments-yml" "${OUT_FILE}"
+
+# ----------------------------------------------------------------------
+# An empty environments-yml — nothing to build a matrix from
+# ----------------------------------------------------------------------
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "[]"')"
+assert "negative: an empty environments list still produces output" \
+  test "${LAST_EXIT}" -eq 0
+assert_eq "negative: ... and that output is an empty array" \
+  '0' "$(printf '%s' "${MATRIX_JSON}" | jq -c 'length')"
+run_validate
+assert "negative: the validate step rejects an empty matrix" test "${LAST_EXIT}" -ne 0
+assert "negative: the error says the specification is empty" \
+  grep -q 'The specification is an empty array' "${OUT_FILE}"
+
+# ----------------------------------------------------------------------
+# Type mismatch between the global and per-environment value of a merged
+# field. Better a loud jq failure than a silently mangled matrix.
+# ----------------------------------------------------------------------
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" \
+  | jq -c '.["extra-envs-per-goal-yml"] = "plan:\n  GOGC: 25\n"
+         | .["environments-yml"] = "- environment: \"my-tf-env\"\n  extra-envs-per-goal-yml: \"a plain string\"\n"')"
+assert "negative: an object-versus-string merge fails the step" test "${LAST_EXIT}" -ne 0
+assert "negative: the error explains the shape mismatch rather than dumping jq" \
+  grep -q 'the two are probably of different shapes' "${OUT_FILE}"
+
+# ----------------------------------------------------------------------
+# The validate step's own guards, driven directly
+# ----------------------------------------------------------------------
+run_create_vars 'test_input_minimal'
+assert "validate: the baseline matrix is valid" test "${LAST_EXIT}" -eq 0
+
+# A required field removed from an otherwise valid matrix.
+MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(del(.["extra-envs-per-goal"]))')"
+run_validate
+assert "negative: a missing required field fails validation" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the field" \
+  grep -q "Missing property 'extra-envs-per-goal'" "${OUT_FILE}"
+
+# project-dir must point at a directory that exists.
+run_create_vars 'test_input_minimal'
+MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["project-dir"] = "./envs/does-not-exist")')"
+run_validate
+assert "negative: a non-existent project-dir fails validation" test "${LAST_EXIT}" -ne 0
+assert "negative: the error names the directory" \
+  grep -q 'does not exist, make sure' "${OUT_FILE}"
+
+# An empty value in a NOT_EMPTY field. The two new per-goal fields are
+# deliberately absent from that list, since '{}' is a legitimate value.
+run_create_vars 'test_input_minimal'
+MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["terraform-version"] = "")')"
+run_validate
+assert "negative: an empty required-non-empty field fails validation" \
+  test "${LAST_EXIT}" -ne 0
+assert "negative: the error says the property is empty" \
+  grep -q "Property 'terraform-version' is empty" "${OUT_FILE}"
+
+run_create_vars 'test_input_minimal'
+MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["extra-envs-per-goal"] = {})')"
+run_validate
+assert "positive: an empty per-goal map is accepted, not treated as empty" \
+  test "${LAST_EXIT}" -eq 0
+
+# ----------------------------------------------------------------------
+# normalize-goal-keys-json leaves a non-object alone rather than guessing.
+# resolve-goal-envs is what rejects it, so the caller gets one error from one
+# place.
+# ----------------------------------------------------------------------
+assert_eq "normalize: an array input is passed through untouched" \
+  '[1,2]' "$(call_helper normalize-goal-keys-json '[1,2]' | jq -c .)"
+assert_eq "normalize: a string input is passed through untouched" \
+  '"nope"' "$(call_helper normalize-goal-keys-json '"nope"' | jq -c .)"
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}      CREATE-TF-VARS-MATRIX SUMMARY         ${NC}"

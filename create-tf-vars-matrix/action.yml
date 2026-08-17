@@ -181,7 +181,11 @@ runs:
               # merge env with global, env wins in cases where defined both places
               log-info "'${MERGE_FIELD}' was specified for environment, merging with global value"
               ENV_JSON=$(get-val "${MERGE_FIELD}" | yq e -o=json -)
-              MERGED_JSON=$(merge-yml-field-json "${GLOBAL_ENVS_JSON}" "${ENV_JSON}")
+              if ! MERGED_JSON=$(merge-yml-field-json "${GLOBAL_ENVS_JSON}" "${ENV_JSON}"); then
+                log-error "unable to merge the environment's '${MERGE_FIELD}' with the global value!"
+                log-error "the two are probably of different shapes, e.g. a mapping globally and a plain value per environment."
+                exit 1
+              fi
               set-field-from-json "${MERGE_FIELD//-yml/}" "${MERGED_JSON}" # modifies $ENVIRONMENT_OBJ
             fi
           done
