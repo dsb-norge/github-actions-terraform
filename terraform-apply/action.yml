@@ -40,17 +40,10 @@ runs:
         end-group
     - id: apply
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       env:
         TF_IN_AUTOMATION: "true"
+        input_working_directory: ${{ inputs.working-directory }}
+        input_terraform_plan_file: ${{ inputs.terraform-plan-file }}
       run: |
-        # run terraform apply of a given plan
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        APPLY_CMD="terraform apply -input=false -auto-approve ${{ inputs.terraform-plan-file }}"
-        log-info "apply command string is '${APPLY_CMD}'"
-        start-group "'terraform apply' in '$(ws-path $(pwd))'"
-        ${APPLY_CMD}
-        echo '' # avoid control characters left behind by apply, messes up the end-group cmd
-        end-group
+        set -o allexport
+        source "${{ github.action_path }}/step_apply.sh"
