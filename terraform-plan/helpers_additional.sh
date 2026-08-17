@@ -73,7 +73,7 @@ _EXTRA_ENVS_UNSET='__DSB_UNSET__'
 _EXTRA_ENVS_FILTER='to_entries[] | (.key, (if .value == null then "__DSB_UNSET__" else (.value | tostring) end))'
 
 function apply-extra-envs {
-  local _extra_envs_file="${1}" _extra_envs_key _extra_envs_value
+  local _extra_envs_file="${1}" _extra_envs_key _extra_envs_value _extra_envs_type
 
   if [ -z "${_extra_envs_file}" ]; then
     log-info "no per-goal environment variables file configured."
@@ -84,14 +84,47 @@ function apply-extra-envs {
     return 1
   fi
 
+  # Validated before anything is applied. Without this an unparseable, empty or
+  # truncated file applies nothing at all and the step carries on as if it had —
+  # the consequence then surfaces as an OOM or a wrong-credentials error far
+  # from its cause, which is the failure mode this whole feature exists to
+  # avoid. resolve-goal-envs already guarantees a JSON object; this is the last
+  # line of defence, and cheap.
+  if ! _extra_envs_type=$(jq -r 'type' "${_extra_envs_file}" 2>/dev/null); then
+    log-error "the per-goal environment variables file '${_extra_envs_file}' is not valid JSON!"
+    return 1
+  fi
+  if [ ! "${_extra_envs_type}" == 'object' ]; then
+    log-error "the per-goal environment variables file '${_extra_envs_file}' must hold a JSON object, got '${_extra_envs_type:-nothing}'!"
+    return 1
+  fi
+
   start-group "applying per-goal environment variables"
   while IFS= read -r -d '' _extra_envs_key && IFS= read -r -d '' _extra_envs_value; do
+    # 'export' cannot be relied on to reject a bad name: given the key 'FOO=BAR'
+    # and the value 'x' it happily assigns 'BAR=x' to FOO — silently setting a
+    # different variable than the caller asked for. Hence the explicit check.
+    if [[ ! "${_extra_envs_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      log-error "'${_extra_envs_key}' is not a valid environment variable name!"
+      end-group
+      return 1
+    fi
     if [ "${_extra_envs_value}" == "${_EXTRA_ENVS_UNSET}" ]; then
       log-info "unsetting '${_extra_envs_key}'"
-      unset "${_extra_envs_key}"
+      if ! unset "${_extra_envs_key}"; then
+        log-error "'${_extra_envs_key}' is not a usable environment variable name!"
+        end-group
+        return 1
+      fi
     else
       log-info "setting '${_extra_envs_key}'"
-      export "${_extra_envs_key}=${_extra_envs_value}"
+      # Still guarded: a readonly variable makes 'export' fail even though the
+      # name itself is valid.
+      if ! export "${_extra_envs_key}=${_extra_envs_value}"; then
+        log-error "'${_extra_envs_key}' is not a usable environment variable name!"
+        end-group
+        return 1
+      fi
     fi
   done < <(jq --raw-output0 "${_EXTRA_ENVS_FILTER}" "${_extra_envs_file}")
   end-group
