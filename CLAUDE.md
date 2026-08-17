@@ -97,7 +97,7 @@ python3 -c "import yaml; yaml.safe_load(open('<path-to>.yml'))"
 python3 -c "import json; json.load(open('<path-to>.json'))"
 ```
 
-The matrix-builder test harness (`create-tf-vars-matrix/test_action_source.sh`) is a known-flaky direct-invocation harness that requires a real tty and may fail on pristine main; rely on the modern per-action `run_all_tests.sh` suites where they exist.
+`create-tf-vars-matrix` has a modern `run_all_tests.sh` (helper unit tests + fixture-driven runs of the step source extracted from `action.yml` by `extract_step_source.py`) and is enrolled in CI like every other action. The older `test_action_source.sh` harness is a known-flaky direct-invocation harness that requires a real tty and may fail on pristine main — it is kept for manual debugging only and CI does not run it.
 
 ## Development workflow (see `docs/Development-and-release.md` for full procedure)
 

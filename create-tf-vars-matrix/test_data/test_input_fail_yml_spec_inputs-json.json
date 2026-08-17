@@ -3,9 +3,14 @@
   "goals-yml": "[all]",
   "extra-envs-from-secrets-yml": "| invalid yaml!",
   "extra-envs-yml": "{}",
+  "extra-envs-per-goal-yml": "{}",
+  "extra-envs-from-secrets-per-goal-yml": "{}",
   "terraform-version": "latest",
   "tflint-version": "latest",
   "add-pr-comment": "true",
   "verify-lock-file": "true",
-  "pr-comment-group": ""
+  "pr-comment-group": "",
+  "pr-auto-merge-enabled": "false",
+  "pr-auto-merge-from-actors-yml": "[]",
+  "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n"
 }
