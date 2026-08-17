@@ -22,15 +22,14 @@ set -o pipefail
 set -o errexit
 
 # Hard exclusions: actions skipped regardless of whether run_all_tests.sh exists.
-# Keep this list in sync with docs/Testing-in-ci.md §3.
-EXCLUDED=(
-  create-tf-vars-matrix
-)
+# Keep this list in sync with docs/Testing-in-ci.md §3. Currently empty — the
+# array and the guard stay so re-adding an exclusion is a one-line change.
+EXCLUDED=()
 
 function is_excluded {
   local name="${1}"
   local entry
-  for entry in "${EXCLUDED[@]}"; do
+  for entry in ${EXCLUDED[@]+"${EXCLUDED[@]}"}; do
     [[ "${entry}" == "${name}" ]] && return 0
   done
   return 1

@@ -32,7 +32,9 @@ runs:
         #  - pr-auto-merge-enabled
         YML_INPUTS=(
           environments-yml
+          extra-envs-from-secrets-per-goal-yml
           extra-envs-from-secrets-yml
+          extra-envs-per-goal-yml
           extra-envs-yml
           goals-yml
           pr-auto-merge-from-actors-yml
@@ -160,7 +162,9 @@ runs:
           #   - if defined merge with global value, otherwise use global
           #   - '*-yml' becomes '*'
           MERGE_INPUT_YML_FIELDS=(
+            extra-envs-from-secrets-per-goal-yml
             extra-envs-from-secrets-yml
+            extra-envs-per-goal-yml
             extra-envs-yml
             pr-auto-merge-from-actors-yml
             pr-auto-merge-limits-yml
@@ -177,9 +181,25 @@ runs:
               # merge env with global, env wins in cases where defined both places
               log-info "'${MERGE_FIELD}' was specified for environment, merging with global value"
               ENV_JSON=$(get-val "${MERGE_FIELD}" | yq e -o=json -)
-              MERGED_JSON=$(echo "${GLOBAL_ENVS_JSON} ${ENV_JSON}" | jq -s 'add')
+              MERGED_JSON=$(merge-yml-field-json "${GLOBAL_ENVS_JSON}" "${ENV_JSON}")
               set-field-from-json "${MERGE_FIELD//-yml/}" "${MERGED_JSON}" # modifies $ENVIRONMENT_OBJ
             fi
+          done
+
+          # per-goal env maps must contain all goal keys:
+          #   the workflow renders 'toJSON(matrix.vars.extra-envs-per-goal.plan)'
+          #   per goal, and an absent key renders as the four-character string
+          #   'null' — invalid input for the resolver's jq. Defaulting each key
+          #   to '{}' here means the resolver always receives an object.
+          PER_GOAL_FIELDS=(
+            extra-envs-from-secrets-per-goal
+            extra-envs-per-goal
+          )
+          log-info "Normalizing goal keys in per-goal yml fields ..."
+          for PER_GOAL_FIELD in ${PER_GOAL_FIELDS[*]}; do
+            log-info "Processing per-goal field '${PER_GOAL_FIELD}' ..."
+            NORMALIZED_JSON=$(normalize-goal-keys-json "$(get-val "${PER_GOAL_FIELD}")")
+            set-field-from-json "${PER_GOAL_FIELD}" "${NORMALIZED_JSON}" # modifies $ENVIRONMENT_OBJ
           done
 
           # yml fields should not exist in output
@@ -226,6 +246,8 @@ runs:
           environment
           extra-envs
           extra-envs-from-secrets
+          extra-envs-from-secrets-per-goal
+          extra-envs-per-goal
           github-environment
           goals
           pr-auto-merge-enabled

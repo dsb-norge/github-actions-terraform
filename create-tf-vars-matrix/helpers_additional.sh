@@ -21,5 +21,69 @@ function fail-field {
   end-group
 }
 
+# merge and normalize yml fields
+# ==========================================================
+
+# The goal keys valid in the per-goal environment-variable maps. Same
+# vocabulary a caller writes in 'goals-yml', except that 'all' is not a goal:
+# it is shorthand expanded inside each workflow step's 'if:', so there is
+# nothing to attach per-goal values to. The every-goal layer is the plain
+# 'extra-envs-yml'. Kept in sync with the 'resolve-goal-envs' action and
+# docs/Per-goal-environment-variables.md §2.2 — the resolver hard-fails on
+# keys outside this list, which is what makes 'all:' fail loudly here rather
+# than being silently dropped.
+GOAL_KEYS=(
+  init
+  format
+  validate
+  lint
+  plan
+  apply
+  destroy-plan
+  destroy
+)
+
+# Merge a global '*-yml' field value ($1) with an environment-specific one
+# ($2), environment wins.
+#
+# 'add' is a shallow merge: correct for the flat scalar maps, and the only
+# thing jq defines for arrays — 'pr-auto-merge-from-actors-yml' is a YAML
+# array and '*' errors on arrays outright. '*' recurses into objects while
+# replacing scalars, which is what the nested per-goal maps need: a
+# per-environment override of one goal must not discard that goal's other
+# keys. The two are provably identical for flat objects of scalars, so the
+# array case is the only one that forces the dispatch. '*' also preserves
+# null leaves, which the "a null value unsets the variable" semantics depend
+# on. Ref. docs/Per-goal-environment-variables.md §9.5.
+function merge-yml-field-json {
+  printf '%s\n%s\n' "${1}" "${2}" | jq -s '
+    if   (.[0] == null) then .[1]
+    elif (.[1] == null) then .[0]
+    elif ((.[0] | type) == "array") then add
+    else .[0] * .[1]
+    end
+  '
+}
+
+# Normalize a per-goal environment-variable map ($1) so that every goal key
+# exists, defaulting to an empty object.
+#
+# Without this, 'toJSON(matrix.vars.extra-envs-per-goal.plan)' in the workflow
+# renders the four-character string 'null' for an absent key, which then
+# reaches the resolver's jq as invalid input. Unknown keys are passed through
+# untouched — rejecting them is the resolver's job, so the caller gets one
+# error message from one place.
+function normalize-goal-keys-json {
+  local in_json="${1}" keys_json
+  [ -z "${in_json}" ] && in_json='{}'
+  keys_json=$(printf '%s\n' "${GOAL_KEYS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+  printf '%s\n' "${in_json}" | jq -c --argjson keys "${keys_json}" '
+    ( . // {} )
+    | if type != "object" then . else
+        reduce $keys[] as $k (.; if has($k) then . else .[$k] = {} end)
+      end
+  '
+}
+
 # ==========================================================
 log-info "'$(basename ${BASH_SOURCE[0]})' loaded."

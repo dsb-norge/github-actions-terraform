@@ -84,11 +84,13 @@ Fails if `needs.discover.result != success`, or if `needs.test.result` is `failu
 
 ## 3. Discovery rules and exclusions
 
-Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. The following directories are **excluded by name**, regardless of whether `run_all_tests.sh` is present:
+Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. Directories can additionally be **excluded by name**, regardless of whether `run_all_tests.sh` is present:
 
 | Excluded | Reason |
 |---|---|
-| `create-tf-vars-matrix` | Has a known-flaky `test_action_source.sh` harness that requires a real tty and may fail on pristine main. Documented in [`CLAUDE.md`](../CLAUDE.md). Not yet ported to the modern `run_all_tests.sh` shape. |
+| *(none)* | — |
+
+`create-tf-vars-matrix` used to be excluded here: its only harness was `test_action_source.sh`, which needs a real tty and may fail on pristine main. It now has a deterministic `run_all_tests.sh` (helper unit tests plus fixture-driven runs of the step source extracted from `action.yml`) and is discovered like any other action. `test_action_source.sh` is left in place as a manual debugging aid and is not invoked by CI.
 
 `.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`.
 
@@ -104,7 +106,7 @@ Tests passed: <N>
 Tests failed: <N>
 ```
 
-This format is set by the template in [Action-implementation-guide.md §`run_all_tests.sh`](Action-implementation-guide.md#run_all_testssh--automated-tests) and is currently emitted by all 8 modern suites.
+This format is set by the template in [Action-implementation-guide.md §`run_all_tests.sh`](Action-implementation-guide.md#run_all_testssh--automated-tests) and is emitted by every modern suite.
 
 Multi-step orchestrator scripts (e.g. [`aggregate-validation-summaries/run_all_tests.sh`](../aggregate-validation-summaries/run_all_tests.sh)) emit these lines once **per delegated step script**. The parser sums them, so the action's totals are the sum across its sub-suites.
 
@@ -328,8 +330,8 @@ bash -n .github/scripts/aggregate-action-tests.sh
 
 ```bash
 bash .github/scripts/discover-actions.sh
-# Expect: tests-matrix=[...] and no-tests-list=[...] on stdout, with create-tf-vars-matrix
-# in the no-tests list (regardless of file presence — see §3).
+# Expect: tests-matrix=[...] and no-tests-list=[...] on stdout, partitioned on the
+# presence of run_all_tests.sh (plus any name on the exclusion list — see §3).
 ```
 
 **Aggregator script** — exercise it with fixture results in DRY_RUN so it builds the markdown without trying to post:

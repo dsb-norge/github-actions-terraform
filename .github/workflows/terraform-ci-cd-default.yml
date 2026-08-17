@@ -62,6 +62,14 @@ on:
             - extra-envs-from-secrets-yml
                 YAML objects, make environment variables with secrets available, see the workflow input 'extra-envs-from-secrets-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - extra-envs-from-secrets-per-goal-yml
+                YAML objects keyed by goal, make environment variables with secrets available to a single goal, see the workflow input 'extra-envs-from-secrets-per-goal-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+                note: merged with the global value per goal key, so overriding one variable for one goal keeps that goal's other variables.
+            - extra-envs-per-goal-yml
+                YAML objects keyed by goal, make environment variables available to a single goal, see the workflow input 'extra-envs-per-goal-yml'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+                note: merged with the global value per goal key, so overriding one variable for one goal keeps that goal's other variables.
             - extra-envs-yml
                 YAML objects, make environment variables available, see the workflow input 'extra-envs-yml'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
@@ -165,6 +173,65 @@ on:
               ARM_SUBSCRIPTION_ID: NAME_OF_GITHUB_SECRET_WITH_AZURE_SUBSCRIPTION_ID
 
           NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+        required: false
+        default: "{}" # empty object
+      extra-envs-per-goal-yml:
+        type: string
+        description: |
+          Key value pairs of environment variables to make available to a single terraform goal only, as opposed to 'extra-envs-yml' which applies to every goal.
+
+          Motivating case is memory tuning: 'plan' may need a much higher GOMEMLIMIT than 'validate', and a GOGC low enough to keep 'plan' inside a runner's memory would needlessly slow down 'lint'.
+
+          The values are applied to the goal's own process only, they do not reach any other step in the job. A YAML null value ('~') unsets the variable for that goal rather than setting it to the empty string.
+
+          Type: YAML object of objects, keyed by goal:
+            key:    goal name, one of: init, format, validate, lint, plan, apply, destroy-plan, destroy
+                    note: 'all' is NOT a valid key — it is not a stage. Use 'extra-envs-yml' for values that apply to every goal.
+                    note: the key is 'format', even though the workflow step is named 'fmt'.
+                    note: 'destroy-plan' / 'destroy' are separate from 'plan' / 'apply', which is what lets a destroy plan be tuned independently.
+            value:  YAML object of environment variables, as in 'extra-envs-yml'
+          Example:
+            extra-envs-per-goal-yml: |
+              plan:
+                GOMEMLIMIT: 12GiB
+                GOGC: 25
+              apply:
+                GOMEMLIMIT: ~     # unset for apply
+              lint:
+                GOGC: 400
+
+          An unknown goal key is a hard error, so a typo fails loudly instead of silently doing nothing.
+
+          Consider terraform's own 'TF_CLI_ARGS_<subcommand>' via 'extra-envs-yml' first — it covers anything expressible as CLI flags with no per-goal configuration at all. Caveat: it applies to both plan invocations, 'plan' and 'destroy-plan'.
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+          Per environment values are deep merged with the global ones, so overriding one variable for one goal keeps that goal's other variables.
+
+          See docs/Workflow-terraform-ci-default.md for details.
+        required: false
+        default: "{}" # empty object
+      extra-envs-from-secrets-per-goal-yml:
+        type: string
+        description: |
+          Key value pairs of environment variables to make available to a single terraform goal only, with values retrieved from github secrets. The secret-sourced counterpart to 'extra-envs-per-goal-yml'.
+
+          IMPORTANT: these values reach the terraform/tflint process for that goal, NOT the workflow's 'Login to Azure' step.
+          A reader service principal for 'plan' and a contributor for 'apply' therefore does NOT work through this input: 'azure/login' runs once, early, and reads job-wide environment variables. Handing terraform a different ARM_CLIENT_ID after the OIDC token was already minted for another identity changes nothing. Use this for values terraform or a provider reads directly.
+
+          Type: YAML object of objects, keyed by goal (same keys as 'extra-envs-per-goal-yml'):
+            key:    goal name, one of: init, format, validate, lint, plan, apply, destroy-plan, destroy
+            value:  YAML object mapping environment variable name -> secret name to get the value from
+          Example:
+            extra-envs-from-secrets-per-goal-yml: |
+              plan:
+                TF_VAR_readonly_token: NAME_OF_GITHUB_SECRET
+
+          A secret name that is not available to the workflow is a hard error.
+
+          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+          Per environment values are deep merged with the global ones.
+
+          See docs/Workflow-terraform-ci-default.md for details.
         required: false
         default: "{}" # empty object
       terraform-version:
