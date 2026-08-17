@@ -526,6 +526,62 @@ assert "negative: the per-goal invalid name is reported" grep -q '"ALSO BAD"' "$
 assert "negative: no files are written when validation fails" \
   bash -c "[ -z '${ENVS_DIR}' ] || [ ! -d '${ENVS_DIR}' ]"
 
+# ======================================================================
+# Cross-file contract: the goal vocabulary exists in three places and
+# nothing else asserts they agree.
+#
+#   1. GOAL_KEYS here, which decides what is valid and what files are written
+#   2. GOAL_KEYS in create-tf-vars-matrix, which decides what gets normalized
+#   3. the '<goal>.json' file names in the reusable workflow
+#
+# A goal added to one and forgotten in another is a silent no-op or a hard
+# error at run time on a calling repo. This suite owns the vocabulary, so the
+# check lives here even though it reaches outside the action directory.
+# ======================================================================
+_repo_root="$(cd -- "${_this_script_dir}/.." &>/dev/null && pwd)"
+_matrix_helpers="${_repo_root}/create-tf-vars-matrix/helpers_additional.sh"
+_workflow="${_repo_root}/.github/workflows/terraform-ci-cd-default.yml"
+
+# The GOAL_KEYS array as declared in a given helpers file, sorted.
+declared_goal_keys() {
+  sed -n '/^GOAL_KEYS=(/,/^)/p' "${1}" \
+    | sed '1d;$d' \
+    | tr -d ' ' \
+    | sort \
+    | paste -sd,
+}
+
+assert "contract: this action declares GOAL_KEYS" \
+  test -n "$(declared_goal_keys "${_this_script_dir}/helpers_additional.sh")"
+assert_eq "contract: create-tf-vars-matrix declares the same goals" \
+  "$(declared_goal_keys "${_this_script_dir}/helpers_additional.sh")" \
+  "$(declared_goal_keys "${_matrix_helpers}")"
+
+# The goal file names the workflow asks for, sorted and de-suffixed.
+workflow_goal_files() {
+  grep -o 'envs-dir }}/[a-z-]*\.json' "${_workflow}" \
+    | sed 's|.*/||; s|\.json$||' \
+    | sort -u \
+    | paste -sd,
+}
+
+assert_eq "contract: the workflow references exactly the declared goals" \
+  "$(declared_goal_keys "${_this_script_dir}/helpers_additional.sh")" \
+  "$(workflow_goal_files)"
+
+assert_eq "contract: the workflow wires up all eight goal steps" \
+  '8' "$(grep -c 'extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/' "${_workflow}")"
+
+# Every file the workflow names must actually be produced.
+setup
+run_step
+_all_referenced_present=true
+for _goal in $(workflow_goal_files | tr ',' ' '); do
+  [ -f "${ENVS_DIR}/${_goal}.json" ] || _all_referenced_present=false
+done
+assert "contract: every file the workflow names is produced by this action" \
+  test "${_all_referenced_present}" = 'true'
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}          step_resolve.sh SUMMARY           ${NC}"
