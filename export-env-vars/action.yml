@@ -77,6 +77,16 @@ runs:
               log-info "Get secret name for '${ENV_KEY}' ..."
               ENV_SECRET_NAME=$(echo "${EXTRA_SECRETS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
 
+              # A secret name that is not available to the workflow used to
+              # resolve to the literal four characters 'null' and get exported
+              # as if it were a value, with no warning. That surfaced far from
+              # its cause — typically as an opaque Azure login failure.
+              if [ ! "$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" 'has($key)')" == 'true' ]; then
+                log-error "the secret '${ENV_SECRET_NAME}', configured for environment variable '${ENV_KEY}', is not available to this workflow!"
+                log-error "check the spelling, and that the calling workflow passes secrets down with 'secrets: inherit'."
+                exit 1
+              fi
+
               log-info "Secret is named '${ENV_SECRET_NAME}', reading value ..."
               ENV_SECRET_VALUE=$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" -r '.[$key]')
               export-secret-environment-variable "${ENV_KEY}" "${ENV_SECRET_VALUE}"
