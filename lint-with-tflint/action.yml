@@ -18,6 +18,22 @@ inputs:
       See https://github.com/terraform-linters/tflint/blob/master/docs/user-guide/plugins.md#avoiding-rate-limiting
     required: false
     default: ${{ github.token }}
+  extra-envs-file:
+    description: |
+      Path to a JSON file with environment variables to apply to this action's
+      invocations only, as produced by the 'resolve-goal-envs' action. A JSON
+      null value unsets the variable rather than setting it to the empty
+      string.
+
+      A path rather than a payload so that the values — which may be secrets —
+      never enter argv, envp, or this step's script text.
+
+      The values are applied before this action's own exports, so an action-managed
+      variable set by the step script at runtime (e.g. TF_PLUGIN_CACHE_DIR) wins,
+      while one set in the step's env: block (e.g. TF_IN_AUTOMATION) is overridden
+      by the caller. See docs/Per-goal-environment-variables.md §6.3.
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -50,6 +66,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         input_working_directory: ${{ inputs.working-directory }}
         input_config_file: ${{ steps.get-config.outputs.file }}
+        input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         set -o allexport
         source "${{ github.action_path }}/step_lint.sh"

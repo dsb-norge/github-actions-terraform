@@ -43,10 +43,40 @@ export TF_BIN="${STUB_DIR}/terraform"
 export input_working_directory="${WORK_DIR}"
 export input_format_check_in_root_dir="false"
 
-source "${_this_script_dir}/step_fmt.sh"
+# Per-goal environment variables, as resolve-goal-envs would produce them.
+# GOMEMLIMIT is set, and a variable that exists job-wide is unset by a JSON null
+# — something $GITHUB_ENV cannot express.
+export DSB_LEAKY_VAR="value-from-the-job"
+export DSB_UNSET_ME="also-from-the-job"
+export input_extra_envs_file="${RUNNER_TEMP}/extra-envs.json"
+cat >"${input_extra_envs_file}" <<'EOF'
+{
+  "GOMEMLIMIT": "12GiB",
+  "GOGC": 25,
+  "DSB_LEAKY_VAR": "value-from-the-goal",
+  "DSB_UNSET_ME": null
+}
+EOF
+
+# Subshell: the step script ends in 'exit', which would otherwise
+# terminate this runner before it can show anything. It is also what
+# makes the scoping check below meaningful — the step's exports die
+# with the subshell, exactly as they do when the GitHub step ends.
+( source "${_this_script_dir}/step_fmt.sh" )
+echo ""
+echo "step exit code: ${?}"
+
 
 echo ""
 echo "========================================"
 echo "GitHub Actions Outputs (GITHUB_OUTPUT):"
 echo "========================================"
 cat "${GITHUB_OUTPUT}"
+
+echo ""
+echo "========================================"
+echo "Scoping check (values must NOT leak out)"
+echo "========================================"
+echo "GOMEMLIMIT after the step:    '${GOMEMLIMIT:-<unset>}'  (expected: <unset>)"
+echo "DSB_LEAKY_VAR after the step: '${DSB_LEAKY_VAR:-<unset>}'  (expected: value-from-the-job)"
+echo "DSB_UNSET_ME after the step:  '${DSB_UNSET_ME:-<unset>}'  (expected: also-from-the-job)"

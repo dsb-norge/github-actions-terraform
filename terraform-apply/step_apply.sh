@@ -9,6 +9,9 @@
 #   input_terraform_plan_file - Path of the plan file to apply.
 #
 # Optional environment variables:
+#   input_extra_envs_file - Path of a JSON file with environment variables
+#                           to apply to this step only. Empty or unset is a
+#                           no-op.
 #   TF_BIN - Path to the terraform binary (defaults to 'terraform' on PATH).
 #            Used by tests to inject a stub.
 #
@@ -19,6 +22,10 @@ set +o nounset
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
+  # Applied first, before this action's own exports — see
+  # docs/Per-goal-environment-variables.md §6.3.
+  apply-extra-envs "${input_extra_envs_file}" || return 1
+
   local tf_bin="${TF_BIN:-terraform}"
 
   cd "${input_working_directory}"
