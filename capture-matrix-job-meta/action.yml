@@ -54,6 +54,8 @@ runs:
       env:
         input_environment_name: ${{ inputs.environment-name }}
       run: |
+        # Capture step outcomes, outputs and matrix context to a JSON file
+        #
         # JSON inputs are captured into shell-local variables (heredocs)
         # and intentionally NOT exported. step_capture.sh is sourced from
         # this same shell so it reads them as locals — they stay out of

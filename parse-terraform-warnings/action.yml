@@ -49,5 +49,6 @@ runs:
         input_step_label: ${{ inputs.step-label }}
         input_environment_name: ${{ inputs.environment-name }}
       run: |
+        # Extract terraform warnings from the console output
         set -o allexport
         source "${{ github.action_path }}/step_parse_warnings.sh"

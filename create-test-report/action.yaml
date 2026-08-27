@@ -43,7 +43,7 @@ runs:
         TEST_SUMMARY: ${{ inputs.test-summary }}
         TEST_REPORT: ${{ inputs.test-report }}
       run: |
-        # Build pull request comment
+        # Build the terraform test summary pull request comment
   
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
   

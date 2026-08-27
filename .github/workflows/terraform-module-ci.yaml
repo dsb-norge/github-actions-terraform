@@ -331,7 +331,8 @@ jobs:
     steps:
       # fail the workflow if any of the job was failed or cancelled
       # also fail if module-tests was skipped, ex because of an update to the docs
-      - run: exit 1
+      - name: "🛑 Fail if any job failed, was cancelled or skipped"
+        run: exit 1
         # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
         # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
         if: >-

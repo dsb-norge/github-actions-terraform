@@ -54,5 +54,6 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_platforms: ${{ inputs.platforms }}
       run: |
+        # Verify .terraform.lock.hcl covers all required platforms
         set -o allexport
         source "${{ github.action_path }}/step_verify_lock.sh"

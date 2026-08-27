@@ -87,6 +87,8 @@ runs:
         input_issue_number: ${{ inputs.issue-number }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
+        # Upsert the head comments, then garbage collect stale tag comments
+        #
         # heads-yml + gc-yml are passed via heredoc so multi-line YAML is
         # preserved verbatim (env-list interpolation would mangle newlines).
         input_heads_yml=$(cat <<'EOF_RECONCILE_HEADS'

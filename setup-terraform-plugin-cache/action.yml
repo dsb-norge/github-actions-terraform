@@ -15,7 +15,7 @@ runs:
     - id: configure
       shell: bash
       run: |
-        # configure terraform plugin cache directory
+        # Configure the terraform provider plugin cache directory
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
@@ -41,7 +41,7 @@ runs:
     - id: cache-key
       shell: bash
       run: |
-        # generate a cache key for a monthly rolling cache
+        # Generate a cache key for a monthly rolling plugin cache
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 

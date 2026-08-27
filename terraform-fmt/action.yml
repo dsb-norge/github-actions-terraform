@@ -52,5 +52,6 @@ runs:
         input_format_check_in_root_dir: ${{ inputs.format-check-in-root-dir }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform fmt' to check the formatting of the terraform code
         set -o allexport
         source "${{ github.action_path }}/step_fmt.sh"

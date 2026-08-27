@@ -31,7 +31,7 @@ runs:
     - id: check-prereqs
       shell: bash
       run: |
-        # Make sure terraform is available
+        # Make sure the plan file and the terraform binary are available
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
@@ -62,5 +62,6 @@ runs:
         input_terraform_plan_file: ${{ inputs.terraform-plan-file }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform apply' on the saved plan file
         set -o allexport
         source "${{ github.action_path }}/step_apply.sh"

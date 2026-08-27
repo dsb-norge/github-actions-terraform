@@ -92,6 +92,7 @@ runs:
         input_extra_plan_args: ${{ inputs.extra-plan-args }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform plan' and save the plan file
         set -o allexport
         source "${{ github.action_path }}/step_plan.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
@@ -111,6 +112,7 @@ runs:
         input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Render the saved plan file as human readable text
         set -o allexport
         source "${{ github.action_path }}/step_plan_show.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
@@ -123,6 +125,7 @@ runs:
         input_plan_tf_output_file: ${{ steps.plan.outputs.tf-plan-tf-output-file }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Render the saved plan file as JSON
         set -o allexport
         source "${{ github.action_path }}/step_plan_json.sh"
       continue-on-error: true # allow action to continue, execution status is returned by the last step
@@ -138,4 +141,6 @@ runs:
         inputs.fail-on-failed-plan == 'true'
         && ( steps.plan.outcome == 'failure' || steps.plan.outcome == 'cancelled' )
       shell: bash
-      run: exit 1
+      run: |
+        # Fail the action because 'terraform plan' failed
+        exit 1

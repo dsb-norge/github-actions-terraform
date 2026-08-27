@@ -42,6 +42,7 @@ runs:
       if: github.event_name != 'pull_request'
       shell: bash
       run: |
+        # Fail: this action only makes sense on pull_request events
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
         log-error "This action can only run in pull request context"
         exit 1
@@ -55,6 +56,7 @@ runs:
         )
       shell: bash
       run: |
+        # Skip: the PR is being closed or converted to draft
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
         log-info "Skipping: PR is being closed or converted to draft"
         exit 0
@@ -70,6 +72,8 @@ runs:
         input_repo_ref: ${{ github.repository }}
         input_pr_number: ${{ github.event.number }}
       run: |
+        # Merge the pull request with admin privileges
+        #
         # Heredoc capture (special chars in github.event JSON survive verbatim).
         # Intentionally NOT exported — step_auto_merge_pr.sh is sourced from
         # this same shell and reads ${input_github_event_context_json} as a
