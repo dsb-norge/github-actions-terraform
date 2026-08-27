@@ -74,6 +74,8 @@ runs:
     - id: resolve
       shell: bash
       run: |
+        # Resolve the environment variables of every goal into per-goal files
+        #
         # 'secrets-json' is the one genuinely large payload here — a bag holding
         # a PEM private key is enough on its own. It goes straight to a file
         # BEFORE 'set -o allexport', and only the path is exported. A

@@ -43,6 +43,7 @@ runs:
         input_runner_os: ${{ runner.os }}
         input_runner_arch: ${{ runner.arch }}
       run: |
+        # Resolve TFLint version, download URL and install paths
         set -o allexport
         source "${{ github.action_path }}/step_get_meta.sh"
 
@@ -52,6 +53,7 @@ runs:
         input_config_file_path: ${{ inputs.config-file-path }}
         input_working_directory: ${{ inputs.working-directory }}
       run: |
+        # Locate the TFLint config file to cache plugins for
         set -o allexport
         source "${{ github.action_path }}/step_get_config.sh"
 
@@ -77,6 +79,7 @@ runs:
         input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
         input_install_bin_path: ${{ steps.get-meta.outputs.install-bin-path }}
       run: |
+        # Check whether the cache restore already provided the TFLint binary
         set -o allexport
         source "${{ github.action_path }}/step_exists_check.sh"
 
@@ -88,6 +91,7 @@ runs:
         input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
         input_install_bin_path: ${{ steps.get-meta.outputs.install-bin-path }}
       run: |
+        # Download and install the TFLint binary
         set -o allexport
         source "${{ github.action_path }}/step_install.sh"
 
@@ -96,5 +100,6 @@ runs:
       env:
         input_install_dir: ${{ steps.get-meta.outputs.install-dir }}
       run: |
+        # Add the TFLint install directory to PATH
         set -o allexport
         source "${{ github.action_path }}/step_add_to_path.sh"

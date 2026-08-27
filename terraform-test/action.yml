@@ -56,6 +56,7 @@ runs:
       env:
         TF_IN_AUTOMATION: true
       run: |
+        # Run 'terraform test' for one test file and build a test report
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         TEST_RESULT_JSON="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-results.json"
@@ -142,4 +143,6 @@ runs:
     - id: test-status
       if: ( steps.run-tests.outcome == 'failure' || steps.run-tests.outcome == 'cancelled' )
       shell: bash
-      run: exit 1
+      run: |
+        # Fail the action because 'terraform test' failed
+        exit 1

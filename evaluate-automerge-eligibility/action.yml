@@ -58,7 +58,7 @@ runs:
       env:
         input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
       run: |
-        # run step and exit with its exit code
+        # Evaluate whether every environment is eligible for auto-merge
         set -o allexport
         source "${{ github.action_path }}/step_evaluate.sh"
         exit_code=$?

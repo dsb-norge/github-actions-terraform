@@ -23,6 +23,7 @@ runs:
     - id: inject-config-files
       shell: bash
       run: |
+        # Add default terraform-docs config files where the repo has none
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         # check if terraform-docs config is present in the repo root
@@ -62,6 +63,7 @@ runs:
     - id: validate-root-readme
       shell: bash
       run: |
+        # Make sure README.md has the terraform-docs delimiters
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         README_FILE="${{ inputs.readme-file-path }}/README.md"
@@ -118,6 +120,7 @@ runs:
       if: always()
       shell: bash
       run: |
+        # Count the files changed by terraform-docs
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         # count number of files changed by the action
@@ -140,4 +143,6 @@ runs:
     - id: tf-docs-status
       if: ( steps.validate-root-readme.outcome == 'failure' || steps.validate-root-readme.outcome == 'cancelled' )
       shell: bash
-      run: exit 1
+      run: |
+        # Fail the action because the README.md validation failed
+        exit 1

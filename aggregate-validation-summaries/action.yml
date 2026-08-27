@@ -63,6 +63,7 @@ runs:
         input_pr_number: ${{ inputs.pr-number }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
+        # Reconcile the per-group validation summary PR comments
         set -o allexport
         source "${{ github.action_path }}/step_aggregate.sh"
         exit_code=$?

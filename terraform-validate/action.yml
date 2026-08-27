@@ -62,5 +62,6 @@ runs:
         input_environment_name: ${{ inputs.environment-name }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform validate' on the terraform project
         set -o allexport
         source "${{ github.action_path }}/step_validate.sh"

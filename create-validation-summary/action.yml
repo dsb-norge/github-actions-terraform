@@ -200,6 +200,8 @@ runs:
         input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
+        # Build the validation summary PR comment body for this environment
+        #
         # No `set -o allexport` on purpose. step_create_validation_summary.sh
         # captures up to ~65k chars of plan output into `plan_out` (and an
         # equally large `legacy_summary` that re-concatenates head + plan).

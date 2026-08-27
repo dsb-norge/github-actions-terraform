@@ -17,7 +17,7 @@ runs:
     - id: create-vars
       shell: bash
       run: |
-        # Define variables needed for terraform ci/cd
+        # Resolve the terraform ci/cd variables for every environment
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
@@ -229,7 +229,9 @@ runs:
     - id: validate
       shell: bash
       run: |
-        # Some field's must exist for github actions not to go bonkers
+        # Validate the resolved variables of every environment
+        #
+        # Some fields must exist for github actions not to go bonkers
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
@@ -335,7 +337,7 @@ runs:
     - shell: bash
       id: make-matrix-compatible
       run: |
-        # Create env vars matrix
+        # Reshape the resolved variables into a github job matrix
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 

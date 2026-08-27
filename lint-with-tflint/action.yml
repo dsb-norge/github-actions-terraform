@@ -58,6 +58,7 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_config_file_path: ${{ inputs.config-file-path }}
       run: |
+        # Locate the TFLint config file to lint with
         set -o allexport
         source "${{ github.action_path }}/step_get_config.sh"
     - id: lint
@@ -68,5 +69,6 @@ runs:
         input_config_file: ${{ steps.get-config.outputs.file }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'tflint' on the terraform project
         set -o allexport
         source "${{ github.action_path }}/step_lint.sh"

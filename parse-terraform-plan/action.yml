@@ -52,5 +52,6 @@ runs:
       env:
         input_plan_console_file: ${{ inputs.plan-console-file }}
       run: |
+        # Extract resource change counts from the plan console output
         set -o allexport
         source "${{ github.action_path }}/step_parse_plan_output.sh"

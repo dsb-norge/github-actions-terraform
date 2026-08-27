@@ -59,7 +59,7 @@ runs:
     - id: check-prereqs
       shell: bash
       run: |
-        # Make sure terraform is available
+        # Make sure terraform and the plugin cache directory are available
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
@@ -96,6 +96,8 @@ runs:
         input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform init' in the project and any additional directories
+        #
         # JSON input via heredoc — keeps quotes/special chars intact and
         # out of envp (the ARG_MAX guard pattern from CLAUDE.md).
         input_additional_dirs_json=$(cat <<'EOF'
