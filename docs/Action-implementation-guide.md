@@ -176,6 +176,74 @@ The `action.yml` should contain **no logic**, only:
 - Input and output declarations
 - Steps that prepare environment variables and source `step_*.sh`
 
+### Every `run:` block opens with a description comment
+
+**Rule:** the first line of every `run:` block is a `#` comment saying what the
+step does. No exceptions — not for one-liners, not for steps that only source a
+`step_*.sh`.
+
+GitHub ignores a composite action's step `name:` in the log. Each inner step is
+rendered as a collapsible group titled `Run <first line of the run block>`, and
+a `uses:` step gets `Run <owner>/<action>@<ref>`. With the shim pattern that
+first line is `set -o allexport` for nearly every step, so a job that calls a
+handful of actions collapses into a wall of identical group titles:
+
+```
+▾ Terraform Plan
+  ▸ Run dsb-norge/github-actions-terraform/terraform-plan@v0
+  ▸ Run # Make sure terraform is available
+  ▸ Run set -o allexport                    ← which step is this?
+  ▸ Run actions/upload-artifact@v7
+  ▸ Run set -o allexport                    ← …and this?
+  ▸ Run actions/upload-artifact@v7
+```
+
+The leading comment is the only lever we have over that title, so it doubles as
+the step's log label:
+
+```yaml
+- id: plan
+  shell: bash
+  env:
+    input_environment_name: ${{ inputs.environment-name }}
+  run: |
+    # Run 'terraform plan' and save the plan file
+    set -o allexport
+    source "${{ github.action_path }}/step_plan.sh"
+```
+
+Writing the label:
+
+- **One line, ≤ 72 characters.** It is a title in a narrow log gutter, not a
+  sentence. Sentence case, no trailing period.
+- **Describe what the step does for the caller, not how the shim works.**
+  "Resolve which TFLint config file to use" — not "Source the step script",
+  "run step and exit with its exit code", or "Heredoc capture".
+- **Distinguish it from its siblings.** Two steps in the same action must not
+  share a label; telling them apart in the log is the whole point.
+- **Keep rationale out of it.** ARG_MAX notes, heredoc explanations and other
+  why-comments still belong in the shim — but below the label, separated by a
+  blank line. Only the first line reaches the log.
+- **One-liner `run:` steps become blocks.** `run: exit 1` is written as a
+  `run: |` block whose first line is the label.
+
+```yaml
+- id: plan-status
+  if: steps.plan.outcome == 'failure'
+  shell: bash
+  run: |
+    # Fail the action because 'terraform plan' failed
+    exit 1
+```
+
+`uses:` steps have no `run:` block and therefore no lever — their log title is
+the action reference. Give them a `name:` anyway; it documents intent in the
+source even though the runner drops it.
+
+> In **reusable workflows** (`.github/workflows/*.yml`) the opposite holds:
+> job-level steps *do* honor `name:`, and the name wins over the run block. Give
+> every workflow step a `name:` there; the leading comment is optional.
+
 ### Step shim pattern — simple inputs (strings, booleans)
 
 For inputs that are simple strings, pass them as environment variables. Use `set -o allexport` so that any variables set by the step script are automatically exported:
@@ -187,6 +255,7 @@ For inputs that are simple strings, pass them as environment variables. Use `set
     input_foo: ${{ inputs.foo }}
     input_bar: ${{ inputs.bar }}
   run: |
+    # <What this step does>
     set -o allexport
     source "${{ github.action_path }}/step_my_step.sh"
 ```
@@ -203,6 +272,8 @@ JSON values passed from GitHub Actions expressions can contain special character
   env:
     input_simple_var: ${{ inputs.simple-var }}
   run: |
+    # <What this step does>
+    #
     # Heredoc capture (special chars survive verbatim). Intentionally NOT
     # exported — step_my_step.sh reads it as a shell-local via `source`.
     input_json_data=$(cat <<'EOF'
@@ -449,6 +520,7 @@ Most existing actions embed their logic directly in `action.yml` YAML strings. H
 4. **Update the `action.yml`** step to the thin shim pattern:
    - Move `${{ inputs.* }}` references into `env:` as `input_*` variables
    - Replace the `run:` block with the `set -o allexport` + `source` shim (no exit code capture needed)
+   - Open the `run:` block with the one-line description comment (see [Every `run:` block opens with a description comment](#every-run-block-opens-with-a-description-comment))
    - Use heredocs for JSON inputs
 
 5. **Create `run_local_step_<name>.sh`**:
@@ -513,6 +585,7 @@ Use your judgement — the goal is testability, not blind extraction.
     input_environment_name: ${{ inputs.environment-name }}
     input_extra_plan_args: ${{ inputs.extra-plan-args }}
   run: |
+    # Run 'terraform plan' and save the plan file
     set -o allexport
     source "${{ github.action_path }}/step_plan.sh"
 ```
@@ -605,6 +678,8 @@ This repo has been bitten by this exact bug multiple times: `capture-matrix-job-
 
 ```yaml
 run: |
+  # <What this step does>
+  #
   # Heredoc capture, NOT exported.
   input_json_data=$(cat <<'EOF'
   ${{ inputs.json-data }}
@@ -633,6 +708,7 @@ Use this checklist when creating or converting an action:
 - [ ] Each non-trivial step has a `step_<name>.sh` file
 - [ ] Each `step_<name>.sh` sources `helpers.sh`, uses a `main` function, and ends with `exit`
 - [ ] `action.yml` steps use the `set -o allexport` + `source` shim (no exit code capture)
+- [ ] Every `run:` block starts with a one-line `#` comment describing what the step does
 - [ ] JSON inputs are passed via heredocs in the YAML shim
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
 - [ ] Multi-step actions have `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`

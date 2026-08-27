@@ -52,9 +52,12 @@ Legacy actions (e.g. `terraform-validate/`, `terraform-init/`, `setup-tflint/`) 
 
 For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` — never `return`. GitHub Actions sources the script in a `bash -eo pipefail` shell, so `exit` terminates the sourced process cleanly and the runner fails the step on non-zero. Tests run the script in a `( subshell )`, so `exit` terminates only the subshell.
 
+Every `run:` block in an `action.yml` **opens with a one-line `#` comment describing what the step does**. GitHub ignores a composite step's `name:` and titles the log group `Run <first line of the run block>` — without the comment every shim renders as an indistinguishable `Run set -o allexport`. Rationale and wording rules: `docs/Action-implementation-guide.md` → "Every `run:` block opens with a description comment".
+
 For JSON inputs in `action.yml` shims, use heredocs:
 ```yaml
 run: |
+  # <What this step does>
   input_json_data=$(cat <<'EOF'
   ${{ inputs.json-data }}
   EOF
