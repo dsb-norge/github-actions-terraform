@@ -5,6 +5,10 @@
 # Runs after 'terraform init' and before the cache save. Does both post-init
 # jobs in one pass over the same manifests:
 #
+# The two are not equally important. Completeness is a diagnostic and is skipped
+# whenever the before-image is unavailable for any reason; the gate is a safety
+# control and always runs.
+#
 #   1. Digest completeness (§4.4.2). On an exact cache hit the resolved module
 #      set must not have changed. If it did, the key missed an input, and
 #      because a hit skips the save the entry is now permanently stale —
@@ -38,6 +42,14 @@ function _check_completeness {
   local before after
 
   [ "${input_cache_hit}" == 'true' ] || return 0
+
+  # The snapshot step is a diagnostic aid and is allowed to fail; the save gate
+  # below is not. Losing the before-image costs the completeness warning and
+  # nothing else.
+  if [ -z "${input_snapshot_dir}" ] || [ ! -d "${input_snapshot_dir}" ]; then
+    log-info "no snapshot directory, skipping completeness check for '${path}'"
+    return 0
+  fi
 
   before="${input_snapshot_dir}/$(manifest-slug "${path}").json"
   if [ ! -f "${before}" ]; then

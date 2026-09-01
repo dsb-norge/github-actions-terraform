@@ -246,8 +246,16 @@ function reset-walk-state {
 # Deterministic before-image filename for one cache path. Lives here rather
 # than in workflow YAML so the writer (snapshot) and the reader (verify) cannot
 # drift apart.
+#
+# The readable part is for whoever is looking in RUNNER_TEMP; the hash is what
+# makes it unique. Flattening separators alone is not injective — 'a/b' and
+# 'a_b' both flatten to 'a_b', and two directories sharing one before-image
+# would compare each against the other's manifest.
 function manifest-slug {
-  printf '%s' "${1}" | sed 's|[^[:alnum:]]\+|_|g'
+  local path="${1}" readable hash
+  readable="$(printf '%s' "${path}" | sed 's|[^[:alnum:]]\+|_|g')"
+  hash="$(printf '%s' "${path}" | sha256sum | cut -c1-8)"
+  printf '%s-%s' "${readable}" "${hash}"
 }
 
 # normalize-manifest <modules.json path>

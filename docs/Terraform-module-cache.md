@@ -407,8 +407,13 @@ directions of error have very different costs:
 
 | | Effect |
 |---|---|
-| **Over-reads** — a commented-out block, an `_override.tf` variant, a `module "x"` inside a string | Safe. The reachable set becomes a superset, and "any mutable source excludes" is monotone over supersets: more sources can only make the audit *more* conservative. Verified: an `_override.tf` repointing a module from `?ref=v1.0.0` to `?ref=main` is caught, because both files are `*.tf` and both blocks are read |
+| **Over-reads** — an `_override.tf` variant, a commented-out `source` line inside a live block, a `module "x"` inside a string | Safe. The reachable set becomes a superset, and "any mutable source excludes" is monotone over supersets: more sources can only make the audit *more* conservative. Verified: an `_override.tf` repointing a module from `?ref=v1.0.0` to `?ref=main` is caught, because both files are `*.tf` and both blocks are read |
 | **Under-reads** — a `module` block in `.tf.json`, or HCL the patterns miss | **Unsafe.** A mutable source goes unseen, the directory is cached, and the §3 freeze returns silently |
+
+A module block commented out in its entirety is in neither column: the audit
+skips it and so does terraform, so the two agree. It is worth knowing that this
+is agreement rather than a gap, because the same pattern *would* have been a gap
+for any design that pruned directories by declared label.
 
 So the audit must err toward reading too much, never too little, and any future
 change to the matching must be evaluated in that direction. An under-read of a

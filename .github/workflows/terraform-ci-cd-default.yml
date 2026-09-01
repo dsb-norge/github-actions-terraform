@@ -692,6 +692,7 @@ jobs:
           project-dir: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           environment: ${{ matrix.vars.environment }}
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
 
       # Puts previously downloaded modules back on disk, but only on an exact
       # key match - meaning this environment is using precisely the same set of
@@ -720,6 +721,7 @@ jobs:
           phase: snapshot
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
           cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
+        continue-on-error: true # only feeds a warning; must never block init
 
       - name: ⚙️ Terraform Init
         id: init
@@ -753,6 +755,7 @@ jobs:
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
           cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
           snapshot-dir: ${{ steps.snapshot-module-cache.outputs.snapshot-dir }}
+        continue-on-error: true # if this cannot run, safe-to-save stays unset and nothing is saved
 
       # Stores the modules for the next run, when init succeeded, nothing was
       # stored under this key already, and the check above found nothing that
