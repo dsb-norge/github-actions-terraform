@@ -1,0 +1,128 @@
+name: "Terraform module cache"
+description: |
+  Decides what may be cached of terraform's per-directory '.terraform/modules'
+  trees, under what key, and whether what init produced is safe to write.
+
+  Invoked three times per job, selected by the 'phase' input:
+
+    resolve  - before the cache restore. Audits every init directory, follows
+               local module sources through the repository, and emits the cache
+               paths and the one cache key used by BOTH the restore and the save.
+    snapshot - after the restore, before init. Copies the restored manifests
+               aside so drift can be detected.
+    verify   - after init, before the save. Warns when the module set changed
+               under an unchanged key, and refuses the save when the resolved
+               module graph contains anything that can move.
+
+  Full design, including why there are no restore-keys and why the save must run
+  before any other terraform stage: docs/Terraform-module-cache.md
+author: "Peder Schmedling"
+inputs:
+  phase:
+    description: "Which phase to run: 'resolve', 'snapshot' or 'verify'."
+    required: true
+  project-dir:
+    description: |
+      resolve: the environment's terraform directory, relative to the repo root.
+    required: false
+    default: ""
+  additional-dirs-json:
+    description: |
+      resolve: JSON array of additional directories that 'terraform init' is run
+      in, relative to the repo root. Empty array or empty string is allowed.
+    required: false
+    default: "[]"
+  environment:
+    description: |
+      resolve: the matrix environment name. Forms part of the cache key, since
+      each environment has its own project-dir.
+    required: false
+    default: ""
+  cache-paths:
+    description: |
+      snapshot, verify: the newline-separated cache paths emitted by the resolve
+      phase.
+    required: false
+    default: ""
+  cache-hit:
+    description: |
+      snapshot, verify: 'true' when the restore was an exact hit. The
+      completeness check only means anything on an exact hit.
+    required: false
+    default: "false"
+  snapshot-dir:
+    description: |
+      verify: the directory the snapshot phase wrote before-images to.
+    required: false
+    default: ""
+outputs:
+  cache-enabled:
+    description: "resolve: 'true' when at least one directory qualifies for caching."
+    value: ${{ steps.resolve.outputs.cache-enabled }}
+  cache-paths:
+    description: "resolve: newline-separated '<dir>/.terraform/modules' paths to cache."
+    value: ${{ steps.resolve.outputs.cache-paths }}
+  cache-key:
+    description: "resolve: the cache key, computed once and used by both cache steps."
+    value: ${{ steps.resolve.outputs.cache-key }}
+  excluded-dirs-file:
+    description: "resolve: path to a file listing excluded directories and why."
+    value: ${{ steps.resolve.outputs.excluded-dirs-file }}
+  snapshot-dir:
+    description: "snapshot: directory holding the restored manifests' before-images."
+    value: ${{ steps.snapshot.outputs.snapshot-dir }}
+  safe-to-save:
+    description: "verify: 'true' only when every included directory's resolved graph is immutable."
+    value: ${{ steps.verify.outputs.safe-to-save }}
+runs:
+  using: "composite"
+  steps:
+    - id: resolve
+      if: inputs.phase == 'resolve'
+      shell: bash
+      env:
+        input_project_dir: ${{ inputs.project-dir }}
+        input_environment: ${{ inputs.environment }}
+      run: |
+        # Audit the init directories and emit the module cache paths and key
+        #
+        # JSON input via heredoc — keeps quotes and special characters intact
+        # and out of envp (the ARG_MAX guard pattern from CLAUDE.md).
+        input_additional_dirs_json=$(cat <<'EOF'
+        ${{ inputs.additional-dirs-json }}
+        EOF
+        )
+        export input_additional_dirs_json
+        set -o allexport
+        source "${{ github.action_path }}/step_resolve.sh"
+
+    - id: snapshot
+      if: inputs.phase == 'snapshot'
+      shell: bash
+      env:
+        input_cache_hit: ${{ inputs.cache-hit }}
+      run: |
+        # Copy the restored module manifests aside as a before-image
+        input_cache_paths=$(cat <<'EOF'
+        ${{ inputs.cache-paths }}
+        EOF
+        )
+        export input_cache_paths
+        set -o allexport
+        source "${{ github.action_path }}/step_snapshot.sh"
+
+    - id: verify
+      if: inputs.phase == 'verify'
+      shell: bash
+      env:
+        input_cache_hit: ${{ inputs.cache-hit }}
+        input_snapshot_dir: ${{ inputs.snapshot-dir }}
+      run: |
+        # Check the module cache digest for completeness and gate the save
+        input_cache_paths=$(cat <<'EOF'
+        ${{ inputs.cache-paths }}
+        EOF
+        )
+        export input_cache_paths
+        set -o allexport
+        source "${{ github.action_path }}/step_verify.sh"
