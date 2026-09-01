@@ -11,6 +11,7 @@
   "format-check-in-root-dir": "true",
   "add-pr-comment": "true",
   "verify-lock-file": "true",
+  "cache-terraform-modules": "true",
   "pr-comment-group": "",
   "pr-auto-merge-enabled": "true",
   "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",

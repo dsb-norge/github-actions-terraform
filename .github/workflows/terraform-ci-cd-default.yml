@@ -49,6 +49,9 @@ on:
             - verify-lock-file
                 bool, whether to verify lock file platform coverage on PRs, see the workflow input 'verify-lock-file'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - cache-terraform-modules
+                bool, whether to cache terraform modules between runs, see the workflow input 'cache-terraform-modules'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - pr-comment-group
                 string, name of a group this environment belongs to for PR-comment aggregation, see the workflow input 'pr-comment-group'.
                 Environments with the same non-empty group value share a single grouped validation-summary PR comment (one column per environment).
@@ -275,6 +278,23 @@ on:
           skip it since verification has already happened at PR time.
 
           Set this to 'false' to disable lock file verification. For per environment control specify this directly in the environment specification.
+        required: false
+        default: true
+      cache-terraform-modules:
+        type: boolean
+        description: |
+          Whether to cache terraform modules between runs. Each directory that 'terraform init' runs in gets its own
+          '.terraform/modules' tree cached, so repeated runs stop re-downloading modules that have not changed.
+
+          A directory is only cached when every module source reachable from it — including everything reached through
+          local module sources — resolves to immutable content. A directory that can reach a moving git ref is left
+          uncached and behaves exactly as it does today, because a warm module tree is never re-fetched and would
+          silently pin such a module to whatever commit was current when the cache was written.
+
+          Set this to 'false' to disable module caching. For per environment control specify this directly in the
+          environment specification.
+
+          See docs/Terraform-module-cache.md for the full design.
         required: false
         default: true
       pr-comment-group:
