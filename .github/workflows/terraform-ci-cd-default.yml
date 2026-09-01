@@ -664,12 +664,23 @@ jobs:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.vars.project-dir)) }}"
 
-      # Decides which init directories may have their '.terraform/modules'
-      # tree cached, and under what key. Follows local module sources through
-      # the repo: an environment that declares only '../../main' still ends up
-      # holding that tree's whole remote closure, so reading its own .tf files
-      # alone would get both the key and the safety check wrong.
-      # See docs/Terraform-module-cache.md.
+      # Works out which of this environment's terraform directories can have
+      # their downloaded modules re-used from an earlier run, and what cache key
+      # identifies that set of modules.
+      #
+      # A directory only qualifies if every module it ends up using is pinned to
+      # something fixed (an exact version, a tag, a commit). A module that
+      # follows a git branch disqualifies it, because a re-used copy would go on
+      # being used unchanged after the branch had moved on.
+      #
+      # "Ends up using" includes modules reached indirectly: an environment that
+      # only says source = "../../main" still downloads everything main pulls in,
+      # so those are examined too.
+      #
+      # The steps below all key off this one — when it decides nothing can be
+      # cached, or it is skipped entirely, they skip too.
+      #
+      # Full details: docs/Terraform-module-cache.md
       - name: "🗄️ Resolve terraform module cache"
         id: module-cache
         if: |
@@ -682,27 +693,28 @@ jobs:
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           environment: ${{ matrix.vars.environment }}
 
-      # No 'restore-keys' — deliberately, and it is an invariant. Entries never
-      # inherit, so a tree is only restored under a key matching its module set
-      # exactly, and every entry that gets written was built by init into an
-      # empty directory. That is what makes orphaned module directories
-      # impossible rather than something to clean up later.
+      # Puts previously downloaded modules back on disk, but only on an exact
+      # key match - meaning this environment is using precisely the same set of
+      # modules as the run that saved them. There is intentionally no partial
+      # match: a close-enough cache would carry along modules that are no longer
+      # used, and nothing would ever remove them again.
+      #
+      # A miss is not a problem, it just means init downloads as it does today.
       - name: "🚀 Restore terraform module cache"
         id: restore-module-cache
-        if: |
-          steps.module-cache.outputs.cache-enabled == 'true'
-          && (contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init'))
+        if: steps.module-cache.outputs.cache-enabled == 'true'
         uses: actions/cache/restore@v5
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
 
-      # Before-image for the completeness check below.
+      # Notes down which modules the cache just supplied, so the step after init
+      # can tell whether init had to change anything. Does nothing when there
+      # was no cache to restore.
       - name: "📸 Snapshot restored module manifests"
         id: snapshot-module-cache
-        if: |
-          steps.module-cache.outputs.cache-enabled == 'true'
-          && (contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init'))
+        if: steps.module-cache.outputs.cache-enabled == 'true'
         uses: dsb-norge/github-actions-terraform/terraform-module-cache@v0
         with:
           phase: snapshot
@@ -721,16 +733,20 @@ jobs:
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
-      # Two post-init jobs in one pass over the same manifests: warn when the
-      # module set changed under an unchanged key (the key missed an input, so
-      # the entry is now permanently stale), and refuse the save outright when
-      # the resolved graph contains anything that can move. The resolved graph
-      # is the only place a branch ref inside a remote module is visible.
+      # Answers two questions from the modules init actually ended up with:
+      #
+      #   1. Did init have to fetch something the cache did not supply, even
+      #      though the key matched? That means the key is not describing this
+      #      environment's modules properly and the cache is doing no good, so
+      #      it is called out in the log.
+      #
+      #   2. Does anything in there follow a moving target such as a git branch?
+      #      This is the first point where modules pulled in by other modules can
+      #      be seen, so it can catch what the step before init could not. If so,
+      #      these modules must not be stored for re-use at all.
       - name: "🔍 Check terraform module cache"
         id: post-init-check
-        if: |
-          steps.module-cache.outputs.cache-enabled == 'true'
-          && (contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init'))
+        if: steps.module-cache.outputs.cache-enabled == 'true'
         uses: dsb-norge/github-actions-terraform/terraform-module-cache@v0
         with:
           phase: verify
@@ -738,12 +754,14 @@ jobs:
           cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
           snapshot-dir: ${{ steps.snapshot-module-cache.outputs.snapshot-dir }}
 
-      # Placed here on purpose, and it is an invariant: immediately after init,
-      # before verify-lock, fmt, validate, lint, plan and apply. Terraform runs
-      # write inside module directories, and none of that belongs in an archive
-      # that later runs restore as though init had produced it. Nothing enforces
-      # this but the position of this step — a combined 'actions/cache' step
-      # would write at post-job, after apply.
+      # Stores the modules for the next run, when init succeeded, nothing was
+      # stored under this key already, and the check above found nothing that
+      # can move.
+      #
+      # This sits here, right after init, rather than at the end of the job on
+      # purpose: the later steps (plan and apply especially) can write files
+      # inside the module directories, and those files must not end up being
+      # handed to a future run as if init had produced them.
       - name: "💾 Save terraform module cache"
         if: |
           steps.module-cache.outputs.cache-enabled == 'true'
@@ -754,6 +772,7 @@ jobs:
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # a lost cache write must not fail the run
 
       # Verify the committed .terraform.lock.hcl covers all required platforms.
       # Only runs on PR events — once merged to the default branch the

@@ -477,23 +477,33 @@ contents float is already non-reproducible today, with or without this cache.
 
 ## 5. Workflow wiring
 
-The cache steps carry the same goal gate as the init step they bracket:
+Only the `resolve` step carries the goal gate. Everything downstream keys off
+its verdict alone:
+
+```yaml
+if: steps.module-cache.outputs.cache-enabled == 'true'
+```
+
+That is not shorthand — it is exact. A skipped step's outputs evaluate to the
+empty string, so when `resolve` is skipped for want of the `init` goal the
+comparison is false and every later cache step skips with it. GitHub also
+applies an implicit `success()` to any `if:` containing no status function, so a
+`resolve` that *failed* stops the chain too. Repeating the goal gate downstream
+would restate a condition already implied, and invite the two copies to drift.
+
+The save step adds the rest of its preconditions:
 
 ```yaml
 if: >-
   steps.module-cache.outputs.cache-enabled == 'true'
-  && (contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init'))
-```
-
-The save step adds:
-
-```yaml
-if: >-
-  ... same as above ...
   && steps.init.outcome == 'success'
   && steps.restore-module-cache.outputs.cache-hit != 'true'
   && steps.post-init-check.outputs.safe-to-save == 'true'
 ```
+
+Both `actions/cache` steps are `continue-on-error: true`. The cache is an
+optimisation, so a cache-service failure — or a concurrent run winning the race
+to write the same key — must degrade to a cold init, never fail a terraform run.
 
 With no `restore-keys`, `cache-hit` is simply whether the entry existed — so the
 save runs when there is something new to write *and* the resolved graph says it
