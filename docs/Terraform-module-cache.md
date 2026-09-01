@@ -346,6 +346,11 @@ changed on an exact cache hit. The cache is not helping for this directory.
 The comparison runs only for directories that were included in the cache, so an
 excluded directory legitimately downloading on every run does not trip it.
 
+The two post-init jobs are not equally important, and the code says so. This one
+is a diagnostic: if the before-image is unavailable for any reason — the cache
+missed, or the snapshot step failed — it is skipped. The save gate in §4.5.2 is
+a safety control and always runs.
+
 #### 4.4.3 Why the terraform version is *not* in the key
 
 Modules are not published per terraform version — a module at `0.4.2` is the
@@ -409,6 +414,7 @@ directions of error have very different costs:
 |---|---|
 | **Over-reads** — an `_override.tf` variant, a commented-out `source` line inside a live block, a `module "x"` inside a string | Safe. The reachable set becomes a superset, and "any mutable source excludes" is monotone over supersets: more sources can only make the audit *more* conservative. Verified: an `_override.tf` repointing a module from `?ref=v1.0.0` to `?ref=main` is caught, because both files are `*.tf` and both blocks are read |
 | **Under-reads** — a `module` block in `.tf.json`, or HCL the patterns miss | **Unsafe.** A mutable source goes unseen, the directory is cached, and the §3 freeze returns silently |
+| **Mis-attributes** — a `source` or `version` read from the wrong block | **Unsafe**, and it is the one that actually happened. A `terraform` block's `required_providers` carries its own `source` and `version`; while module blocks ran on until the next module header, an unpinned registry module followed by a pinned provider looked pinned. An unpinned module resolves to the latest release, so that is §3 arrived at through the parser. Blocks end at a `}` in column zero — which `terraform fmt` guarantees for a top-level block — or at the next top-level keyword |
 
 A module block commented out in its entirety is in neither column: the audit
 skips it and so does terraform, so the two agree. It is worth knowing that this
@@ -506,9 +512,15 @@ if: >-
   && steps.post-init-check.outputs.safe-to-save == 'true'
 ```
 
-Both `actions/cache` steps are `continue-on-error: true`. The cache is an
-optimisation, so a cache-service failure — or a concurrent run winning the race
-to write the same key — must degrade to a cold init, never fail a terraform run.
+**No module-cache step may fail the job.** All five carry
+`continue-on-error: true`. The cache is an optimisation, so the worst any
+problem with it may cost is a cold init: a cache-service failure, a concurrent
+run winning the race to write the same key, or a bug in the audit itself.
+
+The snapshot step makes this more than tidiness. It sits directly before init,
+so without `continue-on-error` a failure there fails the job and init — the very
+next step — skips on GitHub's implicit `success()`. A step whose only product is
+a warning would stop the run it exists to help.
 
 With no `restore-keys`, `cache-hit` is simply whether the entry existed — so the
 save runs when there is something new to write *and* the resolved graph says it
