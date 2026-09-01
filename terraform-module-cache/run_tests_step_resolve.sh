@@ -560,3 +560,127 @@ assert_eq "k04 cache paths keep project-dir first, then declared order" \
   "env/.terraform/modules
 beta/.terraform/modules
 alpha/.terraform/modules" "$(out_value cache-paths)"
+
+# ---------------------------------------------------------------------------
+# Block boundaries
+#
+# A 'terraform' block's required_providers carries its own source and version.
+# If a module block ran on until the next module header, an unpinned registry
+# module followed by a provider version would look pinned and be cached — and
+# an unpinned module resolves to the latest release, so that is the §3 hazard
+# reached through the parser rather than through a git ref.
+# ---------------------------------------------------------------------------
+
+# b01 the classic real-world file: unpinned module, then required_providers
+setup_workspace
+write_tf "env/main.tf" <<'TF'
+module "reg" {
+  source = "acme/vpc/aws"
+}
+
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "4.1.2"
+    }
+  }
+}
+TF
+export input_project_dir="env"
+run_resolve
+assert_eq "b01 a provider version does not pin the module above it" "false" "$(out_value cache-enabled)"
+
+# b02 a provider source is never mistaken for a module source
+setup_workspace
+write_tf "env/main.tf" <<'TF'
+module "pinned" {
+  source  = "acme/vpc/aws"
+  version = "1.0.0"
+}
+
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4"
+    }
+  }
+}
+TF
+export input_project_dir="env"
+run_resolve
+assert_eq "b02 a provider's range constraint does not disqualify the directory" "true" "$(out_value cache-enabled)"
+assert_log_has "b02 and only the real module is counted" "1 reachable remote module(s)"
+
+# b03 module blocks either side of a terraform block are both read
+setup_workspace
+write_tf "env/main.tf" <<'TF'
+module "first" {
+  source  = "acme/a/aws"
+  version = "1.0.0"
+}
+
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4"
+    }
+  }
+}
+
+module "second" {
+  source  = "acme/b/aws"
+  version = "2.0.0"
+}
+TF
+export input_project_dir="env"
+run_resolve
+assert_log_has "b03 modules either side of a terraform block are both found" "2 reachable remote module(s)"
+
+# b04 providers declared in their own file, with no module blocks at all
+setup_workspace
+write_tf "env/main.tf" <<'TF'
+module "pinned" {
+  source  = "acme/a/aws"
+  version = "1.0.0"
+}
+TF
+write_tf "env/versions.tf" <<'TF'
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4"
+    }
+  }
+}
+TF
+export input_project_dir="env"
+run_resolve
+assert_log_has "b04 a providers-only file contributes nothing" "1 reachable remote module(s)"
+assert_eq "b04 and the directory is still cacheable" "true" "$(out_value cache-enabled)"
+
+# b05 a resource block between modules does not bleed either
+setup_workspace
+write_tf "env/main.tf" <<'TF'
+module "pinned" {
+  source  = "acme/a/aws"
+  version = "1.0.0"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "rg"
+  location = "norwayeast"
+}
+
+module "also_pinned" {
+  source  = "acme/b/aws"
+  version = "2.0.0"
+}
+TF
+export input_project_dir="env"
+run_resolve
+assert_log_has "b05 a resource block between modules is ignored" "2 reachable remote module(s)"
+assert_eq "b05 and both modules are pinned, so the directory is cached" "true" "$(out_value cache-enabled)"

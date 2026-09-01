@@ -107,11 +107,19 @@ function classify-source {
 # Emits one '<label>\t<source>\t<version>' line per module block declared in
 # <dir>/*.tf. Streams through awk; file contents never enter a variable.
 #
-# Deliberately over-reads: commented-out blocks, '_override.tf' variants and
-# 'module "x"' inside a string all count. That direction is safe — the
-# reachable set becomes a superset and "any mutable source excludes" is
-# monotone over supersets — while under-reading is not (§4.5.1). A stray
-# header can only split a block early, never swallow the next one.
+# Deliberately over-reads within a module block: an '_override.tf' variant, or a
+# commented-out 'source' line ahead of the real one, both count. That direction
+# is safe — the reachable set becomes a superset and "any mutable source
+# excludes" is monotone over supersets — while under-reading is not (§4.5.1).
+#
+# The block boundary matters for exactly that reason. A 'terraform' block's
+# 'required_providers' carries its own source and version arguments, and if a
+# module block were allowed to run on until the next module header, an unpinned
+# registry module followed by a provider's 'version' would look pinned and get
+# cached — an unpinned module resolves to the latest release, so that is the §3
+# hazard, arrived at through the parser. Blocks therefore end at a '}' in
+# column zero, which 'terraform fmt' guarantees for a top-level block, or at
+# the next top-level keyword.
 function read-module-blocks {
   local dir="${1}"
   local f
@@ -122,6 +130,10 @@ function read-module-blocks {
         if (label != "") printf "%s\t%s\t%s\n", label, src, ver
         label = ""; src = ""; ver = ""
       }
+      # End of a top-level block, per terraform fmt.
+      /^}/ { flush(); next }
+      # A new top-level block of any kind.
+      /^[a-z_]+[[:space:]]/ && !/^[[:space:]]*module[[:space:]]+"/ { flush() }
       /^[[:space:]]*module[[:space:]]+"[^"]+"/ {
         flush()
         line = $0
