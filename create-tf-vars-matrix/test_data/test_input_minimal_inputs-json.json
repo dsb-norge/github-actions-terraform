@@ -9,6 +9,7 @@
   "tflint-version": "latest",
   "add-pr-comment": "true",
   "verify-lock-file": "true",
+  "cache-terraform-modules": "true",
   "pr-comment-group": "",
   "pr-auto-merge-enabled": "false",
   "pr-auto-merge-from-actors-yml": "[]",
