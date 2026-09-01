@@ -158,3 +158,110 @@ setup_workspace
 export input_cache_paths=""
 run_verify
 assert_eq "t34 an empty cache-paths refuses the save" "false" "$(out_value safe-to-save)"
+
+# ---------------------------------------------------------------------------
+# step_snapshot.sh
+# ---------------------------------------------------------------------------
+
+# s01 several directories, one before-image each
+setup_workspace
+write_manifest "one" <<<"${PINNED_MANIFEST}"
+write_manifest "two" <<<"${PINNED_MANIFEST}"
+export input_cache_paths="one/.terraform/modules
+two/.terraform/modules"
+export input_cache_hit="true"
+run_snapshot
+assert_eq "s01 one before-image per directory" "2" \
+  "$(find "${RUNNER_TEMP}/module-cache-manifests" -name '*.json' | wc -l)"
+assert_eq "s01 the snapshot directory is emitted" \
+  "${RUNNER_TEMP}/module-cache-manifests" "$(out_value snapshot-dir)"
+
+# s02 one directory has no manifest yet — the others are still snapshotted
+setup_workspace
+write_manifest "one" <<<"${PINNED_MANIFEST}"
+mkdir -p "${WORK_DIR}/two/.terraform/modules"
+export input_cache_paths="one/.terraform/modules
+two/.terraform/modules"
+export input_cache_hit="true"
+run_snapshot
+assert_log_has "s02 a missing manifest is reported" "no restored manifest"
+assert_eq "s02 and does not stop the others" "1" \
+  "$(find "${RUNNER_TEMP}/module-cache-manifests" -name '*.json' | wc -l)"
+
+# s03 directories whose names collide once separators are flattened must not
+# share a before-image — 'a/b' and 'a_b' both flatten to 'a_b'.
+setup_workspace
+write_manifest "a/b" <<<"${PINNED_MANIFEST}"
+write_manifest "a_b" <<'JSON'
+{"Modules":[{"Key":"different","Source":"registry.terraform.io/q/r/s","Version":"9.9.9","Dir":".terraform/modules/different"}]}
+JSON
+export input_cache_paths="a/b/.terraform/modules
+a_b/.terraform/modules"
+export input_cache_hit="true"
+run_snapshot
+assert_eq "s03 colliding directory names get distinct before-images" "2" \
+  "$(find "${RUNNER_TEMP}/module-cache-manifests" -name '*.json' | wc -l)"
+# and the roundtrip must not report a phantom change for either of them
+run_verify
+assert_log_lacks "s03 neither is compared against the other's manifest" "digest is incomplete"
+
+# ---------------------------------------------------------------------------
+# The verify step when the snapshot is unavailable
+# ---------------------------------------------------------------------------
+
+# v01 the snapshot step failed, so snapshot-dir is empty. The completeness
+# check is a diagnostic and is skipped; the save gate is a safety control and
+# still runs.
+setup_workspace
+write_manifest "env" <<<"${PINNED_MANIFEST}"
+export input_cache_paths="env/.terraform/modules"
+export input_cache_hit="true"
+export input_snapshot_dir=""
+run_verify
+assert_eq "v01 an empty snapshot-dir does not crash the step" "0" "${LAST_EXIT}"
+assert_log_has "v01 the completeness check is skipped" "no snapshot directory"
+assert_eq "v01 but the save gate still reaches a verdict" "true" "$(out_value safe-to-save)"
+
+# v02 same, with a snapshot-dir that points nowhere
+setup_workspace
+write_manifest "env" <<'JSON'
+{"Modules":[{"Key":"floating","Source":"git::https://example.com/f.git?ref=main","Dir":".terraform/modules/floating"}]}
+JSON
+export input_cache_paths="env/.terraform/modules"
+export input_cache_hit="true"
+export input_snapshot_dir="/nonexistent/snapshot/dir"
+run_verify
+assert_log_has "v02 a missing snapshot directory is skipped, not fatal" "no snapshot directory"
+assert_eq "v02 and a moving source is still refused" "false" "$(out_value safe-to-save)"
+
+# v03 the gate runs on a cache miss too, where there is no before-image at all
+setup_workspace
+write_manifest "env" <<'JSON'
+{"Modules":[{"Key":"floating","Source":"git::https://example.com/f.git?ref=feature/x","Dir":".terraform/modules/floating"}]}
+JSON
+export input_cache_paths="env/.terraform/modules"
+export input_cache_hit="false"
+export input_snapshot_dir=""
+run_verify
+assert_eq "v03 a cold run still refuses to save a moving source" "false" "$(out_value safe-to-save)"
+
+# v04 several directories, all clean
+setup_workspace
+write_manifest "one" <<<"${PINNED_MANIFEST}"
+write_manifest "two" <<<"${PINNED_MANIFEST}"
+export input_cache_paths="one/.terraform/modules
+two/.terraform/modules"
+export input_cache_hit="false"
+run_verify
+assert_eq "v04 several clean directories are safe to save" "true" "$(out_value safe-to-save)"
+assert_log_has "v04 and all of them were checked" "verified 2 manifest(s)"
+
+# v05 a manifest holding only the root module has nothing that can move
+setup_workspace
+write_manifest "env" <<'JSON'
+{"Modules":[{"Key":"","Source":"","Dir":"."}]}
+JSON
+export input_cache_paths="env/.terraform/modules"
+export input_cache_hit="false"
+run_verify
+assert_eq "v05 a root-only manifest is safe" "true" "$(out_value safe-to-save)"
