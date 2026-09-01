@@ -199,20 +199,24 @@ an entry is written (§4.5.2).
 
 ### 4.1 Shape
 
-One new composite action, `setup-terraform-module-cache`, runs after
-`setup-terraform` and before `terraform init`. It audits the init directories,
-decides which are cacheable, and emits the cache paths and key. The workflow
-then does an explicit **restore → init → save**, with no `restore-keys`
+One new composite action, `terraform-module-cache`, does the work. Because
+that work straddles `terraform init`, the action has three phases selected by a
+`phase` input — `resolve` before the restore, `snapshot` after it, `verify`
+after init and before the save. They are one action rather than three so the
+source classifier is genuinely one function (§4.5.2); a phase is a step guarded
+by `if: inputs.phase == '<phase>'`.
+
+The workflow does an explicit **restore → init → save**, with no `restore-keys`
 (§7.1), rather than a single `actions/cache` step.
 
 ```mermaid
 flowchart TD
     setup["📥 Setup Terraform<br>(terraform on PATH)"]
-    resolve["🗄️ setup-terraform-module-cache<br>in - project-dir, additional-dirs-json, environment<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
+    resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, additional-dirs-json, environment<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
     restore["🚀 actions/cache/restore@v5<br>path = cache-paths, key = cache-key, no restore-keys"]
-    snap["📸 snapshot restored manifests<br>copies each included dir's modules.json to RUNNER_TEMP"]
+    snap["📸 terraform-module-cache (phase - snapshot)<br>copies each included dir's modules.json to RUNNER_TEMP"]
     init["⚙️ terraform-init<br>(unchanged)"]
-    verify["🔍 post-init check<br>digest completeness + save safety gate<br>reads each included dir's modules.json"]
+    verify["🔍 terraform-module-cache (phase - verify)<br>digest completeness + save safety gate<br>reads each included dir's modules.json"]
     save["💾 actions/cache/save@v5<br>if init succeeded AND key missed AND safe to save"]
 
     setup --> resolve --> restore --> snap --> init --> verify --> save
@@ -445,10 +449,18 @@ registry ranges are still caught by the pre-init grep; transitive ones are caugh
 by neither — §4.5.3.
 
 Because one classification table is applied to two different inputs — config
-text before init, resolved `Source` strings after — it must be a single function
-taking an explicit input-kind, with a documented contract for what each input can
-and cannot reveal. The two do not and cannot produce identical verdicts, and a
-maintainer who assumes they do will misread one of them.
+text before init, resolved `Source` strings after — it is a single function
+taking an explicit input-kind (`classify-source config|manifest …`), with a
+documented contract for what each input can and cannot reveal. Passing the kind
+rather than inferring it means the divergence is visible at every call site: the
+two do not and cannot produce identical verdicts, and a maintainer who assumes
+they do will misread one of them.
+
+**The gate fails closed.** A manifest that is missing, or present but not
+parseable — the state §2.5 shows terraform itself rejects — refuses the save
+rather than reading as a clean graph. Invariant 8.3 is about never writing an
+unsafe tree, and a tree whose contents cannot be established is not established
+to be safe.
 
 #### 4.5.3 What stays open: transitive registry ranges
 
@@ -487,18 +499,19 @@ With no `restore-keys`, `cache-hit` is simply whether the entry existed — so t
 save runs when there is something new to write *and* the resolved graph says it
 is safe to write it.
 
-Two small inline `run:` blocks support this, each opening with the mandatory
-description comment:
+Two further invocations of the action support this:
 
-- after restore — copy each included directory's `modules.json` to
-  `$RUNNER_TEMP`, so §4.4.2 has a before-image;
-- after init — walk the same directories once, reading each `modules.json` to do
-  both post-init jobs in one pass: compare against the before-image
-  (completeness, §4.4.2) and classify every recorded `Source` (safety,
-  §4.5.2), emitting `safe-to-save`.
+- `phase: snapshot` after the restore — copies each included directory's
+  `modules.json` to `$RUNNER_TEMP`, so §4.4.2 has a before-image;
+- `phase: verify` after init — walks the same directories once, reading each
+  `modules.json` to do both post-init jobs in one pass: compare against the
+  before-image (completeness, §4.4.2) and classify every recorded `Source`
+  (safety, §4.5.2), emitting `safe-to-save`.
 
-They read the same files in the same loop, which is why they are one step rather
-than two. A handful of lines of `jq`; promote to an action only if they grow.
+Both belong to the action rather than to inline `run:` blocks in the workflow.
+The classifier has to be shared (§4.5.2) and workflow YAML cannot share code
+with an action; the before-image filename likewise has to be agreed between the
+step that writes it and the step that reads it, and one place should own it.
 
 **Step order is part of the design, not incidental.** The save sits immediately
 after init and its check, and before `fmt`, `validate`, `lint`, `plan` and
@@ -680,7 +693,7 @@ than merely imperfect:
 
 ## 9. Test scenarios
 
-`setup-terraform-module-cache/run_all_tests.sh`, picked up automatically by
+`terraform-module-cache/run_all_tests.sh`, picked up automatically by
 `.github/workflows/action-tests.yml` (discovery is by presence of the suite —
 see [docs/Testing-in-ci.md](Testing-in-ci.md)). Fixtures are directory trees of
 `.tf` files; no terraform binary is needed for the audit tests.
