@@ -30,6 +30,26 @@ inputs:
       additional-dirs init loop so providers are reused across envs.
     required: false
     default: ""
+  github-token:
+    description: |
+      Optional: token used to authenticate the 'git clone' calls terraform makes
+      when it installs remote modules. The caller's own workflow token is
+      enough — read access to public repositories is all this needs.
+
+      Do not write a GitHub Actions expression in this description. Actions
+      parses expressions in an action.yml's input descriptions too, and the
+      'github' context does not exist there — an expression naming it fails the
+      whole job at "Set up job" with "Unrecognized named-value: 'github'",
+      before a single step runs.
+
+      Leaving it empty keeps those clones anonymous, which makes them subject to
+      GitHub's 60 requests/hour budget for unauthenticated traffic. That budget
+      is counted against the source IP and therefore shared by every runner
+      behind the same NAT address, so a large module set can exhaust it and see
+      its clones refused. See 'configure-github-clone-auth' in
+      helpers_additional.sh for the full story.
+    required: false
+    default: ""
   extra-envs-file:
     description: |
       Path to a JSON file with environment variables to apply to this action's
@@ -95,6 +115,7 @@ runs:
         input_environment_name: ${{ inputs.environment-name }}
         input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
+        input_github_token: ${{ inputs.github-token }}
       run: |
         # Run 'terraform init' in the project and any additional directories
         #

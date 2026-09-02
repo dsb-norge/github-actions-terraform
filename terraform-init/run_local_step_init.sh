@@ -36,6 +36,17 @@ export input_environment_name="sandbox"
 export input_additional_dirs_json="[\"${EXTRA_DIR_REL}\"]"
 export input_plugin_cache_directory=""
 
+# A stand-in for '${{ github.token }}'. Any non-empty value exercises the
+# injection; the stub terraform never clones anything, so it need not be real.
+export input_github_token="ghs_localsandboxtoken"
+
+# The credential guard reads the runner's global and system git config. Point
+# both somewhere empty so a local run behaves like a fresh runner rather than
+# picking up the developer's own ~/.gitconfig.
+export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/gitconfig-global"
+export GIT_CONFIG_SYSTEM=/dev/null
+: >"${GIT_CONFIG_GLOBAL}"
+
 # Per-goal environment variables, as resolve-goal-envs would produce them.
 # GOMEMLIMIT is set, and a variable that exists job-wide is unset by a JSON null
 # — something $GITHUB_ENV cannot express.

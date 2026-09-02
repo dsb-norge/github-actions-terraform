@@ -40,7 +40,23 @@ setup_workdir() {
 
   unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_ARGV_FILE MOCK_ENV_FILE
   unset input_extra_envs_file
+  unset input_github_token
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+
+  # Hermetic git configuration: the credential guard in
+  # configure-github-clone-auth reads the global and system scopes, and without
+  # these it would read whatever the developer running the suite happens to
+  # have in ~/.gitconfig — passing or failing by accident.
+  export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/gitconfig-global"
+  export GIT_CONFIG_SYSTEM=/dev/null
+  : >"${GIT_CONFIG_GLOBAL}"
 }
+
+# Put a setting in the simulated runner-level (global) git config.
+set_runner_git_config() { git config --file "${GIT_CONFIG_GLOBAL}" "${1}" "${2}"; }
+
+# The header value the step is expected to inject for a given token.
+expected_auth_header() { printf 'Authorization: Basic %s' "$(printf 'x-access-token:%s' "${1}" | base64 -w0)"; }
 
 # Installs a stub terraform that records argv and obeys MOCK_TF_EXIT.
 # When MOCK_TF_EXIT_DIR_<base64-of-cwd> is set, the stub uses that value
@@ -79,8 +95,14 @@ STUB
   export TF_BIN="${stub_dir}/terraform"
 }
 
+# 'set -e -o pipefail' is not decoration: GitHub sources a composite step's
+# script in 'bash --noprofile --norc -e -o pipefail', so a command whose
+# non-zero status is normal (a 'git config --get' that finds nothing, a grep
+# that matches nothing) ends the step there. Without errexit here the suite
+# passes on code that fails on every real run.
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_init.sh"
   ) >/tmp/test_output_init.txt 2>&1
@@ -515,6 +537,101 @@ assert "negative: the error names the directory" \
   grep -q 'could not be entered' '/tmp/test_output_init.txt'
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+
+# ----------------------------------------------------------------------
+# github.com module-clone authentication (the 'github-token' input)
+#
+# Terraform clones remote modules with git, and those clones inherit nothing
+# from the workspace repository. The step injects an Authorization header via
+# GIT_CONFIG_* so they are not charged to GitHub's shared per-IP budget for
+# unauthenticated traffic.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+record_env
+run_step
+assert "auth: no token, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "auth: no token injects no git config" env_is_unset GIT_CONFIG_COUNT
+assert "auth: no token is reported in the log" \
+  grep -q "module clones will be unauthenticated" '/tmp/test_output_init.txt'
+
+setup_workdir
+install_stub_terraform
+record_env
+export input_github_token="ghs_testtoken"
+run_step
+assert "auth: with a token, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "auth: exactly one config entry is injected" env_eq GIT_CONFIG_COUNT '1'
+assert "auth: the entry is an extraheader scoped to github.com" \
+  env_eq GIT_CONFIG_KEY_0 'http.https://github.com/.extraheader'
+assert "auth: the header carries the token as basic auth" \
+  env_eq GIT_CONFIG_VALUE_0 "$(expected_auth_header ghs_testtoken)"
+assert "auth: terraform saw the config (it is what runs git)" \
+  bash -c "[ -s '${MOCK_ENV_FILE}' ]"
+assert "auth: the encoded credential is masked" \
+  grep -qF "::add-mask::$(printf 'x-access-token:%s' ghs_testtoken | base64 -w0)" \
+  '/tmp/test_output_init.txt'
+# The runner masks the token itself, but only where it appears verbatim; the
+# step must not be what puts it in the log.
+assert "auth: the raw token is never logged" \
+  bash -c "! grep -qF 'ghs_testtoken' '/tmp/test_output_init.txt'"
+
+# The guard: three shapes of runner-level github.com credential, each of which
+# a preemptive header would override. A repository that clones private modules
+# with runner-provided credentials must keep working.
+for _guard in \
+  'http.https://github.com/.extraheader|Authorization: Basic cnVubmVy' \
+  'credential.https://github.com.helper|store' \
+  'url.https://runner@github.com/.insteadOf|https://github.com/'; do
+  setup_workdir
+  install_stub_terraform
+  record_env
+  set_runner_git_config "${_guard%%|*}" "${_guard#*|}"
+  export input_github_token="ghs_testtoken"
+  run_step
+  assert "auth guard (${_guard%%|*}): nothing is injected" env_is_unset GIT_CONFIG_COUNT
+  assert "auth guard (${_guard%%|*}): the skip is logged" \
+    grep -q "already has git credentials configured for github.com" '/tmp/test_output_init.txt'
+done
+
+# actions/checkout writes its extraheader into the workspace repository's LOCAL
+# config, and this step runs inside that repository. A scope-less lookup would
+# find it on every real run and skip the injection always — which is the whole
+# fix silently doing nothing.
+setup_workdir
+install_stub_terraform
+record_env
+git init -q "${WORK_DIR}"
+git -C "${WORK_DIR}" config --local 'http.https://github.com/.extraheader' 'Authorization: Basic Y2hlY2tvdXQ='
+export input_github_token="ghs_testtoken"
+run_step
+assert "auth guard: checkout's LOCAL extraheader does not suppress the injection" \
+  env_eq GIT_CONFIG_COUNT '1'
+
+# Additive, so an entry someone else put in the environment survives.
+setup_workdir
+install_stub_terraform
+record_env
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0='user.name'
+export GIT_CONFIG_VALUE_0='pre-existing'
+export input_github_token="ghs_testtoken"
+run_step
+assert "auth: a pre-existing entry is kept" env_eq GIT_CONFIG_KEY_0 'user.name'
+assert "auth: the injected entry goes after it" \
+  env_eq GIT_CONFIG_KEY_1 'http.https://github.com/.extraheader'
+assert "auth: the count covers both" env_eq GIT_CONFIG_COUNT '2'
+
+setup_workdir
+install_stub_terraform
+record_env
+export GIT_CONFIG_COUNT='not-a-number'
+export input_github_token="ghs_testtoken"
+run_step
+assert "auth: a non-numeric count is replaced rather than appended to" \
+  env_eq GIT_CONFIG_COUNT '1'
+assert "auth: and the entry still lands at index 0" \
+  env_eq GIT_CONFIG_KEY_0 'http.https://github.com/.extraheader'
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"

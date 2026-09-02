@@ -31,6 +31,11 @@
 #   input_plugin_cache_directory - When set, exported as TF_PLUGIN_CACHE_DIR
 #                                  during the additional-dirs loop so
 #                                  providers are reused across envs.
+#   input_github_token    - When set, terraform's github.com module clones are
+#                           authenticated with it. Empty or unset leaves them
+#                           anonymous, which is what they were before this
+#                           existed. See configure-github-clone-auth in
+#                           helpers_additional.sh for why this is needed.
 #   TF_BIN                       - Path to the terraform binary (defaults
 #                                  to 'terraform' on PATH). Used by tests
 #                                  to inject a stub.
@@ -45,6 +50,10 @@ function main {
   # Applied first, before this action's own exports — see
   # docs/Per-goal-environment-variables.md §6.3.
   apply-extra-envs "${input_extra_envs_file}" || return 1
+
+  # Before the first invocation: terraform shells out to 'git clone' for every
+  # remote module, and those clones are what this authenticates.
+  configure-github-clone-auth "${input_github_token}"
 
   local tf_bin="${TF_BIN:-terraform}"
 
@@ -130,6 +139,7 @@ function main {
   for v in "${TF_INIT_RESULTS[@]}"; do
     sum_exit_codes=$((sum_exit_codes + v))
   done
+
   return ${sum_exit_codes}
 }
 
