@@ -733,6 +733,11 @@ jobs:
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json
+          # Authenticates the 'git clone' calls terraform makes for remote
+          # modules. Anonymous clones are charged to a 60/hour per-IP budget
+          # that every runner behind the same NAT address shares, and a module
+          # set of any size exhausts it — see the action's 'github-token' input.
+          github-token: ${{ github.token }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       # Answers two questions from the modules init actually ended up with:

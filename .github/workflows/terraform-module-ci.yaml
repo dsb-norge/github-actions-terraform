@@ -161,6 +161,10 @@ jobs:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          # Authenticates terraform's remote-module clones, which are otherwise
+          # charged to a per-IP budget shared by every runner behind the same
+          # NAT address — see the action's 'github-token' input.
+          github-token: ${{ github.token }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🖌 Terraform Format
@@ -275,6 +279,10 @@ jobs:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
           plugin-cache-directory: ${{ needs.validate-project.outputs.plugin-cache-directory }}
+          # Authenticates terraform's remote-module clones, which are otherwise
+          # charged to a per-IP budget shared by every runner behind the same
+          # NAT address — see the action's 'github-token' input.
+          github-token: ${{ github.token }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
       - name: 🧪 Terraform Test

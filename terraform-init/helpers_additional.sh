@@ -111,5 +111,113 @@ function apply-extra-envs {
   return 0
 }
 
+# Echo any git credentials the runner itself has configured for github.com
+# ======================================================================
+# --global and --system only. actions/checkout writes its extraheader into the
+# LOCAL config of the workspace repository, and the init step runs inside that
+# repository — a scope-less lookup would find checkout's header on every real
+# run and skip the injection always, which is the whole fix quietly doing
+# nothing.
+#
+# Every lookup is '|| true' and the function ends in 'return 0'. 'git config
+# --get' exits 1 when the key is absent, which is the normal case here, and the
+# runner sources this in a 'bash -e -o pipefail' shell where that status ends
+# the step before terraform ever runs.
+function _github_credentials_in_runner_config {
+  local _scope _key
+
+  for _scope in --global --system; do
+    for _key in 'http.https://github.com/.extraheader' \
+      'credential.https://github.com.helper' \
+      'credential.helper'; do
+      git config "${_scope}" --get-all "${_key}" 2>/dev/null || true
+    done
+    git config "${_scope}" --get-regexp '^url\..*github\.com.*\.insteadof$' 2>/dev/null || true
+  done
+
+  return 0
+}
+
+# Authenticate terraform's github.com module clones
+# =================================================
+# Terraform installs a registry module by shelling out to 'git clone' — the
+# registry resolves e.g. 'Azure/avm-res-keyvault-vault/azurerm' to
+# 'git::https://github.com/Azure/terraform-azurerm-avm-res-keyvault-vault?ref=<sha>'
+# — and each clone is a brand new repository under '.terraform/modules'. It
+# inherits nothing from the workspace repository, so the extraheader
+# actions/checkout wrote into that repository's local config does not apply and
+# the clone goes out unauthenticated.
+#
+# Unauthenticated github.com traffic is budgeted at 60 requests/hour against the
+# source IP, which every runner behind the same NAT address shares. A single init
+# with a few dozen modules is 2-3 requests each, so the budget goes quickly. Once
+# it is spent GitHub answers the pack negotiation with a 401; git, having no
+# credentials and no tty to ask on, gives up with
+#
+#   fatal: could not read Username for 'https://github.com'
+#
+# which terraform reports as "Failed to download module" — for a subset of the
+# modules that varies run to run, because the refusal is a throttle and not a
+# configuration error. Authenticated requests are budgeted per repository
+# instead (1 000/hour for GITHUB_TOKEN), which this traffic does not come close
+# to.
+#
+# 'http.<url>.extraheader' rather than 'url.<base>.insteadOf': git sends an
+# extraheader on the very first request, while credentials embedded in a
+# rewritten URL are only offered after a request has already been refused.
+# Only the former keeps the anonymous budget out of the picture altogether,
+# rather than relying on GitHub to keep answering with a challenge the retry
+# can satisfy.
+#
+# GIT_CONFIG_COUNT rather than 'git config --global': it adds to git's existing
+# configuration instead of replacing it, needs no file on disk and no cleanup,
+# and cannot outlive this step. '--global' would leave the token in
+# ~/.gitconfig, which on a long-lived self-hosted runner is a shared home
+# directory; a job-scoped GIT_CONFIG_GLOBAL file avoids that but discards
+# whatever the runner image put in the global config, and setting the same
+# extraheader job-wide makes git send TWO Authorization headers for any
+# operation on the workspace repository — where checkout's own local one already
+# applies — which github.com answers with a 400.
+#
+# Skipped when the runner already has github.com credentials of its own: a
+# preemptive header overrides them, and a repository whose private modules are
+# cloned with a runner-level credential helper must keep working.
+function configure-github-clone-auth {
+  local _token="${1}" _existing _b64 _idx
+
+  if [ -z "${_token}" ]; then
+    log-info "no github token supplied, terraform's module clones will be unauthenticated."
+    return 0
+  fi
+
+  _existing="$(_github_credentials_in_runner_config)"
+  if [ -n "${_existing}" ]; then
+    log-info "the runner already has git credentials configured for github.com, leaving them alone."
+    log-info "terraform's module clones will use those instead of the supplied token."
+    return 0
+  fi
+
+  _b64="$(printf 'x-access-token:%s' "${_token}" | base64 -w0)"
+
+  # The runner masks the token wherever it appears verbatim, but its base64 form
+  # is a different string and is not masked by that. Without this a 'git config
+  # --list' or an 'env' dump in any later step prints a usable credential into
+  # the log.
+  echo "::add-mask::${_b64}"
+
+  # Additive: honour a GIT_CONFIG_COUNT something else already set rather than
+  # overwriting its entries. A non-numeric value is garbage that would make git
+  # itself fail, so it is simply replaced.
+  _idx="${GIT_CONFIG_COUNT:-0}"
+  [[ "${_idx}" =~ ^[0-9]+$ ]] || _idx=0
+
+  export "GIT_CONFIG_KEY_${_idx}=http.https://github.com/.extraheader"
+  export "GIT_CONFIG_VALUE_${_idx}=Authorization: Basic ${_b64}"
+  export GIT_CONFIG_COUNT=$((_idx + 1))
+
+  log-info "terraform's github.com module clones will be authenticated."
+  return 0
+}
+
 # ==========================================================
 log-info "'$(basename ${BASH_SOURCE[0]})' loaded."

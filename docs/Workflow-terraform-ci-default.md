@@ -120,6 +120,24 @@ Terraform's own `TF_CLI_ARGS_<subcommand>` mechanism already works through plain
 
 Full design, including why the values are passed as a file path rather than as a payload: [Per-goal-environment-variables.md](./Per-goal-environment-variables.md).
 
+#### Module downloads are authenticated
+
+`terraform init` installs a remote module by shelling out to `git clone`. The public registry resolves a module such as `Azure/avm-res-keyvault-vault/azurerm` to `git::https://github.com/Azure/terraform-azurerm-avm-res-keyvault-vault?ref=<sha>`, so a configuration with no `git::` sources of its own still ends up cloning from github.com — once per module.
+
+Those clones are fresh repositories under `.terraform/modules`. They inherit nothing from the workspace repository, so the credentials `actions/checkout` wrote into *its* local config do not apply, and without help the clones are anonymous. GitHub budgets unauthenticated traffic at **60 requests/hour counted against the source IP**, which every runner behind the same NAT address shares. A module set of any size spends that quickly, and when it is gone the pack negotiation is refused with a `401`; git has no credentials and no tty, so it fails with
+
+```text
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+which terraform reports as `Failed to download module` — for a subset of the modules that varies run to run, since it is a throttle and not a misconfiguration. The workflow therefore hands `${{ github.token }}` to `terraform-init`, which authenticates the clones so they are budgeted per repository (1 000 requests/hour) instead. Nothing is required of the calling repository; `contents: read` is enough.
+
+One thing worth knowing:
+
+- **A runner that already has github.com credentials keeps them.** When the runner's global or system git config carries an `extraheader`, a credential helper or an `insteadOf` rewrite for github.com, the token is not injected — a repository whose private modules are cloned with runner-level credentials must keep working. The init log says which of the two happened.
+
+Note that the module cache normally hides this problem: on a cache hit nothing is cloned at all, so the failure surfaces only when the cache misses — after a module pin changes, for instance. See [Terraform-module-cache.md](./Terraform-module-cache.md).
+
 #### Example usage
 
 #### Basic
