@@ -12,6 +12,20 @@ function set-field-from-json { ENVIRONMENT_OBJ=$(echo "${ENVIRONMENT_OBJ}" | jq 
 function set-bool-field-true { set-field-from-json "$1" "true"; } # really just an alias
 function set-bool-field-false { set-field-from-json "$1" "false"; } # really just an alias
 function get-val { echo "${ENVIRONMENT_OBJ}" | jq -r --arg name "${1}" '.[$name] | select( . != null )'; }
+# Reads a '*-yml' field off the environment object and converts it from YAML to
+# JSON. The value stored there is the YAML text the caller wrote, so it has to
+# be parsed before it can reach 'jq --argjson' — which reports only 'invalid
+# JSON text passed to --argjson', naming neither the field nor the environment.
+function get-val-as-json {
+  local field="${1}" raw json
+  raw="$(get-val "${field}")"
+  if ! json="$(printf '%s' "${raw}" | yq e -o=json - 2>/dev/null)"; then
+    log-error "the environment's '${field}' is not valid yaml!"
+    log-multiline "value of '${field}'" "${raw}"
+    return 1
+  fi
+  printf '%s' "${json}"
+}
 function rm-field { ENVIRONMENT_OBJ=$(echo "${ENVIRONMENT_OBJ}" | jq --arg key_name "$1" 'del(.[$key_name])'); }
 function _jjq { echo ${ENV_VARS} | base64 --decode | jq -r ${*}; }
 function fail-field {
