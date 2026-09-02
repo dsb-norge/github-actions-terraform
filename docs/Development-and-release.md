@@ -42,6 +42,24 @@ Section below describes development, testing and release process for actions and
     - Replace: `$2$3v2`
 7. Create PR and merge to main.
 
+### Test driving from a calling repo
+
+Two things cost a round trip each if you learn them from CI instead of here:
+
+- **Do not put a GitHub Actions expression in an `action.yml` input description.**
+  It fails the whole job at `Set up job`, before any step runs, and no local check
+  catches it. See
+  [Action-implementation-guide.md](./Action-implementation-guide.md) →
+  "Never write an Actions expression in an input `description`".
+- **Test drive a module repo through a pull request, not `workflow_dispatch` on a
+  branch.** The DSB module repos authenticate to Azure with workload identity
+  federation, and the federated subjects are scoped (`refs/heads/main`,
+  `pull_request`). A dispatch from an ad-hoc branch presents a subject nobody
+  federated, so `azure/login` fails with `AADSTS7002131` and every `terraform
+  test` job fails with it — for reasons that have nothing to do with the change
+  under test. The `init`/`fmt`/`validate`/`lint` jobs still run, so a dispatch is
+  enough when those are all you need to see.
+
 ## Release
 
 After merge to main use tags to release.
