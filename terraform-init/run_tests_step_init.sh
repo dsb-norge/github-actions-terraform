@@ -633,6 +633,57 @@ assert "auth: a non-numeric count is replaced rather than appended to" \
 assert "auth: and the entry still lands at index 0" \
   env_eq GIT_CONFIG_KEY_0 'http.https://github.com/.extraheader'
 
+# ----------------------------------------------------------------------
+# A clone refused for want of credentials is named in an annotation
+#
+# git's "could not read Username" is what a spent anonymous rate-limit budget
+# looks like from inside the job — the refusal is a 401, so nothing in the log
+# says "rate limit" and terraform only reports "Failed to download module".
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_STDOUT="Downloading registry.terraform.io/Azure/avm-res-keyvault-vault/azurerm 0.10.2 for kv...
+fatal: could not read Username for 'https://github.com': No such device or address
+Error: Failed to download module"
+export MOCK_TF_EXIT=1
+run_step
+assert "refused clone: the step still fails" test "${LAST_EXIT}" -ne 0
+assert "refused clone: an error annotation is emitted" \
+  grep -q '::error title=Module clone refused for want of credentials::' \
+  '/tmp/test_output_init.txt'
+assert "refused clone: the annotation names the host" \
+  grep -q "credentials for 'https://github.com'" '/tmp/test_output_init.txt'
+assert "refused clone: the annotation explains the per-IP budget" \
+  grep -q '60/hour' '/tmp/test_output_init.txt'
+
+setup_workdir
+install_stub_terraform
+export MOCK_TF_STDOUT="fatal: could not read Username for 'https://github.com': No such device or address"
+run_step
+assert "refused clone: init exiting 0 downgrades it to a warning" \
+  grep -q '::warning title=Module clone refused for want of credentials::' \
+  '/tmp/test_output_init.txt'
+assert "refused clone: and no error annotation is emitted" \
+  bash -c "! grep -q '::error title=Module clone refused' '/tmp/test_output_init.txt'"
+
+setup_workdir
+install_stub_terraform
+export MOCK_TF_STDOUT="Terraform has been successfully initialized!"
+run_step
+assert "refused clone: a clean init emits no annotation" \
+  bash -c "! grep -q 'Module clone refused' '/tmp/test_output_init.txt'"
+
+setup_workdir
+install_stub_terraform
+export MOCK_TF_STDOUT="fatal: could not read Username for 'https://github.com': No such device or address
+fatal: could not read Username for 'https://gitlab.com': No such device or address
+fatal: could not read Username for 'https://github.com': No such device or address"
+export MOCK_TF_EXIT=1
+run_step
+assert "refused clone: every distinct host is listed once" \
+  grep -q "credentials for 'https://github.com https://gitlab.com'" \
+  '/tmp/test_output_init.txt'
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}            step_init.sh SUMMARY            ${NC}"

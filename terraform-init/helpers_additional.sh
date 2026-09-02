@@ -219,5 +219,48 @@ function configure-github-clone-auth {
   return 0
 }
 
+# Report a module clone that was refused for want of credentials
+# ==============================================================
+# git prints "could not read Username for '<host>'" when a clone is refused and
+# it has neither credentials to offer nor a tty to ask on. On github.com that is
+# what a spent anonymous rate-limit budget looks like from inside the job: the
+# refusal is a 401, so no 429 and no rate-limit wording appears anywhere in the
+# log, and the only visible symptom is "Failed to download module" for a varying
+# subset of the modules.
+#
+# Diagnosing that from first principles costs an afternoon, so name it here.
+# Reads the console file with grep and keeps only the extracted hosts in a
+# variable — the file itself is unbounded and must not enter envp while
+# allexport is in scope (ref. the ARG_MAX rule in CLAUDE.md).
+function annotate-refused-clones {
+  local _console_file="${1}" _init_failed="${2}" _hosts
+
+  [ -f "${_console_file}" ] || return 0
+
+  # '|| true' inside the pipeline: grep exits 1 when it matches nothing — the
+  # happy path — and under the runner's 'bash -e -o pipefail' that status would
+  # end the step here, turning a clean init into a failure.
+  _hosts="$( { grep -oh "could not read Username for '[^']*'" "${_console_file}" 2>/dev/null || true; } |
+    sed "s/^.*for '//; s/'$//" | sort -u | tr '\n' ' ')"
+  _hosts="${_hosts% }"
+
+  [ -n "${_hosts}" ] || return 0
+
+  local _message="terraform could not clone one or more modules: git was asked for credentials for '${_hosts}' and had none."
+  _message="${_message} On github.com this is normally GitHub's budget for unauthenticated requests (60/hour, counted against the source IP and shared by every runner behind the same NAT address) rather than a misconfiguration — the refusal arrives as a 401, which is why nothing in the log mentions a rate limit."
+  _message="${_message} Pass 'github-token' to this action so the module clones are authenticated."
+
+  if [ "${_init_failed}" == 'true' ]; then
+    echo "::error title=Module clone refused for want of credentials::${_message}"
+  else
+    # Reachable when only an additional-dirs init hit it and terraform still
+    # exited 0, or when a later attempt succeeded. Worth saying, not worth
+    # failing.
+    echo "::warning title=Module clone refused for want of credentials::${_message}"
+  fi
+
+  return 0
+}
+
 # ==========================================================
 log-info "'$(basename ${BASH_SOURCE[0]})' loaded."
