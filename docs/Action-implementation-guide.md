@@ -244,6 +244,28 @@ source even though the runner drops it.
 > job-level steps *do* honor `name:`, and the name wins over the run block. Give
 > every workflow step a `name:` there; the leading comment is optional.
 
+### Never write an Actions expression in an input `description`
+
+Actions parses `${{ ... }}` inside an `action.yml` input description, not just in
+`run:` blocks and `with:` values — and the `github` context does **not** exist in
+that position. A description that mentions, say, `${{ github.token }}` as an
+example value fails the **entire job** at `Set up job` with
+
+```text
+Unrecognized named-value: 'github'. Located at position 1 within expression: github.token
+##[error]Failed to load <owner>/<repo>/<ref>/<action>/action.yml
+```
+
+before a single step runs — and every job that uses the action, not only the one
+that passes that input.
+
+Nothing local catches this: the file is valid YAML, so `yaml.safe_load` passes,
+`actionlint` does not check `action.yml` descriptions, and no test suite loads
+the shim. It surfaces only when a calling repo runs the action.
+
+Describe the value in prose instead — "the caller's own workflow token is
+enough" — or name the context without the expression braces.
+
 ### Step shim pattern — simple inputs (strings, booleans)
 
 For inputs that are simple strings, pass them as environment variables. Use `set -o allexport` so that any variables set by the step script are automatically exported:
