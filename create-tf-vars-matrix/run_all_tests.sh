@@ -425,6 +425,36 @@ assert "negative: the error says the specification is empty" \
   grep -q 'The specification is an empty array' "${OUT_FILE}"
 
 # ----------------------------------------------------------------------
+# Per-environment overrides of the '*-yml' fields that fall back to a global
+# default. The stored value is the YAML the caller wrote, so it has to be
+# parsed before it can reach 'jq --argjson' — the merged fields have always
+# done that, these had not.
+# ----------------------------------------------------------------------
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n    - format\n"')"
+assert "a per-environment 'goals-yml' override is accepted" test "${LAST_EXIT}" -eq 0
+assert_eq "... and is parsed into a list, not left as a yaml string" \
+  '["init","format"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0].goals')"
+
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  terraform-init-additional-dirs-yml: |\n    - \"./main\"\n"')"
+assert "a per-environment 'terraform-init-additional-dirs-yml' override is accepted" \
+  test "${LAST_EXIT}" -eq 0
+assert_eq "... and is parsed into a list" \
+  '["./main"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0]["terraform-init-additional-dirs"]')"
+
+# The per-environment value wins outright; these fields replace rather than
+# merge, unlike the extra-envs family below.
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["goals-yml"] = "- init\n- format\n- validate\n- lint\n" | .["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n"')"
+assert_eq "a per-environment override replaces the global value" \
+  '["init"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0].goals')"
+
+# Malformed yaml in a per-environment override must say so, not surface as a
+# bare jq parse error from somewhere further down.
+run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n     bad: [indent\n"')"
+assert "negative: malformed yaml in a per-environment override fails" test "${LAST_EXIT}" -ne 0
+assert "negative: ... and the error names the field" \
+  grep -q "goals-yml" "${OUT_FILE}"
+
+# ----------------------------------------------------------------------
 # Type mismatch between the global and per-environment value of a merged
 # field. Better a loud jq failure than a silently mangled matrix.
 # ----------------------------------------------------------------------
