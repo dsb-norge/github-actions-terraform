@@ -11,9 +11,11 @@ export GITHUB_PATH=$(mktemp)
 export GITHUB_ACTION_PATH="${_this_script_dir}"
 export input_install_dir="${TEST_DIR}"
 
-set -o allexport
-source "${_this_script_dir}/step_add_to_path.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_add_to_path.sh"
+)
 
 echo ""
 echo "GITHUB_PATH appended with:"

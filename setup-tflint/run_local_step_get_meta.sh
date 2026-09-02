@@ -16,8 +16,11 @@ export input_runner_tool_cache="${RUNNER_TOOL_CACHE:-/tmp/runner-tool-cache}"
 export input_runner_os="Linux"
 export input_runner_arch="X64"
 
-set -o allexport
-source "${_this_script_dir}/step_get_meta.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_get_meta.sh"
+)
 
 echo ""
 echo "========================================"

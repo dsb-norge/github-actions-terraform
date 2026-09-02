@@ -15,8 +15,11 @@ export GITHUB_WORKSPACE="${TEST_DIR}"
 export input_config_file_path=""
 export input_working_directory="${TEST_DIR}"
 
-set -o allexport
-source "${_this_script_dir}/step_get_config.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_get_config.sh"
+)
 
 echo ""
 echo "========================================"

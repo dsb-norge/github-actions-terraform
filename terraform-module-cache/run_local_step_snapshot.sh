@@ -25,7 +25,8 @@ export input_cache_paths="envs/sandbox/.terraform/modules"
 export input_cache_hit="true"
 
 echo "=== Running step_snapshot.sh ==="
-source "${_this_script_dir}/step_snapshot.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_snapshot.sh")
 _exit=$?
 
 echo ""

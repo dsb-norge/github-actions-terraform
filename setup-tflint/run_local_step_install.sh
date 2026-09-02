@@ -31,9 +31,11 @@ export input_download_url="http://localhost:${PORT}/tflint.zip"
 export input_install_dir="${INSTALL_DIR}"
 export input_install_bin_path="${INSTALL_DIR}/tflint"
 
-set -o allexport
-source "${_this_script_dir}/step_install.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_install.sh"
+)
 
 echo ""
 echo "========================================"

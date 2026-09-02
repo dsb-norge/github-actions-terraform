@@ -24,7 +24,8 @@ EOF
 export input_working_directory="${WORK_DIR}"
 export input_config_file_path=""
 
-source "${_this_script_dir}/step_get_config.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_get_config.sh")
 
 echo ""
 echo "========================================"

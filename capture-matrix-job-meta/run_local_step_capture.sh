@@ -117,8 +117,8 @@ export input_steps_context_json='{
   }
 }'
 
-# Source the main script
-source "${_this_script_dir}/step_capture.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_capture.sh")
 
 # Display GitHub Actions outputs
 echo ""

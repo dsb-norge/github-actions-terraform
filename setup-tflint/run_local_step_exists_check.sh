@@ -16,9 +16,11 @@ export input_install_dir="${INSTALL_DIR}"
 export input_install_bin_path="${INSTALL_DIR}/tflint"
 
 echo "--- Run 1: nothing installed yet ---"
-set -o allexport
-source "${_this_script_dir}/step_exists_check.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_exists_check.sh"
+)
 echo "  outputs:"
 cat "${GITHUB_OUTPUT}"
 
@@ -29,9 +31,11 @@ chmod +x "${INSTALL_DIR}/tflint"
 
 echo ""
 echo "--- Run 2: binary present at ${INSTALL_DIR}/tflint ---"
-set -o allexport
-source "${_this_script_dir}/step_exists_check.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_exists_check.sh"
+)
 echo "  outputs:"
 cat "${GITHUB_OUTPUT}"
 

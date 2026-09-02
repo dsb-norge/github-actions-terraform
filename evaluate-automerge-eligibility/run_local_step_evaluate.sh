@@ -109,10 +109,11 @@ echo ""
 echo "Created test metadata file: matrix-job-meta-sandbox.json"
 echo ""
 
-# Run the step
-set -o allexport
-source "${_this_script_dir}/step_evaluate.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_evaluate.sh"
+)
 
 # Display GitHub Actions outputs
 echo ""

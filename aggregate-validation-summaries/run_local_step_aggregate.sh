@@ -135,9 +135,11 @@ echo "============================================================"
 echo "Running step_aggregate.sh..."
 echo "============================================================"
 
-set -o allexport
-source "${_this_script_dir}/step_aggregate.sh"
-set +o allexport
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_aggregate.sh"
+)
 
 echo ""
 echo "============================================================"

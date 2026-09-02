@@ -53,8 +53,8 @@ export input_platforms="linux_amd64
 linux_arm64
 darwin_arm64"
 
-# Source the main script
-source "${_this_script_dir}/step_verify_lock.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_verify_lock.sh")
 
 # Display GitHub Actions outputs and step summary
 echo ""
