@@ -356,8 +356,11 @@ export input_json_data='{
   "nested": { "a": 1 }
 }'
 
-# Source the main script
-source "${_this_script_dir}/step_<name>.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(
+  set -o allexport
+  source "${_this_script_dir}/step_<name>.sh"
+)
 
 # Display GitHub Actions outputs
 echo ""
@@ -373,6 +376,12 @@ cat "${GITHUB_OUTPUT}"
 - Export **all** `input_*` variables that the step expects.
 - Use **realistic test data** that exercises the happy path — this is a debugging aid, not a test harness.
 - Print the contents of `$GITHUB_OUTPUT` at the end so you can verify outputs.
+- **Source the step in a subshell — `( source … )` — never bare.** A step script
+  ends in `exit` (see "Why only `exit`" above), and a bare `source` runs it in
+  *this* shell, so that `exit` ends the runner too. Everything after the call —
+  the `$GITHUB_OUTPUT` dump the runner exists to show you — silently never
+  prints, and the runner still exits `0`, so nothing looks wrong. Wrap it, and
+  read the step's exit code from `$?` on the line after the closing paren.
 
 ---
 

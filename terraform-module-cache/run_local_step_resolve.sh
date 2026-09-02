@@ -50,7 +50,8 @@ export input_additional_dirs_json='["./main", "modules/floating"]'
 export input_environment="sandbox-env"
 
 echo "=== Running step_resolve.sh ==="
-source "${_this_script_dir}/step_resolve.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_resolve.sh")
 _exit=$?
 
 echo ""

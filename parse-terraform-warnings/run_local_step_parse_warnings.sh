@@ -16,7 +16,8 @@ export input_console_output_file="${_this_script_dir}/test-data/t05_multiple_blo
 export input_step_label="plan"
 export input_environment_name="sandbox"
 
-source "${_this_script_dir}/step_parse_warnings.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_parse_warnings.sh")
 
 echo ""
 echo "========================================"

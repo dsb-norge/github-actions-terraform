@@ -39,7 +39,8 @@ export input_cache_hit="true"
 export input_snapshot_dir="${SNAPSHOT_DIR}"
 
 echo "=== Running step_verify.sh ==="
-source "${_this_script_dir}/step_verify.sh"
+# Source the main script in a subshell so 'exit' doesn't terminate this runner
+(source "${_this_script_dir}/step_verify.sh")
 _exit=$?
 
 echo ""
