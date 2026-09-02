@@ -132,9 +132,10 @@ fatal: could not read Username for 'https://github.com': No such device or addre
 
 which terraform reports as `Failed to download module` — for a subset of the modules that varies run to run, since it is a throttle and not a misconfiguration. The workflow therefore hands `${{ github.token }}` to `terraform-init`, which authenticates the clones so they are budgeted per repository (1 000 requests/hour) instead. Nothing is required of the calling repository; `contents: read` is enough.
 
-One thing worth knowing:
+Two things worth knowing:
 
 - **A runner that already has github.com credentials keeps them.** When the runner's global or system git config carries an `extraheader`, a credential helper or an `insteadOf` rewrite for github.com, the token is not injected — a repository whose private modules are cloned with runner-level credentials must keep working. The init log says which of the two happened.
+- **The error is annotated.** If a clone is refused for want of credentials anyway, the init step emits an annotation naming the host and the likely cause, rather than leaving `Failed to download module` to be diagnosed from first principles.
 
 Note that the module cache normally hides this problem: on a cache hit nothing is cloned at all, so the failure surfaces only when the cache misses — after a module pin changes, for instance. See [Terraform-module-cache.md](./Terraform-module-cache.md).
 

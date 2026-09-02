@@ -140,6 +140,13 @@ function main {
     sum_exit_codes=$((sum_exit_codes + v))
   done
 
+  # After the sum, so the annotation can say whether it actually broke the init.
+  if [ "${sum_exit_codes}" == '0' ]; then
+    annotate-refused-clones "${console_file}" 'false'
+  else
+    annotate-refused-clones "${console_file}" 'true'
+  fi
+
   return ${sum_exit_codes}
 }
 
