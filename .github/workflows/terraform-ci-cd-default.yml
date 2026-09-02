@@ -762,6 +762,27 @@ jobs:
           snapshot-dir: ${{ steps.snapshot-module-cache.outputs.snapshot-dir }}
         continue-on-error: true # if this cannot run, safe-to-save stays unset and nothing is saved
 
+      # Terraform installs a module with a git source by cloning it, and the
+      # clone's '.git' stays behind afterwards — for one AVM module that is
+      # 932 KiB of the 1.5 MiB installed. Terraform never reads it again, so it
+      # comes off before the archive is made rather than being carried into
+      # every restore.
+      #
+      # Conditioned exactly like the save below: a run that is not saving keeps
+      # its module trees exactly as init produced them.
+      - name: "🧹 Prune git metadata from the module cache"
+        id: prune-module-cache
+        if: |
+          steps.module-cache.outputs.cache-enabled == 'true'
+          && steps.init.outcome == 'success'
+          && steps.restore-module-cache.outputs.cache-hit != 'true'
+          && steps.post-init-check.outputs.safe-to-save == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v0
+        with:
+          phase: prune
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+        continue-on-error: true # a prune that cannot run must not stop the save
+
       # Stores the modules for the next run, when init succeeded, nothing was
       # stored under this key already, and the check above found nothing that
       # can move.

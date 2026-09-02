@@ -200,11 +200,11 @@ an entry is written (§4.5.2).
 ### 4.1 Shape
 
 One new composite action, `terraform-module-cache`, does the work. Because
-that work straddles `terraform init`, the action has three phases selected by a
+that work straddles `terraform init`, the action has four phases selected by a
 `phase` input — `resolve` before the restore, `snapshot` after it, `verify`
-after init and before the save. They are one action rather than three so the
-source classifier is genuinely one function (§4.5.2); a phase is a step guarded
-by `if: inputs.phase == '<phase>'`.
+after init, and `prune` immediately before the save. They are one action rather
+than four so the source classifier is genuinely one function (§4.5.2); a phase
+is a step guarded by `if: inputs.phase == '<phase>'`.
 
 The workflow does an explicit **restore → init → save**, with no `restore-keys`
 (§7.1), rather than a single `actions/cache` step.
@@ -217,9 +217,10 @@ flowchart TD
     snap["📸 terraform-module-cache (phase - snapshot)<br>copies each included dir's modules.json to RUNNER_TEMP"]
     init["⚙️ terraform-init<br>(unchanged)"]
     verify["🔍 terraform-module-cache (phase - verify)<br>digest completeness + save safety gate<br>reads each included dir's modules.json"]
+    prune["🧹 terraform-module-cache (phase - prune)<br>drops '.git' from the cache paths<br>gated exactly like the save"]
     save["💾 actions/cache/save@v5<br>if init succeeded AND key missed AND safe to save"]
 
-    setup --> resolve --> restore --> snap --> init --> verify --> save
+    setup --> resolve --> restore --> snap --> init --> verify --> prune --> save
 ```
 
 ### 4.2 Why restore/save split, and not one `actions/cache` step
@@ -486,6 +487,42 @@ still satisfies the constraint the config asked for — and a pinned module whos
 contents float is already non-reproducible today, with or without this cache.
 §11 records the shape of a fix.
 
+### 4.6 Pruning git metadata before the save
+
+Terraform installs a module with a git source by shelling out to `git clone`,
+and the clone's `.git` stays in the tree afterwards. That covers more than the
+configurations that write `git::` themselves: the public registry resolves a
+registry module to a git source, so
+`source = "Azure/avm-res-keyvault-vault/azurerm"` is installed by cloning
+`https://github.com/Azure/terraform-azurerm-avm-res-keyvault-vault`. Terraform
+also runs `git submodule update --init --recursive` on what it cloned, which
+leaves a `.git` *file* — a gitlink — for any nested checkout.
+
+It is the larger half of the tree. One AVM module measures 1.5 MiB installed:
+580 KiB of module, 932 KiB of `.git`.
+
+Terraform never reads it again. Reconciliation is against the manifest and the
+module directories (§2.1, §2.6), so a pruned tree restores and skips the
+download exactly as an unpruned one does — verified both in place and through a
+full archive/restore cycle before this was implemented, and re-checkable with
+the §10 snippet. So the `prune` phase removes it from every cache path
+immediately before the archive is made.
+
+Two properties are deliberate:
+
+- **It is gated exactly like the save.** A run that is not going to save keeps
+  its module trees exactly as init produced them. Pruning a tree that is about
+  to be archived is housekeeping; pruning one that is merely going to be used is
+  a side-effect nobody asked for.
+- **The `rm -rf` cannot leave the cache paths.** §11 rejects orphan pruning
+  partly because it means `rm -rf` inside a caller's checkout driven by the same
+  parser whose under-reads are unsafe. This is not that: the name is fixed
+  (`.git`, nothing pattern-matched), the root is a path the resolve step emitted,
+  and the step re-checks that the path both ends in `.terraform/modules` and
+  resolves inside `$GITHUB_WORKSPACE` before deleting anything. Invariant 8.9.
+  The repository's own `.git` sits outside every cache path and is therefore
+  never in scope — asserted by `t38` and `t45`.
+
 ## 5. Workflow wiring
 
 Only the `resolve` step carries the goal gate. Everything downstream keys off
@@ -512,7 +549,7 @@ if: >-
   && steps.post-init-check.outputs.safe-to-save == 'true'
 ```
 
-**No module-cache step may fail the job.** All five carry
+**No module-cache step may fail the job.** All six carry
 `continue-on-error: true`. The cache is an optimisation, so the worst any
 problem with it may cost is a cold init: a cache-service failure, a concurrent
 run winning the race to write the same key, or a bug in the audit itself.
@@ -526,14 +563,19 @@ With no `restore-keys`, `cache-hit` is simply whether the entry existed — so t
 save runs when there is something new to write *and* the resolved graph says it
 is safe to write it.
 
-Two further invocations of the action support this:
+Three further invocations of the action support this:
 
 - `phase: snapshot` after the restore — copies each included directory's
   `modules.json` to `$RUNNER_TEMP`, so §4.4.2 has a before-image;
 - `phase: verify` after init — walks the same directories once, reading each
   `modules.json` to do both post-init jobs in one pass: compare against the
   before-image (completeness, §4.4.2) and classify every recorded `Source`
-  (safety, §4.5.2), emitting `safe-to-save`.
+  (safety, §4.5.2), emitting `safe-to-save`;
+- `phase: prune` after that — drops the git metadata terraform's clones left
+  behind, so it is not carried into the archive and back out of every restore
+  (§4.6). It repeats the save's own `if:` rather than keying off
+  `cache-enabled` alone, because it must not touch a tree that is not about to
+  be saved.
 
 Both belong to the action rather than to inline `run:` blocks in the workflow.
 The classifier has to be shared (§4.5.2) and workflow YAML cannot share code
@@ -713,7 +755,12 @@ than merely imperfect:
 7. **The cache key is computed exactly once**, in the resolve step, and consumed
    by both the restore and the save step. §4.2.
 8. **The audit must err toward reading too much HCL, never too little.** §4.5.1.
-9. **No large payload through step outputs.** Paths and short strings only; the
+9. **The prune deletes only `.git`, and only under a resolved cache path.** A
+   fixed name, a root the resolve step emitted, and a re-check that the path
+   ends in `.terraform/modules` and resolves inside `$GITHUB_WORKSPACE` (§4.6).
+   Widening any of the three turns a size optimisation into an `rm -rf` over a
+   caller's checkout.
+10. **No large payload through step outputs.** Paths and short strings only; the
    excluded-dirs detail goes through a file. `capture-matrix-job-meta` captures
    every step's outputs via `toJSON(steps)`, and this is the documented ARG_MAX
    trip-wire.
@@ -783,6 +830,22 @@ Post-init save gate (§4.5.2):
 | `t32_gate_registry_range_invisible` | manifests produced from `~> 0.4` and from `0.4.3` are identical → both pass the gate. Asserts the documented blindness (§2.7, §4.5.3), so a future reader sees it is intended rather than a bug |
 | `t33_gate_classifier_input_kind` | the same source string classified as config text vs as a manifest `Source` → a registry entry from a manifest is never called mutable for lack of a constraint; the divergence is explicit, not accidental |
 | `t34_gate_init_failed` | init non-zero → save already gated on outcome; the gate does not crash on a missing or partial manifest |
+
+Git-metadata prune (§4.6):
+
+| Fixture | Expectation |
+|---|---|
+| `t35_prune_clone_metadata` | the clone's `.git` directory goes; `modules.json` and the module sources stay; both entries counted and the freed size reported |
+| `t36_prune_gitlink_file` | the `.git` *file* a submodule checkout leaves is removed too, and its directory is left in place |
+| `t37_prune_nested_depth` | metadata several levels down is reached |
+| `t38_prune_leaves_repository` | the checkout's own `.git` is untouched |
+| `t39_prune_multiple_paths` | every cache path is pruned and the counts add up |
+| `t40_prune_nothing_to_do` | a tree with no git metadata → count `0`, said in the log, no failure |
+| `t41_prune_missing_path` | a cache path that does not exist → logged, exit `0`; the prune is never what fails a run |
+| `t42_prune_no_paths` | empty `cache-paths` → count `0`, exit `0` |
+| `t43_prune_refuses_escape` | `../<sibling>/.terraform/modules` → refused, the `.git` outside the workspace survives (invariant 8.9) |
+| `t44_prune_refuses_non_module_path` | a path that is not a `.terraform/modules` tree → refused, left alone |
+| `t45_prune_root_project` | `./.terraform/modules`, the shape `normalize-dir` emits for a project at the repository root → pruned, and the repository's `.git` still survives |
 
 ## 10. Re-verifying the terraform behaviour
 
@@ -859,6 +922,28 @@ them. `terraform init` accepts some malformed single-line block forms that
 looks exactly like a pinning bug in the audit. (`module "a.b"` is worth knowing
 about too: it crashes terraform outright, so dotted labels cannot occur in a
 config that works, and the dot-path key namespace is unambiguous.)
+
+The §4.6 claim — that terraform does not care whether `.git` is still there —
+is equally version-dependent:
+
+```bash
+# 4.6 a pruned tree still skips the download, in place and through an archive
+mkdir -p /tmp/tf-prune && cd /tmp/tf-prune
+cat >main.tf <<'EOF'
+module "kv" {
+  source  = "Azure/avm-res-keyvault-vault/azurerm"
+  version = "0.10.2"
+}
+EOF
+terraform init -backend=false                    # clones; leaves .terraform/modules/kv/.git
+du -sh .terraform/modules                        # expect ~1.5M
+find .terraform/modules -name .git -prune -exec rm -rf {} +
+du -sh .terraform/modules                        # expect ~580K
+terraform init -backend=false | grep Downloading # expect: no output — nothing re-downloaded
+tar -czf /tmp/tf-prune-cache.tgz .terraform/modules
+rm -rf .terraform/modules && tar -xzf /tmp/tf-prune-cache.tgz
+terraform init -backend=false | grep Downloading # expect: no output, from the restored archive
+```
 
 ## 11. Out of scope / follow-ups
 

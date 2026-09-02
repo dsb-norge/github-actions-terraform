@@ -2,12 +2,13 @@
 #
 # Test runner for terraform-module-cache.
 #
-# The action has three steps, so tests are organised per step and sourced from
+# The action has four steps, so tests are organised per step and sourced from
 # here — shared counters, one canonical summary. See
 # docs/Action-implementation-guide.md and docs/Testing-in-ci.md.
 #
-# No terraform binary is needed: the resolve phase reads .tf files and the
-# snapshot/verify phases read modules.json, so every fixture is static text.
+# No terraform binary is needed: the resolve phase reads .tf files, the
+# snapshot/verify phases read modules.json and the prune phase only moves files
+# around, so every fixture is static text.
 #
 # Fixture ids map to the scenarios in docs/Terraform-module-cache.md §9.
 #
@@ -71,7 +72,11 @@ run_step() {
   # Each step gets a fresh outputs file, as it would on a runner. Without this
   # a second run in the same fixture appends, and out_value returns both.
   : >"${GITHUB_OUTPUT}"
-  (bash "${_this_script_dir}/${script}") >"${STEP_LOG}" 2>&1
+  # '-e -o pipefail' matches the shell GitHub sources a composite step's script
+  # in. A command whose non-zero status is normal — a find that hits an
+  # unreadable path, a grep that matches nothing — ends the step there, so a
+  # harness without errexit passes code that fails on every real run.
+  (bash -e -o pipefail "${_this_script_dir}/${script}") >"${STEP_LOG}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -81,6 +86,7 @@ run_snapshot() {
   export input_snapshot_dir="${RUNNER_TEMP}/module-cache-manifests"
 }
 run_verify() { run_step step_verify.sh; }
+run_prune() { run_step step_prune.sh; }
 
 # Read a value from GITHUB_OUTPUT, handling both 'k=v' and the heredoc form
 # that set-multiline-output writes.
@@ -138,6 +144,10 @@ source "${_this_script_dir}/run_tests_step_resolve.sh"
 echo ""
 echo -e "${YELLOW}=== step_snapshot.sh / step_verify.sh ===${NC}"
 source "${_this_script_dir}/run_tests_step_verify.sh"
+
+echo ""
+echo -e "${YELLOW}=== step_prune.sh ===${NC}"
+source "${_this_script_dir}/run_tests_step_prune.sh"
 
 # --------------------------------------------------------------------------
 # Summary

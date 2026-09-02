@@ -3,7 +3,7 @@ description: |
   Decides what may be cached of terraform's per-directory '.terraform/modules'
   trees, under what key, and whether what init produced is safe to write.
 
-  Invoked three times per job, selected by the 'phase' input:
+  Invoked four times per job, selected by the 'phase' input:
 
     resolve  - before the cache restore. Audits every init directory, follows
                local module sources through the repository, and emits the cache
@@ -13,13 +13,17 @@ description: |
     verify   - after init, before the save. Warns when the module set changed
                under an unchanged key, and refuses the save when the resolved
                module graph contains anything that can move.
+    prune    - after the save gate, immediately before the save. Removes the
+               git metadata terraform's module clones leave behind, which
+               terraform never reads again and which is the larger half of the
+               archive.
 
   Full design, including why there are no restore-keys and why the save must run
   before any other terraform stage: docs/Terraform-module-cache.md
 author: "Peder Schmedling"
 inputs:
   phase:
-    description: "Which phase to run: 'resolve', 'snapshot' or 'verify'."
+    description: "Which phase to run: 'resolve', 'snapshot', 'verify' or 'prune'."
     required: true
   project-dir:
     description: |
@@ -40,8 +44,8 @@ inputs:
     default: ""
   cache-paths:
     description: |
-      snapshot, verify: the newline-separated cache paths emitted by the resolve
-      phase.
+      snapshot, verify, prune: the newline-separated cache paths emitted by the
+      resolve phase.
     required: false
     default: ""
   cache-hit:
@@ -74,6 +78,12 @@ outputs:
   safe-to-save:
     description: "verify: 'true' only when every included directory's resolved graph is immutable."
     value: ${{ steps.verify.outputs.safe-to-save }}
+  pruned-count:
+    description: "prune: how many '.git' entries were removed from the cache paths."
+    value: ${{ steps.prune.outputs.pruned-count }}
+  freed-kib:
+    description: "prune: how much smaller the cache paths got, in KiB."
+    value: ${{ steps.prune.outputs.freed-kib }}
 runs:
   using: "composite"
   steps:
@@ -126,3 +136,16 @@ runs:
         export input_cache_paths
         set -o allexport
         source "${{ github.action_path }}/step_verify.sh"
+
+    - id: prune
+      if: inputs.phase == 'prune'
+      shell: bash
+      run: |
+        # Drop the git metadata terraform's module clones left behind
+        input_cache_paths=$(cat <<'EOF'
+        ${{ inputs.cache-paths }}
+        EOF
+        )
+        export input_cache_paths
+        set -o allexport
+        source "${{ github.action_path }}/step_prune.sh"
