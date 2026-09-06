@@ -165,13 +165,51 @@ export input_plan_console_file="${_this_script_dir}/test-data/plan_output_only_c
 run_test "Output-only changes (no resource changes)" \
   "0" "0" "0" "0" "0" "0" "true"
 
-# Test 6: Empty input (no file specified)
+# Test 6: Output-only changes in a plan that also defers a data source read.
+# Regression guard. Terraform prints "…without changing any real infrastructure."
+# only for a plan with no resource actions at all. A deferred data read
+# ("# data.x.y will be read during apply") counts as an action, so Terraform
+# instead emits the normal action list plus "Plan: 0 to add, 0 to change,
+# 0 to destroy." and no such sentence — while outputs are still the only thing
+# that changes. Detection therefore keys off the "Changes to Outputs:" header,
+# not the sentence; keying off the sentence rendered these plans as
+# "Plan: no changes ✅" with the output diff hidden.
+export input_plan_console_file="${_this_script_dir}/test-data/plan_output_only_changes_with_data_read.log"
+#                   imports adds changes destroys moves removes  has-output-only-changes
+run_test "Output-only changes alongside a deferred data source read" \
+  "0" "0" "0" "0" "0" "0" "true"
+
+# Test 7: Deferred data source read, no output changes.
+# Same "Plan: 0 to add, 0 to change, 0 to destroy." shape as test 6 but with no
+# "Changes to Outputs:" section, so the flag must stay false and consumers keep
+# rendering "no changes" — a data read changes nothing.
+#
+# The fixture also carries the literal words "Changes to Outputs:" indented
+# inside a heredoc attribute value. That guards the anchor in the detection
+# grep: Terraform always prints the real header unindented, so an unanchored
+# match would report output-only changes for a plan that has none.
+export input_plan_console_file="${_this_script_dir}/test-data/plan_0_changes_with_data_read.log"
+#                   imports adds changes destroys moves removes  has-output-only-changes
+run_test "Deferred data source read without output changes" \
+  "0" "0" "0" "0" "0" "0" "false"
+
+# Test 8: Resource changes *and* output changes.
+# The flag is gated on every resource count being zero, so a plan that touches
+# both must not claim to be output-only — it already renders its extract on the
+# strength of a non-zero total, under the "N changes" summary rather than the
+# "output-only changes" one.
+export input_plan_console_file="${_this_script_dir}/test-data/plan_1_change_with_output_changes.log"
+#                   imports adds changes destroys moves removes  has-output-only-changes
+run_test "Resource changes alongside output changes are not output-only" \
+  "0" "0" "1" "0" "0" "0" "false"
+
+# Test 9: Empty input (no file specified)
 export input_plan_console_file=""
 #                   imports adds changes destroys moves removes
 run_test "Empty input file path yields fallback values" \
   "?" "?" "?" "?" "?" "?"
 
-# Test 7: Non-existent file (empty file = file exists but is empty)
+# Test 10: Non-existent file (empty file = file exists but is empty)
 _empty_file=$(mktemp)
 export input_plan_console_file="${_empty_file}"
 #                   imports adds changes destroys moves removes

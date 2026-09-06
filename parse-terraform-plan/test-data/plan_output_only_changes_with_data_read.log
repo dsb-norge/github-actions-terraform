@@ -1,0 +1,41 @@
+data.azurerm_client_config.current: Reading...
+data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZA==]
+module.identity_resource_groups.azurerm_user_assigned_identity.this["uai-example-notifier"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-identity-example/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-example-notifier]
+module.identity_resource_groups.azurerm_user_assigned_identity.this["uai-example-cert-monitor"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-identity-example/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-example-cert-monitor]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+ <= read (data resources)
+
+Terraform will perform the following actions:
+
+  # data.azapi_resource.example_cluster_primary will be read during apply
+  # (config will be reloaded to verify a check block)
+ <= data "azapi_resource" "example_cluster_primary" {
+      + exists                 = true
+      + id                     = "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-k8s/providers/Microsoft.ContainerService/managedClusters/aks-example-cluster-1"
+      + location               = "norwayeast"
+      + name                   = "aks-example-cluster-1"
+      + output                 = {
+          + properties = {
+              + oidcIssuerProfile = {
+                  + issuerURL = "https://norwayeast.oic.prod-aks.azure.com/00000000-1111-2222-3333-444444444444/55555555-6666-7777-8888-999999999999/"
+                }
+            }
+        }
+      + parent_id              = "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-k8s"
+      + response_export_values = [
+          + "properties.oidcIssuerProfile.issuerURL",
+        ]
+      + type                   = "Microsoft.ContainerService/managedClusters@2024-09-01"
+    }
+
+Plan: 0 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + identity_client_ids     = {
+      + rg-identity-example = {
+          + uai-example-cert-monitor = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+          + uai-example-notifier     = "11111111-2222-3333-4444-555555555555"
+        }
+    }

@@ -4,7 +4,7 @@
 #
 # Parses a Terraform plan's console output file to extract resource change counts.
 # Outputs the number of resources to be added, changed, destroyed, imported,
-# moved, and removed.
+# moved, and removed, plus a flag for plans that change outputs but no resources.
 #
 # Required environment variables:
 #   input_plan_console_file  - Path to the plan console output file
@@ -29,10 +29,11 @@ function main {
   local destroys='?'
   local moves='?'
   local removes='?'
-  # Tracks Terraform's "without changing any real infrastructure" branch.
-  # Independent of count-total because both "really no changes" and "output-only
-  # changes" set every resource count to 0 — callers need this flag to tell
-  # them apart and decide whether to render the plan extract.
+  # Tracks "this plan changes outputs but no resources". Independent of
+  # count-total because both "really no changes" and "output-only changes" set
+  # every resource count to 0 — callers need this flag to tell them apart and
+  # decide whether to render the plan extract. Determined after the counts are
+  # known; see the detection block near the end of main.
   local has_output_only_changes='false'
 
   if [ ! -z "${input_plan_console_file:-}" ]; then
@@ -47,14 +48,15 @@ function main {
         changes=0
         destroys=0
       elif grep -q "without changing any real infrastructure" "${input_plan_console_file}"; then
-        # Output-only changes: Terraform reports changes to outputs but no resource changes.
-        # There is no "Plan:" summary line in this case.
-        log-info "detected output-only changes (no resource changes)"
+        # Terraform's wholly-empty-plan branch: it prints this sentence in place
+        # of a "Plan:" summary line, so there is nothing to parse and every
+        # resource count is zero. The output-only flag is not set here — the
+        # count-based detection near the end of main owns that decision.
+        log-info "detected plan with no resource actions and no 'Plan:' line"
         imports=0
         adds=0
         changes=0
         destroys=0
-        has_output_only_changes='true'
       else
         imports=0 # not always in the plan string
         local plan_line
@@ -122,13 +124,6 @@ function main {
     fi
   fi
 
-  set-output 'import-count' "${imports}"
-  set-output 'add-count' "${adds}"
-  set-output 'change-count' "${changes}"
-  set-output 'destroy-count' "${destroys}"
-  set-output 'move-count' "${moves}"
-  set-output 'remove-count' "${removes}"
-
   # Sum across every category. Computed here (single source of truth) so a
   # future new count type only needs to be added to this sum once and every
   # consumer picks it up — GitHub Actions expressions can't do arithmetic.
@@ -138,6 +133,35 @@ function main {
   if [[ "${adds}${changes}${destroys}${imports}${moves}${removes}" =~ ^[0-9]+$ ]]; then
     total=$((adds + changes + destroys + imports + moves + removes))
   fi
+
+  # Output-only detection keys off the "Changes to Outputs:" header, not off
+  # Terraform's "…without changing any real infrastructure." sentence.
+  #
+  # That sentence is printed only when the plan holds no resource actions at
+  # all. A plan that defers a data source — "# data.x.y will be read during
+  # apply", emitted for a check block or for config that depends on values not
+  # yet known — does hold an action, so Terraform renders the normal action
+  # list plus "Plan: 0 to add, 0 to change, 0 to destroy." and no sentence,
+  # even though outputs are the only thing that will actually change. Keying
+  # off the sentence missed those plans, and consumers rendered them as
+  # "no changes" while the output diff sat unseen inside the plan extract.
+  #
+  # Gating on total==0 keeps plans that touch both resources and outputs out of
+  # this branch: they already render their extract on the strength of a
+  # non-zero total. The header is anchored because Terraform always prints it
+  # unindented, whereas a resource diff can carry the same words indented
+  # inside a heredoc or a string attribute.
+  if [ "${total}" = '0' ] && grep -q '^Changes to Outputs:' "${input_plan_console_file}"; then
+    log-info "detected output-only changes (outputs change, no resource changes)"
+    has_output_only_changes='true'
+  fi
+
+  set-output 'import-count' "${imports}"
+  set-output 'add-count' "${adds}"
+  set-output 'change-count' "${changes}"
+  set-output 'destroy-count' "${destroys}"
+  set-output 'move-count' "${moves}"
+  set-output 'remove-count' "${removes}"
   set-output 'total-count' "${total}"
   set-output 'has-output-only-changes' "${has_output_only_changes}"
 

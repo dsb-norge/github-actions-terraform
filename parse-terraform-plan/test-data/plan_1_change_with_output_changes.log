@@ -1,0 +1,22 @@
+azurerm_resource_group.example: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-app-prod]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # azurerm_resource_group.example will be updated in-place
+  ~ resource "azurerm_resource_group" "example" {
+        id       = "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-app-prod"
+        name     = "rg-example-app-prod"
+      ~ tags     = {
+          ~ "Description" = "Example application" -> "Example application, production"
+        }
+        # (1 unchanged attribute hidden)
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+
+Changes to Outputs:
+  ~ resource_group_description = "Example application" -> "Example application, production"
