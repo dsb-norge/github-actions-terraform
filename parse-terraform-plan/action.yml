@@ -39,10 +39,14 @@ outputs:
     value: ${{ steps.parse-plan-output.outputs.total-count }}
   has-output-only-changes:
     description: |
-      "true" when the plan reports changes to outputs but no resource changes
-      (Terraform's "without changing any real infrastructure" path), "false"
-      otherwise. Lets consumers render output-only plans differently from
-      truly-no-change plans even though both yield count-total=0.
+      "true" when the plan reports changes to outputs but no resource changes,
+      "false" otherwise. Lets consumers render output-only plans differently
+      from truly-no-change plans even though both yield count-total=0.
+
+      Detected from the "Changes to Outputs:" header together with count-total
+      being 0. Terraform's "without changing any real infrastructure" sentence
+      is not a reliable signal on its own: it is omitted whenever the plan also
+      defers a data source read, which output-only plans commonly do.
     value: ${{ steps.parse-plan-output.outputs.has-output-only-changes }}
 runs:
   using: "composite"

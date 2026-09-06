@@ -1,0 +1,31 @@
+data.azurerm_client_config.current: Reading...
+data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZA==]
+module.identity_resource_groups.azurerm_user_assigned_identity.this["uai-example-notifier"]: Refreshing state... [id=/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-identity-example/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai-example-notifier]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+ <= read (data resources)
+
+Terraform will perform the following actions:
+
+  # data.azapi_resource.example_cluster_primary will be read during apply
+  # (config will be reloaded to verify a check block)
+ <= data "azapi_resource" "example_cluster_primary" {
+      + exists                 = true
+      + location               = "norwayeast"
+      + name                   = "aks-example-cluster-1"
+      + parent_id              = "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-example-k8s"
+      + type                   = "Microsoft.ContainerService/managedClusters@2024-09-01"
+    }
+
+  # data.local_file.release_notes will be read during apply
+  # (config refers to values not yet known)
+ <= data "local_file" "release_notes" {
+      + content  = <<-EOT
+            Changes to Outputs: see the runbook before promoting this release.
+        EOT
+      + filename = "./release-notes.txt"
+      + id       = (known after apply)
+    }
+
+Plan: 0 to add, 0 to change, 0 to destroy.
