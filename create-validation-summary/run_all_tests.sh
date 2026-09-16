@@ -81,6 +81,9 @@ reset_defaults() {
   # plan-tag-comment-id: empty default → legacy footer-style head body.
   # Tests that exercise the Links-row branch override this with a fake id.
   export input_plan_tag_comment_id=""
+  # output-file-suffix: empty default → files named tf-comment-<env>-head.md
+  # / -plan.md. The suffix tests override this.
+  export input_output_file_suffix=""
   export input_job_check_run_id="87654321"
 
   export GITHUB_SERVER_URL="https://github.com"
@@ -99,15 +102,18 @@ run_test() {
 
   echo -e "${BLUE}TEST ${TESTS_RUN}: ${test_name}${NC}"
 
-  # Set up fresh GITHUB_OUTPUT
+  # Set up fresh GITHUB_OUTPUT and a fresh RUNNER_TEMP (the body files land
+  # there; a fresh dir per test means a stale file from a previous test can
+  # never satisfy an assertion).
   export GITHUB_OUTPUT=$(mktemp)
+  export RUNNER_TEMP=$(mktemp -d)
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   export GITHUB_WORKSPACE="${_this_script_dir}"
 
-  # Run step in a subshell
+  # Run step in a subshell. No allexport — the action.yml shim deliberately
+  # omits it (see the shim comment); the harness matches production.
   local exit_code
   (
-    set -o allexport
     source "${_this_script_dir}/step_create_validation_summary.sh"
   ) > /tmp/test_output.txt 2>&1
   exit_code=$?
@@ -120,13 +126,18 @@ run_test() {
     failures+="  exit code: expected 0, got ${exit_code}\n"
   fi
 
-  # Get outputs (split: head-summary + plan-extract). Most assertions look
-  # for substring presence/absence and are agnostic to which output a thing
-  # lives in — we pass them a `summary` that concatenates both. Byte-exact
-  # golden tests use the explicit head/plan args (3 and 4) instead.
-  local actual_head actual_plan
-  actual_head=$(get_output "head-summary")
-  actual_plan=$(get_output "plan-extract")
+  # Get the two bodies by reading the files named by the *-file outputs.
+  # Most assertions look for substring presence/absence and are agnostic to
+  # which body a thing lives in — we pass them a `summary` that concatenates
+  # both. Byte-exact golden tests use the explicit head/plan args (3 and 4).
+  # $(cat) strips trailing newlines exactly as the old multiline-output
+  # reader did, so every golden written against the string outputs still
+  # holds against the files.
+  local actual_head actual_plan head_file plan_file
+  head_file=$(get_output "head-summary-file")
+  plan_file=$(get_output "plan-extract-file")
+  actual_head=""; [ -n "${head_file}" ] && [ -f "${head_file}" ] && actual_head=$(cat "${head_file}")
+  actual_plan=""; [ -n "${plan_file}" ] && [ -f "${plan_file}" ] && actual_plan=$(cat "${plan_file}")
   local actual_prefix actual_summary
   actual_prefix=$(echo "${actual_head}" | head -n1)
   actual_summary="${actual_head}
@@ -159,6 +170,7 @@ ${actual_plan}"
 
   # Cleanup
   rm -f "${GITHUB_OUTPUT}"
+  rm -rf "${RUNNER_TEMP}"
 }
 
 # --------------------------------------------------
@@ -1933,11 +1945,11 @@ export input_warning_count="1"
 export input_warnings_markdown_file=$(make_warnings_md default)
 run_test "Warnings collapser sits AFTER plan-block in plan-extract" assert_warnings_collapser_after_plan_block
 
-assert_warnings_included_in_legacy_summary() {
+assert_warnings_included_in_concatenated_bodies() {
   local prefix="${1}"
   local summary="${2}"
   if [[ "${summary}" != *'⚠️ 2 warnings</summary>'* ]]; then
-    echo "  legacy 'summary' output must include the warnings collapser"
+    echo "  head + plan bodies together must include the warnings collapser"
     return 1
   fi
   return 0
@@ -1945,7 +1957,7 @@ assert_warnings_included_in_legacy_summary() {
 reset_defaults
 export input_warning_count="2"
 export input_warnings_markdown_file=$(make_warnings_md multi)
-run_test "Legacy 'summary' output includes warnings collapser" assert_warnings_included_in_legacy_summary
+run_test "Head + plan bodies together carry the warnings collapser" assert_warnings_included_in_concatenated_bodies
 
 assert_utf8_preserved_at_truncation_boundary() {
   local prefix="${1}"
@@ -1974,6 +1986,126 @@ export input_plan_count_total="1"
 export input_warning_count="3"
 export input_warnings_markdown_file=$(make_warnings_md default)
 run_test "UTF-8 preserved at truncation boundary" assert_utf8_preserved_at_truncation_boundary
+
+
+# --------------------------------------------------
+# Body files replace the string outputs (docs/Apply-and-destroy-reporting.md
+# §7.10, tests C16–C18). The bodies must reach the PR via pr-comment's
+# body-file only; a body string in $GITHUB_OUTPUT is the defect.
+# --------------------------------------------------
+
+# C17: only paths, counts and flags in GITHUB_OUTPUT — no body text.
+assert_no_body_strings_in_github_output() {
+  local fails=""
+  # Every output line is a single `key=value` line: no multiline delimiters.
+  if grep -qE '^[a-z-]+<<' "${GITHUB_OUTPUT}"; then
+    fails+="  GITHUB_OUTPUT: multiline output present — a body string leaked\n"
+  fi
+  if grep -qF '### Terraform' "${GITHUB_OUTPUT}"; then
+    fails+="  GITHUB_OUTPUT: a rendered heading is present — a body string leaked\n"
+  fi
+  if grep -qF '| Step | Result |' "${GITHUB_OUTPUT}"; then
+    fails+="  GITHUB_OUTPUT: table markup present — a body string leaked\n"
+  fi
+  local n
+  n=$(wc -l < "${GITHUB_OUTPUT}")
+  if [ "${n}" -ne 2 ]; then
+    fails+="  GITHUB_OUTPUT: expected exactly 2 lines (head-summary-file, plan-extract-file), got ${n}\n"
+  fi
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+_plan_file=$(mktemp); echo "some plan body" > "${_plan_file}"
+export input_plan_txt_output_file="${_plan_file}"
+run_test "C17: GITHUB_OUTPUT holds only the two file paths, never a body" assert_no_body_strings_in_github_output
+rm -f "${_plan_file}"
+
+# C18: the deleted outputs are gone by name.
+assert_deleted_outputs_absent() {
+  local fails=""
+  for k in summary prefix head-summary plan-extract; do
+    if grep -qE "^${k}(=|<<)" "${GITHUB_OUTPUT}"; then
+      fails+="  GITHUB_OUTPUT: deleted output '${k}' is still emitted\n"
+    fi
+  done
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+run_test "C18: summary / prefix / head-summary / plan-extract outputs are gone" assert_deleted_outputs_absent
+
+# File paths: under RUNNER_TEMP, env-named, default (no suffix) shape.
+assert_body_files_default_names() {
+  local head_file plan_file
+  head_file=$(get_output "head-summary-file")
+  plan_file=$(get_output "plan-extract-file")
+  local fails=""
+  [[ "${head_file}" == "${RUNNER_TEMP}/tf-comment-dev-head.md" ]] || fails+="  head-summary-file: expected '${RUNNER_TEMP}/tf-comment-dev-head.md', got '${head_file}'\n"
+  [[ "${plan_file}" == "${RUNNER_TEMP}/tf-comment-dev-plan.md" ]] || fails+="  plan-extract-file: expected '${RUNNER_TEMP}/tf-comment-dev-plan.md', got '${plan_file}'\n"
+  [ -s "${head_file}" ] || fails+="  head file missing or empty\n"
+  [ -s "${plan_file}" ] || fails+="  plan file missing or empty\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+run_test "Body files land under RUNNER_TEMP with env-scoped default names" assert_body_files_default_names
+
+# Files have no trailing newline — byte-identical to the string the
+# multiline output used to carry (which the delimiter reader stripped).
+assert_body_files_have_no_trailing_newline() {
+  local head_file
+  head_file=$(get_output "head-summary-file")
+  if [ "$(tail -c1 "${head_file}" | wc -l)" -ne 0 ]; then
+    echo "  head file ends with a newline; must be byte-identical to the former string output"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+run_test "Body files carry no trailing newline (byte-identical to former strings)" assert_body_files_have_no_trailing_newline
+
+# C16: output-file-suffix — four invocations in one job write four distinct
+# files and none overwrites another. Simulated by running the step four
+# times against ONE RUNNER_TEMP with the suffixes the workflow passes, then
+# checking all four pairs exist with the content each invocation rendered.
+test_c16_suffix_isolation() {
+  local shared_tmp; shared_tmp=$(mktemp -d)
+  local -a suffixes=(phase1 phase1-final phase2 phase2-final)
+  local sfx
+  for sfx in "${suffixes[@]}"; do
+    reset_defaults
+    export input_output_file_suffix="${sfx}"
+    # Make each render distinguishable: the plan-tag id lands in the head body.
+    export input_plan_tag_comment_id="id-${sfx}"
+    export GITHUB_OUTPUT=$(mktemp)
+    export RUNNER_TEMP="${shared_tmp}"
+    export GITHUB_ACTION_PATH="${_this_script_dir}"
+    export GITHUB_WORKSPACE="${_this_script_dir}"
+    ( source "${_this_script_dir}/step_create_validation_summary.sh" ) > /tmp/test_output.txt 2>&1 || { echo "  invocation '${sfx}' failed"; rm -rf "${shared_tmp}"; return 1; }
+    rm -f "${GITHUB_OUTPUT}"
+  done
+  local fails=""
+  for sfx in "${suffixes[@]}"; do
+    local f="${shared_tmp}/tf-comment-dev-head-${sfx}.md"
+    [ -s "${f}" ] || fails+="  missing head file for suffix '${sfx}'\n"
+    grep -qF "#issuecomment-id-${sfx}" "${f}" 2>/dev/null || fails+="  head file for '${sfx}' does not hold that invocation's body (overwritten?)\n"
+    [ -s "${shared_tmp}/tf-comment-dev-plan-${sfx}.md" ] || fails+="  missing plan file for suffix '${sfx}'\n"
+  done
+  local count
+  count=$(ls "${shared_tmp}"/tf-comment-dev-*.md | wc -l)
+  [ "${count}" -eq 8 ] || fails+="  expected 8 body files (4 head + 4 plan), found ${count}\n"
+  rm -rf "${shared_tmp}"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+TESTS_RUN=$((TESTS_RUN + 1))
+echo -e "${BLUE}TEST ${TESTS_RUN}: C16: four suffixed invocations in one RUNNER_TEMP write eight distinct files, none overwritten${NC}"
+if _c16_err=$(test_c16_suffix_isolation 2>&1); then
+  echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"; echo -e "${_c16_err}"; TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
 
 # --------------------------------------------------
 # Summary

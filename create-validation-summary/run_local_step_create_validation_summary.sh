@@ -38,11 +38,15 @@ export input_job_check_run_id="87654321"
 export input_github_actor="test-user"
 export input_github_event_name="pull_request"
 
-# Source the main script in a subshell so 'exit' doesn't terminate this runner
+export input_output_file_suffix="local"
+
+# Source the main script in a subshell so 'exit' doesn't terminate this
+# runner. No allexport — mirrors the action.yml shim (see the comment there).
 (
-  set -o allexport
   source "${_this_script_dir}/step_create_validation_summary.sh"
 )
+echo ""
+echo "step exit code: ${?}"
 
 # Display GitHub Actions outputs
 echo ""
@@ -50,3 +54,14 @@ echo "========================================"
 echo "GitHub Actions Outputs (GITHUB_OUTPUT):"
 echo "========================================"
 cat "${GITHUB_OUTPUT}"
+
+echo ""
+echo "========================================"
+echo "Rendered head-summary-file:"
+echo "========================================"
+cat "$(grep '^head-summary-file=' "${GITHUB_OUTPUT}" | cut -d= -f2-)"; echo
+echo ""
+echo "========================================"
+echo "Rendered plan-extract-file:"
+echo "========================================"
+cat "$(grep '^plan-extract-file=' "${GITHUB_OUTPUT}" | cut -d= -f2-)"; echo
