@@ -248,6 +248,70 @@ inputs:
     description: Warning count from the destroy console. Its own row in the Destroy block.
     required: false
     default: "0"
+  goals-json:
+    description: |
+      The environment's goals as a JSON array (the matrix's `goals`). When
+      it contains 'apply-on-pr' and/or 'destroy-on-pr' the head gains a
+      Mode row as its first row and the plan tag gains a banner, both
+      independent of any outcome — the warning is on the PR before the
+      apply has happened. Malformed JSON is ignored.
+      See docs/Apply-and-destroy-reporting.md §8.2, §8.5.
+    required: false
+    default: ""
+  apply-console-file:
+    description: |
+      Tick-filtered apply console (parse-terraform-apply's
+      `filtered-console-file`). Source of the apply tag body.
+    required: false
+    default: ""
+  destroy-plan-console-file:
+    description: Console of the destroy plan (terraform-plan's `console-output-file` for the -destroy invocation).
+    required: false
+    default: ""
+  destroy-plan-txt-output-file:
+    description: The destroy plan's 'terraform show' text (terraform-plan's `txt-output-file`). Preferred over the console when present, as for the plan.
+    required: false
+    default: ""
+  destroy-console-file:
+    description: Tick-filtered destroy console (parse-terraform-apply's `filtered-console-file` for the destroy invocation).
+    required: false
+    default: ""
+  apply-extract-include-outputs:
+    description: |
+      'true' keeps the Outputs section in the apply and destroy tag bodies.
+      Default 'false' strips it and appends '_(outputs section omitted)_'.
+
+      terraform apply prints every non-sensitive output's actual VALUE in
+      that section — terraform plan never does — so posting it publishes
+      values the plan comment has always kept hidden, in repositories whose
+      maintainers have only ever reviewed the plan comment's exposure.
+      See docs/Apply-and-destroy-reporting.md P3.
+    required: false
+    default: "false"
+  apply-warnings-markdown-file:
+    description: Warning bodies from the apply console (parse-terraform-warnings, step-label 'apply'); appended to the apply tag body.
+    required: false
+    default: ""
+  destroy-plan-warnings-markdown-file:
+    description: Warning bodies from the destroy-plan console; appended to the destroy-plan tag body.
+    required: false
+    default: ""
+  destroy-warnings-markdown-file:
+    description: Warning bodies from the destroy console; appended to the destroy tag body.
+    required: false
+    default: ""
+  apply-tag-comment-id:
+    description: Comment id of this run's apply tag. Adds an '[apply log]' line to the Links row.
+    required: false
+    default: ""
+  destroy-plan-tag-comment-id:
+    description: Comment id of this run's destroy-plan tag. Adds a '[destroy plan log]' line to the Links row.
+    required: false
+    default: ""
+  destroy-tag-comment-id:
+    description: Comment id of this run's destroy tag. Adds a '[destroy log]' line to the Links row.
+    required: false
+    default: ""
   output-file-suffix:
     description: |
       Appended (after a '-') to the name of every body file this action
@@ -282,6 +346,25 @@ outputs:
       (`<details>` collapser or its short-circuit variants). Empty plan
       output renders as 'Plan not available 🤷‍♀️'.
     value: ${{ steps.create-validation-summary.outputs.plan-extract-file }}
+  apply-extract-file:
+    description: |
+      Absolute path of the apply tag body (`<!-- tf:tag:apply:<env>:run-id-…`).
+      Always written; renders 'Apply not available 🤷‍♀️' when apply did not
+      run — the workflow posts the tag only when it did. Shapes in
+      docs/Apply-and-destroy-reporting.md §8.6; the failure shape is the
+      only `<details open>` in the system.
+    value: ${{ steps.create-validation-summary.outputs.apply-extract-file }}
+  destroy-plan-extract-file:
+    description: |
+      Absolute path of the destroy-plan tag body
+      (`<!-- tf:tag:destroy-plan:<env>:run-id-…`). A destroy plan is a plan:
+      same five block shapes as the plan tag.
+    value: ${{ steps.create-validation-summary.outputs.destroy-plan-extract-file }}
+  destroy-extract-file:
+    description: |
+      Absolute path of the destroy tag body (`<!-- tf:tag:destroy:<env>:run-id-…`).
+      Same shapes as the apply tag with the destroy wording.
+    value: ${{ steps.create-validation-summary.outputs.destroy-extract-file }}
 runs:
   using: "composite"
   steps:
@@ -335,6 +418,18 @@ runs:
         input_apply_warning_count: ${{ inputs.apply-warning-count }}
         input_destroy_plan_warning_count: ${{ inputs.destroy-plan-warning-count }}
         input_destroy_warning_count: ${{ inputs.destroy-warning-count }}
+        input_goals_json: ${{ inputs.goals-json }}
+        input_apply_console_file: ${{ inputs.apply-console-file }}
+        input_destroy_plan_console_file: ${{ inputs.destroy-plan-console-file }}
+        input_destroy_plan_txt_output_file: ${{ inputs.destroy-plan-txt-output-file }}
+        input_destroy_console_file: ${{ inputs.destroy-console-file }}
+        input_apply_extract_include_outputs: ${{ inputs.apply-extract-include-outputs }}
+        input_apply_warnings_markdown_file: ${{ inputs.apply-warnings-markdown-file }}
+        input_destroy_plan_warnings_markdown_file: ${{ inputs.destroy-plan-warnings-markdown-file }}
+        input_destroy_warnings_markdown_file: ${{ inputs.destroy-warnings-markdown-file }}
+        input_apply_tag_comment_id: ${{ inputs.apply-tag-comment-id }}
+        input_destroy_plan_tag_comment_id: ${{ inputs.destroy-plan-tag-comment-id }}
+        input_destroy_tag_comment_id: ${{ inputs.destroy-tag-comment-id }}
         input_output_file_suffix: ${{ inputs.output-file-suffix }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |

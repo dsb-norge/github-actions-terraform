@@ -55,6 +55,23 @@
 #                              - From parse-terraform-apply on the destroy console
 #   input_{apply,destroy_plan,destroy}_warning_count
 #                              - One count per operation block (never summed)
+#   input_goals_json           - JSON array of the env's goals. 'apply-on-pr' /
+#                                'destroy-on-pr' drive the Mode row and the
+#                                plan-tag banner; anything malformed is ignored.
+#   input_apply_console_file / input_destroy_console_file
+#                              - Tick-filtered consoles (parse-terraform-apply's
+#                                filtered-console-file) for the apply / destroy
+#                                tag bodies
+#   input_destroy_plan_console_file / input_destroy_plan_txt_output_file
+#                              - The destroy plan's console / 'terraform show'
+#                                text, as for the plan
+#   input_apply_extract_include_outputs
+#                              - 'true' keeps the Outputs section in the apply /
+#                                destroy bodies; default strips it (P3)
+#   input_{apply,destroy_plan,destroy}_warnings_markdown_file
+#                              - Warning bodies for the three tag comments
+#   input_{apply,destroy_plan,destroy}_tag_comment_id
+#                              - Comment ids of the three tags, for the Links row
 #   input_job_check_run_id     - The check run ID for the current job
 #   input_output_file_suffix   - Optional. Appended (after a '-') to every body
 #                                file name. The workflow invokes this action
@@ -178,6 +195,13 @@ function render_head_summary {
 
   local head="### Terraform validation summary for environment: \`${input_environment_name}\`"
 
+  # Any tag comment id turns the footer link into a Links row.
+  local links_rendered=""
+  if [ -n "${input_plan_tag_comment_id:-}" ] || [ -n "${input_apply_tag_comment_id:-}" ] \
+     || [ -n "${input_destroy_plan_tag_comment_id:-}" ] || [ -n "${input_destroy_tag_comment_id:-}" ]; then
+    links_rendered="true"
+  fi
+
   # Logs go to stderr so they don't pollute the captured stdout when this
   # function is called via $(). Same trick the rest of the action uses for
   # diagnostic output.
@@ -186,10 +210,12 @@ function render_head_summary {
   else
     log-info "ungrouped mode — head includes full validation table" 1>&2
 
+    # Mode row first (§8.2) — present only for an env that mutates on PR, so
+    # the plan-only table still starts with Initialization as it always has.
     # don't touch the indenting here
     head="${head}
 |  | Step | Result |
-|:---:|---|---|
+|:---:|---|---|$(_render_mode_row)
 | $(_render_step_icon_cell "⚙️" "Initialization") | Initialization | $(format-status "${input_status_init}") |
 | $(_render_step_icon_cell "🔒" "Lock file") | Lock file | $(format-status "${input_status_verify_lock}") |
 | $(_render_step_icon_cell "🖌" "Format and Style") | Format and Style | $(format-status "${input_status_fmt}") |
@@ -251,21 +277,27 @@ function render_head_summary {
     # Appended after Plan time, before Links; see the header comment.
     head="${head}$(_render_apply_block)$(_render_destroy_plan_block)$(_render_destroy_block)"
 
-    # Links row — only rendered when the caller supplied
-    # plan-tag-comment-id (typically the id of this run's per-env plan tag,
-    # captured from pr-comment's POST output). Mirrors the per-group head's
-    # Links column (docs/Workflow-pr-comments.md §6.3) so reviewers learn
-    # one navigation pattern.
+    # Links row — rendered when the caller supplied any tag comment id
+    # (captured from pr-comment's POST outputs). One line per tag in the
+    # order the operations run, then the job log. Mirrors the per-group
+    # head's Links column (docs/Workflow-pr-comments.md §6.3) so reviewers
+    # learn one navigation pattern.
     # When the Links row is rendered, the standalone '[Job log]' footer
     # below the table is dropped — the same link sits inside the cell.
-    if [ -n "${input_plan_tag_comment_id:-}" ]; then
+    if [ -n "${links_rendered}" ]; then
+      local links_cell=""
+      [ -n "${input_plan_tag_comment_id:-}" ]         && links_cell+="[log extract](#issuecomment-${input_plan_tag_comment_id})<br>"
+      [ -n "${input_apply_tag_comment_id:-}" ]        && links_cell+="[apply log](#issuecomment-${input_apply_tag_comment_id})<br>"
+      [ -n "${input_destroy_plan_tag_comment_id:-}" ] && links_cell+="[destroy plan log](#issuecomment-${input_destroy_plan_tag_comment_id})<br>"
+      [ -n "${input_destroy_tag_comment_id:-}" ]      && links_cell+="[destroy log](#issuecomment-${input_destroy_tag_comment_id})<br>"
+      links_cell+="[job log](${job_url})"
       # don't touch the indenting here
       head="${head}
-| $(_render_step_icon_cell "🔗" "Links") | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
+| $(_render_step_icon_cell "🔗" "Links") | Links | ${links_cell} |"
     fi
   fi
 
-  if [ -z "${input_plan_tag_comment_id:-}" ] || [ -n "${input_pr_comment_group}" ]; then
+  if [ -z "${links_rendered}" ] || [ -n "${input_pr_comment_group}" ]; then
     # Legacy / grouped path: keep the standalone '[Job log]' footer outside
     # the table. Grouped mode still uses it (table is omitted entirely, so
     # the footer is all that's there); ungrouped without a plan-tag-id
@@ -349,8 +381,15 @@ function load_warnings_md {
     "${truncated}" "${cap}"
 }
 
-function render_plan_extract {
-  local plan="### Terraform plan for environment: \`${input_environment_name}\`"
+# Render a plan-shaped tag body. Used for the plan tag and — because a
+# destroy plan is a plan — the destroy-plan tag, with the sources swapped.
+#   $1 heading, $2 'terraform show' txt file, $3 console file, $4 count-total,
+#   $5 has-output-only-changes, $6 warnings markdown file, $7 warning count,
+#   $8 banner (may be empty; printed between heading and block)
+function _render_plan_like_extract {
+  local heading="${1}" txt_file="${2}" console_file="${3}" total="${4}" output_only="${5:-false}"
+  local warnings_file="${6}" warning_count="${7}" banner="${8}"
+  local plan="${heading}"
 
   # GitHub's comment-body limit is 65536; we cap at 65000 to leave headroom
   # under that AND under Linux's per-string execve limit (MAX_ARG_STRLEN,
@@ -362,11 +401,11 @@ function render_plan_extract {
   local WARN_CAP=60000 # warnings get most-but-not-all of the budget
 
   local warnings_md=""
-  warnings_md=$(load_warnings_md "${input_warnings_markdown_file:-}" "${WARN_CAP}")
+  warnings_md=$(load_warnings_md "${warnings_file:-}" "${WARN_CAP}")
   local warnings_size
   warnings_size=$(printf '%s' "${warnings_md}" | wc -c)
 
-  local plan_budget=$((HARD_LIMIT - OVERHEAD - warnings_size))
+  local plan_budget=$((HARD_LIMIT - OVERHEAD - warnings_size - ${#banner}))
   [ "${plan_budget}" -lt 0 ] && plan_budget=0
 
   # Pick the source file for plan output. txt-output-file is the post-
@@ -375,12 +414,12 @@ function render_plan_extract {
   # the selected providers…" header so we drop init/refresh noise above.
   local source_file=""
   local sliced_console=""
-  if [ -f "${input_plan_txt_output_file:-}" ]; then
-    source_file="${input_plan_txt_output_file}"
-  elif [ -f "${input_plan_console_file:-}" ]; then
+  if [ -f "${txt_file:-}" ]; then
+    source_file="${txt_file}"
+  elif [ -f "${console_file:-}" ]; then
     sliced_console="${RUNNER_TEMP:-/tmp}/plan-sliced-$$.txt"
     sed -n '/Terraform used the selected providers to generate the following execution/,$p' \
-      "${input_plan_console_file}" >"${sliced_console}"
+      "${console_file}" >"${sliced_console}"
     source_file="${sliced_console}"
   fi
 
@@ -389,8 +428,14 @@ function render_plan_extract {
     plan_out=$(line_anchored_tail "${source_file}" "${plan_budget}")
   fi
 
-  local total="${input_plan_count_total:-}"
-  local output_only="${input_plan_has_output_only_changes:-false}"
+  # Banner (the env mutates on PR) sits between heading and block. Its
+  # trailing newline plus the block's leading blank line give exactly one
+  # empty line between them.
+  if [ -n "${banner}" ]; then
+    plan="${plan}
+
+${banner%$'\n'}"
+  fi
 
   if [ -z "${plan_out}" ]; then
     plan="${plan}
@@ -436,7 +481,6 @@ ${plan_out}
   # Rendered regardless of plan-block shape, including 'no changes ✅' —
   # warnings are interesting even when the plan itself is.
   if [ -n "${warnings_md}" ]; then
-    local warning_count="${input_warning_count:-0}"
     [[ "${warning_count}" =~ ^[0-9]+$ ]] || warning_count=0
     # don't touch the indenting here
     plan="${plan}
@@ -453,6 +497,132 @@ ${warnings_md}
   printf '%s' "${plan}"
 }
 
+function render_plan_extract {
+  _render_plan_like_extract \
+    "### Terraform plan for environment: \`${input_environment_name}\`" \
+    "${input_plan_txt_output_file:-}" "${input_plan_console_file:-}" \
+    "${input_plan_count_total:-}" "${input_plan_has_output_only_changes:-false}" \
+    "${input_warnings_markdown_file:-}" "${input_warning_count:-0}" \
+    "$(_render_plan_tag_banner)"
+}
+
+function render_destroy_plan_extract {
+  _render_plan_like_extract \
+    "### Terraform destroy plan for environment: \`${input_environment_name}\`" \
+    "${input_destroy_plan_txt_output_file:-}" "${input_destroy_plan_console_file:-}" \
+    "${input_destroy_plan_count_total:-}" "false" \
+    "${input_destroy_plan_warnings_markdown_file:-}" "${input_destroy_plan_warning_count:-0}" \
+    ""
+}
+
+# ============================================================================
+# apply / destroy extract renderer (docs/Apply-and-destroy-reporting.md §8.6)
+# ============================================================================
+#
+# Body shape:
+#   ### Terraform <apply|destroy> for environment: `<env>`
+#   <blank>
+#   <block — one of four shapes>
+#   [<blank> <warnings collapser>]
+#
+# Block shapes:
+#   1. completed=true,  total 0       → 'Apply: no changes ✅'
+#   2. completed=true,  total > 0     → '<details><summary>Apply: N changes ✅</summary>…'
+#   3. completed=false, console given → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
+#   4. no console at all              → 'Apply not available 🤷‍♀️'
+# Destroy: 'Destroy: no changes ✅' / 'Destroy: N destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
+#
+# Shape 3 is the only <details open> anywhere: a failed apply is the one
+# case nobody should have to click, and the console tail is the whole story.
+#   $1 'apply' | 'destroy'
+function render_op_extract {
+  local kind="${1}"
+  local verb console_file total completed warnings_file warning_count
+  if [ "${kind}" = 'apply' ]; then
+    verb="Apply"; console_file="${input_apply_console_file:-}"
+    total="${input_apply_count_total:-}"; completed="${input_apply_completed:-}"
+    warnings_file="${input_apply_warnings_markdown_file:-}"; warning_count="${input_apply_warning_count:-0}"
+  else
+    verb="Destroy"; console_file="${input_destroy_console_file:-}"
+    total="${input_destroy_count_total:-}"; completed="${input_destroy_completed:-}"
+    warnings_file="${input_destroy_warnings_markdown_file:-}"; warning_count="${input_destroy_warning_count:-0}"
+  fi
+  local body="### Terraform ${kind} for environment: \`${input_environment_name}\`"
+
+  local HARD_LIMIT=65000
+  local OVERHEAD=500
+  local WARN_CAP=60000
+
+  local warnings_md=""
+  warnings_md=$(load_warnings_md "${warnings_file}" "${WARN_CAP}")
+  local warnings_size
+  warnings_size=$(printf '%s' "${warnings_md}" | wc -c)
+  local budget=$((HARD_LIMIT - OVERHEAD - warnings_size))
+  [ "${budget}" -lt 0 ] && budget=0
+
+  # P3: drop the Outputs section unless the caller opted in to keep it.
+  _strip_outputs_section "${console_file}" "${input_apply_extract_include_outputs:-false}"
+  local render_file="${STRIP_RESULT_FILE}"
+
+  local console_out=""
+  if [ -n "${render_file}" ] && [ -s "${render_file}" ]; then
+    console_out=$(line_anchored_tail "${render_file}" "${budget}")
+  fi
+  local omitted_note=""
+  [ "${OUTPUTS_STRIPPED}" = 'true' ] && omitted_note=$'\n\n'"_(outputs section omitted)_"
+
+  local summary_word
+  if [ "${kind}" = 'apply' ]; then summary_word="changes"; else summary_word="destroyed"; fi
+  local failed_note
+  if [ "${kind}" = 'apply' ]; then failed_note="applied"; else failed_note="destroyed"; fi
+
+  if [ -z "${console_out}" ]; then
+    body="${body}
+
+${verb} not available 🤷‍♀️"
+  elif [ "${completed}" = 'true' ] && [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ]; then
+    body="${body}
+
+${verb}: no changes ✅"
+  elif [ "${completed}" = 'true' ]; then
+    local n="${total}"
+    [[ "${n}" =~ ^[0-9]+$ ]] || n='?'
+    # don't touch the indenting here
+    body="${body}
+
+<details><summary>${verb}: ${n} ${summary_word} ✅</summary>
+
+\`\`\`terraform
+${console_out}
+\`\`\`${omitted_note}
+</details>"
+  else
+    # don't touch the indenting here
+    body="${body}
+
+<details open><summary>❌ ${verb} failed — infrastructure may be partially ${failed_note}</summary>
+
+\`\`\`terraform
+${console_out}
+\`\`\`${omitted_note}
+</details>"
+  fi
+
+  if [ -n "${warnings_md}" ]; then
+    [[ "${warning_count}" =~ ^[0-9]+$ ]] || warning_count=0
+    # don't touch the indenting here
+    body="${body}
+
+<details><summary>⚠️ ${warning_count} warnings</summary>
+
+${warnings_md}
+</details>"
+  fi
+
+  [ "${render_file}" != "${console_file}" ] && [ -f "${render_file}" ] && rm -f "${render_file}"
+  printf '%s' "${body}"
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -462,28 +632,47 @@ function main {
 
   local job_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${input_job_check_run_id}#logs"
 
-  local head_summary plan_extract
+  _parse_on_pr_goals
+
+  local head_summary plan_extract apply_extract destroy_plan_extract destroy_extract
   head_summary=$(render_head_summary "${job_url}")
   plan_extract=$(render_plan_extract)
+  apply_extract=$(render_op_extract apply)
+  destroy_plan_extract=$(render_destroy_plan_extract)
+  destroy_extract=$(render_op_extract destroy)
 
   # Kept deliberately: with the bodies no longer in the step-output log,
   # these groups are where a reviewer reads what was rendered.
   log-multiline "head-summary " "${head_summary}"
   log-multiline "plan-extract " "${plan_extract}"
+  log-multiline "apply-extract " "${apply_extract}"
+  log-multiline "destroy-plan-extract " "${destroy_plan_extract}"
+  log-multiline "destroy-extract " "${destroy_extract}"
 
   local suffix=""
   [ -n "${input_output_file_suffix:-}" ] && suffix="-${input_output_file_suffix}"
   local out_dir="${RUNNER_TEMP:-/tmp}"
   local head_file="${out_dir}/tf-comment-${input_environment_name}-head${suffix}.md"
   local plan_file="${out_dir}/tf-comment-${input_environment_name}-plan${suffix}.md"
+  local apply_file="${out_dir}/tf-comment-${input_environment_name}-apply${suffix}.md"
+  local destroy_plan_file="${out_dir}/tf-comment-${input_environment_name}-destroy-plan${suffix}.md"
+  local destroy_file="${out_dir}/tf-comment-${input_environment_name}-destroy${suffix}.md"
 
   # printf '%s' — no trailing newline, so the file is byte-identical to the
-  # string the multiline output used to carry.
+  # string the multiline output used to carry. The three operation bodies
+  # are always written (a 'not available' body when the operation did not
+  # run); the workflow decides, by step outcome, which tags to post.
   printf '%s' "${head_summary}" >"${head_file}"
   printf '%s' "${plan_extract}" >"${plan_file}"
+  printf '%s' "${apply_extract}" >"${apply_file}"
+  printf '%s' "${destroy_plan_extract}" >"${destroy_plan_file}"
+  printf '%s' "${destroy_extract}" >"${destroy_file}"
 
   set-output 'head-summary-file' "${head_file}"
   set-output 'plan-extract-file' "${plan_file}"
+  set-output 'apply-extract-file' "${apply_file}"
+  set-output 'destroy-plan-extract-file' "${destroy_plan_file}"
+  set-output 'destroy-extract-file' "${destroy_file}"
 
   log-info "create-validation-summary completed."
   return 0
