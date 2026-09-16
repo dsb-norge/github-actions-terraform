@@ -103,9 +103,11 @@ These are not cosmetic and are in scope because the same wiring fixes them.
 input_destroy_plan_count_add=$(get_step_output "${file}" "parse-destroy-plan" "count-add")
 ```
 
-There is no step with id `parse-destroy-plan` anywhere in the workflow. Every `destroy-plan-max-count-*` limit therefore compares against an empty string. A repo that configured `pr-auto-merge-limits.destroy-plan-max-count-destroy: 0` as a safety net has no safety net.
+There is no step with id `parse-destroy-plan` anywhere in the workflow, so those reads always came back empty.
 
-Adding the step with **exactly** the id `parse-destroy-plan` is the whole fix — the consumer side already exists and needs no change.
+**What that actually did** (corrected after reading `validate_counts` closely, not what this section first claimed): the evaluator treats missing counts as "plan parsing may have failed" and marks the environment **ineligible**. So a repo with a `destroy-plan` goal (and no `destroy-on-pr`) and auto-merge enabled has *never* auto-merged — fail-closed, safe, but silent and with a misleading reason in the log. There is no separate `destroy-plan-max-count-*` limit family either: destroy-plan counts are **added to** the plan counts and checked against the same `plan-max-count-*` limits.
+
+Adding the step with **exactly** the id `parse-destroy-plan` is the whole fix — the consumer side already exists and needs no change. The visible consequence is that such repos can now auto-merge **when their limits allow** (a destroy plan with `0` destroys under the default `plan-max-count-destroy: 0`, or any destroy plan under `-1`). Auto-merge becomes more permissive for that one class of repo, never less; it belongs in the release note.
 
 ### 5.2 No outcome gate for apply / destroy-plan / destroy
 
@@ -910,7 +912,7 @@ Stated so review does not assume more coverage than exists.
 - AI-config files, if touched, get their own commit.
 - [Workflow-pr-comments.md](Workflow-pr-comments.md) §5-§6 and [Plan-warnings.md](Plan-warnings.md) are updated in the same PR — updating the docs is part of the change, not a follow-up.
 - Verification against a real calling repo uses the dev-tag swap flow; the dev tag is deleted and the `@v0` refs reverted before the PR is marked ready.
-- Release note must call out `-no-color` (P4), the new `Outputs:` stripping default (P3), the module-ci comment behaviour change (P22), and that `@v0` consumers pick all of it up immediately.
+- Release note must call out `-no-color` (P4), the new `Outputs:` stripping default (P3), the module-ci comment behaviour change (P22), that repos with a `destroy-plan` goal and auto-merge enabled can now auto-merge when their limits allow where they silently never did (§5.1), and that `@v0` consumers pick all of it up immediately.
 
 ## 12. Out of scope / follow-ups
 
