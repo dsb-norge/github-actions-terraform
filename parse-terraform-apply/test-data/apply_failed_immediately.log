@@ -1,0 +1,8 @@
+╷
+│ Error: building account: could not acquire access token to parse claims: running Azure CLI: exit status 1: ERROR: AADSTS70043: The refresh token has expired or is invalid due to sign-in frequency checks by conditional access.
+│ 
+│   with provider["registry.terraform.io/hashicorp/azurerm"],
+│   on providers.tf line 8, in provider "azurerm":
+│    8: provider "azurerm" {
+│ 
+╵

@@ -1,0 +1,4 @@
+azurerm_resource_group.rg: Creating...
+azurerm_resource_group.rg: Creation complete after 2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.

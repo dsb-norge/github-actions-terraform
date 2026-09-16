@@ -1206,9 +1206,24 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
+          # Names the console file. The destroy step below shares this action
+          # and passes '<env>-destroy', so the two files never collide.
+          environment-name: ${{ matrix.vars.github-environment }}
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/apply.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+
+      # Counts from the 'Apply complete!' line plus a tick-free copy of the
+      # console for the PR comment. Runs whenever apply ran, including on
+      # failure — a failed apply has no summary line, and the parser reports
+      # that as '?' / completed=false rather than as zeros.
+      - name: "🔍 Parse terraform apply"
+        id: parse-apply
+        if: steps.apply.outcome != 'cancelled' && steps.apply.outcome != 'skipped'
+        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v0
+        with:
+          apply-console-file: ${{ steps.apply.outputs.console-output-file }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: ☠📖 Terraform Destroy Plan
         id: destroy-plan
@@ -1223,6 +1238,20 @@ jobs:
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/destroy-plan.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+
+      # The step id is load-bearing: evaluate-automerge-eligibility reads
+      # .steps["parse-destroy-plan"].outputs.count-* out of the captured
+      # metadata by this literal name. Before this step existed every
+      # destroy-plan-max-count-* auto-merge limit compared against an empty
+      # string and was never enforced (docs/Apply-and-destroy-reporting.md
+      # §5.1, P7). Renaming it re-breaks that silently.
+      - name: "🔍 Parse terraform destroy plan"
+        id: parse-destroy-plan
+        if: steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v0
+        with:
+          plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: ☠ Terraform Destroy
         id: destroy
@@ -1250,9 +1279,20 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
+          # '<env>-destroy', matching the destroy-plan step above, so this
+          # console file does not overwrite the apply step's.
+          environment-name: "${{ matrix.vars.github-environment }}-destroy"
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/destroy.json
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+
+      - name: "🔍 Parse terraform destroy"
+        id: parse-destroy-apply
+        if: steps.destroy.outcome != 'cancelled' && steps.destroy.outcome != 'skipped'
+        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v0
+        with:
+          apply-console-file: ${{ steps.destroy.outputs.console-output-file }}
+        continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata

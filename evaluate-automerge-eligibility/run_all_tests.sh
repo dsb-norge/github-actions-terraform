@@ -887,6 +887,54 @@ run_test "Environment with remove count exceeds zero limit" "false"
 cleanup_test_dir
 
 # ============================================================================
+# F2 — the step id this action reads by literal name must exist in the
+# reusable workflow (docs/Apply-and-destroy-reporting.md §5.1, P7, F2).
+#
+# extract_environment_data looks up .steps["parse-destroy-plan"].outputs.*
+# in the captured metadata. For a long time no step with that id existed,
+# so every destroy-plan-max-count-* limit compared against an empty string
+# and was never enforced — with every test here green, because the tests
+# write the metadata themselves. This is a structural check across the two
+# files that have to agree; it is the only thing standing between that
+# defect and a silent recurrence on the next workflow refactor.
+# ============================================================================
+_workflow="${_this_script_dir}/../.github/workflows/terraform-ci-cd-default.yml"
+_helper="${_this_script_dir}/helpers_additional.sh"
+
+# The step ids the helper reads out of the metadata, by literal string.
+_ids_read_by_helper=$(grep -oE 'get_step_output(_success)? "\$\{file\}" "[a-z-]+"' "${_helper}" | grep -oE '"[a-z-]+"$' | tr -d '"' | sort -u)
+# The step ids the workflow's matrix job actually defines.
+_ids_in_workflow=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for step in wf["jobs"]["terraform-ci-cd"]["steps"]:
+    if "id" in step:
+        print(step["id"])
+PYEOF
+)
+
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F2 - every step id the helper reads exists in the workflow${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f2_missing=""
+for _id in ${_ids_read_by_helper}; do
+  if ! grep -qx "${_id}" <<<"${_ids_in_workflow}"; then
+    _f2_missing+=" ${_id}"
+  fi
+done
+if [[ -z "${_f2_missing}" ]] && grep -qx "parse-destroy-plan" <<<"${_ids_read_by_helper}"; then
+  echo -e "${GREEN}✓ PASSED${NC}: helper reads [$(echo ${_ids_read_by_helper} | tr '\n' ' ')] — all defined in the workflow"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: step id(s) read by helpers_additional.sh but not defined in terraform-ci-cd-default.yml:${_f2_missing:- (parse-destroy-plan no longer read by the helper?)}"
+  echo "  helper reads:  $(echo ${_ids_read_by_helper} | tr '\n' ' ')"
+  echo "  workflow has:  $(echo ${_ids_in_workflow} | tr '\n' ' ')"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

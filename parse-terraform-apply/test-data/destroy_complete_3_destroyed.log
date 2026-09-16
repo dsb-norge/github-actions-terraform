@@ -1,0 +1,9 @@
+azurerm_storage_account.sa: Destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample]
+azurerm_key_vault.kv: Destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.KeyVault/vaults/kv-example]
+azurerm_key_vault.kv: Destruction complete after 4s
+azurerm_storage_account.sa: Still destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample, 10s elapsed]
+azurerm_storage_account.sa: Destruction complete after 12s
+azurerm_resource_group.rg: Destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+azurerm_resource_group.rg: Destruction complete after 47s
+
+Destroy complete! Resources: 3 destroyed.
