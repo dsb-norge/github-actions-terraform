@@ -3,10 +3,17 @@
 # Source for the create-validation-summary step
 #
 # Renders the per-env head and plan-extract bodies for a single environment's
-# matrix run. Emitted as two outputs so the caller workflow can post them as
-# two separate PR comments: a stable "head" (PATCHed in place across runs,
-# pre-allocated by the seed job) and a run-scoped "plan tag" (GC'd at next
-# run's seed and re-POSTed).
+# matrix run. Each body is written to a file under RUNNER_TEMP and the PATH
+# is published as an output, so the caller workflow can post them as two
+# separate PR comments via pr-comment's body-file input: a stable "head"
+# (PATCHed in place across runs, pre-allocated by the seed job) and a
+# run-scoped "plan tag" (GC'd at next run's seed and re-POSTed).
+#
+# The bodies themselves are never step outputs. A step output enters the
+# steps context, which capture-matrix-job-meta serialises wholesale into the
+# metadata artifact — ~65k per body per env, read by three downstream jobs
+# that never look at it — and it is the last place a 65k string could reach
+# envp via toJSON(steps). See docs/Apply-and-destroy-reporting.md §7.10.
 #
 # See docs/Workflow-pr-comments.md for the model.
 #
@@ -34,11 +41,19 @@
 #   input_warning_count        - Total warning count across init+validate+plan (numeric; 0/missing/'?' suppresses the row + collapser)
 #   input_warnings_markdown_file - Path to rendered warnings markdown; appended as a sibling <details> after the plan-block when non-empty
 #   input_job_check_run_id     - The check run ID for the current job
+#   input_output_file_suffix   - Optional. Appended (after a '-') to every body
+#                                file name. The workflow invokes this action
+#                                several times per job; without a distinct
+#                                suffix a later invocation overwrites the file
+#                                an earlier step's output still points at, and
+#                                the head-upsert fallback silently posts the
+#                                wrong body (docs/Apply-and-destroy-reporting.md P12).
 #
 # Standard GitHub environment variables used:
 #   GITHUB_SERVER_URL  - GitHub server URL
 #   GITHUB_REPOSITORY  - Repository owner/name
 #   GITHUB_RUN_ID      - Workflow run ID
+#   RUNNER_TEMP        - Where the body files are written (falls back to /tmp)
 #
 
 set +o nounset # allow unset variables (graceful handling of defaults)
@@ -358,22 +373,24 @@ function main {
   head_summary=$(render_head_summary "${job_url}")
   plan_extract=$(render_plan_extract)
 
+  # Kept deliberately: with the bodies no longer in the step-output log,
+  # these groups are where a reviewer reads what was rendered.
   log-multiline "head-summary " "${head_summary}"
   log-multiline "plan-extract " "${plan_extract}"
 
-  # Back-compat outputs: the legacy `summary` + `prefix` outputs are kept so
-  # callers still on the pre-overhaul commenting flow (e.g. terraform-module-ci
-  # via comment-on-pr@v2's delete-by-prefix mechanism) continue to work.
-  # Both outputs are deprecated and will be dropped once those callers migrate
-  # to head-summary/plan-extract + the pr-comment action.
-  local legacy_prefix="### Terraform validation summary for environment: \`${input_environment_name}\`"
-  local legacy_summary
-  legacy_summary=$(printf '%s\n%s' "${head_summary}" "${plan_extract}")
+  local suffix=""
+  [ -n "${input_output_file_suffix:-}" ] && suffix="-${input_output_file_suffix}"
+  local out_dir="${RUNNER_TEMP:-/tmp}"
+  local head_file="${out_dir}/tf-comment-${input_environment_name}-head${suffix}.md"
+  local plan_file="${out_dir}/tf-comment-${input_environment_name}-plan${suffix}.md"
 
-  set-multiline-output 'head-summary' "${head_summary}"
-  set-multiline-output 'plan-extract' "${plan_extract}"
-  set-output 'prefix' "${legacy_prefix}"
-  set-multiline-output 'summary' "${legacy_summary}"
+  # printf '%s' — no trailing newline, so the file is byte-identical to the
+  # string the multiline output used to carry.
+  printf '%s' "${head_summary}" >"${head_file}"
+  printf '%s' "${plan_extract}" >"${plan_file}"
+
+  set-output 'head-summary-file' "${head_file}"
+  set-output 'plan-extract-file' "${plan_file}"
 
   log-info "create-validation-summary completed."
   return 0

@@ -202,13 +202,21 @@ jobs:
           status-plan: "N/A"
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      - name: 🏷️ Add validation summary as pull request comment
+      # Marker-based upsert, PATCHed in place across runs — see the test
+      # report comment below for the rationale. Only the head body is posted:
+      # a module has no plan, so the plan body this action also renders is
+      # always 'Plan not available' and was noise in the comment.
+      - name: 🏷️ Upsert validation summary as pull request comment
         id: validation-summary-on-pr
         if: steps.create-validation-summary.outcome == 'success'
-        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
-          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
-          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:head:module -->"
+          body-file: ${{ steps.create-validation-summary.outputs.head-summary-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "🧐 Validation outcome: ⚙️ Init"

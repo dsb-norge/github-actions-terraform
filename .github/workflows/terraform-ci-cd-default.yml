@@ -1000,6 +1000,9 @@ jobs:
           # warnings taking priority over plan-extract in the 65k budget.
           warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
           warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
+          # Distinct per invocation within the job — see the upsert-head
+          # step's fallback and docs/Apply-and-destroy-reporting.md P12.
+          output-file-suffix: phase1
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 📋 Post per-env plan-extract tag
@@ -1020,7 +1023,7 @@ jobs:
           github-token: ${{ github.token }}
           mode: upsert
           marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }}:attempt-${{ github.run_attempt }} -->"
-          body: ${{ steps.create-validation-summary.outputs.plan-extract }}
+          body-file: ${{ steps.create-validation-summary.outputs.plan-extract-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: 📝 Re-render validation summary with Links row
@@ -1070,9 +1073,10 @@ jobs:
           # body that ultimately PATCHes the per-env head.
           warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
           warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
-          # The single input that differs from the first call. Triggers the
-          # Links row branch in render_head_summary.
+          # The input that differs from the first call. Triggers the Links
+          # row branch in render_head_summary.
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
+          output-file-suffix: phase1-final
         continue-on-error: true
 
       - name: 🏷️ Upsert per-env head comment
@@ -1082,11 +1086,14 @@ jobs:
         # still gets its plan-extract tag above). See
         # docs/Workflow-pr-comments.md §6.1 grouped mode.
         #
-        # Consumes head-summary from the *second* create-validation-summary
-        # call (which carries the Links row). Falls back to the first call's
-        # head-summary if the second call didn't run (e.g. degraded), so a
-        # transient failure mid-pipeline still updates the head with the
-        # best body we have.
+        # Consumes the head body file from the *second*
+        # create-validation-summary call (which carries the Links row).
+        # Falls back to the first call's file if the second call didn't run
+        # (e.g. degraded), so a transient failure mid-pipeline still updates
+        # the head with the best body we have. The two files have distinct
+        # suffixes (phase1 / phase1-final) precisely so this fallback can
+        # never resolve to a path the later call overwrote — see
+        # docs/Apply-and-destroy-reporting.md P12.
         #
         # always() so that, paired with the always() on create-validation-summary
         # above, the per-env head refreshes even when an earlier infrastructure
@@ -1105,7 +1112,7 @@ jobs:
           github-token: ${{ github.token }}
           mode: upsert
           marker: "<!-- tf:head:env:${{ matrix.vars.github-environment }} -->"
-          body: ${{ steps.create-validation-summary-final.outputs.head-summary || steps.create-validation-summary.outputs.head-summary }}
+          body-file: ${{ steps.create-validation-summary-final.outputs.head-summary-file || steps.create-validation-summary.outputs.head-summary-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       # Terminate the job with 'failure' if any validation check did not succeed.
