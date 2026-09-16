@@ -277,7 +277,7 @@ New inputs. All optional; all default to the "absent" sentinel so existing calle
 
 | Input | Default | Purpose |
 |---|---|---|
-| `status-apply` / `status-destroy-plan` / `status-destroy` | `""` | Step outcomes. Non-empty is what gates the corresponding rows. |
+| `status-apply` / `status-destroy-plan` / `status-destroy` | `""` | Step outcomes. A value that is non-empty **and not `skipped`** gates the corresponding rows — GitHub sets the string `skipped` for a step whose `if:` was false (P30). |
 | `apply-time` / `destroy-plan-time` / `destroy-time` | `N/A` | `mm:ss` |
 
 **Counts**
@@ -323,7 +323,7 @@ New outputs:
 
 Deleted outputs: `summary`, `prefix`, `head-summary`, `plan-extract` (§7.10, §7.15).
 
-**Row-presence rule.** Every new row renders **only** when its gating input is non-empty. This follows the existing "absent when uninteresting" convention already used by the Warnings and Plan-details rows, and is what makes the §2 invariant hold. Under the §8.1 ordering every new row is **appended below** today's last data row, so a plan-only env's table is a strict prefix of the full one — which is what test C1 asserts.
+**Row-presence rule.** Every new row renders **only** when its gating input names a step that ran — non-empty and not `skipped`. This follows the existing "absent when uninteresting" convention already used by the Warnings and Plan-details rows, and is what makes the §2 invariant hold. Under the §8.1 ordering every new row is **appended below** today's last data row, so a plan-only env's table is a strict prefix of the full one — which is what test C1 asserts.
 
 > **P9 — table sync.** [Workflow-pr-comments.md §5.1](Workflow-pr-comments.md) declares the per-env head and the per-group head structurally in sync, with exactly two documented intentional divergences. Every row added here lands in **both** renderers, and the presence rules must correspond (per-env: "this env has data"; per-group: "any env in the group has data"). Enforced by test F1. The run-level rollup (§7.9) is explicitly **outside** this invariant and uses a different shape — stated there so nobody "fixes" it into sync.
 
@@ -549,15 +549,15 @@ Rows in this fixed order. `cond` rows render only when their gating input is non
 | 8 | ⚠️ | Warnings | cond — `warning-count` > 0 |
 | 9 | 📊 | Plan details | cond — `include-plan-details` |
 | 10 | ⏱ | Plan time | always |
-| 11 | 🐙 | Apply | cond — `status-apply` |
+| 11 | 🐙 | Apply | cond — `status-apply` ran (non-empty, not `skipped`) |
 | 12 | ⚠️ | Apply warnings | cond — `apply-warning-count` > 0 |
 | 13 | 📊 | Apply details | cond — `status-apply` |
 | 14 | ⏱ | Apply time | cond — `status-apply` |
-| 15 | ☠📖 | Destroy plan | cond — `status-destroy-plan` |
+| 15 | ☠📖 | Destroy plan | cond — `status-destroy-plan` ran |
 | 16 | ⚠️ | Destroy plan warnings | cond — `destroy-plan-warning-count` > 0 |
 | 17 | 📊 | Destroy plan details | cond — `status-destroy-plan` |
 | 18 | ⏱ | Destroy plan time | cond — `status-destroy-plan` |
-| 19 | ☠ | Destroy | cond — `status-destroy` |
+| 19 | ☠ | Destroy | cond — `status-destroy` ran |
 | 20 | ⚠️ | Destroy warnings | cond — `destroy-warning-count` > 0 |
 | 21 | 📊 | Destroy details | cond — `status-destroy` |
 | 22 | ⏱ | Destroy time | cond — `status-destroy` |
@@ -930,3 +930,4 @@ Recorded here because each would have been invisible in a green test run had the
 | P27 | `annotate-terraform-outcome` | A step outcome of `skipped` is not empty. Treating "non-empty and not success" as failure would have annotated every skipped apply as a failed one. Skipped is "did not run". |
 | P28 | every renderer | `$(…)` runs in a subshell: a function that sets a global (`OUTPUTS_STRIPPED`, the run-summary counts) or ends its output with a newline loses both when called that way. Hit three times in one afternoon; now a section in [Action-implementation-guide.md](Action-implementation-guide.md). |
 | P29 | test harnesses | Two suites exported large inputs that the production shim deliberately does not — `capture-matrix-job-meta` (JSON contexts) and, historically, `create-validation-summary` (allexport). A harness that exports what the shim keeps local E2BIGs the step's own `jq` on a large fixture and tests the harness, not the step. Both now mirror their shim. |
+| P30 | §7.4, §8.1 | **Found in the first real run.** A step whose `if:` was false has the outcome string `skipped`, not `""`. Gating the operation blocks on "non-empty" rendered `Apply | skipped`, `Destroy plan | skipped`, `Destroy | skipped` on every plan-only environment — the §2 invariant broken in production while every unit test was green, because C1 only exercised the empty case. Both renderers now gate on "ran" (non-empty and not `skipped`), as `annotate-terraform-outcome` already did; tests cover all-skipped and mixed. The spec's own §7.4 wording was wrong about GitHub's semantics. |

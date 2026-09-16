@@ -320,3 +320,9 @@ function _render_mode_cell {
     echo "<span title=\"${title}\">${icon}</span>"
   fi
 }
+
+# A step whose if: was false has the outcome STRING 'skipped', not ''. Both
+# mean "did not run" here. Gating on non-empty alone rendered three skipped
+# blocks on every plan-only environment in the first real run — breaking the
+# byte-identical invariant (docs/Apply-and-destroy-reporting.md §2, P30).
+function _op_ran { [ -n "${1:-}" ] && [ "${1}" != 'skipped' ]; }

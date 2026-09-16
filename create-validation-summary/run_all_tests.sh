@@ -2156,6 +2156,27 @@ fi
 
 
 # --------------------------------------------------
+# P30 — 'skipped' is what GitHub sets for a step whose if: was false. It must
+# gate exactly like empty. Found in the first real run: every plan-only env
+# rendered three skipped blocks.
+# --------------------------------------------------
+reset_defaults
+export input_status_apply="skipped"; export input_status_destroy_plan="skipped"; export input_status_destroy="skipped"
+run_test "P30: all three statuses 'skipped' → head byte-identical to the plan-only golden" assert_full_body_golden_all_success_no_plan
+
+assert_skipped_apply_shows_mode_not_block() {
+  local head="${3}"
+  [[ "${head}" == *'| Mode |'* ]] || { echo "  Mode row must still render (goal-driven)"; return 1; }
+  [[ "${head}" != *'| <span title="Apply">🐙</span> | Apply |'* ]] || { echo "  a skipped apply must not render the Apply block"; return 1; }
+  [[ "${head}" != *'Apply details'* ]] || { echo "  no Apply details for a skipped apply"; return 1; }
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+export input_status_plan="failure"; export input_status_apply="skipped"
+run_test "P30: plan failed → apply skipped → Mode row yes, Apply block no" assert_skipped_apply_shows_mode_not_block
+
+# --------------------------------------------------
 # Operation blocks — apply / destroy-plan / destroy rows appended below
 # Plan time (docs/Apply-and-destroy-reporting.md §8.1, tests C1b–C6, C14,
 # C15). The plan-only rendering is asserted byte-identical by every golden
@@ -2439,7 +2460,7 @@ assert_apply_time_em_dash() {
   return 0
 }
 reset_defaults
-export input_status_apply="skipped"
+export input_status_apply="success"   # a step that ran; its time input left at N/A
 run_test "Apply time renders em-dash when N/A (same shape as Plan time)" assert_apply_time_em_dash
 
 # Grouped mode: operation blocks live in the table, which grouped mode omits.

@@ -542,8 +542,9 @@ function render_group_body {
 # ----------------------------------------------------------------------------
 
 # Render one operation block (status · warnings · details · time) for the
-# grouped table, or nothing when no env in the group has an outcome for the
-# step. Rows end in a newline. Details cells differ per operation:
+# grouped table, or nothing when no env in the group RAN the step (outcome
+# non-empty and not 'skipped'). Rows end in a newline. An env that skipped a
+# step another env ran still gets its ⏭️ cell. Details cells differ per operation:
 # applied/planned badges for apply and destroy, the plan badge set for the
 # destroy plan (it is a plan). Denominators come from the matching plan
 # step's parse output.
@@ -558,7 +559,7 @@ function _render_op_block {
   local status_row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
   for env in "${envs[@]}"; do
     outcome=$(_extract_step_outcome "${group}" "${env}" "${step}")
-    [ -n "${outcome}" ] && any_outcome=true
+    _op_ran "${outcome}" && any_outcome=true
     status_row+=" $(_render_status_cell "${outcome}") |"
   done
   [ "${any_outcome}" = true ] || return 0
