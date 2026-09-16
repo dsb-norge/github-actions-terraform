@@ -301,3 +301,22 @@ function _render_full_body {
   local user_body="${2}"
   printf '%s\n\n%s' "${marker}" "${user_body}"
 }
+
+# Mode cell for one env in the grouped table (docs/Apply-and-destroy-reporting.md
+# §8.2, §8.8): '🐙' / '☠' / '🐙☠' from the env's goals, '—' when the env does
+# not mutate on PR. Driven by goals, not outcomes, so a group mixing an
+# applying env with plan-only envs shows exactly which column is the
+# dangerous one before any apply has happened.
+#   $1 'true' when goals contain apply-on-pr, $2 'true' for destroy-on-pr
+function _render_mode_cell {
+  local apply_on_pr="${1}" destroy_on_pr="${2}"
+  local title='This environment mutates infrastructure on pull request'
+  local icon=""
+  [ "${apply_on_pr}" = 'true' ] && icon+="🐙"
+  [ "${destroy_on_pr}" = 'true' ] && icon+="☠"
+  if [ -z "${icon}" ]; then
+    echo "<span title=\"${title}\">—</span>"
+  else
+    echo "<span title=\"${title}\">${icon}</span>"
+  fi
+}
