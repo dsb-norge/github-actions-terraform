@@ -1,0 +1,11 @@
+null_resource.banner: Creating...
+null_resource.banner: Creation complete after 0s [id=5555555555555555555]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+banner = "Apply complete! Resources: 9 added, 9 changed, 9 destroyed."
+note = <<EOT
+Apply complete! Resources: 8 added, 8 changed, 8 destroyed.
+EOT
