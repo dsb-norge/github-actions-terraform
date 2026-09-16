@@ -1550,6 +1550,27 @@ test_e8_mode_row_tolerates_missing_goals() {
   return 0
 }
 
+# P30: 'skipped' outcomes must not open a block.
+test_p30_all_skipped_no_block() {
+  write_meta "a" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy-plan": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  write_meta "b" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  for label in 'Apply' 'Apply details' 'Destroy plan' 'Destroy'; do
+    [ -z "$(row "${label}")" ] || { echo "row '${label}' must be omitted when every env skipped the step"; return 1; }
+  done
+  return 0
+}
+test_p30_mixed_success_and_skipped() {
+  write_meta "a" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  write_meta "b" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Apply)"
+  [[ "${r}" == '| <span title="Apply">🐙</span> | Apply | <span title="success">✅</span> | <span title="skipped">⏭️</span> |' ]] || { echo "expected ✅ / ⏭️ row, got: ${r}"; return 1; }
+  return 0
+}
+
 # ============================================================================
 # Run tests
 # ============================================================================
@@ -1612,6 +1633,8 @@ run_test "F1: per-group and per-env heads emit the same row set"            test
 run_test "E8: Mode row renders per-env 🐙/☠/🐙☠/— and sits first"           test_e8_mode_row_per_env
 run_test "E8: Mode row omitted when no env in the group mutates on PR"      test_e8_mode_row_omitted_when_nobody_mutates
 run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals
+run_test "P30: every env skipped the step → no block at all"                test_p30_all_skipped_no_block
+run_test "P30: one env ran, one skipped → row with ✅ and ⏭️"                test_p30_mixed_success_and_skipped
 
 # ============================================================================
 echo ""
