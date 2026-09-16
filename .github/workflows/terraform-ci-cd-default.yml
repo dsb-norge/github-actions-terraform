@@ -1776,6 +1776,42 @@ jobs:
           github-token: ${{ github.token }}
         continue-on-error: true # never fail the workflow over PR comment rendering
 
+  # Run-level rollup on the run page: one table with every environment as a
+  # row. Each matrix job can only describe itself on its own job page; this
+  # is the whole run at a glance — and on push / schedule / dispatch, where
+  # there is no PR comment, the only place it exists. Runs on every event.
+  #
+  # A dedicated job rather than a step in 'conclusion' (which repos wire into
+  # branch protection and which must stay trivially correct) or a relaxation
+  # of pr-comment-aggregator (named and permissioned for PR comments; it
+  # would then run on push). Must never fail the workflow: continue-on-error
+  # on every step, and deliberately NOT in conclusion's needs (P20).
+  # See docs/Apply-and-destroy-reporting.md §7.9.
+  run-summary:
+    if: always()
+    name: "Run summary"
+    needs: [create-matrix, terraform-ci-cd]
+    runs-on: ${{ inputs.runs-on }} # global setting
+    # No pull-requests permission — this job never touches the PR.
+    permissions: {}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download matrix job metadata"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-job-meta-*
+          merge-multiple: true
+        # No artifacts (matrix skipped) is a valid input: the action renders
+        # a "no environments" block.
+        continue-on-error: true
+      - name: "📋 Write the run summary"
+        uses: dsb-norge/github-actions-terraform/create-run-summary@v0
+        with:
+          metadata-files-pattern: "matrix-job-meta-*.json"
+        continue-on-error: true # never fail the workflow over run-page reporting
+
   # create a global result indicating if workflow steps succeeded or not,
   # handy for branch protection rules
   conclusion:

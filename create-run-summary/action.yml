@@ -1,0 +1,40 @@
+name: "Create the run-level terraform summary"
+description: |
+  Writes one table covering every environment of the run to
+  $GITHUB_STEP_SUMMARY, from the matrix-job-meta-*.json artifacts the
+  matrix jobs uploaded. Envs as rows; a headline line first.
+
+  Each matrix job can only describe itself on its own job page. This is
+  the one place the whole run is visible at a glance, on every event —
+  push, schedule and dispatch runs included, which get no PR comment.
+  See docs/Apply-and-destroy-reporting.md §7.9, §8.7.
+
+  Never fails: a reporting job that can redden a deploy is worse than no
+  reporting job. Missing or malformed artifacts degrade the table, they
+  do not fail the step.
+author: "Peder Schmedling"
+inputs:
+  metadata-files-pattern:
+    description: |
+      Glob matched against files in the working directory. Each match must
+      be a JSON file with the structure produced by capture-matrix-job-meta.
+    required: false
+    default: "matrix-job-meta-*.json"
+outputs:
+  environment-count:
+    description: Number of environments rendered.
+    value: ${{ steps.summary.outputs.environment-count }}
+  failed-count:
+    description: Number of environments whose worst outcome was a failure.
+    value: ${{ steps.summary.outputs.failed-count }}
+runs:
+  using: "composite"
+  steps:
+    - id: summary
+      shell: bash
+      env:
+        input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+      run: |
+        # Write the run-level rollup of every environment to the job summary
+        set -o allexport
+        source "${{ github.action_path }}/step_summary.sh"
