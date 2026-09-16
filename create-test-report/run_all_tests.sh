@@ -169,6 +169,12 @@ assert "J4: body-file output is set" test -n "${_bf}"
 assert "J4: body-file exists and is non-empty" test -s "${_bf}"
 assert "J4: body-file lives under RUNNER_TEMP" bash -c "[[ '${_bf}' == '${RUNNER_TEMP}'/* ]]"
 assert "J4: body-file content is the golden body" cmp -s "${DATA_DIR}/golden_success_with_report.md" "${_bf}"
+# The body must not also be a step output — that is what puts it into the
+# steps context and every downstream fork's envp. Only the path may appear.
+assert "J4: no body string in GITHUB_OUTPUT (only the path)" \
+  bash -c "! grep -qE '^(summary|prefix)(<<|=)' '${GITHUB_OUTPUT}' && ! grep -qF 'Show Test Report' '${GITHUB_OUTPUT}'"
+assert "J4: GITHUB_OUTPUT holds exactly one output line" \
+  test "$(wc -l < "${GITHUB_OUTPUT}")" -eq 1
 teardown
 
 # A test file name with a path separator must not become a nested path.
