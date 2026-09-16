@@ -9,6 +9,18 @@ inputs:
   terraform-plan-file:
     description: Path of terraform plan output file to apply.
     required: true
+  environment-name:
+    description: |
+      Name of the current deployment environment. Used when naming the
+      console output file, mirroring terraform-plan. Empty yields
+      'tf-apply-console-output.txt'.
+
+      When this action is invoked twice in one job — once for apply and
+      once for destroy — the two invocations must be given different names
+      or the second console file overwrites the first. The default workflow
+      passes '<env>' and '<env>-destroy'.
+    required: false
+    default: ""
   extra-envs-file:
     description: |
       Path to a JSON file with environment variables to apply to this action's
@@ -25,6 +37,22 @@ inputs:
       by the caller. See docs/Per-goal-environment-variables.md §6.3.
     required: false
     default: ""
+outputs:
+  exitcode:
+    description: The raw exit code from the terraform apply command.
+    value: ${{ steps.apply.outputs.tf-apply-exitcode }}
+  console-output-file:
+    description: |
+      The console output captured during execution of 'terraform apply'
+      (stdout and stderr, '-no-color'). Populated even when apply fails —
+      a failed apply's console is the only record of what was and was not
+      applied.
+    value: ${{ steps.apply.outputs.tf-apply-console-output-file }}
+  apply-time:
+    description: |
+      Wall-clock duration of the 'terraform apply' command, formatted as
+      'mm:ss'. Always emitted, including on failure.
+    value: ${{ steps.apply.outputs.apply-time }}
 runs:
   using: "composite"
   steps:
@@ -60,8 +88,9 @@ runs:
         TF_IN_AUTOMATION: "true"
         input_working_directory: ${{ inputs.working-directory }}
         input_terraform_plan_file: ${{ inputs.terraform-plan-file }}
+        input_environment_name: ${{ inputs.environment-name }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
-        # Run 'terraform apply' on the saved plan file
+        # Run 'terraform apply' on the saved plan file and capture its console output
         set -o allexport
         source "${{ github.action_path }}/step_apply.sh"

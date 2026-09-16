@@ -43,9 +43,12 @@ setup_workdir() {
   export input_working_directory="${WORK_DIR}"
   export input_terraform_plan_file="${PLAN_FILE}"
 
-  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_ARGS_FILE MOCK_TF_PWD_FILE MOCK_ENV_FILE
-  unset input_extra_envs_file
+  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_STDOUT_FILE MOCK_TF_ARGS_FILE MOCK_TF_PWD_FILE MOCK_ENV_FILE
+  unset input_extra_envs_file input_environment_name
 }
+
+# Value of a single-line output from GITHUB_OUTPUT.
+get_output() { grep "^${1}=" "${GITHUB_OUTPUT}" | head -n1 | cut -d= -f2-; }
 
 install_stub_terraform() {
   local stub_dir="${RUNNER_TEMP}/stub-bin"
@@ -66,6 +69,14 @@ fi
 if [ -n "${MOCK_TF_STDOUT:-}" ]; then
   printf '%s\n' "${MOCK_TF_STDOUT}"
 fi
+# Large canned output comes from a file: a 200k value in MOCK_TF_STDOUT would
+# itself trip MAX_ARG_STRLEN on this very exec, which is what the test is
+# meant to prove the STEP does not do.
+if [ -n "${MOCK_TF_STDOUT_FILE:-}" ]; then
+  cat "${MOCK_TF_STDOUT_FILE}"
+fi
+# Something on stderr too, so the capture provably merges both streams.
+echo "stub: this line went to stderr" >&2
 exit "${MOCK_TF_EXIT:-0}"
 STUB
   chmod +x "${stub_dir}/terraform"
@@ -133,14 +144,38 @@ assert "Happy path: stub stdout reaches the log" \
 assert "Happy path: terraform invoked from the working directory" \
   test "$(cat "${MOCK_TF_PWD_FILE}")" = "${WORK_DIR}"
 
+# A1 — console capture (docs/Apply-and-destroy-reporting.md §7.1, §10.1)
+CONSOLE_FILE="$(get_output tf-apply-console-output-file)"
+assert "A1: console-output-file output is set" test -n "${CONSOLE_FILE}"
+assert "A1: console file exists and is non-empty" test -s "${CONSOLE_FILE}"
+assert "A1: console file holds terraform's stdout" \
+  grep -q "Apply complete! Resources: 1 added" "${CONSOLE_FILE}"
+assert "A1: console file holds terraform's stderr too (2>&1)" \
+  grep -q "went to stderr" "${CONSOLE_FILE}"
+assert "A1: stdout still reaches the job log as well (tee)" \
+  grep -q "went to stderr" "${OUT_FILE}"
+assert "A5: no environment-name → tf-apply-console-output.txt" \
+  test "${CONSOLE_FILE}" = "${GITHUB_WORKSPACE}/tf-apply-console-output.txt"
+
+# A2 — timing
+assert "A2: apply-time is emitted as m:ss" \
+  bash -c "[[ '$(get_output apply-time)' =~ ^[0-9]+:[0-9]{2}$ ]]"
+
+# A7 — raw exit code
+assert "A7: exitcode output is terraform's raw exit code (0)" \
+  test "$(get_output tf-apply-exitcode)" = "0"
+
 # ----------------------------------------------------------------------
-# Test: argv shape — apply -input=false -auto-approve <plan-file>
+# Test: argv shape — apply -input=false -auto-approve -no-color <plan-file>
+# A4: -no-color is what keeps ANSI escapes out of the PR comment's code
+# fence; the plan file must still be one argv element.
 # ----------------------------------------------------------------------
-assert "argv: exactly 4 arguments" test "$(argc)" -eq 4
+assert "argv: exactly 5 arguments" test "$(argc)" -eq 5
 assert "argv: 1st is 'apply'" test "$(argn 1)" = "apply"
 assert "argv: 2nd is '-input=false'" test "$(argn 2)" = "-input=false"
 assert "argv: 3rd is '-auto-approve'" test "$(argn 3)" = "-auto-approve"
-assert "argv: 4th is the plan file, verbatim" test "$(argn 4)" = "${PLAN_FILE}"
+assert "A4: 4th is '-no-color'" test "$(argn 4)" = "-no-color"
+assert "argv: 5th is the plan file, verbatim" test "$(argn 5)" = "${PLAN_FILE}"
 
 # ----------------------------------------------------------------------
 # Test: Failure (terraform exit 1)
@@ -155,6 +190,23 @@ assert "Failure: error log line present" \
   grep -q "apply exited with code '1'" "${OUT_FILE}"
 assert "Failure: terraform stderr/stdout still reaches the log" \
   grep -q "applying plan failed" "${OUT_FILE}"
+# A3 — a failed apply's console is the only record of what was applied, so
+# every output must still be there.
+CONSOLE_FILE="$(get_output tf-apply-console-output-file)"
+assert "A3: console-output-file still emitted on failure" test -s "${CONSOLE_FILE}"
+assert "A3: console file holds the error text" grep -q "applying plan failed" "${CONSOLE_FILE}"
+assert "A3: apply-time still emitted on failure" \
+  bash -c "[[ '$(get_output apply-time)' =~ ^[0-9]+:[0-9]{2}$ ]]"
+assert "A7: exitcode output is the raw code (1)" test "$(get_output tf-apply-exitcode)" = "1"
+
+# Exit 2 is not special for apply (unlike plan's -detailed-exitcode) —
+# it must fail the step and be reported verbatim.
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=2
+run_step
+assert "A7: exit 2 fails the step" test "${LAST_EXIT}" -ne 0
+assert "A7: exitcode output is the raw code (2)" test "$(get_output tf-apply-exitcode)" = "2"
 
 # ----------------------------------------------------------------------
 # Test: plan file path containing a space reaches terraform as ONE argv
@@ -170,10 +222,10 @@ export input_terraform_plan_file="${PLAN_FILE}"
 export MOCK_TF_EXIT=0
 run_step
 assert "Space in path: step exits 0" test "${LAST_EXIT}" -eq 0
-assert "Space in path: still exactly 4 arguments (no word-splitting)" \
-  test "$(argc)" -eq 4
+assert "Space in path: still exactly 5 arguments (no word-splitting)" \
+  test "$(argc)" -eq 5
 assert "Space in path: plan file arrives verbatim" \
-  test "$(argn 4)" = "${PLAN_FILE}"
+  test "$(argn 5)" = "${PLAN_FILE}"
 assert "Space in path: logged command string shows the real quoting" \
   grep -Fq "'${PLAN_FILE}'" "${OUT_FILE}"
 
@@ -190,10 +242,66 @@ touch "${GITHUB_WORKSPACE}/tf-plan-one.plan" "${GITHUB_WORKSPACE}/tf-plan-two.pl
 export input_terraform_plan_file="${PLAN_FILE}"
 export MOCK_TF_EXIT=0
 run_step
-assert "Glob in path: still exactly 4 arguments (no glob expansion)" \
-  test "$(argc)" -eq 4
+assert "Glob in path: still exactly 5 arguments (no glob expansion)" \
+  test "$(argc)" -eq 5
 assert "Glob in path: plan file arrives unexpanded" \
-  test "$(argn 4)" = "${GITHUB_WORKSPACE}/tf-plan-*.plan"
+  test "$(argn 5)" = "${GITHUB_WORKSPACE}/tf-plan-*.plan"
+
+# ----------------------------------------------------------------------
+# A5 — environment-name names the console file
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export input_environment_name="prod"
+export MOCK_TF_STDOUT="Apply complete! Resources: 0 added, 0 changed, 0 destroyed."
+run_step
+assert "A5: environment-name set → tf-apply-console-output-<env>.txt" \
+  test "$(get_output tf-apply-console-output-file)" = "${GITHUB_WORKSPACE}/tf-apply-console-output-prod.txt"
+assert "A5: ... and that file was written" test -s "${GITHUB_WORKSPACE}/tf-apply-console-output-prod.txt"
+
+# ----------------------------------------------------------------------
+# A6 — apply and destroy in one job share this action. The workflow passes
+# '<env>' and '<env>-destroy'; the two console files must both survive.
+# (P6 in docs/Apply-and-destroy-reporting.md.)
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export input_environment_name="stage"
+export MOCK_TF_STDOUT="Apply complete! Resources: 3 added, 0 changed, 0 destroyed."
+run_step
+APPLY_FILE="$(get_output tf-apply-console-output-file)"
+# Second invocation in the SAME workspace, as the destroy step would do.
+export GITHUB_OUTPUT=$(mktemp)
+export input_environment_name="stage-destroy"
+export MOCK_TF_STDOUT="Destroy complete! Resources: 3 destroyed."
+run_step
+DESTROY_FILE="$(get_output tf-apply-console-output-file)"
+assert "A6: apply and destroy console files have distinct names" \
+  test "${APPLY_FILE}" != "${DESTROY_FILE}"
+assert "A6: apply console file still holds the apply output" \
+  grep -q "3 added" "${APPLY_FILE}"
+assert "A6: destroy console file holds the destroy output" \
+  grep -q "Destroy complete" "${DESTROY_FILE}"
+assert "A6: apply console file was not truncated by the destroy run" \
+  bash -c "! grep -q 'Destroy complete' '${APPLY_FILE}'"
+
+# ----------------------------------------------------------------------
+# A10 — 200k of terraform output: captured whole, step completes. The
+# content goes disk → tee → disk; only the path is ever in a variable, so
+# nothing here can trip ARG_MAX however large the apply gets (P10).
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_STDOUT_FILE="${RUNNER_TEMP}/big-stdout.txt"
+yes 'module.big.azurerm_thing.many["item"]: Creation complete after 1s [id=/subscriptions/x/y/z]' | head -c 200000 > "${MOCK_TF_STDOUT_FILE}"
+echo "Apply complete! Resources: 2000 added, 0 changed, 0 destroyed." >> "${MOCK_TF_STDOUT_FILE}"
+run_step
+assert "A10: 200k output → step exits 0" test "${LAST_EXIT}" -eq 0
+CONSOLE_FILE="$(get_output tf-apply-console-output-file)"
+assert "A10: console file holds all of it (≥200k)" \
+  test "$(wc -c < "${CONSOLE_FILE}")" -ge 200000
+assert "A10: ... including the final summary line" \
+  grep -q "2000 added" "${CONSOLE_FILE}"
 
 # ======================================================================
 # Per-goal environment variables (the 'extra-envs-file' input)
