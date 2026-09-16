@@ -65,7 +65,7 @@ function _render_step_icon_cell {
   echo "<span title=\"${label}\">${emoji}</span>"
 }
 
-# Row definitions for the grouped table.
+# Row definitions for the grouped table's always-present step rows.
 # Format: "<step-id-in-matrix-meta>|<emoji>|<label>".
 # The step-id matches the keys under `steps:` in a matrix-job-meta-*.json
 # file (set by capture-matrix-job-meta from GitHub's steps context).
@@ -78,6 +78,19 @@ declare -gar GROUPED_TABLE_STEP_ROWS=(
   "validate|✔|Validate"
   "lint|🧹|TFLint"
   "plan|📖|Plan"
+)
+
+# The mutating operations, each a four-row block (status · warnings ·
+# details · time) appended after Plan time in execution order. Presence is
+# group-wide: a block renders when ANY env in the group has an outcome for
+# its step; envs without render '—' / 'N/A'.
+# Format: "<step-id>|<emoji>|<label>|<warnings-step-id>|<time-output-name>"
+# Kept in sync with create-validation-summary's _render_*_block functions
+# (docs/Apply-and-destroy-reporting.md §8.1, P9; enforced by test F1).
+declare -gar GROUPED_TABLE_OP_BLOCKS=(
+  "apply|🐙|Apply|parse-apply-warnings|apply-time"
+  "destroy-plan|☠📖|Destroy plan|parse-destroy-plan-warnings|plan-time"
+  "destroy|☠|Destroy|parse-destroy-warnings|apply-time"
 )
 
 # Render the Plan Details cell for a single env in the grouped table.
@@ -118,20 +131,58 @@ function _render_plan_details_cell {
   echo "${cell}"
 }
 
-# Render the Warnings cell for a single env in the grouped table.
+# Render a Warnings cell for a single env in the grouped table.
 # Empty input (no parse-warnings data) → "—" (matches the not-applicable
 # fallback used by _render_plan_time_cell and _status_emoji_and_title's
 # default branch). 0 → "—" too, since "no warnings" is not interesting.
 # Non-zero numeric → "⚠️ N" inside a tooltip-bearing span so the row
-# stays scannable in the grouped table.
+# stays scannable in the grouped table. $2 is the tooltip; it defaults to
+# the original init+validate+plan wording so the existing row is unchanged.
 function _render_warning_count_cell {
   local v="${1:-}"
-  local title='Warnings from init+validate+plan'
+  local title="${2:-Warnings from init+validate+plan}"
   if [ -z "${v}" ] || [ "${v}" = "0" ]; then
     echo "<span title=\"${title}\">—</span>"
     return
   fi
   echo "<span title=\"${title}\">⚠️ ${v}</span>"
+}
+
+# One "applied / planned" badge — byte-identical to create-validation-
+# summary's _render_ratio_badge. The numerator is '?' whenever the operation
+# did not complete, whatever count arrived (docs/Apply-and-destroy-reporting.md P2).
+function _render_ratio_badge {
+  local emoji="${1}" applied="${2}" planned="${3}" verb="${4}" completed="${5}"
+  local num='?' den='?'
+  if [ "${completed}" = 'true' ] && [[ "${applied}" =~ ^[0-9]+$ ]]; then num="${applied}"; fi
+  if [[ "${planned}" =~ ^[0-9]+$ ]]; then den="${planned}"; fi
+  echo "<span title=\"Applied / planned\">\`${emoji} ${num}/${den}\` ${verb}</span>"
+}
+
+# Apply details cell: three applied/planned badges. "N/A" when parse-apply
+# left no data at all for the env (the step did not run).
+function _render_apply_details_cell {
+  local a_add="${1}" a_change="${2}" a_destroy="${3}" p_add="${4}" p_change="${5}" p_destroy="${6}" completed="${7}"
+  if [ -z "${a_add}" ] && [ -z "${a_change}" ] && [ -z "${a_destroy}" ] && [ -z "${completed}" ]; then
+    echo "N/A"
+    return 0
+  fi
+  local cell="<div align=\"left\">"
+  cell+="$(_render_ratio_badge "💫" "${a_add}" "${p_add}" "added" "${completed}")"
+  cell+="<br>$(_render_ratio_badge "🛠️" "${a_change}" "${p_change}" "changed" "${completed}")"
+  cell+="<br>$(_render_ratio_badge "💥" "${a_destroy}" "${p_destroy}" "destroyed" "${completed}")"
+  cell+="</div>"
+  echo "${cell}"
+}
+
+# Destroy details cell: a single destroyed/planned badge.
+function _render_destroy_details_cell {
+  local d_destroy="${1}" p_destroy="${2}" completed="${3}"
+  if [ -z "${d_destroy}" ] && [ -z "${completed}" ]; then
+    echo "N/A"
+    return 0
+  fi
+  echo "<div align=\"left\">$(_render_ratio_badge "💥" "${d_destroy}" "${p_destroy}" "destroyed" "${completed}")</div>"
 }
 
 # Render the Plan time cell for a single env in the grouped table.
@@ -153,17 +204,30 @@ function _render_plan_time_cell {
   echo "<span title=\"${title}\">\`${v}\`</span>"
 }
 
-# Render the Links cell for a single env (0-2 lines, <br>-separated).
-# Each argument may be empty — the corresponding line is omitted. Both empty
-# yields an empty cell rather than a row of stray pipes.
+# Render the Links cell for a single env (0-5 lines, <br>-separated), in
+# the order the operations run: plan tag, apply tag, destroy-plan tag,
+# destroy tag, job log. Each argument may be empty — that line is omitted.
+# All empty yields an empty cell rather than a row of stray pipes.
 # See docs/Workflow-pr-comments.md §4.5.
 function _render_links_cell {
   local log_extract_anchor="${1}"
   local job_log_url="${2}"
+  local apply_anchor="${3:-}"
+  local destroy_plan_anchor="${4:-}"
+  local destroy_anchor="${5:-}"
 
   local -a lines=()
   if [ -n "${log_extract_anchor}" ]; then
     lines+=("[log extract](${log_extract_anchor})")
+  fi
+  if [ -n "${apply_anchor}" ]; then
+    lines+=("[apply log](${apply_anchor})")
+  fi
+  if [ -n "${destroy_plan_anchor}" ]; then
+    lines+=("[destroy plan log](${destroy_plan_anchor})")
+  fi
+  if [ -n "${destroy_anchor}" ]; then
+    lines+=("[destroy log](${destroy_anchor})")
   fi
   if [ -n "${job_log_url}" ]; then
     lines+=("[job log](${job_log_url})")
