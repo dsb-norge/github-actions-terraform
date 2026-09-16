@@ -379,6 +379,24 @@ function render_group_body {
     sep+=":---:|"
   done
 
+  # ---- Mode row (§8.2, §8.8) — first, and only when some env mutates on PR ----
+  # Two passes: collect each env's flags (and the union for the col-1 icon),
+  # then build the row.
+  local any_mode=false mode_icons="" apply_on_pr destroy_on_pr
+  local -a mode_cells=()
+  for env in "${envs[@]}"; do
+    apply_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "apply-on-pr")
+    destroy_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "destroy-on-pr")
+    mode_cells+=("$(_render_mode_cell "${apply_on_pr}" "${destroy_on_pr}")")
+    [ "${apply_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *🐙* ]] && mode_icons+="🐙"
+    [ "${destroy_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *☠* ]] && mode_icons+="☠"
+  done
+  # Col-1 icon is the union of what the group does on PR; the per-env head's
+  # icon is per env. The tooltip label is 'Mode' in both.
+  local mode_row="| $(_render_step_icon_cell "${mode_icons:-🐙}" "Mode") | Mode |"
+  local cell
+  for cell in "${mode_cells[@]}"; do mode_row+=" ${cell} |"; done
+
   # ---- Step rows ----
   local rows=""
   local row_def step_id emoji label
@@ -506,10 +524,14 @@ function render_group_body {
   mid_rows+="${op_rows}"
   mid_rows+="${links_row}"
 
-  printf '%s\n%s\n%s\n%s%s\n\n%s\n' \
+  local top_rows=""
+  [ "${any_mode}" = true ] && top_rows="${mode_row}"$'\n'
+
+  printf '%s\n%s\n%s\n%s%s%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
+    "${top_rows}" \
     "${rows}" \
     "${mid_rows}" \
     "${footer}"
@@ -607,6 +629,20 @@ function _extract_step_output {
   val=$(jq -r --arg s "${step}" --arg k "${key}" '.steps[$s].outputs[$k] // ""' "${file}" 2>/dev/null || echo "")
   [ "${val}" = "null" ] && val=""
   echo "${val}"
+}
+
+# 'true' when the env's goals (matrix_context.vars.goals, a JSON array)
+# contain the given goal; '' otherwise, including when goals are missing or
+# not an array (older artifacts).
+function _extract_goal_flag {
+  local group="${1}" env="${2}" goal="${3}"
+  local file="${DESIRED_META[${group}/${env}]:-}"
+  [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
+  if jq -e --arg g "${goal}" '(.matrix_context.vars.goals // []) | (type == "array") and (index($g) != null)' "${file}" >/dev/null 2>&1; then
+    echo "true"
+  else
+    echo ""
+  fi
 }
 
 # Extract step outcome from a matrix-job-meta file. Returns "" if step not present.

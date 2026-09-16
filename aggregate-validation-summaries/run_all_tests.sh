@@ -133,8 +133,9 @@ teardown() {
 # ops_apply / ops_destroy_plan / ops_destroy below, comma-joined — appended
 # to the steps object. Empty = no mutating stage ran (the pre-feature shape,
 # which is also what an older action version's artifact looks like).
+# 8th arg (goals): the env's goals as a JSON array; default '["all"]'.
 write_meta() {
-  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}" ops="${7:-}"
+  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}" ops="${7:-}" goals="${8:-[\"all\"]}"
   local counts_default='{"count-add":"0","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
   local counts_use="${counts:-${counts_default}}"
   local plan_outputs='{}'
@@ -160,7 +161,7 @@ write_meta() {
                "workflow_name": "Terraform CI", "job_name": "terraform-ci-cd",
                "actor": "test-user", "event_name": "pull_request",
                "ref": "refs/pull/123/merge", "sha": "abc"},
-  "matrix_context": {"environment": "${env}", "vars": {"environment": "${env}", "pr-comment-group": "${group}"}},
+  "matrix_context": {"environment": "${env}", "vars": {"environment": "${env}", "pr-comment-group": "${group}", "goals": ${goals}}},
   "github_context": {"actor": "test-user"},
   "steps": {
     "init":        {"outcome": "success", "conclusion": "success", "outputs": {}},
@@ -1467,7 +1468,7 @@ Links'
 # grep: a row added to one renderer and not the other fails here.
 test_f1_row_set_in_sync_with_per_env_head() {
   local plan_counts='{"count-add":"1","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
-  write_meta "e" "g" success "${plan_counts}" "0:04" "1:0:0" "$(ops_apply success true 1 0 0 1:07 1),$(ops_destroy_plan success 1 0:31 1),$(ops_destroy success true 1 0:44 1)"
+  write_meta "e" "g" success "${plan_counts}" "0:04" "1:0:0" "$(ops_apply success true 1 0 0 1:07 1),$(ops_destroy_plan success 1 0:31 1),$(ops_destroy success true 1 0:44 1)" '["all","apply-on-pr","destroy-on-pr"]'
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [{"id": 1, "body": "<!-- tf:tag:plan:e:run-id-999:attempt-1 -->\nx"}]
 JSON
@@ -1490,6 +1491,7 @@ JSON
     export input_plan_count_add=1 input_plan_count_change=0 input_plan_count_destroy=0
     export input_plan_count_import=0 input_plan_count_move=0 input_plan_count_remove=0 input_plan_count_total=1
     export input_plan_time="0:04" input_warning_count=1 input_plan_tag_comment_id=1
+    export input_goals_json='["all","apply-on-pr","destroy-on-pr"]'
     export input_status_apply=success input_apply_completed=true input_apply_count_add=1 input_apply_count_change=0 input_apply_count_destroy=0 input_apply_time="1:07" input_apply_warning_count=1
     export input_status_destroy_plan=success input_destroy_plan_count_add=0 input_destroy_plan_count_change=0 input_destroy_plan_count_destroy=1 input_destroy_plan_time="0:31" input_destroy_plan_warning_count=1
     export input_status_destroy=success input_destroy_completed=true input_destroy_count_destroy=1 input_destroy_time="0:44" input_destroy_warning_count=1
@@ -1503,7 +1505,48 @@ JSON
     return 1
   fi
   local n; n=$(echo "${grouped_labels}" | wc -l)
-  [ "${n}" -ge 22 ] || { echo "expected ≥22 distinct rows in the fully populated table, got ${n}"; return 1; }
+  [ "${n}" -eq 23 ] || { echo "expected exactly 23 distinct rows (incl. Mode) in the fully populated table, got ${n}"; return 1; }
+  return 0
+}
+
+
+# E8: Mode row — per-env value in each column; row omitted when no env in the
+# group mutates on PR; rendered from goals, before any outcome exists.
+test_e8_mode_row_per_env() {
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  write_meta "bravo" "g"
+  write_meta "charlie" "g" success "" "" "" "" '["all","destroy-plan","apply-on-pr","destroy-on-pr"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Mode)"
+  local t='This environment mutates infrastructure on pull request'
+  local expected="| <span title=\"Mode\">🐙☠</span> | Mode | <span title=\"${t}\">🐙</span> | <span title=\"${t}\">—</span> | <span title=\"${t}\">🐙☠</span> |"
+  [[ "${r}" == "${expected}" ]] || { echo "Mode row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  # First row of the table, before Initialization.
+  local first; first=$(rendered_body | grep -E '^\| <span title="' | head -n1)
+  [[ "${first}" == "| <span title=\"Mode\">"* ]] || { echo "Mode must be the first row; first row is: ${first}"; return 1; }
+  return 0
+}
+
+test_e8_mode_row_omitted_when_nobody_mutates() {
+  write_meta "alpha" "g" success "" "" "" "" '["all"]'
+  write_meta "bravo" "g" success "" "" "" "" '["all","apply"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [ -z "$(row Mode)" ] || { echo "Mode row must be omitted when no env has an on-PR goal"; return 1; }
+  local first; first=$(rendered_body | grep -E '^\| <span title="' | head -n1)
+  [[ "${first}" == '| <span title="Initialization">'* ]] || { echo "first row must still be Initialization; got: ${first}"; return 1; }
+  return 0
+}
+
+# Older artifact without a goals field → no Mode row, no crash.
+test_e8_mode_row_tolerates_missing_goals() {
+  write_meta "alpha" "g"
+  # Strip the goals key to mimic an artifact captured before this feature.
+  jq 'del(.matrix_context.vars.goals)' "${TEST_DIR}/matrix-job-meta-alpha.json" > "${TEST_DIR}/tmp.json" && mv "${TEST_DIR}/tmp.json" "${TEST_DIR}/matrix-job-meta-alpha.json"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [ -z "$(row Mode)" ] || { echo "Mode row must be omitted without goals"; return 1; }
   return 0
 }
 
@@ -1566,6 +1609,9 @@ run_test "E7: destroy-plan (plan-shaped) and destroy (ratio) blocks"        test
 run_test "P2: failed apply renders ?/N in the grouped table, never 0/N"     test_failed_apply_renders_question_marks
 run_test "all blocks present → 22 rows in §8.1 order"                       test_full_row_order_with_all_blocks
 run_test "F1: per-group and per-env heads emit the same row set"            test_f1_row_set_in_sync_with_per_env_head
+run_test "E8: Mode row renders per-env 🐙/☠/🐙☠/— and sits first"           test_e8_mode_row_per_env
+run_test "E8: Mode row omitted when no env in the group mutates on PR"      test_e8_mode_row_omitted_when_nobody_mutates
+run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals
 
 # ============================================================================
 echo ""
