@@ -1429,14 +1429,15 @@ jobs:
       # apply the one case that skips its own reporting (P1).
       # See docs/Apply-and-destroy-reporting.md §7.5.
       # ======================================================================
+      # Unconditional (always(), no PR guard): the renderer is pure and
+      # cheap, and its step-summary-file is what the annotate step below
+      # writes to the job page — on push, schedule and dispatch runs, on
+      # fork PRs, and for add-pr-comment=false envs, that job page is the
+      # only surface there is (P11). The POST/PATCH steps that follow keep
+      # the full pull_request guard.
       - name: 📝 Create validation summary (phase 2)
         id: cvs-apply
-        if: |
-          always()
-          && matrix.vars.add-pr-comment == 'true'
-          && github.event_name == 'pull_request'
-          && github.event.action != 'closed'
-          && github.event.action != 'converted_to_draft'
+        if: always()
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
         with:
           environment-name: ${{ matrix.vars.github-environment }}
@@ -1505,6 +1506,10 @@ jobs:
         id: post-apply-tag
         if: |
           always() && steps.cvs-apply.outcome == 'success'
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
           && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
         uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
@@ -1519,6 +1524,10 @@ jobs:
         id: post-destroy-plan-tag
         if: |
           always() && steps.cvs-apply.outcome == 'success'
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
           && steps.destroy-plan.outcome != 'skipped' && steps.destroy-plan.outcome != ''
         uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
@@ -1533,6 +1542,10 @@ jobs:
         id: post-destroy-tag
         if: |
           always() && steps.cvs-apply.outcome == 'success'
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
           && steps.destroy.outcome != 'skipped' && steps.destroy.outcome != ''
         uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
@@ -1643,6 +1656,26 @@ jobs:
           marker: "<!-- tf:head:env:${{ matrix.vars.github-environment }} -->"
           body-file: ${{ steps.cvs-apply-final.outputs.head-summary-file || steps.cvs-apply.outputs.head-summary-file }}
         continue-on-error: true
+
+      # The run-page surface. No pull_request guard on purpose — see the
+      # cvs-apply comment above (P11). Never fails the job (P20 in spirit:
+      # reporting must not redden a deploy).
+      - name: "📣 Annotate outcome"
+        id: annotate
+        if: always()
+        uses: dsb-norge/github-actions-terraform/annotate-terraform-outcome@v0
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          step-summary-file: ${{ steps.cvs-apply-final.outputs.step-summary-file || steps.cvs-apply.outputs.step-summary-file }}
+          status-apply: ${{ steps.apply.outcome }}
+          apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
+          apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
+          apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
+          apply-time: ${{ steps.apply.outputs.apply-time }}
+          status-destroy: ${{ steps.destroy.outcome }}
+          destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
+          destroy-time: ${{ steps.destroy.outputs.apply-time }}
+        continue-on-error: true # never fail the job over run-page reporting
 
       # Outcome gates for the mutating steps (§5.2). Without these a failed
       # apply under allow-failing-terraform-operations=true was green

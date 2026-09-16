@@ -2056,8 +2056,8 @@ assert_no_body_strings_in_github_output() {
   fi
   local n
   n=$(wc -l < "${GITHUB_OUTPUT}")
-  if [ "${n}" -ne 5 ]; then
-    fails+="  GITHUB_OUTPUT: expected exactly 5 lines (head, plan, apply, destroy-plan, destroy *-file), got ${n}\n"
+  if [ "${n}" -ne 6 ]; then
+    fails+="  GITHUB_OUTPUT: expected exactly 6 lines (head, plan, apply, destroy-plan, destroy, step-summary *-file), got ${n}\n"
   fi
   if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
   return 0
@@ -2065,7 +2065,7 @@ assert_no_body_strings_in_github_output() {
 reset_defaults
 _plan_file=$(mktemp); echo "some plan body" > "${_plan_file}"
 export input_plan_txt_output_file="${_plan_file}"
-run_test "C17: GITHUB_OUTPUT holds only the five file paths, never a body" assert_no_body_strings_in_github_output
+run_test "C17: GITHUB_OUTPUT holds only the six file paths, never a body" assert_no_body_strings_in_github_output
 rm -f "${_plan_file}"
 
 # C18: the deleted outputs are gone by name.
@@ -2141,13 +2141,13 @@ test_c16_suffix_isolation() {
   done
   local count
   count=$(ls "${shared_tmp}"/tf-comment-dev-*.md | wc -l)
-  [ "${count}" -eq 20 ] || fails+="  expected 20 body files (4 invocations × 5 bodies), found ${count}\n"
+  [ "${count}" -eq 24 ] || fails+="  expected 24 body files (4 invocations × 6 bodies), found ${count}\n"
   rm -rf "${shared_tmp}"
   if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
   return 0
 }
 TESTS_RUN=$((TESTS_RUN + 1))
-echo -e "${BLUE}TEST ${TESTS_RUN}: C16: four suffixed invocations in one RUNNER_TEMP write twenty distinct files, none overwritten${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: C16: four suffixed invocations in one RUNNER_TEMP write 24 distinct files, none overwritten${NC}"
 if _c16_err=$(test_c16_suffix_isolation 2>&1); then
   echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -2774,6 +2774,54 @@ assert_op_bodies_default_not_available() {
 }
 reset_defaults
 run_test "Operation bodies are always written; 'not available' when the operation did not run" assert_op_bodies_default_not_available
+
+
+# --------------------------------------------------
+# step-summary-file (§8.7): the head's table, ungrouped shape, [Job log]
+# footer instead of a Links row — on every event, for every env.
+# --------------------------------------------------
+assert_step_summary_shape() {
+  local head="${3}"; local ss; ss="$(body_of step-summary)"
+  local fails=""
+  [[ "${ss}" == *'| <span title="Apply">🐙</span> | Apply | `success` |'* ]] || fails+="  step summary must carry the operation blocks\n"
+  [[ "${ss}" == *'| <span title="Mode">🐙</span> | Mode |'* ]] || fails+="  step summary must carry the Mode row\n"
+  [[ "${ss}" != *'| Links |'* ]] || fails+="  step summary must NOT have a Links row\n"
+  [[ "${ss}" == *$'\n\n[Job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs)' ]] || fails+="  step summary must end with the [Job log] footer\n"
+  # The head (with tag ids) has a Links row — the two differ only there.
+  [[ "${head}" == *'| Links |'* ]] || fails+="  (precondition) head should have a Links row in this scenario\n"
+  local head_no_links; head_no_links=$(printf '%s\n' "${head}" | grep -v '| Links |' | sed '$ d')
+  [[ "${ss}" == "${head_no_links}"* ]] || fails+="  step summary table must equal the head's table minus the Links row\n$(diff <(echo "${head_no_links}") <(echo "${ss}") | sed 's/^/    /')\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_goals_json='["all","apply-on-pr"]'
+export input_plan_tag_comment_id="11"; export input_apply_tag_comment_id="22"
+run_test "step-summary-file: head's table (incl. Mode + blocks), Links row → [Job log] footer" assert_step_summary_shape
+
+assert_step_summary_has_table_in_grouped_mode() {
+  local head="${3}"; local ss; ss="$(body_of step-summary)"
+  [[ "${head}" != *'| Step | Result |'* ]] || { echo "  (precondition) grouped head must omit the table"; return 1; }
+  [[ "${ss}" == *'| Step | Result |'* && "${ss}" == *'| Initialization |'* ]] || { echo "  step summary must carry the full table even for a grouped env"; return 1; }
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"
+run_test "step-summary-file: grouped env still gets the full table on the job page" assert_step_summary_has_table_in_grouped_mode
+
+assert_step_summary_small() {
+  local ss; ss="$(body_of step-summary)"
+  local n; n=$(printf '%s' "${ss}" | wc -c)
+  [ "${n}" -lt 8192 ] || { echo "  step summary is ${n} bytes; must stay well under the 1 MiB cap (P19) — no extract may leak in"; return 1; }
+  [[ "${ss}" != *'```'* ]] || { echo "  no code fence (console extract) may appear in the step summary"; return 1; }
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_apply_console_file=$(make_apply_console)
+export input_status_destroy_plan="success"; export input_status_destroy="success"
+run_test "step-summary-file: < 8 KiB and never carries a console extract (P19)" assert_step_summary_small
 
 # --------------------------------------------------
 # Summary

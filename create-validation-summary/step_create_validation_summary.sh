@@ -624,6 +624,24 @@ ${warnings_md}
 }
 
 # ============================================================================
+# step-summary renderer (docs/Apply-and-destroy-reporting.md §8.7)
+# ============================================================================
+#
+# The per-env block for $GITHUB_STEP_SUMMARY: the head's table, always in
+# its ungrouped shape (a grouped env has no table in its PR head, but the
+# job page has no per-group table to defer to), with the Links row replaced
+# by the plain '[Job log](<url>)' footer — there is no PR to anchor into.
+# Rendered by reusing render_head_summary with the group and every tag id
+# blanked, which is exactly the legacy footer branch; one renderer, no copy
+# to drift. The workflow renders on every event; only posting is PR-gated.
+function render_step_summary {
+  local job_url="${1}"
+  local input_pr_comment_group="" input_plan_tag_comment_id="" input_apply_tag_comment_id="" \
+        input_destroy_plan_tag_comment_id="" input_destroy_tag_comment_id=""
+  render_head_summary "${job_url}"
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -634,8 +652,9 @@ function main {
 
   _parse_on_pr_goals
 
-  local head_summary plan_extract apply_extract destroy_plan_extract destroy_extract
+  local head_summary plan_extract apply_extract destroy_plan_extract destroy_extract step_summary
   head_summary=$(render_head_summary "${job_url}")
+  step_summary=$(render_step_summary "${job_url}")
   plan_extract=$(render_plan_extract)
   apply_extract=$(render_op_extract apply)
   destroy_plan_extract=$(render_destroy_plan_extract)
@@ -648,6 +667,7 @@ function main {
   log-multiline "apply-extract " "${apply_extract}"
   log-multiline "destroy-plan-extract " "${destroy_plan_extract}"
   log-multiline "destroy-extract " "${destroy_extract}"
+  log-multiline "step-summary " "${step_summary}"
 
   local suffix=""
   [ -n "${input_output_file_suffix:-}" ] && suffix="-${input_output_file_suffix}"
@@ -657,6 +677,7 @@ function main {
   local apply_file="${out_dir}/tf-comment-${input_environment_name}-apply${suffix}.md"
   local destroy_plan_file="${out_dir}/tf-comment-${input_environment_name}-destroy-plan${suffix}.md"
   local destroy_file="${out_dir}/tf-comment-${input_environment_name}-destroy${suffix}.md"
+  local step_summary_file="${out_dir}/tf-comment-${input_environment_name}-step-summary${suffix}.md"
 
   # printf '%s' — no trailing newline, so the file is byte-identical to the
   # string the multiline output used to carry. The three operation bodies
@@ -667,12 +688,14 @@ function main {
   printf '%s' "${apply_extract}" >"${apply_file}"
   printf '%s' "${destroy_plan_extract}" >"${destroy_plan_file}"
   printf '%s' "${destroy_extract}" >"${destroy_file}"
+  printf '%s' "${step_summary}" >"${step_summary_file}"
 
   set-output 'head-summary-file' "${head_file}"
   set-output 'plan-extract-file' "${plan_file}"
   set-output 'apply-extract-file' "${apply_file}"
   set-output 'destroy-plan-extract-file' "${destroy_plan_file}"
   set-output 'destroy-extract-file' "${destroy_file}"
+  set-output 'step-summary-file' "${step_summary_file}"
 
   log-info "create-validation-summary completed."
   return 0
