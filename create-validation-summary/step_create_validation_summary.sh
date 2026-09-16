@@ -40,6 +40,21 @@
 #   input_plan_time            - Wall-clock duration of 'terraform plan' formatted as mm:ss (defaults to 'N/A')
 #   input_warning_count        - Total warning count across init+validate+plan (numeric; 0/missing/'?' suppresses the row + collapser)
 #   input_warnings_markdown_file - Path to rendered warnings markdown; appended as a sibling <details> after the plan-block when non-empty
+#   input_status_apply / input_status_destroy_plan / input_status_destroy
+#                              - Outcomes of the mutating steps. Non-empty gates
+#                                that operation's four-row block; empty (the
+#                                default) renders nothing — a plan-only env's
+#                                table is a strict prefix of the full one.
+#   input_apply_time / input_destroy_plan_time / input_destroy_time
+#                              - mm:ss per operation ('N/A' = em-dash)
+#   input_apply_count_{add,change,destroy,total}, input_apply_completed
+#                              - From parse-terraform-apply on the apply console
+#   input_destroy_plan_count_{add,change,destroy,import,move,remove,total}
+#                              - From parse-terraform-plan on the destroy plan
+#   input_destroy_count_{destroy,total}, input_destroy_completed
+#                              - From parse-terraform-apply on the destroy console
+#   input_{apply,destroy_plan,destroy}_warning_count
+#                              - One count per operation block (never summed)
 #   input_job_check_run_id     - The check run ID for the current job
 #   input_output_file_suffix   - Optional. Appended (after a '-') to every body
 #                                file name. The workflow invokes this action
@@ -71,6 +86,14 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 #   <blank>
 #   [Job log](<url>)
 #
+# Table row order (docs/Apply-and-destroy-reporting.md §8.1): the plan
+# block as it always was — steps, Warnings, Plan details, Plan time — then
+# one four-row block per mutating operation in the order the job runs them
+# (apply, destroy-plan, destroy), each block status · warnings · details ·
+# time, and Links last. Every operation block is gated on its status input
+# being non-empty, so a plan-only environment renders exactly the table it
+# rendered before these rows existed, byte for byte.
+#
 # In grouped mode (input_pr_comment_group non-empty), the validation table
 # is omitted — it lives on the per-group head posted by
 # aggregate-validation-summaries.
@@ -83,6 +106,72 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # via format-status) vs emoji in the grouped head — a column-width
 # adaptation; (2) the header shape and footer scope differ. See
 # docs/Workflow-pr-comments.md §5.1/§5.3.
+
+# ---- Operation blocks -------------------------------------------------------
+# Each returns zero or more table rows, each row PREFIXED with a newline so
+# the caller can append them straight after the Plan time row. Empty output
+# when the block's status input is empty.
+
+# Apply block: 🐙 Apply · ⚠️ Apply warnings · 📊 Apply details · ⏱ Apply time.
+# Details are applied/planned: numerators from parse-terraform-apply,
+# denominators from parse-terraform-plan. Only the three badges terraform's
+# apply summary has — no move/import/remove (§8.3).
+function _render_apply_block {
+  [ -z "${input_status_apply:-}" ] && return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "🐙" "Apply") | Apply | $(format-status "${input_status_apply}") |"
+  if _is_positive_int "${input_apply_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Apply warnings") | Apply warnings | <span title=\"Warnings from apply\">⚠️ ${input_apply_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Apply details") | Apply details | <div align=\"left\">"
+  out+="$(_render_ratio_badge "💫" "${input_apply_count_add:-}" "${input_plan_count_add:-}" "added" "${input_apply_completed:-}")"
+  out+="<br>$(_render_ratio_badge "🛠️" "${input_apply_count_change:-}" "${input_plan_count_change:-}" "changed" "${input_apply_completed:-}")"
+  out+="<br>$(_render_ratio_badge "💥" "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "destroyed" "${input_apply_completed:-}")"
+  out+="</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Apply time") | Apply time | $(_render_time_cell "${input_apply_time:-}") |"
+  printf '%s' "${out}"
+}
+
+# Destroy plan block: ☠📖 Destroy plan · ⚠️ · 📊 Destroy plan details · ⏱.
+# A destroy plan is a plan, so its details cell is the plan badge set with
+# the plan's present-tense verbs, optional move/import/remove included —
+# the same cell shape as Plan details, byte for byte.
+function _render_destroy_plan_block {
+  [ -z "${input_status_destroy_plan:-}" ] && return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "☠📖" "Destroy plan") | Destroy plan | $(format-status "${input_status_destroy_plan}") |"
+  if _is_positive_int "${input_destroy_plan_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Destroy plan warnings") | Destroy plan warnings | <span title=\"Warnings from destroy-plan\">⚠️ ${input_destroy_plan_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Destroy plan details") | Destroy plan details | <div align=\"left\"><span title=\"Resources to be added\">\`💫 ${input_destroy_plan_count_add:-N/A}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_destroy_plan_count_change:-N/A}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_destroy_plan_count_destroy:-N/A}\` destroy</span>"
+  if [ -n "${input_destroy_plan_count_move:-}" ] && [ "${input_destroy_plan_count_move}" != '0' ] && [ "${input_destroy_plan_count_move}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be moved\">\`🔀 ${input_destroy_plan_count_move}\` move</span>"
+  fi
+  if [ -n "${input_destroy_plan_count_import:-}" ] && [ "${input_destroy_plan_count_import}" != '0' ] && [ "${input_destroy_plan_count_import}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be imported\">\`📥 ${input_destroy_plan_count_import}\` import</span>"
+  fi
+  if [ -n "${input_destroy_plan_count_remove:-}" ] && [ "${input_destroy_plan_count_remove}" != '0' ] && [ "${input_destroy_plan_count_remove}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_destroy_plan_count_remove}\` remove</span>"
+  fi
+  out+="</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Destroy plan time") | Destroy plan time | $(_render_time_cell "${input_destroy_plan_time:-}") |"
+  printf '%s' "${out}"
+}
+
+# Destroy block: ☠ Destroy · ⚠️ · 📊 Destroy details · ⏱. Details are a
+# single destroyed/planned badge, the denominator being the destroy plan's
+# destroy count.
+function _render_destroy_block {
+  [ -z "${input_status_destroy:-}" ] && return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "☠" "Destroy") | Destroy | $(format-status "${input_status_destroy}") |"
+  if _is_positive_int "${input_destroy_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Destroy warnings") | Destroy warnings | <span title=\"Warnings from destroy\">⚠️ ${input_destroy_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Destroy details") | Destroy details | <div align=\"left\">$(_render_ratio_badge "💥" "${input_destroy_count_destroy:-}" "${input_destroy_plan_count_destroy:-}" "destroyed" "${input_destroy_completed:-}")</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Destroy time") | Destroy time | $(_render_time_cell "${input_destroy_time:-}") |"
+  printf '%s' "${out}"
+}
 
 function render_head_summary {
   local job_url="${1}"
@@ -157,6 +246,10 @@ function render_head_summary {
     fi
     head="${head}
 | $(_render_step_icon_cell "⏱" "Plan time") | Plan time | ${plan_time_cell} |"
+
+    # ---- Operation blocks (§8.1 rows 11-22) ----
+    # Appended after Plan time, before Links; see the header comment.
+    head="${head}$(_render_apply_block)$(_render_destroy_plan_block)$(_render_destroy_block)"
 
     # Links row — only rendered when the caller supplied
     # plan-tag-comment-id (typically the id of this run's per-env plan tag,

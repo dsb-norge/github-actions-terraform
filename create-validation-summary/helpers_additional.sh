@@ -36,3 +36,38 @@ function _render_step_icon_cell {
   local label="${2}"
   echo "<span title=\"${label}\">${emoji}</span>"
 }
+
+# Render a mm:ss time cell. A real duration is backtick-wrapped; empty or
+# the literal 'N/A' (the action.yml input default) renders the em-dash. Both
+# carry the unit tooltip — same shape the grouped head uses.
+function _render_time_cell {
+  local v="${1:-}"
+  local title='mm:ss (minutes:seconds)'
+  if [ -z "${v}" ] || [ "${v}" = 'N/A' ]; then
+    echo "<span title=\"${title}\">—</span>"
+  else
+    echo "<span title=\"${title}\">\`${v}\`</span>"
+  fi
+}
+
+# Render one "applied / planned" badge for the Apply / Destroy details rows.
+#   $1 emoji, $2 applied count, $3 planned count, $4 past-tense verb,
+#   $5 whether the operation completed ('true' or anything else)
+# The numerator is '?' whenever the operation did not complete, whatever
+# count arrived: terraform prints no summary line for a failed apply, and a
+# zero there would read as "nothing happened" for an infrastructure that
+# may be half applied (docs/Apply-and-destroy-reporting.md P2, §8.3).
+# Either side that is not numeric renders as '?'.
+function _render_ratio_badge {
+  local emoji="${1}" applied="${2}" planned="${3}" verb="${4}" completed="${5}"
+  local num='?' den='?'
+  if [ "${completed}" = 'true' ] && [[ "${applied}" =~ ^[0-9]+$ ]]; then num="${applied}"; fi
+  if [[ "${planned}" =~ ^[0-9]+$ ]]; then den="${planned}"; fi
+  echo "<span title=\"Applied / planned\">\`${emoji} ${num}/${den}\` ${verb}</span>"
+}
+
+# True when the value is a positive integer — the gate for every warnings
+# row. 0, empty, 'N/A' and '?' all fail it.
+function _is_positive_int {
+  [[ "${1:-0}" =~ ^[0-9]+$ ]] && [ "${1}" -gt 0 ]
+}
