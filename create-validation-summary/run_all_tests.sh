@@ -84,6 +84,34 @@ reset_defaults() {
   # output-file-suffix: empty default → files named tf-comment-<env>-head.md
   # / -plan.md. The suffix tests override this.
   export input_output_file_suffix=""
+  # Operation blocks (docs/Apply-and-destroy-reporting.md §8.1): every
+  # gating status empty, every count 'N/A', every warning count 0 — the
+  # action.yml defaults. With these, the head must be byte-identical to
+  # the pre-feature output; every golden above asserts exactly that (C1).
+  export input_status_apply=""
+  export input_status_destroy_plan=""
+  export input_status_destroy=""
+  export input_apply_time="N/A"
+  export input_destroy_plan_time="N/A"
+  export input_destroy_time="N/A"
+  export input_apply_count_add="N/A"
+  export input_apply_count_change="N/A"
+  export input_apply_count_destroy="N/A"
+  export input_apply_count_total="N/A"
+  export input_apply_completed=""
+  export input_destroy_plan_count_add="N/A"
+  export input_destroy_plan_count_change="N/A"
+  export input_destroy_plan_count_destroy="N/A"
+  export input_destroy_plan_count_import="N/A"
+  export input_destroy_plan_count_move="N/A"
+  export input_destroy_plan_count_remove="N/A"
+  export input_destroy_plan_count_total="N/A"
+  export input_destroy_count_destroy="N/A"
+  export input_destroy_count_total="N/A"
+  export input_destroy_completed=""
+  export input_apply_warning_count="0"
+  export input_destroy_plan_warning_count="0"
+  export input_destroy_warning_count="0"
   export input_job_check_run_id="87654321"
 
   export GITHUB_SERVER_URL="https://github.com"
@@ -2106,6 +2134,305 @@ if _c16_err=$(test_c16_suffix_isolation 2>&1); then
 else
   echo -e "${RED}✗ FAILED${NC}:"; echo -e "${_c16_err}"; TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
+
+
+# --------------------------------------------------
+# Operation blocks — apply / destroy-plan / destroy rows appended below
+# Plan time (docs/Apply-and-destroy-reporting.md §8.1, tests C1b–C6, C14,
+# C15). The plan-only rendering is asserted byte-identical by every golden
+# above (C1); these pin what the blocks add and that they add it below.
+# --------------------------------------------------
+
+# Shared "apply-on-pr, succeeded" fixture inputs.
+set_apply_success_inputs() {
+  export input_status_apply="success"
+  export input_apply_time="1:07"
+  export input_apply_count_add="1"
+  export input_apply_count_change="0"
+  export input_apply_count_destroy="0"
+  export input_apply_count_total="1"
+  export input_apply_completed="true"
+  export input_include_plan_details="true"
+  export input_plan_count_add="1"
+  export input_plan_count_change="0"
+  export input_plan_count_destroy="0"
+  export input_plan_count_total="1"
+  export input_plan_time="0:04"
+}
+
+# The head as rendered with NO operation blocks, for prefix comparisons.
+# Captured once from the current defaults so C1b compares against the real
+# rendering rather than a hand-typed copy.
+_capture_plan_only_head() {
+  reset_defaults
+  export input_include_plan_details="true"
+  export input_plan_count_add="1"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
+  export input_plan_count_total="1"; export input_plan_time="0:04"
+  export GITHUB_OUTPUT=$(mktemp); export RUNNER_TEMP=$(mktemp -d)
+  export GITHUB_ACTION_PATH="${_this_script_dir}"; export GITHUB_WORKSPACE="${_this_script_dir}"
+  ( source "${_this_script_dir}/step_create_validation_summary.sh" ) >/dev/null 2>&1
+  cat "$(get_output head-summary-file)"
+  rm -f "${GITHUB_OUTPUT}"; rm -rf "${RUNNER_TEMP}"
+}
+PLAN_ONLY_HEAD="$(_capture_plan_only_head)"
+# Everything up to and including the Plan time row — the part that must be
+# a prefix of every rendering. The footer ([Job log]) follows the table and
+# is what the blocks are inserted BEFORE, so it is excluded from the prefix.
+PLAN_ONLY_TABLE_PREFIX="$(printf '%s' "${PLAN_ONLY_HEAD}" | sed -n '1,/| Plan time |/p')"
+
+# C1b: with every block present, the plan-only table is a strict PREFIX.
+assert_plan_only_is_strict_prefix() {
+  local head="${3}"
+  if [[ "${head}" != "${PLAN_ONLY_TABLE_PREFIX}"* ]]; then
+    echo "  head-summary: plan-only table (through Plan time) is NOT a prefix of the full rendering"
+    diff <(printf '%s' "${PLAN_ONLY_TABLE_PREFIX}") <(printf '%s' "${head}" | head -n "$(printf '%s\n' "${PLAN_ONLY_TABLE_PREFIX}" | wc -l)") | sed 's/^/    /'
+    return 1
+  fi
+  if [[ "${head}" == "${PLAN_ONLY_TABLE_PREFIX}" ]]; then
+    echo "  head-summary: expected rows BELOW Plan time, got none"
+    return 1
+  fi
+  # And nothing new above Plan time: the first row after the header rows
+  # that is not one of the ten plan-block labels must come after Plan time.
+  local pt_line first_new
+  pt_line=$(printf '%s\n' "${head}" | grep -n '| Plan time |' | head -n1 | cut -d: -f1)
+  first_new=$(printf '%s\n' "${head}" | grep -nE '\| (Apply|Destroy plan|Destroy)( warnings| details| time)? \|' | head -n1 | cut -d: -f1)
+  if [ -n "${first_new}" ] && [ "${first_new}" -le "${pt_line}" ]; then
+    echo "  head-summary: an operation row (line ${first_new}) was inserted ABOVE Plan time (line ${pt_line})"
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_status_destroy_plan="success"; export input_destroy_plan_time="0:31"
+export input_destroy_plan_count_add="0"; export input_destroy_plan_count_change="0"; export input_destroy_plan_count_destroy="2"
+export input_destroy_plan_count_import="0"; export input_destroy_plan_count_move="0"; export input_destroy_plan_count_remove="0"; export input_destroy_plan_count_total="2"
+export input_status_destroy="success"; export input_destroy_time="0:44"
+export input_destroy_count_destroy="2"; export input_destroy_count_total="2"; export input_destroy_completed="true"
+export input_apply_warning_count="3"; export input_destroy_plan_warning_count="1"; export input_destroy_warning_count="2"
+run_test "C1b: plan-only table is a strict prefix of the full rendering; nothing inserted above Plan time" assert_plan_only_is_strict_prefix
+
+# C6 + C15: full row order with every block and every optional row present.
+assert_full_row_order() {
+  local head="${3}"
+  local labels
+  labels=$(printf '%s\n' "${head}" | grep -oE '^\| <span title="[^"]+">' | sed -E 's/^\| <span title="([^"]+)">/\1/')
+  local expected='Initialization
+Lock file
+Format and Style
+Validate
+TFLint
+Plan
+Warnings
+Plan details
+Plan time
+Apply
+Apply warnings
+Apply details
+Apply time
+Destroy plan
+Destroy plan warnings
+Destroy plan details
+Destroy plan time
+Destroy
+Destroy warnings
+Destroy details
+Destroy time
+Links'
+  if [[ "${labels}" != "${expected}" ]]; then
+    echo "  row order mismatch"
+    diff <(echo "${expected}") <(echo "${labels}") | sed 's/^/    /'
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_warning_count="2"; export input_warnings_markdown_file=$(make_warnings_md default)
+export input_status_destroy_plan="success"; export input_destroy_plan_time="0:31"
+export input_destroy_plan_count_add="0"; export input_destroy_plan_count_change="0"; export input_destroy_plan_count_destroy="2"
+export input_destroy_plan_count_import="0"; export input_destroy_plan_count_move="0"; export input_destroy_plan_count_remove="0"; export input_destroy_plan_count_total="2"
+export input_status_destroy="success"; export input_destroy_time="0:44"
+export input_destroy_count_destroy="2"; export input_destroy_count_total="2"; export input_destroy_completed="true"
+export input_apply_warning_count="3"; export input_destroy_plan_warning_count="1"; export input_destroy_warning_count="2"
+export input_plan_tag_comment_id="1"
+run_test "C6/C15: all 22 rows render in §8.1 order — blocks in execution order, each status·warnings·details·time, Links last" assert_full_row_order
+
+# C2 + golden: the apply block, byte-exact (apply-on-pr, success).
+assert_apply_block_golden() {
+  local head="${3}"
+  local expected
+  expected=$(cat <<'EOF'
+| <span title="Plan time">⏱</span> | Plan time | <span title="mm:ss (minutes:seconds)">`0:04`</span> |
+| <span title="Apply">🐙</span> | Apply | `success` |
+| <span title="Apply details">📊</span> | Apply details | <div align="left"><span title="Applied / planned">`💫 1/1` added</span><br><span title="Applied / planned">`🛠️ 0/0` changed</span><br><span title="Applied / planned">`💥 0/0` destroyed</span></div> |
+| <span title="Apply time">⏱</span> | Apply time | <span title="mm:ss (minutes:seconds)">`1:07`</span> |
+EOF
+)
+  if [[ "${head}" != *"${expected}"* ]]; then
+    echo "  head-summary: apply block not byte-exact (expected the four lines below, contiguous, right after Plan time)"
+    echo "${expected}" | sed 's/^/    /'
+    echo "  --- got ---"
+    printf '%s\n' "${head}" | grep -E 'Plan time|Apply' | sed 's/^/    /'
+    return 1
+  fi
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+run_test "C2: apply block (status, details, time) is byte-exact and sits right after Plan time" assert_apply_block_golden
+
+# C3: apply failure renders <kbd>failure</kbd>.
+assert_apply_failure_kbd() {
+  local head="${3}"
+  [[ "${head}" == *'| <span title="Apply">🐙</span> | Apply | <kbd>failure</kbd> |'* ]] || { echo "  expected Apply row with <kbd>failure</kbd>"; return 1; }
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_status_apply="failure"
+run_test "C3: status-apply=failure → Apply row renders <kbd>failure</kbd>" assert_apply_failure_kbd
+
+# C4: apply did not complete → every applied count is '?', never 0 (P2).
+assert_incomplete_apply_renders_question_marks() {
+  local head="${3}"
+  local expected='<span title="Applied / planned">`💫 ?/9` added</span><br><span title="Applied / planned">`🛠️ ?/2` changed</span><br><span title="Applied / planned">`💥 ?/1` destroyed</span>'
+  [[ "${head}" == *"${expected}"* ]] || { echo "  expected '?/planned' badges for an incomplete apply, got:"; printf '%s\n' "${head}" | grep 'Apply details' | sed 's/^/    /'; return 1; }
+  [[ "${head}" != *'`💫 0/9`'* ]] || { echo "  a failed apply must NEVER render 0/N (P2)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"
+export input_apply_completed="false"
+# Even if a caller wired zeros (a parser that regressed to zeros), they must not show.
+export input_apply_count_add="0"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_include_plan_details="true"
+export input_plan_count_add="9"; export input_plan_count_change="2"; export input_plan_count_destroy="1"; export input_plan_count_total="12"
+run_test "C4: apply-completed=false → details render '?/N', never '0/N' (P2)" assert_incomplete_apply_renders_question_marks
+
+# C4b: partial apply where the parser reported '?' and completed=false.
+assert_partial_apply_question_marks() {
+  local head="${3}"
+  [[ "${head}" == *'`💫 ?/9` added'* ]] || { echo "  expected '?/9' for parser-reported '?'"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"; export input_apply_completed="false"
+export input_apply_count_add="?"; export input_apply_count_change="?"; export input_apply_count_destroy="?"
+export input_plan_count_add="9"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
+run_test "C4: parser '?' counts render as '?/N'" assert_partial_apply_question_marks
+
+# Planned side unknown (plan counts N/A) → '?' denominator, no crash.
+assert_unknown_planned_renders_question_mark_denominator() {
+  local head="${3}"
+  [[ "${head}" == *'`💫 1/?` added'* ]] || { echo "  expected '1/?' when the plan count is N/A"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+# The action.yml default for the plan counts is 'N/A' (reset_defaults uses
+# '0' for the older tests' sake) — set it explicitly to hit this branch.
+export input_plan_count_add="N/A"; export input_plan_count_change="N/A"; export input_plan_count_destroy="N/A"
+run_test "Apply details: unknown planned count renders '?' denominator" assert_unknown_planned_renders_question_mark_denominator
+
+# C5: each block appears independently of the others.
+assert_only_destroy_plan_block() {
+  local head="${3}"
+  local fails=""
+  [[ "${head}" == *'| Destroy plan |'* ]] || fails+="  expected Destroy plan row\n"
+  [[ "${head}" == *'| Destroy plan details |'* ]] || fails+="  expected Destroy plan details row\n"
+  [[ "${head}" == *'| Destroy plan time |'* ]] || fails+="  expected Destroy plan time row\n"
+  [[ "${head}" != *'| Apply |'* ]] || fails+="  Apply row must be absent when status-apply is empty\n"
+  [[ "${head}" != *'| <span title="Destroy">☠</span> | Destroy |'* ]] || fails+="  Destroy row must be absent when status-destroy is empty\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_destroy_plan="success"
+export input_destroy_plan_count_add="0"; export input_destroy_plan_count_change="0"; export input_destroy_plan_count_destroy="2"
+run_test "C5: status-destroy-plan alone → only the Destroy plan block appears" assert_only_destroy_plan_block
+
+assert_only_destroy_block() {
+  local head="${3}"
+  local fails=""
+  [[ "${head}" == *'| <span title="Destroy">☠</span> | Destroy | `success` |'* ]] || fails+="  expected Destroy row\n"
+  [[ "${head}" == *'| <span title="Destroy details">📊</span> | Destroy details | <div align="left"><span title="Applied / planned">`💥 2/2` destroyed</span></div> |'* ]] || fails+="  expected byte-exact Destroy details row\n"
+  [[ "${head}" != *'| Apply |'* ]] || fails+="  Apply row must be absent\n"
+  [[ "${head}" != *'| Destroy plan |'* ]] || fails+="  Destroy plan row must be absent\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_destroy="success"; export input_destroy_completed="true"
+export input_destroy_count_destroy="2"; export input_destroy_plan_count_destroy="2"
+run_test "C5: status-destroy alone → only the Destroy block appears, details byte-exact" assert_only_destroy_block
+
+# Destroy plan details is a PLAN: plan badge set, present tense, optional badges.
+assert_destroy_plan_details_is_plan_shaped() {
+  local head="${3}"
+  local expected='| <span title="Destroy plan details">📊</span> | Destroy plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 5` destroy</span><br><span title="Resources to be removed">`⛓️‍💥 1` remove</span></div> |'
+  [[ "${head}" == *"${expected}"* ]] || { echo "  expected plan-shaped Destroy plan details with the optional remove badge:"; echo "    ${expected}"; printf '%s\n' "${head}" | grep 'Destroy plan details' | sed 's/^/    got: /'; return 1; }
+  [[ "${head}" != *'`🔀 0`'* ]] || { echo "  zero move badge must be omitted"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy_plan="success"
+export input_destroy_plan_count_add="0"; export input_destroy_plan_count_change="0"; export input_destroy_plan_count_destroy="5"
+export input_destroy_plan_count_import="0"; export input_destroy_plan_count_move="0"; export input_destroy_plan_count_remove="1"
+run_test "Destroy plan details uses the plan badge set (present tense, optional badges)" assert_destroy_plan_details_is_plan_shaped
+
+# C14: four independent warning rows, each gated by its own count.
+assert_four_warning_rows_independent() {
+  local head="${3}"
+  local fails=""
+  [[ "${head}" == *'| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ 2</span> |'* ]] || fails+="  Warnings row (init+validate+plan) wrong or missing\n"
+  [[ "${head}" == *'| <span title="Apply warnings">⚠️</span> | Apply warnings | <span title="Warnings from apply">⚠️ 3</span> |'* ]] || fails+="  Apply warnings row wrong or missing\n"
+  [[ "${head}" != *'| Destroy plan warnings |'* ]] || fails+="  Destroy plan warnings row must be absent at count 0\n"
+  [[ "${head}" == *'| <span title="Destroy warnings">⚠️</span> | Destroy warnings | <span title="Warnings from destroy">⚠️ 1</span> |'* ]] || fails+="  Destroy warnings row wrong or missing\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_warning_count="2"; export input_warnings_markdown_file=$(make_warnings_md default)
+export input_apply_warning_count="3"
+export input_status_destroy_plan="success"; export input_destroy_plan_warning_count="0"
+export input_status_destroy="success"; export input_destroy_warning_count="1"
+run_test "C14: four warning rows are independent; each gated by its own count, none summed" assert_four_warning_rows_independent
+
+# Warnings row for an operation is absent when its count is '?' / 'N/A'.
+assert_apply_warnings_row_absent_for_non_numeric() {
+  local head="${3}"
+  [[ "${head}" != *'| Apply warnings |'* ]] || { echo "  Apply warnings row must be absent for count '?'"; return 1; }
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_apply_warning_count="?"
+run_test "Apply warnings row absent when the count is '?'" assert_apply_warnings_row_absent_for_non_numeric
+
+# Time cells: N/A → em-dash with tooltip, same as Plan time.
+assert_apply_time_em_dash() {
+  local head="${3}"
+  [[ "${head}" == *'| <span title="Apply time">⏱</span> | Apply time | <span title="mm:ss (minutes:seconds)">—</span> |'* ]] || { echo "  expected em-dash Apply time cell"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="skipped"
+run_test "Apply time renders em-dash when N/A (same shape as Plan time)" assert_apply_time_em_dash
+
+# Grouped mode: operation blocks live in the table, which grouped mode omits.
+assert_grouped_omits_operation_blocks() {
+  local head="${3}"
+  [[ "${head}" != *'| Apply |'* && "${head}" != *'Apply details'* ]] || { echo "  grouped mode must omit the operation blocks along with the rest of the table"; return 1; }
+  return 0
+}
+reset_defaults
+set_apply_success_inputs
+export input_pr_comment_group="dev-group"
+run_test "Grouped mode omits the operation blocks with the rest of the table" assert_grouped_omits_operation_blocks
 
 # --------------------------------------------------
 # Summary

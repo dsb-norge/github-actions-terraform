@@ -140,6 +140,114 @@ inputs:
       See docs/Workflow-pr-comments.md §6.1 (per-env head, Links row).
     required: false
     default: ""
+  status-apply:
+    description: |
+      Outcome of the apply step. Non-empty renders the Apply block (status,
+      warnings, details, time rows) below Plan time. Empty — the default —
+      renders nothing, so an environment that does not apply gets exactly
+      the table it always had. See docs/Apply-and-destroy-reporting.md §8.1.
+    required: false
+    default: ""
+  status-destroy-plan:
+    description: Outcome of the destroy-plan step. Non-empty renders the Destroy plan block.
+    required: false
+    default: ""
+  status-destroy:
+    description: Outcome of the destroy step. Non-empty renders the Destroy block.
+    required: false
+    default: ""
+  apply-time:
+    description: Wall-clock duration of terraform apply as mm:ss (terraform-apply's `apply-time`). 'N/A' renders an em-dash.
+    required: false
+    default: "N/A"
+  destroy-plan-time:
+    description: Wall-clock duration of the destroy plan as mm:ss (terraform-plan's `plan-time` for the -destroy invocation).
+    required: false
+    default: "N/A"
+  destroy-time:
+    description: Wall-clock duration of the destroy apply as mm:ss (terraform-apply's `apply-time` for the destroy invocation).
+    required: false
+    default: "N/A"
+  apply-count-add:
+    description: Resources added by apply (parse-terraform-apply's `count-add`). Rendered as the numerator of the applied/planned badge.
+    required: false
+    default: "N/A"
+  apply-count-change:
+    description: Resources changed by apply (parse-terraform-apply's `count-change`).
+    required: false
+    default: "N/A"
+  apply-count-destroy:
+    description: Resources destroyed by apply (parse-terraform-apply's `count-destroy`).
+    required: false
+    default: "N/A"
+  apply-count-total:
+    description: Sum of the three apply counts (parse-terraform-apply's `count-total`). Drives the apply extract's block shape.
+    required: false
+    default: "N/A"
+  apply-completed:
+    description: |
+      'true' when terraform printed an 'Apply complete!' line
+      (parse-terraform-apply's `completed`). Anything else forces every
+      applied count in the Apply details row to '?', whatever count
+      arrived — a failed apply must never read as '0/N'.
+    required: false
+    default: ""
+  destroy-plan-count-add:
+    description: From parse-terraform-plan on the destroy plan. The destroy plan is a plan, so it carries the full plan badge set.
+    required: false
+    default: "N/A"
+  destroy-plan-count-change:
+    description: From parse-terraform-plan on the destroy plan.
+    required: false
+    default: "N/A"
+  destroy-plan-count-destroy:
+    description: From parse-terraform-plan on the destroy plan. Also the denominator of the Destroy details badge.
+    required: false
+    default: "N/A"
+  destroy-plan-count-import:
+    description: From parse-terraform-plan on the destroy plan.
+    required: false
+    default: "N/A"
+  destroy-plan-count-move:
+    description: From parse-terraform-plan on the destroy plan.
+    required: false
+    default: "N/A"
+  destroy-plan-count-remove:
+    description: From parse-terraform-plan on the destroy plan.
+    required: false
+    default: "N/A"
+  destroy-plan-count-total:
+    description: From parse-terraform-plan on the destroy plan. Drives the destroy-plan extract's block shape.
+    required: false
+    default: "N/A"
+  destroy-count-destroy:
+    description: Resources destroyed by the destroy apply (parse-terraform-apply's `count-destroy` for that invocation).
+    required: false
+    default: "N/A"
+  destroy-count-total:
+    description: parse-terraform-apply's `count-total` for the destroy invocation. Drives the destroy extract's block shape.
+    required: false
+    default: "N/A"
+  destroy-completed:
+    description: As `apply-completed`, for the destroy invocation.
+    required: false
+    default: ""
+  apply-warning-count:
+    description: |
+      Warning count from the apply console (parse-terraform-warnings with
+      step-label 'apply'). Its own row in the Apply block; NOT added to
+      `warning-count`, whose meaning (init+validate+plan) is unchanged.
+      See docs/Apply-and-destroy-reporting.md §7.7.
+    required: false
+    default: "0"
+  destroy-plan-warning-count:
+    description: Warning count from the destroy-plan console. Its own row in the Destroy plan block.
+    required: false
+    default: "0"
+  destroy-warning-count:
+    description: Warning count from the destroy console. Its own row in the Destroy block.
+    required: false
+    default: "0"
   output-file-suffix:
     description: |
       Appended (after a '-') to the name of every body file this action
@@ -203,6 +311,30 @@ runs:
         input_warning_count: ${{ inputs.warning-count }}
         input_warnings_markdown_file: ${{ inputs.warnings-markdown-file }}
         input_plan_tag_comment_id: ${{ inputs.plan-tag-comment-id }}
+        input_status_apply: ${{ inputs.status-apply }}
+        input_status_destroy_plan: ${{ inputs.status-destroy-plan }}
+        input_status_destroy: ${{ inputs.status-destroy }}
+        input_apply_time: ${{ inputs.apply-time }}
+        input_destroy_plan_time: ${{ inputs.destroy-plan-time }}
+        input_destroy_time: ${{ inputs.destroy-time }}
+        input_apply_count_add: ${{ inputs.apply-count-add }}
+        input_apply_count_change: ${{ inputs.apply-count-change }}
+        input_apply_count_destroy: ${{ inputs.apply-count-destroy }}
+        input_apply_count_total: ${{ inputs.apply-count-total }}
+        input_apply_completed: ${{ inputs.apply-completed }}
+        input_destroy_plan_count_add: ${{ inputs.destroy-plan-count-add }}
+        input_destroy_plan_count_change: ${{ inputs.destroy-plan-count-change }}
+        input_destroy_plan_count_destroy: ${{ inputs.destroy-plan-count-destroy }}
+        input_destroy_plan_count_import: ${{ inputs.destroy-plan-count-import }}
+        input_destroy_plan_count_move: ${{ inputs.destroy-plan-count-move }}
+        input_destroy_plan_count_remove: ${{ inputs.destroy-plan-count-remove }}
+        input_destroy_plan_count_total: ${{ inputs.destroy-plan-count-total }}
+        input_destroy_count_destroy: ${{ inputs.destroy-count-destroy }}
+        input_destroy_count_total: ${{ inputs.destroy-count-total }}
+        input_destroy_completed: ${{ inputs.destroy-completed }}
+        input_apply_warning_count: ${{ inputs.apply-warning-count }}
+        input_destroy_plan_warning_count: ${{ inputs.destroy-plan-warning-count }}
+        input_destroy_warning_count: ${{ inputs.destroy-warning-count }}
         input_output_file_suffix: ${{ inputs.output-file-suffix }}
         input_job_check_run_id: ${{ job.check_run_id }}
       run: |
