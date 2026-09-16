@@ -33,6 +33,7 @@ export TF_BIN="${STUB_DIR}/terraform"
 
 export input_working_directory="${WORK_DIR}"
 export input_terraform_plan_file="${PLAN_FILE}"
+export input_environment_name="sandbox"
 
 # Per-goal environment variables, as resolve-goal-envs would produce them.
 # GOMEMLIMIT is set, and a variable that exists job-wide is unset by a JSON null
@@ -63,6 +64,12 @@ echo "========================================"
 echo "GitHub Actions Outputs (GITHUB_OUTPUT):"
 echo "========================================"
 cat "${GITHUB_OUTPUT}"
+
+echo ""
+echo "========================================"
+echo "Captured console output file:"
+echo "========================================"
+cat "$(grep '^tf-apply-console-output-file=' "${GITHUB_OUTPUT}" | cut -d= -f2-)"
 
 echo ""
 echo "========================================"

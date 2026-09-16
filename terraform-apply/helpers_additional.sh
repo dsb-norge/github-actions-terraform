@@ -4,6 +4,18 @@
 # Auto-loaded by helpers.sh.
 #
 
+# Format an integer seconds count as 'mm:ss'.
+# Byte-identical to terraform-plan's helper of the same name so the
+# 'Apply time' row renders exactly like 'Plan time'. Minutes are zero-padded
+# only to width 1 ('0:07', '1:23'); seconds always to width 2. Minutes may
+# exceed 99 and the format degrades gracefully ('120:05').
+function format-duration-mmss {
+  local total="${1:-0}"
+  local minutes=$((total / 60))
+  local seconds=$((total % 60))
+  printf '%d:%02d' "${minutes}" "${seconds}"
+}
+
 # Apply a JSON environment-variable map to the current shell
 # ==========================================================
 # Applies the resolved environment for this action's goal, as produced by the
