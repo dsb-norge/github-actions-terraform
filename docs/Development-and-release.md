@@ -4,43 +4,43 @@ Section below describes development, testing and release process for actions and
 
 ## Development and testing
 
-1. Replace version-tag of all dsb-actions in this repo with a temporary tag, ex. `@v2` becomes `@my-feature`.
+Every same-repo pull request gets a **preview ref** — a tag a calling repo can consume with one `uses:` line, for the reusable workflows and the composite actions alike. [`pr-preview.yml`](../.github/workflows/pr-preview.yml) publishes it on every push and deletes it when the PR closes. The mechanism, its pitfalls and the one-time GitHub App bootstrap are in [Preview-refs.md](Preview-refs.md).
 
-    Replace regex pattern for vscode:
-    - Find: `(^\s*)((- ){0,1}uses: dsb-norge/github-actions-terraform/.*@)v2`
-    - Replace: `$1# TODO revert to @v2\n$1$2my-feature`
-
-2. Make your changes and commit your changes on a branch, for example `my-feature-branch`.
-3. Tag latest commit on you branch:
-
-   ```bash
-   git tag -f -a 'my-feature'
-   git push -f origin 'refs/tags/my-feature'
-   ```
-
-4. To try out your changes, in the calling repo change the calling workflow to call using your **branch name**. Ex. with a dev branch named `my-feature-branch`:
+1. Open a PR (draft is fine) and wait for the `🏷️ Publish preview ref` check. A sticky comment `🧪 Preview refs for this PR` appears with two refs:
+   - `preview/pr-<N>` — moves with every push to the PR;
+   - `preview/pr-<N>-<sha7>` — immutable, one per push; every internal ref inside it names itself.
+2. In the calling repo, point the calling workflow at the moving ref:
 
    ```yaml
-    jobs:
-        ci-cd:
-          # TODO revert to '@v2'
-          uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@my-feature-branch
+   jobs:
+     ci-cd:
+       # TODO revert to '@v0'
+       uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>
    ```
 
-5. Test your changes from the calling repo. Make changes and remember to always move your tag `my-feature` to the latest commit.
-6. When ready remove your temporary tag:
+   The same ref serves `terraform-module-ci.yaml`, `terraform-module-release.yaml` and every composite action. For a calling run longer than one job, pin `preview/pr-<N>-<sha7>` instead — a rebuild landing mid-run cannot change it under you.
+3. Push to the PR as often as you like. Nothing to re-tag and nothing to revert: the PR branch keeps saying `@v0`; the rewrite exists only in a generated commit the tags point at.
+4. Merge or close. The tags and the comment disappear. Revert the calling repo's line to `@v0`.
 
-   ```bash
-   git tag --delete 'my-feature'
-   git push --delete origin 'my-feature'
-   ```
+If the comment says **unavailable (bootstrap)**, the GitHub App that pushes the tags is not configured — [Preview-refs.md §5](Preview-refs.md#5-the-token--why-a-github-app-is-required).
 
-    and revert from using the temporary tag to the version-tag for your release in actions, i.e. `@my-feature` becomes `@v2` or `@v3` or whatever.
+Preview tags fetched into your clone are harmless; drop them with `git tag -l 'preview/*' | xargs -r git tag -d`. Orphans on the remote (a PR whose close event never ran): list with `gh api repos/dsb-norge/github-actions-terraform/git/matching-refs/tags/preview/ --jq '.[].ref'`, delete with `gh api -X DELETE repos/dsb-norge/github-actions-terraform/git/<ref without the refs/ prefix>`.
 
-    Replace regex pattern for vscode:
-    - Find: `(^\s*# TODO revert to @v2\n)(^\s*)((- )?uses: dsb-norge/github-actions-terraform/.*@)my-feature`
-    - Replace: `$2$3v2`
-7. Create PR and merge to main.
+### Fallback: publishing by hand
+
+For a fork PR, or before the App exists. The script `pr-preview.yml` uses rewrites the working tree; a developer's own credentials normally carry the `workflow` scope that the restriction in Preview-refs.md §5 is about, so the push works from a clone.
+
+```bash
+bash .github/scripts/rewrite-internal-refs.sh my-feature          # rewrite every internal uses-ref
+git commit -am 'chore: swap internal refs to dev tag my-feature'   # on the feature branch
+git tag -f my-feature && git push -f origin refs/tags/my-feature   # repeat both after every push
+# … test from the calling repo with @my-feature — one ref serves the workflow and the actions …
+bash .github/scripts/rewrite-internal-refs.sh v0                   # revert before merge
+git commit -am 'chore: revert internal refs to @v0'
+git push --delete origin my-feature
+```
+
+Both the swap commit and the revert commit sit on the branch when it merges, and the tag must be gone — the old dev-tag ritual, minus the regex and the markers.
 
 ### Test driving from a calling repo
 
@@ -74,14 +74,14 @@ Example for release `v0.9`:
 git checkout origin/main
 git pull origin main
 # review latest release tag to determine which is the next one
-git tag --sort=-creatordate | head -n 5
+git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
 # output changes since last release
 git log v0..HEAD --pretty=format:"%s"
-git tag -a 'v0.9'
+git tag -a 'v0.32'
 # you are prompted for the tag annotation (change description)
 git tag -f -a 'v0'
 # you are prompted for the tag annotation
-git push -f origin 'refs/tags/v0.9'
+git push -f origin 'refs/tags/v0.32'
 git push -f origin 'refs/tags/v0'
 ```
 
@@ -97,7 +97,7 @@ Example for release `v1`:
 git checkout origin/main
 git pull origin main
 # review latest release tag to determine which is the next one
-git tag --sort=-creatordate | head -n 5
+git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
 # output changes since last release
 git log v0..HEAD --pretty=format:"%s"
 git tag -a 'v1.0'
