@@ -43,18 +43,6 @@ outputs:
       `body-file`. Lives under RUNNER_TEMP, so it exists for the rest of
       the job.
     value: ${{ steps.create-test-report.outputs.body-file }}
-  prefix:
-    description: |
-      DEPRECATED — removed once terraform-module-ci.yaml posts via
-      pr-comment. The H3 heading line, for callers on the legacy
-      delete-by-prefix flow (comment-on-pr@v2).
-    value: ${{ steps.create-test-report.outputs.prefix }}
-  summary:
-    description: |
-      DEPRECATED — removed once terraform-module-ci.yaml posts via
-      pr-comment. The full body as an inline string, for callers on the
-      legacy delete-by-prefix flow. Prefer `body-file`.
-    value: ${{ steps.create-test-report.outputs.summary }}
 runs:
   using: "composite"
   steps:

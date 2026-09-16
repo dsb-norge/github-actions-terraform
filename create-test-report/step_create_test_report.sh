@@ -125,11 +125,6 @@ function main {
 
   set-output 'body-file' "${body_file}"
 
-  # DEPRECATED outputs, kept only until terraform-module-ci.yaml posts via
-  # pr-comment's body-file. Removed in the same change that migrates it.
-  set-output 'prefix' "### Terraform test summary for file: \`${input_test_file}\`"
-  set-multiline-output 'summary' "$(cat "${body_file}")"
-
   log-info "create-test-report completed."
   return 0
 }
