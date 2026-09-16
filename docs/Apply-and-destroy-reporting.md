@@ -6,7 +6,7 @@ Companion to [Workflow-pr-comments.md](Workflow-pr-comments.md) (the heads + tag
 
 Out of scope: the `plan` stage itself (already covered), `tflint` output, the `terraform-test` workflows.
 
-**Status:** spec, complete. §8 (comment shapes, wording, iconography) is decided and normative. Implementation follows the commit order in §11.
+**Status:** implemented on the `feat/apply-destroy-reporting` branch in the commit order of §11. §8 is normative; §13 records what implementation taught that the spec did not anticipate.
 
 ---
 
@@ -416,6 +416,8 @@ Modern layout, per [Action-implementation-guide.md](Action-implementation-guide.
 
 A separate action rather than folding into `create-validation-summary`, which is a pure renderer whose every test asserts on captured `$GITHUB_OUTPUT` strings. Mixing in side effects would make it untestable in the same shape.
 
+The block itself is nonetheless rendered by `create-validation-summary`, as a sixth body file (`step-summary-file`): the head's table in its ungrouped shape with the Links row replaced by a `[Job log]` footer. Two reasons. A grouped env has no table in its PR head but the job page has no per-group table to defer to, and a second copy of the table renderer would drift. The phase-2 render therefore runs on every event (it is pure and cheap); only the POST/PATCH steps carry the `pull_request` guard.
+
 | Condition | Emission |
 |---|---|
 | apply / destroy ran and succeeded | `::notice title=Apply succeeded::<env> — N added, N changed, N destroyed in mm:ss` |
@@ -450,6 +452,8 @@ Chosen over extending the existing `conclusion` job (which repos wire into branc
 > **P20 — `run-summary` must never fail the workflow.** `continue-on-error: true` on every step, and it is deliberately **not** in `conclusion`'s `needs:`. A reporting job that can redden a deploy is worse than no reporting job.
 
 > The rollup deliberately uses a different table shape from the two PR-comment tables (§8.7). It is **not** part of the §7.4 sync invariant.
+
+> The `Job` column links to the **run** page, not the per-job page. Per-job URLs need the Jobs API — a network call plus `actions: read` — both at odds with a job that has no permissions and must never fail (P20). The run page is one click from every job.
 
 ### 7.10 Comment bodies as file paths (L8)
 
@@ -588,7 +592,7 @@ Status cells keep the existing text form: `` `success` `` / `<kbd>failure</kbd>`
 | <span title="Apply">🐙</span> | Apply | `success` |
 | <span title="Apply details">📊</span> | Apply details | <div align="left"><span title="Applied / planned">`💫 1/1` added</span><br><span title="Applied / planned">`🛠️ 0/0` changed</span><br><span title="Applied / planned">`💥 0/0` destroyed</span></div> |
 | <span title="Apply time">⏱</span> | Apply time | <span title="mm:ss (minutes:seconds)">`1:07`</span> |
-| <span title="Links">🔗</span> | Links | [plan log](#issuecomment-1)<br>[apply log](#issuecomment-2)<br>[job log](…) |
+| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-1)<br>[apply log](#issuecomment-2)<br>[job log](…) |
 ```
 
 **Rendered — a plan-only env:** unchanged from today. Rows 2-10 and 22 only — a strict prefix of the above.
@@ -901,6 +905,8 @@ Stated so review does not assume more coverage than exists.
 - Commits are atomic and ordered to match §4's layers, each reviewable alone:
   spec → **L8a** (`pr-comment` gains `body-file`) → **L8b** (`create-test-report` pinned, then converted) → **L8c** (`terraform-module-ci.yaml` migrated off `comment-on-pr@v2`) → **L8d** (`create-validation-summary` emits paths, deprecated outputs deleted, default workflow rewired) → L1 → L2 → L6 → L3 → L4 → L5 → L7 → docs.
   L8 goes first deliberately: every later layer adds a comment body, and adding them before the file-path plumbing means writing the string path twice. Within L8 the order is forced — the deprecated outputs cannot be deleted (L8d) until their last consumer is gone (L8c), which needs the converted producer (L8b), which needs the new primitive (L8a). L8b and L8c are separately revertable, which P22 asks for.
+
+  As implemented, L8b landed as two commits (pin the legacy output as goldens; convert) and L8c migrated only the test-report call site — the validation-summary call site needs `create-validation-summary` to publish a body file first, so it moved with L8d. Every commit stays green and no output is deleted before its last consumer is gone, which is what this ordering protects. L3 and L4 likewise split by action (renderer commits, then the workflow wiring) so each is reviewable alone.
 - AI-config files, if touched, get their own commit.
 - [Workflow-pr-comments.md](Workflow-pr-comments.md) §5-§6 and [Plan-warnings.md](Plan-warnings.md) are updated in the same PR — updating the docs is part of the change, not a follow-up.
 - Verification against a real calling repo uses the dev-tag swap flow; the dev tag is deleted and the `@v0` refs reverted before the PR is marked ready.
@@ -911,3 +917,16 @@ Stated so review does not assume more coverage than exists.
 - **A dedicated "applied" check run** separate from the job status, so branch protection can require it.
 - **Drift detection.** A scheduled `plan`-only run reporting non-empty plans is a different feature. Note that a scheduled run with `apply` among its goals is auto-remediation, not detection.
 - **Auto-merge limits for apply/destroy counts.** `evaluate-automerge-eligibility` gains real destroy-plan counts here (§5.1) but no new limit types.
+
+## 13. Found during implementation
+
+Recorded here because each would have been invisible in a green test run had the fixtures been less realistic.
+
+| # | Where | Finding |
+|---|---|---|
+| P24 | `parse-terraform-warnings` | The warning-body collector had no terminator other than the next `Warning:`/`Error:` or EOF. Plan output puts warnings last, so it never showed; apply output prints diagnostics *before* `Apply complete!` and `Outputs:`, so a warning body swallowed every output value into markdown posted to the PR — a P3 leak path around the `Outputs:` strip. It also quietly appended the init success line to init warnings. Fixed with four literal end-of-operation terminators (a blank-line rule would truncate multi-paragraph warnings). Fixtures `t10`/`t11`. |
+| P25 | `parse-terraform-apply` | Line-start anchoring of the summary line was not enough: an output rendered as a heredoc (`note = <<EOT`) prints its content at column 0, so a value containing the summary text was taken for the real line. Only the console above `^Outputs:$` is scanned now. And the modify/destroy progress ticks carry the resource id inside the bracket (`[id=…, 10s elapsed]`), a shape the spec's filter regex did not allow. |
+| P26 | §7.2 / B12 | The spec assumed ANSI colour would break the summary-line parse. It does not: terraform emits `[reset][bold][green]\nApply complete!…` — the newline sits *between* the colour codes and the text. `-no-color` (P4) is needed for the rendered comment and for the warnings parser's box-drawing-free shape, not for the count parse. B12 now pins both facts. |
+| P27 | `annotate-terraform-outcome` | A step outcome of `skipped` is not empty. Treating "non-empty and not success" as failure would have annotated every skipped apply as a failed one. Skipped is "did not run". |
+| P28 | every renderer | `$(…)` runs in a subshell: a function that sets a global (`OUTPUTS_STRIPPED`, the run-summary counts) or ends its output with a newline loses both when called that way. Hit three times in one afternoon; now a section in [Action-implementation-guide.md](Action-implementation-guide.md). |
+| P29 | test harnesses | Two suites exported large inputs that the production shim deliberately does not — `capture-matrix-job-meta` (JSON contexts) and, historically, `create-validation-summary` (allexport). A harness that exports what the shim keeps local E2BIGs the step's own `jq` on a large fixture and tests the harness, not the step. Both now mirror their shim. |
