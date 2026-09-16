@@ -56,3 +56,8 @@ Workflow for release of terraform modules (Semver tag + github release).
 See [docs](docs/Workflow-terraform-module-release.md) for workflow information, configuration and behavior.  
 
 ## Development and maintenance
+
+- [Development-and-release.md](docs/Development-and-release.md) — testing a PR from a calling repo (preview refs), cutting a release, moving the major tag.
+- [Preview-refs.md](docs/Preview-refs.md) — how `pr-preview.yml` publishes a `preview/pr-<N>` tag for every PR, and the one-time GitHub App bootstrap.
+- [Testing-in-ci.md](docs/Testing-in-ci.md) — the per-action test suites that gate every PR.
+- [Action-implementation-guide.md](docs/Action-implementation-guide.md) — how a composite action in this repo is built and tested.
