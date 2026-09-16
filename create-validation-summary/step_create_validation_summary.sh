@@ -108,8 +108,9 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # one four-row block per mutating operation in the order the job runs them
 # (apply, destroy-plan, destroy), each block status · warnings · details ·
 # time, and Links last. Every operation block is gated on its status input
-# being non-empty, so a plan-only environment renders exactly the table it
-# rendered before these rows existed, byte for byte.
+# naming a step that RAN (non-empty and not 'skipped'), so a plan-only
+# environment renders exactly the table it rendered before these rows
+# existed, byte for byte.
 #
 # In grouped mode (input_pr_comment_group non-empty), the validation table
 # is omitted — it lives on the per-group head posted by
@@ -134,7 +135,7 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # denominators from parse-terraform-plan. Only the three badges terraform's
 # apply summary has — no move/import/remove (§8.3).
 function _render_apply_block {
-  [ -z "${input_status_apply:-}" ] && return 0
+  _op_ran "${input_status_apply:-}" || return 0
   local out=""
   out+=$'\n'"| $(_render_step_icon_cell "🐙" "Apply") | Apply | $(format-status "${input_status_apply}") |"
   if _is_positive_int "${input_apply_warning_count:-0}"; then
@@ -154,7 +155,7 @@ function _render_apply_block {
 # the plan's present-tense verbs, optional move/import/remove included —
 # the same cell shape as Plan details, byte for byte.
 function _render_destroy_plan_block {
-  [ -z "${input_status_destroy_plan:-}" ] && return 0
+  _op_ran "${input_status_destroy_plan:-}" || return 0
   local out=""
   out+=$'\n'"| $(_render_step_icon_cell "☠📖" "Destroy plan") | Destroy plan | $(format-status "${input_status_destroy_plan}") |"
   if _is_positive_int "${input_destroy_plan_warning_count:-0}"; then
@@ -179,7 +180,7 @@ function _render_destroy_plan_block {
 # single destroyed/planned badge, the denominator being the destroy plan's
 # destroy count.
 function _render_destroy_block {
-  [ -z "${input_status_destroy:-}" ] && return 0
+  _op_ran "${input_status_destroy:-}" || return 0
   local out=""
   out+=$'\n'"| $(_render_step_icon_cell "☠" "Destroy") | Destroy | $(format-status "${input_status_destroy}") |"
   if _is_positive_int "${input_destroy_warning_count:-0}"; then
