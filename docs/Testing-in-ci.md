@@ -243,9 +243,11 @@ Path filters: intentionally omitted. Suites are cheap (seconds each), and "did t
 | `.github/workflows/action-tests.yml` | The PR workflow (§2). |
 | `.github/scripts/discover-actions.sh` | Discovery script (§2.1, §3). |
 | `.github/scripts/aggregate-action-tests.sh` | Summary builder + PR-comment upsert (§6). |
+| `.github/scripts/rewrite-internal-refs.sh` | Not part of this workflow — rewrites internal `uses:` refs for [`pr-preview.yml`](../.github/workflows/pr-preview.yml); spec [Preview-refs.md](Preview-refs.md). |
+| `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs as the first step of `pr-preview.yml`, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
 
-The two `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
+The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
 
 `jq`, `yq`, `gh`, `python3`, and standard coreutils are assumed to be present on the `ubuntu-latest` runner. No install logic is bundled.
 
@@ -326,6 +328,8 @@ When changing anything in this workflow — the YAML, either of the scripts, or 
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/action-tests.yml'))"
 bash -n .github/scripts/discover-actions.sh
 bash -n .github/scripts/aggregate-action-tests.sh
+bash -n .github/scripts/rewrite-internal-refs.sh
+bash .github/scripts/test-rewrite-internal-refs.sh
 ```
 
 **Discovery script** — confirm it partitions actions correctly:
