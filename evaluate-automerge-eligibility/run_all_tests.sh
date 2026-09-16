@@ -935,6 +935,85 @@ else
 fi
 
 # ============================================================================
+# F5 — the three mutating-step outcome gates must come AFTER the phase-2
+# comment steps (docs/Apply-and-destroy-reporting.md P1, F5).
+#
+# A gate exits 1. With allow-failing-terraform-operations=false that fails
+# the job and skips every later step without always(). A gate placed
+# before the phase-2 render would make a failed apply the one case that
+# skips its own reporting. Structural, not behavioural — but P1 is the
+# defect most likely to be reintroduced by a later refactor that "tidies"
+# the gates together.
+# ============================================================================
+_step_order=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for i, step in enumerate(wf["jobs"]["terraform-ci-cd"]["steps"]):
+    print(i, step.get("id") or step.get("name"))
+PYEOF
+)
+_pos() { grep -F -- " ${1}" <<<"${_step_order}" | head -n1 | cut -d' ' -f1; }
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5 - apply/destroy outcome gates sit after the phase-2 comment steps${NC}"
+echo -e "${BLUE}========================================${NC}"
+_upsert=$(_pos "upsert-head-apply")
+_gate_apply=$(_pos "🧐 Validation outcome: 🐙 Apply")
+_gate_dplan=$(_pos "🧐 Validation outcome: ☠📖 Destroy Plan")
+_gate_destroy=$(_pos "🧐 Validation outcome: ☠ Destroy")
+_capture=$(_pos "capture-metadata")
+if [[ -n "${_upsert}" && -n "${_gate_apply}" && -n "${_gate_dplan}" && -n "${_gate_destroy}" && -n "${_capture}" ]] \
+   && [ "${_gate_apply}" -gt "${_upsert}" ] && [ "${_gate_dplan}" -gt "${_upsert}" ] && [ "${_gate_destroy}" -gt "${_upsert}" ] \
+   && [ "${_gate_apply}" -lt "${_capture}" ] && [ "${_gate_dplan}" -lt "${_capture}" ] && [ "${_gate_destroy}" -lt "${_capture}" ]; then
+  echo -e "${GREEN}✓ PASSED${NC}: upsert-head-apply@${_upsert} < gates@${_gate_apply},${_gate_dplan},${_gate_destroy} < capture-metadata@${_capture}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: gate ordering — upsert-head-apply=${_upsert:-?} gates=${_gate_apply:-?},${_gate_dplan:-?},${_gate_destroy:-?} capture=${_capture:-?}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# The phase-2 render must also come after every mutating step and its parsers.
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5 - phase-2 render follows destroy and every parse step${NC}"
+echo -e "${BLUE}========================================${NC}"
+_cvs2=$(_pos "cvs-apply"); _destroy=$(_pos "destroy"); _pdw=$(_pos "parse-destroy-warnings"); _pda=$(_pos "parse-destroy-apply")
+if [[ -n "${_cvs2}" && -n "${_destroy}" && -n "${_pdw}" && -n "${_pda}" ]] && [ "${_cvs2}" -gt "${_destroy}" ] && [ "${_cvs2}" -gt "${_pdw}" ] && [ "${_cvs2}" -gt "${_pda}" ]; then
+  echo -e "${GREEN}✓ PASSED${NC}: cvs-apply@${_cvs2} after destroy@${_destroy}, parse-destroy-apply@${_pda}, parse-destroy-warnings@${_pdw}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: cvs-apply=${_cvs2:-?} destroy=${_destroy:-?} parse-destroy-apply=${_pda:-?} parse-destroy-warnings=${_pdw:-?}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F6 — no comment body travels inline anywhere in the workflows: every
+# pr-comment upsert uses body-file, and no step interpolates a *-extract or
+# head-summary output as a string (docs/Apply-and-destroy-reporting.md §7.10).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F6 - no inline comment bodies in any workflow${NC}"
+echo -e "${BLUE}========================================${NC}"
+_wf_dir="${_this_script_dir}/../.github/workflows"
+_inline_bodies=$(grep -nE '^\s+body:\s' "${_wf_dir}"/*.y*ml || true)
+_string_outputs=$(grep -nE 'outputs\.(head-summary|plan-extract|apply-extract|destroy-plan-extract|destroy-extract|summary|prefix)\s*\}\}' "${_wf_dir}"/*.y*ml | grep -vE 'test\.outputs\.summary|-file\s*\}\}' || true)
+_legacy=$(grep -n 'comment-on-pr' "${_wf_dir}"/*.y*ml || true)
+if [[ -z "${_inline_bodies}" && -z "${_string_outputs}" && -z "${_legacy}" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: every pr-comment upsert uses body-file; no body string is interpolated; comment-on-pr@v2 is gone"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  [ -n "${_inline_bodies}" ] && { echo "  inline 'body:' in a workflow:"; echo "${_inline_bodies}" | sed 's/^/    /'; }
+  [ -n "${_string_outputs}" ] && { echo "  a body-string output interpolated:"; echo "${_string_outputs}" | sed 's/^/    /'; }
+  [ -n "${_legacy}" ] && { echo "  comment-on-pr still referenced:"; echo "${_legacy}" | sed 's/^/    /'; }
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

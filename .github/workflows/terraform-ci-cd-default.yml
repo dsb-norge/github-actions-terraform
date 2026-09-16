@@ -52,6 +52,9 @@ on:
             - cache-terraform-modules
                 bool, whether to cache terraform modules between runs, see the workflow input 'cache-terraform-modules'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+            - apply-extract-include-outputs
+                bool, whether the apply/destroy PR comments include terraform's 'Outputs:' section, see the workflow input 'apply-extract-include-outputs'.
+                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - pr-comment-group
                 string, name of a group this environment belongs to for PR-comment aggregation, see the workflow input 'pr-comment-group'.
                 Environments with the same non-empty group value share a single grouped validation-summary PR comment (one column per environment).
@@ -297,6 +300,21 @@ on:
           See docs/Terraform-module-cache.md for the full design.
         required: false
         default: true
+      apply-extract-include-outputs:
+        type: boolean
+        description: |
+          Whether the apply and destroy PR comments include terraform's 'Outputs:' section.
+
+          The default is false: the section is stripped and the comment says so. 'terraform apply' prints every
+          non-sensitive output's actual VALUE there — 'terraform plan' never does — so posting it would publish
+          values the plan comment has always kept hidden, in repositories whose maintainers have only ever
+          reviewed the plan comment's exposure. Set to true only for environments whose outputs are safe to
+          show on a pull request.
+
+          For per environment control specify this directly in the environment specification.
+          See docs/Apply-and-destroy-reporting.md P3.
+        required: false
+        default: false
       pr-comment-group:
         type: string
         description: |
@@ -496,11 +514,18 @@ jobs:
           # Grouped envs are represented in their per-group head's table — no
           # standalone per-env head is seeded for them. See
           # docs/Workflow-pr-comments.md §6.1 grouped mode.
-          while IFS= read -r e; do
+          # The placeholder carries the Mode line for an env that mutates on
+          # PR, so the warning is on the PR before init has finished — the
+          # head's Mode row (docs/Apply-and-destroy-reporting.md §8.2) then
+          # replaces it on the first render.
+          while IFS=$'\t' read -r e mode; do
             [ -z "${e}" ] && continue
             body=$(printf '%s\n\n%s' \
               "### Terraform validation summary for environment: \`${e}\`" \
               "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
+            if [ -n "${mode}" ]; then
+              body="${body}"$'\n\n'"${mode}"
+            fi
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
               --arg marker "<!-- tf:head:env:${e} -->" \
@@ -512,7 +537,13 @@ jobs:
                 (.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true)
                 and ((.vars["pr-comment-group"] // "") == "")
               ))
-            | .[].vars["github-environment"]
+            | .[]
+            | .vars["github-environment"] as $e
+            | (.vars.goals // []) as $g
+            | ([ (if ($g | index("apply-on-pr"))   != null then "🐙 applies on PR"  else empty end),
+                (if ($g | index("destroy-on-pr")) != null then "☠ destroys on PR" else empty end)
+              ] | join(" · ")) as $mode
+            | "\($e)\t\($mode)"
           ')
 
           # JSON is valid YAML, so we can hand the JSON straight to the
@@ -607,6 +638,56 @@ jobs:
           mode: delete
           marker: "<!-- tf:tag:plan:${{ matrix.vars.github-environment }}:"
         continue-on-error: true # allow job to continue, step outcome is ignored
+
+      # Same for the three operation tags. pr-comment's delete matches by
+      # substring, so every marker segment is terminated by ':' — without
+      # the colon after 'destroy' this purge would also wipe the
+      # destroy-plan tag (docs/Apply-and-destroy-reporting.md P8).
+      - name: 🧹 Purge prior apply tags for this env
+        id: purge-apply-tags
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:tag:apply:${{ matrix.vars.github-environment }}:"
+        continue-on-error: true
+      - name: 🧹 Purge prior destroy-plan tags for this env
+        id: purge-destroy-plan-tags
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:tag:destroy-plan:${{ matrix.vars.github-environment }}:"
+        continue-on-error: true
+      - name: 🧹 Purge prior destroy tags for this env
+        id: purge-destroy-tags
+        if: |
+          matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:tag:destroy:${{ matrix.vars.github-environment }}:"
+        continue-on-error: true
 
       - name: "🎰 Export environment variables and secrets"
         uses: dsb-norge/github-actions-terraform/export-env-vars@v0
@@ -1000,6 +1081,10 @@ jobs:
           # warnings taking priority over plan-extract in the 65k budget.
           warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
           warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
+          # Mode row and plan-tag banner are goal-driven, so they are part
+          # of the very first render — the warning is on the PR before the
+          # apply has happened (docs/Apply-and-destroy-reporting.md §8.2).
+          goals-json: ${{ toJSON(matrix.vars.goals) }}
           # Distinct per invocation within the job — see the upsert-head
           # step's fallback and docs/Apply-and-destroy-reporting.md P12.
           output-file-suffix: phase1
@@ -1076,6 +1161,7 @@ jobs:
           # The input that differs from the first call. Triggers the Links
           # row branch in render_head_summary.
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
+          goals-json: ${{ toJSON(matrix.vars.goals) }}
           output-file-suffix: phase1-final
         continue-on-error: true
 
@@ -1327,6 +1413,274 @@ jobs:
           step-label: destroy
           environment-name: ${{ matrix.vars.github-environment }}
         continue-on-error: true
+
+      # ======================================================================
+      # Phase 2 — re-render the head and post the operation tags, now that
+      # apply / destroy-plan / destroy have run. A second pass rather than a
+      # relocation of phase 1: the head is a marker upsert, so this is one
+      # idempotent PATCH, and it keeps the first feedback at plan time.
+      #
+      # Every step here carries always(): the six phase-1 outcome gates run
+      # before apply and may already have failed the job, and the head must
+      # still be brought to the run's final state (P15). The three new gates
+      # come AFTER these steps, not before — a gate exits 1, and with
+      # allow-failing-terraform-operations=false that skips every later step
+      # without always(); putting the apply gate first would make a failed
+      # apply the one case that skips its own reporting (P1).
+      # See docs/Apply-and-destroy-reporting.md §7.5.
+      # ======================================================================
+      - name: 📝 Create validation summary (phase 2)
+        id: cvs-apply
+        if: |
+          always()
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          plan-console-file: ${{ steps.plan.outputs.console-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-verify-lock: ${{ steps.verify-lock.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
+          pr-comment-group: ${{ matrix.vars.pr-comment-group }}
+          include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
+          plan-time: ${{ steps.plan.outputs.plan-time }}
+          warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
+          warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
+          plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
+          goals-json: ${{ toJSON(matrix.vars.goals) }}
+          # --- the operation blocks (docs/Apply-and-destroy-reporting.md §7.4) ---
+          status-apply: ${{ steps.apply.outcome }}
+          apply-time: ${{ steps.apply.outputs.apply-time }}
+          apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
+          apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
+          apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
+          apply-count-total: ${{ steps.parse-apply.outputs.count-total }}
+          apply-completed: ${{ steps.parse-apply.outputs.completed }}
+          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file }}
+          apply-warning-count: ${{ steps.parse-apply-warnings.outputs.warning-count }}
+          apply-warnings-markdown-file: ${{ steps.parse-apply-warnings.outputs.warnings-markdown-file }}
+          status-destroy-plan: ${{ steps.destroy-plan.outcome }}
+          destroy-plan-time: ${{ steps.destroy-plan.outputs.plan-time }}
+          destroy-plan-count-add: ${{ steps.parse-destroy-plan.outputs.count-add }}
+          destroy-plan-count-change: ${{ steps.parse-destroy-plan.outputs.count-change }}
+          destroy-plan-count-destroy: ${{ steps.parse-destroy-plan.outputs.count-destroy }}
+          destroy-plan-count-import: ${{ steps.parse-destroy-plan.outputs.count-import }}
+          destroy-plan-count-move: ${{ steps.parse-destroy-plan.outputs.count-move }}
+          destroy-plan-count-remove: ${{ steps.parse-destroy-plan.outputs.count-remove }}
+          destroy-plan-count-total: ${{ steps.parse-destroy-plan.outputs.count-total }}
+          destroy-plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+          destroy-plan-txt-output-file: ${{ steps.destroy-plan.outputs.txt-output-file }}
+          destroy-plan-warning-count: ${{ steps.parse-destroy-plan-warnings.outputs.warning-count }}
+          destroy-plan-warnings-markdown-file: ${{ steps.parse-destroy-plan-warnings.outputs.warnings-markdown-file }}
+          status-destroy: ${{ steps.destroy.outcome }}
+          destroy-time: ${{ steps.destroy.outputs.apply-time }}
+          destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
+          destroy-count-total: ${{ steps.parse-destroy-apply.outputs.count-total }}
+          destroy-completed: ${{ steps.parse-destroy-apply.outputs.completed }}
+          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file }}
+          destroy-warning-count: ${{ steps.parse-destroy-warnings.outputs.warning-count }}
+          destroy-warnings-markdown-file: ${{ steps.parse-destroy-warnings.outputs.warnings-markdown-file }}
+          apply-extract-include-outputs: ${{ matrix.vars.apply-extract-include-outputs }}
+          output-file-suffix: phase2
+        continue-on-error: true # allow job to continue, step outcome is ignored
+
+      # One tag per invocation that ran (§7.6). Gated on the step OUTCOME, not
+      # on goals: a skipped apply must not post an 'Apply not available' tag.
+      - name: 🐙 Post per-env apply tag
+        id: post-apply-tag
+        if: |
+          always() && steps.cvs-apply.outcome == 'success'
+          && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:tag:apply:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }}:attempt-${{ github.run_attempt }} -->"
+          body-file: ${{ steps.cvs-apply.outputs.apply-extract-file }}
+        continue-on-error: true
+      - name: ☠📖 Post per-env destroy-plan tag
+        id: post-destroy-plan-tag
+        if: |
+          always() && steps.cvs-apply.outcome == 'success'
+          && steps.destroy-plan.outcome != 'skipped' && steps.destroy-plan.outcome != ''
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:tag:destroy-plan:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }}:attempt-${{ github.run_attempt }} -->"
+          body-file: ${{ steps.cvs-apply.outputs.destroy-plan-extract-file }}
+        continue-on-error: true
+      - name: ☠ Post per-env destroy tag
+        id: post-destroy-tag
+        if: |
+          always() && steps.cvs-apply.outcome == 'success'
+          && steps.destroy.outcome != 'skipped' && steps.destroy.outcome != ''
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:tag:destroy:${{ matrix.vars.github-environment }}:run-id-${{ github.run_id }}:attempt-${{ github.run_attempt }} -->"
+          body-file: ${{ steps.cvs-apply.outputs.destroy-extract-file }}
+        continue-on-error: true
+
+      # Re-render with the tag ids so the Links row anchors every tag. Only
+      # ungrouped envs have a per-env head to update.
+      - name: 📝 Re-render phase 2 with Links
+        id: cvs-apply-final
+        if: |
+          always()
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+          && matrix.vars.pr-comment-group == ''
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@v0
+        with:
+          environment-name: ${{ matrix.vars.github-environment }}
+          plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
+          plan-console-file: ${{ steps.plan.outputs.console-output-file }}
+          status-init: ${{ steps.init.outcome }}
+          status-verify-lock: ${{ steps.verify-lock.outcome }}
+          status-fmt: ${{ steps.fmt.outcome }}
+          status-validate: ${{ steps.validate.outcome }}
+          status-lint: ${{ steps.lint.outcome }}
+          status-plan: ${{ steps.plan.outcome }}
+          pr-comment-group: ${{ matrix.vars.pr-comment-group }}
+          include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
+          plan-time: ${{ steps.plan.outputs.plan-time }}
+          warning-count: ${{ steps.concat-warnings-md.outputs.warning-count }}
+          warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
+          plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
+          goals-json: ${{ toJSON(matrix.vars.goals) }}
+          status-apply: ${{ steps.apply.outcome }}
+          apply-time: ${{ steps.apply.outputs.apply-time }}
+          apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
+          apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
+          apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
+          apply-count-total: ${{ steps.parse-apply.outputs.count-total }}
+          apply-completed: ${{ steps.parse-apply.outputs.completed }}
+          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file }}
+          apply-warning-count: ${{ steps.parse-apply-warnings.outputs.warning-count }}
+          apply-warnings-markdown-file: ${{ steps.parse-apply-warnings.outputs.warnings-markdown-file }}
+          status-destroy-plan: ${{ steps.destroy-plan.outcome }}
+          destroy-plan-time: ${{ steps.destroy-plan.outputs.plan-time }}
+          destroy-plan-count-add: ${{ steps.parse-destroy-plan.outputs.count-add }}
+          destroy-plan-count-change: ${{ steps.parse-destroy-plan.outputs.count-change }}
+          destroy-plan-count-destroy: ${{ steps.parse-destroy-plan.outputs.count-destroy }}
+          destroy-plan-count-import: ${{ steps.parse-destroy-plan.outputs.count-import }}
+          destroy-plan-count-move: ${{ steps.parse-destroy-plan.outputs.count-move }}
+          destroy-plan-count-remove: ${{ steps.parse-destroy-plan.outputs.count-remove }}
+          destroy-plan-count-total: ${{ steps.parse-destroy-plan.outputs.count-total }}
+          destroy-plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+          destroy-plan-txt-output-file: ${{ steps.destroy-plan.outputs.txt-output-file }}
+          destroy-plan-warning-count: ${{ steps.parse-destroy-plan-warnings.outputs.warning-count }}
+          destroy-plan-warnings-markdown-file: ${{ steps.parse-destroy-plan-warnings.outputs.warnings-markdown-file }}
+          status-destroy: ${{ steps.destroy.outcome }}
+          destroy-time: ${{ steps.destroy.outputs.apply-time }}
+          destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
+          destroy-count-total: ${{ steps.parse-destroy-apply.outputs.count-total }}
+          destroy-completed: ${{ steps.parse-destroy-apply.outputs.completed }}
+          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file }}
+          destroy-warning-count: ${{ steps.parse-destroy-warnings.outputs.warning-count }}
+          destroy-warnings-markdown-file: ${{ steps.parse-destroy-warnings.outputs.warnings-markdown-file }}
+          apply-extract-include-outputs: ${{ matrix.vars.apply-extract-include-outputs }}
+          # The inputs that differ from cvs-apply: the three tag ids.
+          apply-tag-comment-id: ${{ steps.post-apply-tag.outputs.comment-id }}
+          destroy-plan-tag-comment-id: ${{ steps.post-destroy-plan-tag.outputs.comment-id }}
+          destroy-tag-comment-id: ${{ steps.post-destroy-tag.outputs.comment-id }}
+          output-file-suffix: phase2-final
+        continue-on-error: true
+
+      # Second PATCH of the per-env head this run. pr-comment short-circuits
+      # on an unchanged body, so a plan-only env costs one API read and no
+      # write (P16). Falls back through phase-2 → phase-1 bodies, each in its
+      # own suffixed file (P12).
+      - name: 🏷️ Upsert per-env head comment (phase 2)
+        id: upsert-head-apply
+        if: |
+          always()
+          && (steps.cvs-apply-final.outcome == 'success' || steps.cvs-apply.outcome == 'success')
+          && matrix.vars.add-pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+          && matrix.vars.pr-comment-group == ''
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:head:env:${{ matrix.vars.github-environment }} -->"
+          body-file: ${{ steps.cvs-apply-final.outputs.head-summary-file || steps.cvs-apply.outputs.head-summary-file }}
+        continue-on-error: true
+
+      # Outcome gates for the mutating steps (§5.2). Without these a failed
+      # apply under allow-failing-terraform-operations=true was green
+      # everywhere with no annotation. They change no job outcome: with
+      # allow-failing=false the apply step itself already failed the job.
+      # Each gate's if: mirrors its step's own if:, so it never fires for a
+      # step that legitimately did not run. Placed AFTER the phase-2
+      # comment steps — see the phase-2 banner comment above (P1).
+      - name: "🧐 Validation outcome: 🐙 Apply"
+        if: |
+          always() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
+        run: |
+          if [ ! "${{ steps.apply.outcome }}" == 'success' ]; then
+            echo "::error title=Apply failed::Outcome of terraform apply step was '${{ steps.apply.outcome }}' for environment '${{ matrix.vars.github-environment }}' — infrastructure may be partially applied!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: ☠📖 Destroy Plan"
+        if: |
+          always() && steps.destroy-plan.outcome != 'skipped' && steps.destroy-plan.outcome != ''
+        run: |
+          if [ ! "${{ steps.destroy-plan.outcome }}" == 'success' ]; then
+            echo "::error title=Destroy plan failed::Outcome of terraform destroy plan step was '${{ steps.destroy-plan.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
+      - name: "🧐 Validation outcome: ☠ Destroy"
+        if: |
+          always() && steps.destroy.outcome != 'skipped' && steps.destroy.outcome != ''
+        run: |
+          if [ ! "${{ steps.destroy.outcome }}" == 'success' ]; then
+            echo "::error title=Destroy failed::Outcome of terraform destroy step was '${{ steps.destroy.outcome }}' for environment '${{ matrix.vars.github-environment }}' — infrastructure may be partially destroyed!"
+            exit 1
+          fi
+        # do not terminate if configured to ignore, fromJSON ensures bool
+        continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata

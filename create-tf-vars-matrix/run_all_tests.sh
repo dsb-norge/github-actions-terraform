@@ -397,6 +397,7 @@ BASE_INPUTS='{
   "tflint-version": "latest",
   "add-pr-comment": "true",
   "verify-lock-file": "true",
+  "apply-extract-include-outputs": "false",
   "pr-comment-group": "",
   "pr-auto-merge-enabled": "false",
   "pr-auto-merge-from-actors-yml": "[]",

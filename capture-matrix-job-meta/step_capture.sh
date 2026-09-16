@@ -82,8 +82,21 @@ function filter_sensitive_keys {
   '
 }
 
+# Largest step-output value kept verbatim, in bytes. Anything longer is
+# replaced by a "<truncated: N bytes>" marker.
+#
+# Nothing downstream reads a step output larger than a few hundred bytes —
+# the aggregator, the auto-merge evaluator and the run summary want counts,
+# outcomes, times and file paths. The ARG_MAX incident this file already
+# describes was caused by a downstream action's output growing unexpectedly
+# (a 65k comment body). Those bodies now travel as file paths, but the cap
+# stays: the next such growth degrades the artifact instead of killing the
+# job (docs/Apply-and-destroy-reporting.md §7.12).
+STEP_OUTPUT_MAX_BYTES="${STEP_OUTPUT_MAX_BYTES:-4096}"
+
 # Normalize the steps context object
-# Ensures each step has outcome, conclusion, and outputs fields
+# Ensures each step has outcome, conclusion, and outputs fields, and caps
+# each output value at STEP_OUTPUT_MAX_BYTES.
 # Input/Output format: { "step-id": { "outputs": {}, "outcome": "success", "conclusion": "success" }, ... }
 function normalize_steps_context {
   local steps_json="${1}"
@@ -94,13 +107,16 @@ function normalize_steps_context {
     return 0
   fi
 
-  echo "${steps_json}" | jq '
+  # utf8bytelength is the right measure for the envp limit, which is bytes.
+  echo "${steps_json}" | jq --argjson max "${STEP_OUTPUT_MAX_BYTES}" '
+    def cap: if (type == "string") and ((. | utf8bytelength) > $max)
+             then "<truncated: \(. | utf8bytelength) bytes>" else . end;
     to_entries | map({
       key: .key,
       value: {
         outcome: (.value.outcome // ""),
         conclusion: (.value.conclusion // ""),
-        outputs: (.value.outputs // {})
+        outputs: ((.value.outputs // {}) | with_entries(.value |= cap))
       }
     }) | from_entries
   '
