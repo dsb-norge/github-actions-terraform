@@ -109,16 +109,16 @@ python3 -c "import json; json.load(open('<path-to>.json'))"
 
 `create-tf-vars-matrix` has a modern `run_all_tests.sh` (helper unit tests + fixture-driven runs of the step source extracted from `action.yml` by `extract_step_source.py`) and is enrolled in CI like every other action. The older `test_action_source.sh` harness is a known-flaky direct-invocation harness that requires a real tty and may fail on pristine main — it is kept for manual debugging only and CI does not run it.
 
-## Development workflow (see `docs/Development-and-release.md` for full procedure)
+## Development workflow (see `docs/Development-and-release.md` and `docs/Preview-refs.md`)
 
-To test changes from a calling repo, the documented "dev-tag swap" flow is mandatory:
+To test changes from a calling repo, use the PR's **preview ref**. There is no dev-tag swap any more:
 
-1. **Rewrite `@v0` refs** in all `dsb-norge/github-actions-terraform/...@v0` lines in this repo to `@<your-feature-tag>`, with a `# TODO revert to @v0` marker above each — there's a documented vscode regex pattern for both the swap and the revert.
-2. **Commit on a feature branch**, push, then `git tag -f -a '<tag>' && git push -f origin 'refs/tags/<tag>'`. Re-tag and force-push each time you push more commits.
-3. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@<tag>`.
-4. **Before merge**: delete the dev tag locally and on origin, and revert all `@<tag>` refs back to `@v0` using the second documented regex.
+1. Open a (draft) PR. `.github/workflows/pr-preview.yml` publishes two tags on every push — `preview/pr-<N>` (moving) and `preview/pr-<N>-<sha7>` (immutable) — pointing at a generated, detached commit whose internal `uses: dsb-norge/github-actions-terraform/...@v0` refs are rewritten to the immutable tag. A sticky `🧪 Preview refs for this PR` comment carries the copy-paste line.
+2. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>`, with `# TODO revert to '@v0'` above it. The same ref serves every composite action.
+3. **Never commit a ref rewrite to the PR branch** — it keeps saying `@v0`. A branch that still carries an old-style swap commit (`@<tag>` refs with `# TODO revert to @v0` markers) should drop that commit; the preview publishes correctly either way.
+4. Closing or merging the PR deletes the tags and the comment.
 
-Branch + tag may share a name. To disambiguate locally, use `refs/heads/<name>` and `refs/tags/<name>` explicitly with `git push`.
+If the comment says *unavailable (bootstrap)*, the repository variable `PREVIEW_APP_ID` / secret `PREVIEW_APP_PRIVATE_KEY` are missing — `docs/Preview-refs.md` §5 has the one-time App setup. Fallback for fork PRs: `bash .github/scripts/rewrite-internal-refs.sh <ref>`, commit, tag and push by hand (Development-and-release.md → "Fallback: publishing by hand"), and revert with the same script and `v0` before merge.
 
 ## Release process (see `docs/Development-and-release.md`)
 
