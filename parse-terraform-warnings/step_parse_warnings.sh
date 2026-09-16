@@ -11,10 +11,11 @@
 #   input_console_output_file - Path to the file to scan. Empty / missing
 #                               / unreadable file is not an error: count=0,
 #                               markdown file empty.
-#   input_step_label          - One of 'init' | 'validate' | 'plan'. Used
-#                               in annotation titles and as the markdown
-#                               subheader so reviewers can tell which
-#                               step a warning came from.
+#   input_step_label          - One of 'init' | 'validate' | 'plan' |
+#                               'destroy-plan' | 'apply' | 'destroy'. Used
+#                               in annotation titles, as the markdown
+#                               subheader, and in the markdown file name —
+#                               so one env's six invocations never collide.
 #   input_environment_name    - Used in the output markdown file name.
 #
 # Outputs:
