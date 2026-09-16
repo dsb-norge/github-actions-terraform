@@ -17,7 +17,12 @@
 #   input_issue_number  - PR or issue number
 #   input_mode          - "upsert" | "delete"
 #   input_marker        - HTML marker substring (e.g. "<!-- tf:head:env:prod -->")
-#   input_body          - markdown body (required when mode=upsert)
+#   input_body          - markdown body. For mode=upsert exactly one of
+#                         input_body / input_body_file must be given.
+#   input_body_file     - path of a file holding the markdown body. Read from
+#                         disk at post time; the content never transits a
+#                         shell variable, argv or envp. Preferred for bodies
+#                         produced by a renderer (see action.yml).
 #   GH_TOKEN  (or GITHUB_TOKEN)  - token for `gh` API calls
 #
 
@@ -69,9 +74,31 @@ function validate_inputs {
 
   case "${input_mode}" in
     upsert)
-      if [ -z "${input_body:-}" ]; then
-        log-error "input_body is required when mode=upsert"
+      # Exactly one body source. Both set is refused rather than picking one:
+      # a caller that wired both almost certainly meant one of them, and
+      # silently preferring either would post the wrong body.
+      if [ -n "${input_body:-}" ] && [ -n "${input_body_file:-}" ]; then
+        log-error "input_body and input_body_file are mutually exclusive — pass exactly one for mode=upsert"
         return 1
+      fi
+      if [ -z "${input_body:-}" ] && [ -z "${input_body_file:-}" ]; then
+        log-error "input_body or input_body_file is required when mode=upsert"
+        return 1
+      fi
+      # A missing or empty file fails before any API call. The producers
+      # that write these files (create-validation-summary and friends) run
+      # with continue-on-error; if one of them silently produced nothing,
+      # posting a blank comment would hide that, whereas failing here
+      # surfaces it in this step's log.
+      if [ -n "${input_body_file:-}" ]; then
+        if [ ! -f "${input_body_file}" ]; then
+          log-error "input_body_file '${input_body_file}' does not exist"
+          return 1
+        fi
+        if [ ! -s "${input_body_file}" ]; then
+          log-error "input_body_file '${input_body_file}' is empty"
+          return 1
+        fi
       fi
       ;;
     delete)
@@ -148,12 +175,23 @@ function list_and_find_candidates {
 function do_upsert {
   start-group "Upsert"
 
-  local full_body
-  full_body=$(_render_full_body "${input_marker}" "${input_body}")
-
+  # Assemble <marker>\n\n<body> straight into the tempfile. The body-file
+  # branch never reads the file into a variable: this function runs under
+  # the shim's allexport, so a 65k body in a local would be exported into
+  # the envp of every fork below (gh, jq) — the exact ARG_MAX path body-file
+  # exists to avoid. The inline branch keeps the pre-existing behaviour.
   local body_file
   body_file=$(mktemp)
-  printf '%s' "${full_body}" >"${body_file}"
+  if [ -n "${input_body_file:-}" ]; then
+    log-info "Body source: file '${input_body_file}' ($(wc -c <"${input_body_file}") bytes)"
+    {
+      printf '%s\n\n' "${input_marker}"
+      cat "${input_body_file}"
+    } >"${body_file}"
+  else
+    log-info "Body source: inline (${#input_body} chars)"
+    _render_full_body "${input_marker}" "${input_body}" >"${body_file}"
+  fi
 
   if [ "${DEGRADED_MODE}" = "true" ]; then
     log-warn "Degraded mode — posting fresh."
