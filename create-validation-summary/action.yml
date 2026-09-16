@@ -365,6 +365,15 @@ outputs:
       Absolute path of the destroy tag body (`<!-- tf:tag:destroy:<env>:run-id-…`).
       Same shapes as the apply tag with the destroy wording.
     value: ${{ steps.create-validation-summary.outputs.destroy-extract-file }}
+  step-summary-file:
+    description: |
+      Absolute path of the per-env block for the job's $GITHUB_STEP_SUMMARY
+      (docs/Apply-and-destroy-reporting.md §8.7): the head's table in its
+      ungrouped shape — a grouped env has no table in its PR head, but the
+      job page has no per-group table to defer to — with the Links row
+      replaced by a '[Job log](<url>)' footer. Consumed by
+      annotate-terraform-outcome, on every event.
+    value: ${{ steps.create-validation-summary.outputs.step-summary-file }}
 runs:
   using: "composite"
   steps:
