@@ -1,6 +1,7 @@
 name: "Parse terraform Warning: diagnostics"
 description: |
-  Scans a terraform console-output file for 'Warning:' diagnostic blocks.
+  Scans a terraform console-output file (init, validate, plan, destroy-plan,
+  apply or destroy) for 'Warning:' diagnostic blocks.
   Emits one ::warning workflow-command annotation per block (with file/line
   source context when terraform printed it) so warnings appear inline in
   the GitHub UI. Renders a markdown summary file for embedding in the PR
@@ -19,8 +20,14 @@ inputs:
   step-label:
     description: |
       Which terraform sub-step the input file came from: 'init', 'validate',
-      or 'plan'. Used as a subheader in the rendered markdown and in the
-      annotation title prefix.
+      'plan', 'destroy-plan', 'apply' or 'destroy'. Used as a subheader in
+      the rendered markdown, in the annotation title prefix, and in the
+      markdown file name (so the six invocations for one environment write
+      six files).
+
+      For 'apply' and 'destroy' the console must have been captured with
+      -no-color — terraform's coloured diagnostics use a box-drawing frame
+      this parser does not recognise. terraform-apply passes the flag.
     required: true
   environment-name:
     description: |

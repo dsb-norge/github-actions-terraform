@@ -208,6 +208,74 @@ assert "t09: file path is providers.tf" \
 assert "t09: line is 8" grep -q "line=8" /tmp/test_output_parse_warnings.txt
 
 # ----------------------------------------------------------------------
+# t09 regression: the init success line is an end-of-operation terminator.
+# Before, it was appended to the warning body.
+# ----------------------------------------------------------------------
+assert "t09: body does NOT swallow 'Terraform has been successfully initialized!'" \
+  bash -c "! grep -q 'successfully initialized' '$(get_output warnings-markdown-file)'"
+assert "t09: body still holds the real message" \
+  grep -q "declared in the required_providers block" "$(get_output warnings-markdown-file)"
+
+# ----------------------------------------------------------------------
+# t10: apply console — warning is followed by 'Apply complete!' and an
+# Outputs section. Neither may bleed into the body: the Outputs section
+# holds real output values, and this markdown is posted to the PR
+# (docs/Apply-and-destroy-reporting.md P3).
+# ----------------------------------------------------------------------
+setup_workdir
+export input_step_label="apply"
+export input_console_output_file="${_test_data_dir}/t10_apply_warning_then_summary_and_outputs.log"
+run_step
+assert "t10: exits 0" test "${LAST_EXIT}" -eq 0
+assert "t10: warning-count is 4 (1 shown + 3 suppressed)" test "$(get_output warning-count)" = "4"
+assert "t10: one ::warning emitted" test "$(count_annotations)" -eq 1
+assert "t10: annotation title carries the 'apply' label" \
+  grep -q "title=terraform apply warning" /tmp/test_output_parse_warnings.txt
+assert "t10: annotation has file=main.tf,line=14" \
+  grep -q "::warning file=main.tf,line=14" /tmp/test_output_parse_warnings.txt
+assert "t10: markdown step header is 'From terraform apply'" \
+  grep -q "### From terraform apply" "$(get_output warnings-markdown-file)"
+assert "t10: markdown file name carries the label (no collision with plan's)" \
+  bash -c "[[ '$(get_output warnings-markdown-file)' == *'/tf-warnings-testenv-apply.md' ]]"
+assert "t10: body holds the real message" \
+  grep -q "superseded by" "$(get_output warnings-markdown-file)"
+assert "t10: body does NOT contain 'Apply complete!'" \
+  bash -c "! grep -q 'Apply complete' '$(get_output warnings-markdown-file)'"
+assert "t10: body does NOT contain the Outputs header" \
+  bash -c "! grep -q 'Outputs:' '$(get_output warnings-markdown-file)'"
+assert "t10: body does NOT leak any output value (P3)" \
+  bash -c "! grep -q 'SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK' '$(get_output warnings-markdown-file)' && ! grep -q 'blob.core.windows.net' '$(get_output warnings-markdown-file)'"
+assert "t10: annotation does NOT leak any output value either" \
+  bash -c "! grep -q 'SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK' /tmp/test_output_parse_warnings.txt"
+
+# ----------------------------------------------------------------------
+# t11: destroy console — 'Destroy complete!' terminates the body.
+# ----------------------------------------------------------------------
+setup_workdir
+export input_step_label="destroy"
+export input_console_output_file="${_test_data_dir}/t11_destroy_warning_then_summary.log"
+run_step
+assert "t11: warning-count is 1" test "$(get_output warning-count)" = "1"
+assert "t11: annotation title carries the 'destroy' label" \
+  grep -q "title=terraform destroy warning" /tmp/test_output_parse_warnings.txt
+assert "t11: body does NOT contain 'Destroy complete!'" \
+  bash -c "! grep -q 'Destroy complete' '$(get_output warnings-markdown-file)'"
+assert "t11: body holds the real message" \
+  grep -q "will be removed in a future version" "$(get_output warnings-markdown-file)"
+
+# ----------------------------------------------------------------------
+# destroy-plan label: same file as a plan, distinct label in name/header.
+# ----------------------------------------------------------------------
+setup_workdir
+export input_step_label="destroy-plan"
+export input_console_output_file="${_test_data_dir}/t02_single_warning_with_context.log"
+run_step
+assert "destroy-plan: markdown file is tf-warnings-<env>-destroy-plan.md" \
+  bash -c "[[ '$(get_output warnings-markdown-file)' == *'/tf-warnings-testenv-destroy-plan.md' ]]"
+assert "destroy-plan: header and title carry the label" \
+  bash -c "grep -q '### From terraform destroy-plan' '$(get_output warnings-markdown-file)' && grep -q 'title=terraform destroy-plan warning' /tmp/test_output_parse_warnings.txt"
+
+# ----------------------------------------------------------------------
 # Missing input_console_output_file → count=0, no crash
 # ----------------------------------------------------------------------
 setup_workdir

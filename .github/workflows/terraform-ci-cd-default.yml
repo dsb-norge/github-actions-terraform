@@ -1225,6 +1225,20 @@ jobs:
           apply-console-file: ${{ steps.apply.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
+      # Fourth warning count, kept separate from the init+validate+plan sum:
+      # the head row and the bodies live in the apply block / apply tag, so
+      # the number stays attributable to the comment it came from
+      # (docs/Apply-and-destroy-reporting.md §7.7, P18).
+      - name: "⚠️ Parse apply warnings"
+        id: parse-apply-warnings
+        if: always() && steps.apply.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.apply.outputs.console-output-file }}
+          step-label: apply
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true
+
       - name: ☠📖 Terraform Destroy Plan
         id: destroy-plan
         if: |
@@ -1252,6 +1266,16 @@ jobs:
         with:
           plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: "⚠️ Parse destroy-plan warnings"
+        id: parse-destroy-plan-warnings
+        if: always() && steps.destroy-plan.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+          step-label: destroy-plan
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true
 
       - name: ☠ Terraform Destroy
         id: destroy
@@ -1293,6 +1317,16 @@ jobs:
         with:
           apply-console-file: ${{ steps.destroy.outputs.console-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
+
+      - name: "⚠️ Parse destroy warnings"
+        id: parse-destroy-warnings
+        if: always() && steps.destroy.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v0
+        with:
+          console-output-file: ${{ steps.destroy.outputs.console-output-file }}
+          step-label: destroy
+          environment-name: ${{ matrix.vars.github-environment }}
+        continue-on-error: true
 
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata

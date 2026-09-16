@@ -1,0 +1,24 @@
+azurerm_resource_group.rg: Creating...
+azurerm_resource_group.rg: Creation complete after 2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+azurerm_storage_account.sa: Creating...
+azurerm_storage_account.sa: Still creating... [10s elapsed]
+azurerm_storage_account.sa: Creation complete after 14s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample]
+
+Warning: Argument is deprecated
+
+  with azurerm_storage_account.sa,
+  on main.tf line 14, in resource "azurerm_storage_account" "sa":
+  14:   enable_https_traffic_only = true
+
+The `enable_https_traffic_only` property has been superseded by
+`https_traffic_only_enabled` and will be removed in v4.0 of the AzureRM
+Provider.
+
+(and 3 more similar warnings elsewhere)
+
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+storage_primary_endpoint = "https://stexample.blob.core.windows.net/"
+connection_hint = "SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK"

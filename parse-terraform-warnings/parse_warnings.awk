@@ -1,9 +1,10 @@
 # State-machine parser for terraform 'Warning:' diagnostic blocks.
 #
 # Required variables (passed via -v):
-#   step_label  - 'init' | 'validate' | 'plan'; used in annotation titles
-#                 ("init warning", etc.) so reviewers can tell which step
-#                 emitted a warning from the run-page annotations panel.
+#   step_label  - 'init' | 'validate' | 'plan' | 'destroy-plan' | 'apply' |
+#                 'destroy'; used in annotation titles ("init warning",
+#                 etc.) so reviewers can tell which step emitted a warning
+#                 from the run-page annotations panel.
 #   md_out      - Path to write per-block markdown bodies to. Each block
 #                 ends with a "---" separator line. Bash main wraps the
 #                 file with a "### From terraform <step>" header.
@@ -17,10 +18,22 @@
 # source context anyway) but sum (1 + N) into warning-count so the cell
 # in the PR table reflects total occurrences, not categories.
 #
-# Block boundaries: ^Warning: starts a block; next ^Warning: or ^Error:
-# or EOF ends it. Blank lines and indented context lines stay inside the
-# block. 'Plan:' is NOT a terminator — terraform plan logs put warnings
-# AFTER the 'Plan: N to add…' summary line.
+# Block boundaries: ^Warning: starts a block; the next ^Warning: or
+# ^Error:, one of the end-of-operation lines below, or EOF ends it. Blank
+# lines and indented context lines stay inside the block. 'Plan:' is NOT a
+# terminator — terraform plan logs put warnings AFTER the 'Plan: N to
+# add…' summary line.
+#
+# End-of-operation terminators. terraform prints diagnostics and THEN the
+# operation's closing lines, so without these a warning body would run on
+# into them. For init that only pulled 'Terraform has been successfully
+# initialized!' into the body. For apply it is a leak: the body would
+# swallow 'Apply complete!' and the whole Outputs section — every
+# non-sensitive output VALUE — into markdown that is posted to the PR,
+# bypassing the Outputs strip in create-validation-summary
+# (docs/Apply-and-destroy-reporting.md P3). Multi-paragraph warning bodies
+# are common, so a blank-line-based terminator is not an option; these
+# four literal lines are.
 
 function escape_attr(s,   r) {
   # Escapes for use in name=value attribute pairs in workflow commands.
@@ -117,6 +130,12 @@ BEGIN {
 
 # Error terminates the current block
 /^Error: / {
+  if (in_block) { emit_block(); in_block = 0 }
+  next
+}
+
+# End-of-operation lines terminate the current block (see header).
+/^Apply complete! / || /^Destroy complete! / || /^Outputs:$/ || /^Terraform has been successfully initialized!/ {
   if (in_block) { emit_block(); in_block = 0 }
   next
 }
