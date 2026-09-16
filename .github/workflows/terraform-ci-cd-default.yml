@@ -1332,9 +1332,19 @@ jobs:
       # console for the PR comment. Runs whenever apply ran, including on
       # failure — a failed apply has no summary line, and the parser reports
       # that as '?' / completed=false rather than as zeros.
+      #
+      # always() is load-bearing here and on the other two parse steps, and
+      # it is a difference from parse-plan: plan runs with continue-on-error
+      # true, so a failed plan never fails the job and parse-plan's plain
+      # if: is enough. apply's continue-on-error is allow-failing-terraform-
+      # operations (default false), so a failed apply fails the job on the
+      # spot — and an if: without always() is then skipped even when it
+      # evaluates true. Without always() the first real failed apply lost
+      # its counts and its console, and the apply tag read 'not available'
+      # (docs/Apply-and-destroy-reporting.md P31).
       - name: "🔍 Parse terraform apply"
         id: parse-apply
-        if: steps.apply.outcome != 'cancelled' && steps.apply.outcome != 'skipped'
+        if: always() && steps.apply.outcome != 'cancelled' && steps.apply.outcome != 'skipped'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/parse-terraform-apply@apply-destroy-reporting
         with:
@@ -1379,7 +1389,7 @@ jobs:
       # §5.1, P7). Renaming it re-breaks that silently.
       - name: "🔍 Parse terraform destroy plan"
         id: parse-destroy-plan
-        if: steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
+        if: always() && steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/parse-terraform-plan@apply-destroy-reporting
         with:
@@ -1433,7 +1443,7 @@ jobs:
 
       - name: "🔍 Parse terraform destroy"
         id: parse-destroy-apply
-        if: steps.destroy.outcome != 'cancelled' && steps.destroy.outcome != 'skipped'
+        if: always() && steps.destroy.outcome != 'cancelled' && steps.destroy.outcome != 'skipped'
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/parse-terraform-apply@apply-destroy-reporting
         with:
@@ -1510,7 +1520,9 @@ jobs:
           apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
           apply-count-total: ${{ steps.parse-apply.outputs.count-total }}
           apply-completed: ${{ steps.parse-apply.outputs.completed }}
-          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file }}
+          # Tick-filtered copy when the parser ran; the raw console otherwise, so a
+          # parser problem can never turn a failed apply's console into 'not available'.
+          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file || steps.apply.outputs.console-output-file }}
           apply-warning-count: ${{ steps.parse-apply-warnings.outputs.warning-count }}
           apply-warnings-markdown-file: ${{ steps.parse-apply-warnings.outputs.warnings-markdown-file }}
           status-destroy-plan: ${{ steps.destroy-plan.outcome }}
@@ -1531,7 +1543,9 @@ jobs:
           destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
           destroy-count-total: ${{ steps.parse-destroy-apply.outputs.count-total }}
           destroy-completed: ${{ steps.parse-destroy-apply.outputs.completed }}
-          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file }}
+          # Tick-filtered copy when the parser ran; the raw console otherwise, so a
+          # parser problem can never turn a failed destroy's console into 'not available'.
+          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file || steps.destroy.outputs.console-output-file }}
           destroy-warning-count: ${{ steps.parse-destroy-warnings.outputs.warning-count }}
           destroy-warnings-markdown-file: ${{ steps.parse-destroy-warnings.outputs.warnings-markdown-file }}
           apply-extract-include-outputs: ${{ matrix.vars.apply-extract-include-outputs }}
@@ -1643,7 +1657,9 @@ jobs:
           apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
           apply-count-total: ${{ steps.parse-apply.outputs.count-total }}
           apply-completed: ${{ steps.parse-apply.outputs.completed }}
-          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file }}
+          # Tick-filtered copy when the parser ran; the raw console otherwise, so a
+          # parser problem can never turn a failed apply's console into 'not available'.
+          apply-console-file: ${{ steps.parse-apply.outputs.filtered-console-file || steps.apply.outputs.console-output-file }}
           apply-warning-count: ${{ steps.parse-apply-warnings.outputs.warning-count }}
           apply-warnings-markdown-file: ${{ steps.parse-apply-warnings.outputs.warnings-markdown-file }}
           status-destroy-plan: ${{ steps.destroy-plan.outcome }}
@@ -1664,7 +1680,9 @@ jobs:
           destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
           destroy-count-total: ${{ steps.parse-destroy-apply.outputs.count-total }}
           destroy-completed: ${{ steps.parse-destroy-apply.outputs.completed }}
-          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file }}
+          # Tick-filtered copy when the parser ran; the raw console otherwise, so a
+          # parser problem can never turn a failed destroy's console into 'not available'.
+          destroy-console-file: ${{ steps.parse-destroy-apply.outputs.filtered-console-file || steps.destroy.outputs.console-output-file }}
           destroy-warning-count: ${{ steps.parse-destroy-warnings.outputs.warning-count }}
           destroy-warnings-markdown-file: ${{ steps.parse-destroy-warnings.outputs.warnings-markdown-file }}
           apply-extract-include-outputs: ${{ matrix.vars.apply-extract-include-outputs }}

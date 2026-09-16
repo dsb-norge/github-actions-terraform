@@ -989,6 +989,48 @@ else
 fi
 
 # ============================================================================
+# F5c — every step from the first parse step after apply through the three
+# gates must carry always() (docs/Apply-and-destroy-reporting.md P31).
+#
+# apply/destroy fail the job on the spot (continue-on-error is
+# allow-failing-terraform-operations, default false), and a later step whose
+# if: lacks always() is skipped even when the if: is true. The first real
+# failed apply lost its parse step that way. F5 checks order; this checks
+# the guard, mechanically, so the next step added here cannot forget it.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5c - every step after apply up to the gates carries always()${NC}"
+echo -e "${BLUE}========================================${NC}"
+_missing_always=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+steps = wf["jobs"]["terraform-ci-cd"]["steps"]
+names = [s.get("id") or s.get("name") for s in steps]
+start = names.index("parse-apply")
+end = names.index("capture-metadata")
+# The terraform steps themselves are deliberately NOT always(): destroy-plan
+# must not run after a failed init, destroy not after a failed destroy-plan.
+exempt = {"destroy-plan", "destroy"}
+for s in steps[start:end]:
+    name = s.get("id") or s.get("name")
+    if name in exempt:
+        continue
+    if "always()" not in str(s.get("if", "")):
+        print(name)
+PYEOF
+)
+if [[ -z "${_missing_always}" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: every parse / render / post / upsert / annotate / gate step between parse-apply and capture-metadata carries always()"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: steps missing always() in their if::"
+  echo "${_missing_always}" | sed 's/^/    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # F6 — no comment body travels inline anywhere in the workflows: every
 # pr-comment upsert uses body-file, and no step interpolates a *-extract or
 # head-summary output as a string (docs/Apply-and-destroy-reporting.md §7.10).
