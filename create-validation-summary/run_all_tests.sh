@@ -112,6 +112,25 @@ reset_defaults() {
   export input_apply_warning_count="0"
   export input_destroy_plan_warning_count="0"
   export input_destroy_warning_count="0"
+  # The init+validate+plan warning inputs were never part of reset_defaults;
+  # tests that set them used to be ordered so the leak was harmless. They
+  # are reset here so a warning set by one test cannot appear in another's
+  # plan tag. The goldens all ran with these empty, so nothing changes for them.
+  export input_warning_count="0"
+  export input_warnings_markdown_file=""
+  # Mode row / banner / extracts / Links (L4a)
+  export input_goals_json=""
+  export input_apply_console_file=""
+  export input_destroy_plan_console_file=""
+  export input_destroy_plan_txt_output_file=""
+  export input_destroy_console_file=""
+  export input_apply_extract_include_outputs="false"
+  export input_apply_warnings_markdown_file=""
+  export input_destroy_plan_warnings_markdown_file=""
+  export input_destroy_warnings_markdown_file=""
+  export input_apply_tag_comment_id=""
+  export input_destroy_plan_tag_comment_id=""
+  export input_destroy_tag_comment_id=""
   export input_job_check_run_id="87654321"
 
   export GITHUB_SERVER_URL="https://github.com"
@@ -2037,8 +2056,8 @@ assert_no_body_strings_in_github_output() {
   fi
   local n
   n=$(wc -l < "${GITHUB_OUTPUT}")
-  if [ "${n}" -ne 2 ]; then
-    fails+="  GITHUB_OUTPUT: expected exactly 2 lines (head-summary-file, plan-extract-file), got ${n}\n"
+  if [ "${n}" -ne 5 ]; then
+    fails+="  GITHUB_OUTPUT: expected exactly 5 lines (head, plan, apply, destroy-plan, destroy *-file), got ${n}\n"
   fi
   if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
   return 0
@@ -2046,7 +2065,7 @@ assert_no_body_strings_in_github_output() {
 reset_defaults
 _plan_file=$(mktemp); echo "some plan body" > "${_plan_file}"
 export input_plan_txt_output_file="${_plan_file}"
-run_test "C17: GITHUB_OUTPUT holds only the two file paths, never a body" assert_no_body_strings_in_github_output
+run_test "C17: GITHUB_OUTPUT holds only the five file paths, never a body" assert_no_body_strings_in_github_output
 rm -f "${_plan_file}"
 
 # C18: the deleted outputs are gone by name.
@@ -2122,13 +2141,13 @@ test_c16_suffix_isolation() {
   done
   local count
   count=$(ls "${shared_tmp}"/tf-comment-dev-*.md | wc -l)
-  [ "${count}" -eq 8 ] || fails+="  expected 8 body files (4 head + 4 plan), found ${count}\n"
+  [ "${count}" -eq 20 ] || fails+="  expected 20 body files (4 invocations × 5 bodies), found ${count}\n"
   rm -rf "${shared_tmp}"
   if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
   return 0
 }
 TESTS_RUN=$((TESTS_RUN + 1))
-echo -e "${BLUE}TEST ${TESTS_RUN}: C16: four suffixed invocations in one RUNNER_TEMP write eight distinct files, none overwritten${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: C16: four suffixed invocations in one RUNNER_TEMP write twenty distinct files, none overwritten${NC}"
 if _c16_err=$(test_c16_suffix_isolation 2>&1); then
   echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -2433,6 +2452,328 @@ reset_defaults
 set_apply_success_inputs
 export input_pr_comment_group="dev-group"
 run_test "Grouped mode omits the operation blocks with the rest of the table" assert_grouped_omits_operation_blocks
+
+
+# --------------------------------------------------
+# Mode row, plan-tag banner, operation tag bodies and the Links row
+# (docs/Apply-and-destroy-reporting.md §8.2, §8.5, §8.6; tests C7–C13,
+# C19–C24). The extra bodies are read from the *-file outputs.
+# --------------------------------------------------
+body_of() { local f; f=$(get_output "${1}-file"); [ -n "${f}" ] && [ -f "${f}" ] && cat "${f}"; }
+
+# A realistic tick-filtered apply console with an Outputs section.
+make_apply_console() {
+  local tmp; tmp=$(mktemp)
+  cat >"${tmp}" <<'EOF'
+azurerm_resource_group.rg: Creating...
+azurerm_resource_group.rg: Creation complete after 2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+resource_group_name = "rg-example"
+connection_hint = "OUTPUT_VALUE_MUST_NOT_LEAK"
+EOF
+  echo "${tmp}"
+}
+
+# C7: apply-on-pr → Mode row first, byte-exact; banner in the plan tag.
+assert_mode_row_and_banner_apply() {
+  local head="${3}" plan="${4}"
+  local fails=""
+  local expected_rows
+  expected_rows=$(cat <<'EOF'
+|  | Step | Result |
+|:---:|---|---|
+| <span title="Mode">🐙</span> | Mode | <span title="This environment mutates infrastructure on pull request">applies on PR</span> |
+| <span title="Initialization">⚙️</span> | Initialization | `success` |
+EOF
+)
+  [[ "${head}" == *"${expected_rows}"* ]] || fails+="  head: Mode row not byte-exact / not first:\n$(printf '%s\n' "${head}" | sed -n '2,5p' | sed 's/^/    /')\n"
+  local expected_banner='### Terraform plan for environment: `dev`
+
+> 🐙 This environment applies on pull request — the plan below was applied to real infrastructure. The result is in the 🐙 apply comment.
+
+Plan not available 🤷‍♀️'
+  [[ "${plan}" == "${expected_banner}" ]] || fails+="  plan: banner not byte-exact:\n$(diff <(echo "${expected_banner}") <(echo "${plan}") | sed 's/^/    /')\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+run_test "C7: apply-on-pr → Mode row is row 1 (byte-exact) and the plan tag carries the banner" assert_mode_row_and_banner_apply
+
+# C8: both on-PR goals → 🐙☠ icon, two value lines, two banner lines.
+assert_mode_row_both() {
+  local head="${3}" plan="${4}"
+  local fails=""
+  local expected='| <span title="Mode">🐙☠</span> | Mode | <span title="This environment mutates infrastructure on pull request">applies on PR</span><br><span title="This environment mutates infrastructure on pull request">destroys on PR</span> |'
+  [[ "${head}" == *"${expected}"* ]] || fails+="  head: expected 🐙☠ Mode row with both lines\n"
+  [[ "${plan}" == *'> 🐙 This environment applies on pull request'* ]] || fails+="  plan: apply banner missing\n"
+  [[ "${plan}" == *'> ☠ This environment destroys on pull request'* ]] || fails+="  plan: destroy banner missing\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_goals_json='["init","plan","apply-on-pr","destroy-plan","destroy-on-pr"]'
+run_test "C8: apply-on-pr + destroy-on-pr → 🐙☠ Mode row, both value lines, both banners" assert_mode_row_both
+
+# destroy-on-pr alone → ☠ only.
+assert_mode_row_destroy_only() {
+  local head="${3}"
+  [[ "${head}" == *'| <span title="Mode">☠</span> | Mode | <span title="This environment mutates infrastructure on pull request">destroys on PR</span> |'* ]] || { echo "  expected ☠-only Mode row"; return 1; }
+  [[ "${head}" != *'applies on PR'* ]] || { echo "  'applies on PR' must be absent"; return 1; }
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","destroy-plan","destroy-on-pr"]'
+run_test "Mode row: destroy-on-pr alone → ☠ / destroys on PR" assert_mode_row_destroy_only
+
+# C9: malformed / empty / non-qualifying goals → no Mode row, no banner, exit 0.
+assert_no_mode_no_banner() {
+  local head="${3}" plan="${4}"
+  [[ "${head}" != *'| Mode |'* ]] || { echo "  Mode row must be absent"; return 1; }
+  [[ "${plan}" != *'> 🐙'* && "${plan}" != *'> ☠'* ]] || { echo "  banner must be absent"; return 1; }
+  return 0
+}
+reset_defaults
+export input_goals_json='{not json'
+run_test "C9: malformed goals-json → no Mode row, no banner, no crash" assert_no_mode_no_banner
+reset_defaults
+export input_goals_json='["all","apply"]'
+run_test "C9: goals without an on-PR goal → no Mode row, no banner" assert_no_mode_no_banner
+reset_defaults
+export input_goals_json='"apply-on-pr"'
+run_test "C9: goals-json that is a string, not an array → ignored" assert_no_mode_no_banner
+
+# C10: Outputs section stripped by default, omission note present, no leak.
+assert_apply_extract_strips_outputs() {
+  local body; body="$(body_of apply-extract)"
+  local fails=""
+  [[ "${body}" != *'OUTPUT_VALUE_MUST_NOT_LEAK'* ]] || fails+="  apply extract leaks an output value (P3)\n"
+  [[ "${body}" != *$'\nOutputs:\n'* ]] || fails+="  Outputs header must be stripped\n"
+  [[ "${body}" == *'_(outputs section omitted)_'* ]] || fails+="  omission note missing\n"
+  [[ "${body}" == *'Creation complete after 2s'* ]] || fails+="  console above Outputs must be kept\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_console_file=$(make_apply_console)
+run_test "C10: apply extract strips the Outputs section by default and says so (P3)" assert_apply_extract_strips_outputs
+
+# C11: opt-in keeps it, no note.
+assert_apply_extract_keeps_outputs() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *'OUTPUT_VALUE_MUST_NOT_LEAK'* ]] || { echo "  opted-in Outputs section missing"; return 1; }
+  [[ "${body}" != *'_(outputs section omitted)_'* ]] || { echo "  omission note must be absent when kept"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_console_file=$(make_apply_console)
+export input_apply_extract_include_outputs="true"
+run_test "C11: apply-extract-include-outputs=true keeps the Outputs section" assert_apply_extract_keeps_outputs
+
+# §8.6 shape 2: completed, N changes — byte-exact heading + summary + fence.
+assert_apply_shape_changes_golden() {
+  local body; body="$(body_of apply-extract)"
+  local expected='### Terraform apply for environment: `dev`
+
+<details><summary>Apply: 1 changes ✅</summary>
+
+```terraform
+azurerm_resource_group.rg: Creating...
+azurerm_resource_group.rg: Creation complete after 2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+```
+
+_(outputs section omitted)_
+</details>'
+  [[ "${body}" == "${expected}" ]] || { echo "  apply extract (shape 2) not byte-exact:"; diff <(echo "${expected}") <(echo "${body}") | sed 's/^/    /'; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_console_file=$(make_apply_console)
+run_test "§8.6 shape 2: 'Apply: N changes ✅' collapser is byte-exact" assert_apply_shape_changes_golden
+
+# §8.6 shape 1: completed, no changes → plain line, no collapser.
+assert_apply_shape_no_changes() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *$'\n\nApply: no changes ✅' ]] || { echo "  expected 'Apply: no changes ✅' line; got: ${body}"; return 1; }
+  [[ "${body}" != *'<details'* ]] || { echo "  no collapser for no changes"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="0"
+_c=$(mktemp); echo "Apply complete! Resources: 0 added, 0 changed, 0 destroyed." >"${_c}"; export input_apply_console_file="${_c}"
+run_test "§8.6 shape 1: completed with 0 changes → 'Apply: no changes ✅'" assert_apply_shape_no_changes
+
+# C21 / §8.6 shape 3: failed apply → <details open>, the only open collapser.
+assert_apply_shape_failed_open() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *'<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>'* ]] || { echo "  expected the open failure collapser; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
+  [[ "${body}" == *'Error: creating Key Vault'* ]] || { echo "  console tail (the error) must be inside"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"; export input_apply_completed="false"; export input_apply_count_total="?"
+_c=$(mktemp); printf 'azurerm_resource_group.rg: Creation complete after 1s [id=x]\n╷\n│ Error: creating Key Vault (kv-example): 409 Conflict\n╵\n' >"${_c}"; export input_apply_console_file="${_c}"
+run_test "C21 / §8.6 shape 3: failed apply → '<details open>❌ Apply failed — …'" assert_apply_shape_failed_open
+
+# C20 / §8.6 shape 4: no console → not available.
+assert_apply_not_available() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == '### Terraform apply for environment: `dev`
+
+Apply not available 🤷‍♀️' ]] || { echo "  expected 'Apply not available 🤷‍♀️'; got: ${body}"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_console_file="/nonexistent/apply.txt"
+run_test "C20 / §8.6 shape 4: missing apply console → 'Apply not available 🤷‍♀️', no crash" assert_apply_not_available
+
+# Destroy wording.
+assert_destroy_shapes() {
+  local body; body="$(body_of destroy-extract)"
+  [[ "${body}" == *'### Terraform destroy for environment: `dev`'* ]] || { echo "  destroy heading"; return 1; }
+  [[ "${body}" == *'<details><summary>Destroy: 3 destroyed ✅</summary>'* ]] || { echo "  expected 'Destroy: 3 destroyed ✅'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy="success"; export input_destroy_completed="true"; export input_destroy_count_total="3"
+_c=$(mktemp); echo "Destroy complete! Resources: 3 destroyed." >"${_c}"; export input_destroy_console_file="${_c}"
+run_test "§8.6 shape 5: destroy wording — 'Destroy: N destroyed ✅'" assert_destroy_shapes
+
+assert_destroy_failed_wording() {
+  local body; body="$(body_of destroy-extract)"
+  [[ "${body}" == *'<details open><summary>❌ Destroy failed — infrastructure may be partially destroyed</summary>'* ]] || { echo "  expected destroy failure wording"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy="failure"; export input_destroy_completed="false"
+_c=$(mktemp); echo "Error: deleting" >"${_c}"; export input_destroy_console_file="${_c}"
+run_test "§8.6 shape 5: '❌ Destroy failed — infrastructure may be partially destroyed'" assert_destroy_failed_wording
+
+# C24: destroy-plan extract uses the plan's five shapes.
+assert_destroy_plan_extract_plan_shaped() {
+  local body; body="$(body_of destroy-plan-extract)"
+  [[ "${body}" == *'### Terraform destroy plan for environment: `dev`'* ]] || { echo "  heading"; return 1; }
+  [[ "${body}" == *'<details><summary>Plan: 2 changes ℹ️</summary>'* ]] || { echo "  expected plan-shaped 'Plan: 2 changes ℹ️'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
+  [[ "${body}" == *'DESTROY_PLAN_BODY'* ]] || { echo "  destroy plan body missing"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy_plan="success"; export input_destroy_plan_count_total="2"
+_c=$(mktemp); echo "DESTROY_PLAN_BODY - azurerm_resource_group.rg will be destroyed" >"${_c}"; export input_destroy_plan_txt_output_file="${_c}"
+run_test "C24: destroy-plan extract reuses the plan's shapes ('Plan: N changes ℹ️')" assert_destroy_plan_extract_plan_shaped
+
+# The plan tag itself is untouched by destroy-plan inputs (no cross-talk).
+assert_plan_extract_unaffected_by_destroy_plan() {
+  local plan="${4}"
+  [[ "${plan}" == '### Terraform plan for environment: `dev`
+
+Plan not available 🤷‍♀️' ]] || { echo "  plan extract changed by destroy-plan inputs: ${plan}"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy_plan="success"; export input_destroy_plan_count_total="2"
+_c=$(mktemp); echo "DESTROY_PLAN_BODY" >"${_c}"; export input_destroy_plan_txt_output_file="${_c}"
+run_test "Plan extract is unaffected by destroy-plan inputs" assert_plan_extract_unaffected_by_destroy_plan
+
+# C12: each extract > 65000 bytes → ≤ 65000, line-aligned, valid UTF-8.
+assert_apply_extract_capped() {
+  local body; body="$(body_of apply-extract)"
+  local size; size=$(printf '%s' "${body}" | wc -c)
+  [ "${size}" -le 65000 ] || { echo "  apply extract is ${size} bytes"; return 1; }
+  printf '%s' "${body}" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || { echo "  apply extract is not valid UTF-8"; return 1; }
+  local first; first=$(printf '%s' "${body}" | awk '/^```terraform$/{f=1;next} f{print; exit}')
+  [[ "${first}" == "module.big.x[\""* ]] || { echo "  cut is not line-aligned; first fence line: '${first}'"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="2000"
+_c=$(mktemp); { for i in $(seq 1 1500); do printf 'module.big.x["%04d"]: Creation complete after 1s — — — — — — — — — — — — — — — — — — — —\n' "${i}"; done; echo "Apply complete! Resources: 2000 added, 0 changed, 0 destroyed."; } >"${_c}"; export input_apply_console_file="${_c}"
+run_test "C12: oversize apply extract is capped ≤65000, line-aligned, valid UTF-8" assert_apply_extract_capped
+
+# C13: budgets are independent — a 64k plan extract does not shrink the apply extract.
+assert_budgets_independent() {
+  local plan="${4}"; local apply; apply="$(body_of apply-extract)"
+  local ps as
+  ps=$(printf '%s' "${plan}" | wc -c); as=$(printf '%s' "${apply}" | wc -c)
+  [ "${ps}" -ge 60000 ] || { echo "  plan extract unexpectedly small (${ps})"; return 1; }
+  [ "${as}" -ge 60000 ] || { echo "  apply extract shrank to ${as} — budgets are not independent (P17)"; return 1; }
+  [ "${ps}" -le 65000 ] && [ "${as}" -le 65000 ] || { echo "  an extract exceeds 65000 (plan ${ps}, apply ${as})"; return 1; }
+  return 0
+}
+reset_defaults
+export input_plan_count_total="1"
+_p=$(mktemp); yes "  + foo_resource.bar = \"a reasonably long line of plan text to pad things out nicely\"" | head -c 100000 >"${_p}"; export input_plan_txt_output_file="${_p}"
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+_c=$(mktemp); yes 'module.x.y["z"]: Creation complete after 1s [id=/some/long/identifier/here]' | head -c 100000 >"${_c}"; echo >>"${_c}"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." >>"${_c}"; export input_apply_console_file="${_c}"
+run_test "C13: plan and apply extracts have independent 65k budgets (P17)" assert_budgets_independent
+
+# Apply warnings collapser in the apply tag, not the plan tag.
+assert_apply_warnings_in_apply_tag_only() {
+  local plan="${4}"; local apply; apply="$(body_of apply-extract)"
+  [[ "${apply}" == *'<details><summary>⚠️ 2 warnings</summary>'* ]] || { echo "  apply tag must carry its warnings collapser"; return 1; }
+  [[ "${plan}" != *'⚠️ 2 warnings'* ]] || { echo "  plan tag must NOT carry the apply warnings"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="0"
+_c=$(mktemp); echo "Apply complete! Resources: 0 added, 0 changed, 0 destroyed." >"${_c}"; export input_apply_console_file="${_c}"
+export input_apply_warning_count="2"; export input_apply_warnings_markdown_file=$(make_warnings_md multi)
+run_test "Apply warnings collapser lives in the apply tag, not the plan tag (P18)" assert_apply_warnings_in_apply_tag_only
+
+# C19: all four tag ids → Links row with five lines in operation order; footer dropped.
+assert_links_row_all_tags() {
+  local head="${3}"
+  local expected='| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-11)<br>[apply log](#issuecomment-22)<br>[destroy plan log](#issuecomment-33)<br>[destroy log](#issuecomment-44)<br>[job log](https://github.com/dsb-norge/github-actions-terraform/actions/runs/12345678/job/87654321#logs) |'
+  [[ "${head}" == *"${expected}"* ]] || { echo "  Links row not byte-exact:"; printf '%s\n' "${head}" | grep 'Links' | sed 's/^/    got: /'; echo "    expected: ${expected}"; return 1; }
+  [[ "${head}" != *$'\n\n[Job log]('* ]] || { echo "  footer must be dropped when Links row renders"; return 1; }
+  return 0
+}
+reset_defaults
+export input_plan_tag_comment_id="11"; export input_apply_tag_comment_id="22"; export input_destroy_plan_tag_comment_id="33"; export input_destroy_tag_comment_id="44"
+run_test "C19: four tag ids → five-line Links row in operation order, footer dropped" assert_links_row_all_tags
+
+# Links row renders on an apply id alone (no plan id) — 'any tag id' gate.
+assert_links_row_apply_id_only() {
+  local head="${3}"
+  [[ "${head}" == *'| Links | [apply log](#issuecomment-22)<br>[job log]('* ]] || { echo "  expected Links row from apply id alone"; return 1; }
+  [[ "${head}" != *'[log extract]'* ]] || { echo "  no plan line without a plan id"; return 1; }
+  return 0
+}
+reset_defaults
+export input_apply_tag_comment_id="22"
+run_test "Links row renders when only the apply tag id is supplied" assert_links_row_apply_id_only
+
+# C23: grouped mode — head omits the table (incl. Mode); all five bodies produced.
+assert_grouped_all_bodies_produced() {
+  local head="${3}"
+  [[ "${head}" != *'| Mode |'* ]] || { echo "  grouped head must omit the Mode row with the table"; return 1; }
+  for k in apply-extract destroy-plan-extract destroy-extract; do
+    [ -n "$(body_of "${k}")" ] || { echo "  ${k} body missing in grouped mode"; return 1; }
+  done
+  return 0
+}
+reset_defaults
+export input_pr_comment_group="dev-group"; export input_goals_json='["all","apply-on-pr"]'
+run_test "C23: grouped mode omits the table (incl. Mode) but produces all five bodies" assert_grouped_all_bodies_produced
+
+# Op bodies always written — 'not available' when the operation did not run.
+assert_op_bodies_default_not_available() {
+  [[ "$(body_of apply-extract)" == *'Apply not available 🤷‍♀️' ]] || { echo "  default apply body"; return 1; }
+  [[ "$(body_of destroy-extract)" == *'Destroy not available 🤷‍♀️' ]] || { echo "  default destroy body"; return 1; }
+  [[ "$(body_of destroy-plan-extract)" == *'Plan not available 🤷‍♀️' ]] || { echo "  default destroy-plan body"; return 1; }
+  return 0
+}
+reset_defaults
+run_test "Operation bodies are always written; 'not available' when the operation did not run" assert_op_bodies_default_not_available
 
 # --------------------------------------------------
 # Summary
