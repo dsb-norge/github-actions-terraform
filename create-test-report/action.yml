@@ -1,0 +1,80 @@
+name: "Create terraform test summary"
+description: |
+  Renders the pull request comment body for one `terraform test` file: a
+  two-row validation table (init, tests), the test summary line, and the
+  test report inside a collapser, capped at 65k characters.
+
+  The body is written to a file and its path published as `body-file`,
+  for posting with the `pr-comment` action's `body-file` input. The body
+  never travels through a step output — see the ARG_MAX section of the
+  repository's CLAUDE.md and docs/Apply-and-destroy-reporting.md §7.15.
+author: "Peder Schmedling"
+inputs:
+  test-file:
+    description: File name of the test file.
+    required: true
+  test-out-file:
+    description: |
+      Path of the `terraform test -json` output file. Accepted for caller
+      compatibility; the rendered body is built from `test-report`, not
+      from this file.
+    required: false
+    default: ""
+  status-init:
+    description: Outcome of init step.
+    required: true
+  status-test:
+    description: Outcome of test step.
+    required: true
+  test-summary:
+    description: |
+      Summary line of the test run, as emitted by the terraform-test action.
+      Rendered with a ✅ prefix when it contains `Success!`, ❌ otherwise.
+    required: true
+  test-report:
+    description: |
+      Path of the plain-text test report produced by the terraform-test
+      action. A missing file renders `Test report not available 🤷‍♀️`.
+    required: true
+outputs:
+  body-file:
+    description: |
+      Absolute path of the rendered comment body. Pass to `pr-comment` as
+      `body-file`. Lives under RUNNER_TEMP, so it exists for the rest of
+      the job.
+    value: ${{ steps.create-test-report.outputs.body-file }}
+  prefix:
+    description: |
+      DEPRECATED — removed once terraform-module-ci.yaml posts via
+      pr-comment. The H3 heading line, for callers on the legacy
+      delete-by-prefix flow (comment-on-pr@v2).
+    value: ${{ steps.create-test-report.outputs.prefix }}
+  summary:
+    description: |
+      DEPRECATED — removed once terraform-module-ci.yaml posts via
+      pr-comment. The full body as an inline string, for callers on the
+      legacy delete-by-prefix flow. Prefer `body-file`.
+    value: ${{ steps.create-test-report.outputs.summary }}
+runs:
+  using: "composite"
+  steps:
+    - id: create-test-report
+      shell: bash
+      env:
+        input_test_file: ${{ inputs.test-file }}
+        input_status_init: ${{ inputs.status-init }}
+        input_status_test: ${{ inputs.status-test }}
+        input_test_summary: ${{ inputs.test-summary }}
+        input_test_report: ${{ inputs.test-report }}
+      run: |
+        # Build the terraform test summary PR comment body
+        #
+        # No `set -o allexport` on purpose. The step holds up to 65k of
+        # test report in a shell-local while assembling the body. Under
+        # allexport that local would be exported, and a single env var of
+        # that size sits just under Linux's per-string execve limit
+        # (MAX_ARG_STRLEN = 128k on Ubuntu) — no headroom for the next
+        # fork. Inputs arrive via the env: block above and outputs flow
+        # through $GITHUB_OUTPUT, so nothing here needs envp. Same
+        # rationale as create-validation-summary.
+        source "${{ github.action_path }}/step_create_test_report.sh"
