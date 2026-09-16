@@ -9,13 +9,16 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 
 ```text
 .
-├── create-test-report            --> creates comment report with terraform test action results
+├── annotate-terraform-outcome    --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
+├── create-run-summary            --> run-level table of every environment on the run page
+├── create-test-report            --> renders the terraform test report body for the module-ci PR comment (body-file)
 ├── create-tf-vars-matrix         --> creates common DSB terraform CI/CD variables
 ├── create-tftest-matrix          --> creates matrix for running terraform module test
-├── create-validation-summary     --> renders per-env head + plan-extract bodies for PR comments
+├── create-validation-summary     --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
 ├── export-env-vars               --> export environment variables for use in subsequent action steps
 ├── lint-with-tflint              --> run linting of terraform code with TFLint
-├── pr-comment                    --> upsert/delete a single PR/issue comment by HTML marker
+├── parse-terraform-apply         --> parses apply/destroy console output: counts, completed flag, tick-free copy
+├── pr-comment                    --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
 ├── pr-comments-reconcile         --> bulk seed + GC PR/issue comments by HTML marker
 ├── setup-terraform-plugin-cache  --> setup and configure plugin cache on runners
 ├── setup-tflint                  --> install TFLint and make available to subsequent action steps

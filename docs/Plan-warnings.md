@@ -46,7 +46,9 @@ What `parse-terraform-warnings` recognises as a warning:
 The parser uses a state machine:
 
 - **Outside-block** → **Inside-block** on a line matching `^Warning: ` (note trailing space; `Warning:Foo` is not a diagnostic header in terraform's output).
-- **Inside-block** → **Outside-block** on EOF, on the next `^Warning: ` / `^Error: ` / `^Plan: ` line, or on a blank line followed by a non-indented non-empty line that isn't itself a `(and N more …)` suffix.
+- **Inside-block** → **Outside-block** on EOF, on the next `^Warning: ` / `^Error: ` line, or on one of terraform's end-of-operation lines: `^Apply complete! `, `^Destroy complete! `, `^Outputs:$`, `^Terraform has been successfully initialized!`. **Not** on `^Plan: ` (plan warnings come after the summary line) and **not** on a blank line (warning bodies are often multi-paragraph).
+
+  The end-of-operation terminators exist because apply output prints diagnostics *before* `Apply complete!` and the `Outputs:` section. Without them a warning body swallowed every output value into markdown posted to the PR — bypassing the `Outputs:` strip the apply tag applies. See [Apply-and-destroy-reporting.md P3](Apply-and-destroy-reporting.md).
 
 For each block extract:
 
@@ -172,6 +174,12 @@ A `⚠️ Warnings` row is added to the grouped table, positioned between the st
 
 The whole row is **omitted** when no env in the group has warnings — keeping ⚠️ a signal rather than a permanent fixture, and matching the per-env head which also suppresses the row at zero. When the row *is* shown (at least one env has warnings), each cell is `⚠️ N` for envs with warnings and em-dash `—` for the clean envs. Both warning surfaces (per-env head row + per-env plan-tag collapser) were already conditional; this aligns the grouped table with them.
 
+### Warnings from the mutating stages
+
+`parse-terraform-warnings` also runs on the destroy-plan, apply and destroy consoles (step labels `destroy-plan`, `apply`, `destroy`). These are **four independent counts, never summed**: `warning-count` keeps its exact init+validate+plan meaning, and each operation gets its own `⚠️ <Op> warnings` row inside its block in both heads, with its bodies in that operation's own tag comment (`### From terraform apply` etc.). One count per block is what keeps every number attributable to the comment it came from — [Apply-and-destroy-reporting.md §7.7, P18](Apply-and-destroy-reporting.md).
+
+The apply and destroy consoles must be captured with `-no-color`, which `terraform-apply` passes: coloured diagnostics use a box-drawing frame this parser does not recognise.
+
 ## 7. Test scenarios
 
 Per-action test suites (under `<action>/run_all_tests.sh`) cover:
@@ -188,7 +196,9 @@ Per-action test suites (under `<action>/run_all_tests.sh`) cover:
 | `t06_warning_then_error.log` | `Warning:` followed by `Error:`; error doesn't bleed into warning body |
 | `t07_non_ascii_message.log` | UTF-8 in body; markdown is valid UTF-8; annotation message round-trips |
 | `t08_empty_file.log` | empty file; count=0; no crash |
-| `t09_init_provider_deprecation.log` | real-shape init log with provider warning at top level |
+| `t09_init_provider_deprecation.log` | real-shape init log with provider warning at top level; the trailing `Terraform has been successfully initialized!` is **not** in the body |
+| `t10_apply_warning_then_summary_and_outputs.log` | apply console: warning, then `Apply complete!`, then `Outputs:` with a value — neither the summary nor any output value reaches the body or the annotation |
+| `t11_destroy_warning_then_summary.log` | destroy console: `Destroy complete!` terminates the body |
 
 `create-validation-summary/` test additions:
 
