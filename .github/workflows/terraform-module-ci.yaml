@@ -85,7 +85,7 @@ jobs:
       - name: "📝 Validate and update README.md"
         id: update-readme
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-docs@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-docs@preview/pr-53-f0ff849
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
         continue-on-error: true
@@ -113,7 +113,7 @@ jobs:
       - name: "🎰 Create the matrix"
         id: create-test-matrix
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@preview/pr-53-f0ff849
 
   # runs all validation steps but also builds up the terraform provider plugin cache
   validate-project:
@@ -142,12 +142,12 @@ jobs:
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@preview/pr-53-f0ff849
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/setup-tflint@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/setup-tflint@preview/pr-53-f0ff849
         with:
           tflint-version: ${{ inputs.tflint-version }}
           working-directory: ${{ github.workspace }}
@@ -161,7 +161,7 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-init@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-init@preview/pr-53-f0ff849
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -175,7 +175,7 @@ jobs:
       - name: 🖌 Terraform Format
         id: fmt
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@preview/pr-53-f0ff849
         with:
           working-directory: ${{ github.workspace }}
           format-check-in-root-dir: true
@@ -184,7 +184,7 @@ jobs:
       - name: ✔ Terraform Validate
         id: validate
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-validate@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-validate@preview/pr-53-f0ff849
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -192,7 +192,7 @@ jobs:
       - name: 🧹 Lint with TFLint
         id: lint
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@preview/pr-53-f0ff849
         with:
           working-directory: ${{ github.workspace }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -201,7 +201,7 @@ jobs:
         id: create-validation-summary
         if: github.event_name == 'pull_request'
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@preview/pr-53-f0ff849
         with:
           environment-name: "module"
           status-init: ${{ steps.init.outcome }}
@@ -219,7 +219,7 @@ jobs:
         id: validation-summary-on-pr
         if: steps.create-validation-summary.outcome == 'success'
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/pr-comment@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-53-f0ff849
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -293,7 +293,7 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-init@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-init@preview/pr-53-f0ff849
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
@@ -307,7 +307,7 @@ jobs:
       - name: 🧪 Terraform Test
         id: test
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/terraform-test@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/terraform-test@preview/pr-53-f0ff849
         with:
           test-file: ${{ matrix.test-file }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -316,7 +316,7 @@ jobs:
         id: create-test-report
         if: github.event_name == 'pull_request'
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/create-test-report@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/create-test-report@preview/pr-53-f0ff849
         with:
           test-out-file: ${{ steps.test.outputs.json }}
           status-init: ${{ steps.init.outcome }}
@@ -339,7 +339,7 @@ jobs:
         id: test-report-on-pr
         if: steps.create-test-report.outcome == 'success'
         # TODO revert to @v0
-        uses: dsb-norge/github-actions-terraform/pr-comment@apply-destroy-reporting
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-53-f0ff849
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
