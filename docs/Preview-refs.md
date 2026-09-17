@@ -128,7 +128,9 @@ Until both exist the `publish-preview` job **skips the mint and the push** and t
 
 Bootstrap, once, by an org owner:
 
-1. Organisation settings → Developer settings → GitHub Apps → **New GitHub App**. Suggested name `dsb-norge-github-actions-terraform-preview`. Homepage: this repo. **Uncheck** "Active" under Webhook. Repository permissions: **Contents → Read and write**, **Workflows → Read and write**. "Where can this GitHub App be installed?" → **Only on this account**.
+1. Organisation settings → Developer settings → GitHub Apps → **New GitHub App**. Name `dsb-norge-tf-actions-preview` — App names are capped at **34 characters**, which the full repo name does not fit. Homepage: this repo. **Uncheck** "Active" under Webhook. Repository permissions: **Contents → Read and write**, **Workflows → Read and write**. "Where can this GitHub App be installed?" → **Only on this account**. Description (shown on the install page, where the *Workflows: write* ask needs its reason):
+
+   > Publishes preview refs for pull requests in dsb-norge/github-actions-terraform. On every push to a PR, `pr-preview.yml` pushes a `preview/pr-<N>` tag (plus an immutable per-push tag) pointing at a generated commit whose internal action refs are rewritten to that tag, so calling repos can validate the pre-release workflows and actions with a single `uses:` line. Needs Contents and Workflows write because the pushed tree contains modified workflow files. Installed on that one repository only; details in the repo's docs/Preview-refs.md.
 2. Generate a private key (`.pem`).
 3. Install the App on **this repository only**.
 4. From a clone of this repo: `gh variable set PREVIEW_APP_ID --body '<app id>'` and `gh secret set PREVIEW_APP_PRIVATE_KEY < <the .pem>`.
