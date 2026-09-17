@@ -134,7 +134,7 @@ Bootstrap, once, by an org owner:
 4. From a clone of this repo: `gh variable set PREVIEW_APP_ID --body '<app id>'` and `gh secret set PREVIEW_APP_PRIVATE_KEY < <the .pem>`.
 5. Re-run the failed/skipped `PR preview ref` run on any open PR; the sticky comment turns into the refs.
 
-Alternative considered: reusing the existing org App used by module repos (`dsb-norge-terraform-cicd-access`). Rejected as the default — it is installed across the private module repos with `pull-requests`/`contents` write, and its credentials live in those repos; adding `workflows: write` to it and installing it on a public repo widens its blast radius for no gain. A dedicated App has one job and one installation. Decision recorded in §12.
+Alternative considered: reusing the org App the module-repo workflows in this repository already reference (`dsb-norge-terraform-cicd-access`). Rejected as the default — it exists for a different job with a broader footprint; adding `workflows: write` to it and installing it on a public repo widens its blast radius for no gain. A dedicated App has one job and one installation. Decision recorded in §12.
 
 Fork PRs are skipped entirely (both jobs gate on `github.event.pull_request.head.repo.full_name == github.repository`): fork-PR runs get no secrets, and a maintainer can publish for a fork manually (§10).
 
