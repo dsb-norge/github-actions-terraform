@@ -666,10 +666,12 @@ Headings mirror the plan tag exactly — these are one series and should read as
 | # | Condition | Block |
 |---|---|---|
 | 1 | `completed=true`, total 0 | `Apply: no changes ✅` |
-| 2 | `completed=true`, total > 0 | `<details><summary>Apply: N changes ✅</summary>` + fenced console |
+| 2 | `completed=true`, total > 0 | `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>` + fenced console — applied/planned per kind, `?` for an unknown side (same rule as the head's details row, §8.3); plain text, since `<summary>` is raw HTML |
 | 3 | `completed=false`, console available | `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>` + fenced console |
 | 4 | no console at all | `Apply not available 🤷‍♀️` |
-| 5 | destroy variants of 1-3 | `Destroy: no changes ✅` / `Destroy: N destroyed ✅` / `❌ Destroy failed — …` |
+| 5 | destroy variants of 1-3 | `Destroy: no changes ✅` / `Destroy: D/P destroyed ✅` (planned = destroy-plan count) / `❌ Destroy failed — …` |
+
+> **Amended 2026-09-17**, after the first real `apply-on-pr` run: shape 2 said `Apply: N changes ✅`, a bare total the head already shows. The collapsed line is all most readers see, and the question they have is "did everything planned get applied?", so it now carries applied/planned per kind. Three shapes were offered (replace the total; keep it and append; put the ratios inside the details); replacing won. Shapes 1, 3 and 4 are unchanged — a failed apply has `?` numerators, so ratios add nothing there.
 
 **Shape 3 is `<details open>`.** Every other collapser stays closed. A failed apply is the one case nobody should have to click, and it is the case where the console tail carries the whole story (§7.2.1).
 

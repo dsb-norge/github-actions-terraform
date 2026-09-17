@@ -66,6 +66,18 @@ function _render_ratio_badge {
   echo "<span title=\"Applied / planned\">\`${emoji} ${num}/${den}\` ${verb}</span>"
 }
 
+# Plain-text 'applied/planned' for the apply and destroy tag <summary> lines.
+# Same '?' rules as _render_ratio_badge, but no markup: the text sits inside
+# a raw HTML block, where backticks and <span> would render literally.
+#   $1 applied count, $2 planned count, $3 completed ('true' or anything else)
+function _ratio_text {
+  local applied="${1}" planned="${2}" completed="${3}"
+  local num='?' den='?'
+  if [ "${completed}" = 'true' ] && [[ "${applied}" =~ ^[0-9]+$ ]]; then num="${applied}"; fi
+  if [[ "${planned}" =~ ^[0-9]+$ ]]; then den="${planned}"; fi
+  echo "${num}/${den}"
+}
+
 # True when the value is a positive integer — the gate for every warnings
 # row. 0, empty, 'N/A' and '?' all fail it.
 function _is_positive_int {

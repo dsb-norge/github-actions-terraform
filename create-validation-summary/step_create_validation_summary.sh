@@ -528,10 +528,12 @@ function render_destroy_plan_extract {
 #
 # Block shapes:
 #   1. completed=true,  total 0       → 'Apply: no changes ✅'
-#   2. completed=true,  total > 0     → '<details><summary>Apply: N changes ✅</summary>…'
+#   2. completed=true,  total > 0     → '<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…'
+#                                      (applied/planned per kind, '?' for either side that is unknown — the
+#                                       same rule as the head's Apply details row, docs §8.3)
 #   3. completed=false, console given → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
 #   4. no console at all              → 'Apply not available 🤷‍♀️'
-# Destroy: 'Destroy: no changes ✅' / 'Destroy: N destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
+# Destroy: 'Destroy: no changes ✅' / 'Destroy: D/P destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
 #
 # Shape 3 is the only <details open> anywhere: a failed apply is the one
 # case nobody should have to click, and the console tail is the whole story.
@@ -572,8 +574,6 @@ function render_op_extract {
   local omitted_note=""
   [ "${OUTPUTS_STRIPPED}" = 'true' ] && omitted_note=$'\n\n'"_(outputs section omitted)_"
 
-  local summary_word
-  if [ "${kind}" = 'apply' ]; then summary_word="changes"; else summary_word="destroyed"; fi
   local failed_note
   if [ "${kind}" = 'apply' ]; then failed_note="applied"; else failed_note="destroyed"; fi
 
@@ -586,12 +586,20 @@ ${verb} not available 🤷‍♀️"
 
 ${verb}: no changes ✅"
   elif [ "${completed}" = 'true' ]; then
-    local n="${total}"
-    [[ "${n}" =~ ^[0-9]+$ ]] || n='?'
+    # The collapsed line is all most readers see: say applied/planned per
+    # kind, the question a reviewer actually has, rather than a bare total
+    # the head already shows. Denominators are the plan (apply) or the
+    # destroy plan (destroy); '?' when either side is unknown.
+    local summary_counts
+    if [ "${kind}" = 'apply' ]; then
+      summary_counts="$(_ratio_text "${input_apply_count_add:-}" "${input_plan_count_add:-}" "${completed}") added, $(_ratio_text "${input_apply_count_change:-}" "${input_plan_count_change:-}" "${completed}") changed, $(_ratio_text "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "${completed}") destroyed"
+    else
+      summary_counts="$(_ratio_text "${input_destroy_count_destroy:-}" "${input_destroy_plan_count_destroy:-}" "${completed}") destroyed"
+    fi
     # don't touch the indenting here
     body="${body}
 
-<details><summary>${verb}: ${n} ${summary_word} ✅</summary>
+<details><summary>${verb}: ${summary_counts} ✅</summary>
 
 \`\`\`terraform
 ${console_out}
