@@ -26,6 +26,13 @@ inputs:
     description: Outcome of the apply step. Empty when it did not run — no annotation is emitted then.
     required: false
     default: ""
+  apply-count-import:
+    description: |
+      Resources imported by the apply (parse-terraform-apply's `count-import`).
+      Appended to the success notice only when non-zero — terraform emits no
+      such segment unless import blocks are in play.
+    required: false
+    default: "N/A"
   apply-count-add:
     description: Resources added (parse-terraform-apply's `count-add`).
     required: false
@@ -63,6 +70,7 @@ runs:
         input_environment_name: ${{ inputs.environment-name }}
         input_step_summary_file: ${{ inputs.step-summary-file }}
         input_status_apply: ${{ inputs.status-apply }}
+        input_apply_count_import: ${{ inputs.apply-count-import }}
         input_apply_count_add: ${{ inputs.apply-count-add }}
         input_apply_count_change: ${{ inputs.apply-count-change }}
         input_apply_count_destroy: ${{ inputs.apply-count-destroy }}
