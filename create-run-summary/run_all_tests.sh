@@ -203,6 +203,24 @@ write_meta "e" success "0:0:0" "0:30" "$(ops_apply success true 0 0 0 0:20),$(op
 run_step
 assert "Destroy cell renders destroyed/planned" row_has e '| `💥 3/3` |'
 assert "Time is the sum of plan+apply+destroy (0:30+0:20+0:40 = 1:30)" row_has e '| `1:30` |'
+assert "Headline counts the destroy as well as the apply" \
+  grep -qxF '**1 environment · 1 applied · 1 destroyed · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+teardown
+
+# A destroy that did not complete is not counted, and the counter stays out of
+# the headline entirely when nothing was destroyed.
+setup
+write_meta "e" success "0:0:0" "0:30" "$(ops_apply success true 1 0 0 0:20),$(ops_destroy failure false 0 3 0:10)"
+run_step
+assert "Failed destroy is not counted as destroyed" \
+  grep -qxF '**1 environment · 1 applied · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+teardown
+
+setup
+write_meta "e" success "0:0:0" "0:30" "$(ops_apply success true 1 0 0 0:20)"
+run_step
+assert "No destroy anywhere → no destroyed counter in the headline" \
+  grep -qxF '**1 environment · 1 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
 teardown
 
 setup

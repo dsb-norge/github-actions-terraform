@@ -699,7 +699,9 @@ Warning collapsers are appended as siblings after the block, exactly as the plan
 ```markdown
 ## Terraform run summary
 
-**2 environments · 1 applied · 0 failed**
+**2 environments · 1 applied · 1 destroyed · 0 failed**
+
+> The `· N destroyed` segment appears only when something was destroyed — most runs never destroy, and a permanent `· 0 destroyed` would be noise on all of them. An environment that both applies and destroys in one run (the throwaway-environment pattern) counts in both.
 
 | Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |
 |---|:---:|---|---|---|---|---|

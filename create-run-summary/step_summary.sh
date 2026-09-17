@@ -44,6 +44,7 @@ function render_summary {
   declare -A row_by_env=()
   declare -A worst_by_env=()
   declare -A applied_by_env=()
+  declare -A destroyed_by_env=()
   local file env rid
   for file in "${files[@]}"; do
     if ! jq -e '.' "${file}" >/dev/null 2>&1; then
@@ -68,6 +69,12 @@ function render_summary {
     if [ "$(meta_step_outcome "${file}" apply)" = 'success' ] && [ "$(meta_step_output "${file}" parse-apply completed)" = 'true' ]; then
       applied_by_env["${env}"]="true"
     fi
+    # Same test for the destroy invocation. An env can be both: apply-on-pr and
+    # destroy-on-pr in one run is the point of the throwaway-environment setup,
+    # and a headline that says only "1 applied" hides the teardown entirely.
+    if [ "$(meta_step_outcome "${file}" destroy)" = 'success' ] && [ "$(meta_step_output "${file}" parse-destroy-apply completed)" = 'true' ]; then
+      destroyed_by_env["${env}"]="true"
+    fi
 
     local time_cell
     time_cell=$(sum_durations \
@@ -79,10 +86,11 @@ function render_summary {
     row_by_env["${env}"]="| \`${env}\` | ${worst_emoji} | $(plan_cell "${file}") | $(apply_cell "${file}") | $(destroy_cell "${file}") | ${time_cell} | [run](${run_url}) |"
   done
 
-  local n_env=${#row_by_env[@]} n_applied=0 n_failed=0
+  local n_env=${#row_by_env[@]} n_applied=0 n_destroyed=0 n_failed=0
   for env in "${!row_by_env[@]}"; do
     [ "${worst_by_env[${env}]}" = 'failure' ] && n_failed=$((n_failed + 1))
     [ "${applied_by_env[${env}]:-}" = 'true' ] && n_applied=$((n_applied + 1))
+    [ "${destroyed_by_env[${env}]:-}" = 'true' ] && n_destroyed=$((n_destroyed + 1))
   done
   ENVIRONMENT_COUNT="${n_env}"
   FAILED_COUNT="${n_failed}"
@@ -95,7 +103,13 @@ function render_summary {
   fi
 
   local env_word="environments"; [ "${n_env}" -eq 1 ] && env_word="environment"
-  printf '**%d %s · %d applied · %d failed**\n\n' "${n_env}" "${env_word}" "${n_applied}" "${n_failed}"
+  # The destroyed count appears only when something was destroyed: most runs
+  # never destroy, and a permanent '· 0 destroyed' would be noise on all of them.
+  if [ "${n_destroyed}" -gt 0 ]; then
+    printf '**%d %s · %d applied · %d destroyed · %d failed**\n\n' "${n_env}" "${env_word}" "${n_applied}" "${n_destroyed}" "${n_failed}"
+  else
+    printf '**%d %s · %d applied · %d failed**\n\n' "${n_env}" "${env_word}" "${n_applied}" "${n_failed}"
+  fi
   printf '| Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |\n'
   printf '|---|:---:|---|---|---|---|---|\n'
   while IFS= read -r env; do
