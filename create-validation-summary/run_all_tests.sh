@@ -64,6 +64,7 @@ reset_defaults() {
   export input_plan_count_add="0"
   export input_plan_count_change="0"
   export input_plan_count_destroy="0"
+  export input_apply_count_import="0"
   export input_plan_count_import="0"
   export input_plan_count_move="0"
   export input_plan_count_remove="0"
@@ -1242,7 +1243,7 @@ rm -f "${_plan_file}"
 assert_changes_summary_with_count() {
   local prefix="${1}"
   local summary="${2}"
-  local expected='<details><summary>Plan: 7 changes ℹ️</summary>'
+  local expected='<details><summary>Plan: 4 to add, 2 to change, 1 to destroy ℹ️</summary>'
   if [[ "${summary}" != *"${expected}"* ]]; then
     echo "  summary: expected '${expected}'"
     return 1
@@ -1259,7 +1260,8 @@ _plan_file=$(mktemp)
 echo "some plan output body content here" > "${_plan_file}"
 export input_plan_txt_output_file="${_plan_file}"
 export input_plan_count_total="7"
-run_test "count-total=N>0 → '<details><summary>Plan: N changes ℹ️</summary>'" assert_changes_summary_with_count
+export input_plan_count_add="4"; export input_plan_count_change="2"; export input_plan_count_destroy="1"
+run_test "count-total=N>0 → '<details><summary>Plan: A to add, C to change, D to destroy ℹ️</summary>'" assert_changes_summary_with_count
 rm -f "${_plan_file}"
 
 # Test 40: count-total empty → legacy 'Show Plan (last 65k characters)' fallback
@@ -1438,7 +1440,7 @@ rm -f "${_plan_file}"
 assert_resource_changes_dominate_over_output_only() {
   local prefix="${1}"
   local summary="${2}"
-  if [[ "${summary}" != *'<details><summary>Plan: 3 changes ℹ️</summary>'* ]]; then
+  if [[ "${summary}" != *'<details><summary>Plan: 3 to add, 0 to change, 0 to destroy ℹ️</summary>'* ]]; then
     echo "  summary: when count-total>0 the N-changes branch wins regardless of output-only flag"
     return 1
   fi
@@ -1453,6 +1455,7 @@ _plan_file=$(mktemp)
 echo "some plan body" > "${_plan_file}"
 export input_plan_txt_output_file="${_plan_file}"
 export input_plan_count_total="3"
+export input_plan_count_add="3"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
 export input_plan_has_output_only_changes="true"
 run_test "count-total>0 dominates over has-output-only-changes=true" assert_resource_changes_dominate_over_output_only
 rm -f "${_plan_file}"
@@ -2696,18 +2699,83 @@ export input_status_destroy="failure"; export input_destroy_completed="false"
 _c=$(mktemp); echo "Error: deleting" >"${_c}"; export input_destroy_console_file="${_c}"
 run_test "§8.6 shape 5: '❌ Destroy failed — infrastructure may be partially destroyed'" assert_destroy_failed_wording
 
+# Extra kinds appear in the summary line only when non-zero, in the head's order.
+assert_plan_summary_extra_kinds() {
+  local body; body="$(body_of plan-extract)"
+  [[ "${body}" == *'<details><summary>Plan: 1 to add, 0 to change, 0 to destroy, 5 to import, 2 to move ℹ️</summary>'* ]] ||
+    { echo "  got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+_c=$(mktemp); echo "PLAN_BODY" >"${_c}"; export input_plan_txt_output_file="${_c}"
+export input_plan_count_total="8"
+export input_plan_count_add="1"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
+export input_plan_count_import="5"; export input_plan_count_move="2"; export input_plan_count_remove="0"
+run_test "Plan summary lists import / move only when non-zero, remove omitted at 0" assert_plan_summary_extra_kinds
+
+# A non-numeric count must not render 'N/A to add' — fall back to the bare total.
+assert_plan_summary_falls_back() {
+  local body; body="$(body_of plan-extract)"
+  [[ "${body}" == *'<details><summary>Plan: 9 changes ℹ️</summary>'* ]] ||
+    { echo "  expected the bare-total fallback; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+_c=$(mktemp); echo "PLAN_BODY" >"${_c}"; export input_plan_txt_output_file="${_c}"
+export input_plan_count_total="9"
+export input_plan_count_add="N/A"; export input_plan_count_change="N/A"; export input_plan_count_destroy="N/A"
+run_test "Plan summary falls back to the bare total when a count is not numeric" assert_plan_summary_falls_back
+
+# P32: imports reach both the apply summary line and the head's details row.
+assert_apply_imports_rendered() {
+  local body; body="$(body_of apply-extract)"
+  local head; head="$(body_of head-summary)"
+  local fails=""
+  [[ "${body}" == *'<details><summary>Apply: 0/0 added, 1/1 changed, 0/0 destroyed, 5/5 imported ✅</summary>'* ]] ||
+    fails+="  apply summary: got $(printf '%s' "${body}" | sed -n 3p)\n"
+  [[ "${head}" == *'`📥 5/5` imported'* ]] || fails+="  head Apply details row is missing the imported badge\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="6"
+export input_apply_count_add="0"; export input_apply_count_change="1"; export input_apply_count_destroy="0"
+export input_apply_count_import="5"
+export input_plan_count_add="0"; export input_plan_count_change="1"; export input_plan_count_destroy="0"
+export input_plan_count_import="5"
+_c=$(mktemp); printf 'x\nApply complete! Resources: 5 imported, 0 added, 1 changed, 0 destroyed.\n' >"${_c}"
+export input_apply_console_file="${_c}"
+run_test "P32: imports render in the apply summary and the head details row" assert_apply_imports_rendered
+
+# ... and stay out of both when there are none.
+assert_apply_no_imports_no_badge() {
+  local body; body="$(body_of apply-extract)"
+  local head; head="$(body_of head-summary)"
+  [[ "${body}" != *'imported'* ]] || { echo "  apply summary must not mention imports at 0"; return 1; }
+  [[ "${head}" != *'📥'* ]] || { echo "  head must not carry an import badge at 0"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_apply_count_import="0"
+_c=$(mktemp); printf 'x\nApply complete! Resources: 1 added, 0 changed, 0 destroyed.\n' >"${_c}"
+export input_apply_console_file="${_c}"
+run_test "P32: no import segment → no imported text and no 📥 badge" assert_apply_no_imports_no_badge
+
 # C24: destroy-plan extract uses the plan's five shapes.
 assert_destroy_plan_extract_plan_shaped() {
   local body; body="$(body_of destroy-plan-extract)"
   [[ "${body}" == *'### Terraform destroy plan for environment: `dev`'* ]] || { echo "  heading"; return 1; }
-  [[ "${body}" == *'<details><summary>Plan: 2 changes ℹ️</summary>'* ]] || { echo "  expected plan-shaped 'Plan: 2 changes ℹ️'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
+  [[ "${body}" == *'<details><summary>Destroy plan: 0 to add, 0 to change, 2 to destroy ℹ️</summary>'* ]] || { echo "  expected 'Destroy plan: 0 to add, 0 to change, 2 to destroy ℹ️'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
   [[ "${body}" == *'DESTROY_PLAN_BODY'* ]] || { echo "  destroy plan body missing"; return 1; }
   return 0
 }
 reset_defaults
 export input_status_destroy_plan="success"; export input_destroy_plan_count_total="2"
+export input_destroy_plan_count_add="0"; export input_destroy_plan_count_change="0"; export input_destroy_plan_count_destroy="2"
 _c=$(mktemp); echo "DESTROY_PLAN_BODY - azurerm_resource_group.rg will be destroyed" >"${_c}"; export input_destroy_plan_txt_output_file="${_c}"
-run_test "C24: destroy-plan extract reuses the plan's shapes ('Plan: N changes ℹ️')" assert_destroy_plan_extract_plan_shaped
+run_test "C24: destroy-plan extract reuses the plan's shapes, labelled 'Destroy plan'" assert_destroy_plan_extract_plan_shaped
 
 # The plan tag itself is untouched by destroy-plan inputs (no cross-talk).
 assert_plan_extract_unaffected_by_destroy_plan() {
@@ -2807,7 +2875,7 @@ run_test "C23: grouped mode omits the table (incl. Mode) but produces all five b
 assert_op_bodies_default_not_available() {
   [[ "$(body_of apply-extract)" == *'Apply not available 🤷‍♀️' ]] || { echo "  default apply body"; return 1; }
   [[ "$(body_of destroy-extract)" == *'Destroy not available 🤷‍♀️' ]] || { echo "  default destroy body"; return 1; }
-  [[ "$(body_of destroy-plan-extract)" == *'Plan not available 🤷‍♀️' ]] || { echo "  default destroy-plan body"; return 1; }
+  [[ "$(body_of destroy-plan-extract)" == *'Destroy plan not available 🤷‍♀️' ]] || { echo "  default destroy-plan body"; return 1; }
   return 0
 }
 reset_defaults

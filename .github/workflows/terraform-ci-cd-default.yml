@@ -1477,6 +1477,7 @@ jobs:
           # --- the operation blocks (docs/Apply-and-destroy-reporting.md §7.4) ---
           status-apply: ${{ steps.apply.outcome }}
           apply-time: ${{ steps.apply.outputs.apply-time }}
+          apply-count-import: ${{ steps.parse-apply.outputs.count-import }}
           apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
           apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
           apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
@@ -1610,6 +1611,7 @@ jobs:
           goals-json: ${{ toJSON(matrix.vars.goals) }}
           status-apply: ${{ steps.apply.outcome }}
           apply-time: ${{ steps.apply.outputs.apply-time }}
+          apply-count-import: ${{ steps.parse-apply.outputs.count-import }}
           apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
           apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
           apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}
@@ -1686,6 +1688,7 @@ jobs:
           environment-name: ${{ matrix.vars.github-environment }}
           step-summary-file: ${{ steps.cvs-apply-final.outputs.step-summary-file || steps.cvs-apply.outputs.step-summary-file }}
           status-apply: ${{ steps.apply.outcome }}
+          apply-count-import: ${{ steps.parse-apply.outputs.count-import }}
           apply-count-add: ${{ steps.parse-apply.outputs.count-add }}
           apply-count-change: ${{ steps.parse-apply.outputs.count-change }}
           apply-count-destroy: ${{ steps.parse-apply.outputs.count-destroy }}

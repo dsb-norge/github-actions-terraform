@@ -680,6 +680,8 @@ Headings mirror the plan tag exactly — these are one series and should read as
 | 4 | no console at all | `Apply not available 🤷‍♀️` |
 | 5 | destroy variants of 1-3 | `Destroy: no changes ✅` / `Destroy: D/P destroyed ✅` (planned = destroy-plan count) / `❌ Destroy failed — …` |
 
+> **Amended 2026-09-17 (second pass).** Shape 2 also carries `, I/P imported` when the apply imported anything (P32) — omitted otherwise, since terraform emits no `imported` segment unless import blocks are in play. The plan and destroy-plan tags moved the same way in the same release: their `N changes` line became a per-kind list (`Plan: A to add, C to change, D to destroy ℹ️`, plus import / move / remove when non-zero), and every destroy-plan shape is now labelled `Destroy plan` instead of `Plan`. One collapsed line, one grammar, everywhere.
+>
 > **Amended 2026-09-17**, after the first real `apply-on-pr` run: shape 2 said `Apply: N changes ✅`, a bare total the head already shows. The collapsed line is all most readers see, and the question they have is "did everything planned get applied?", so it now carries applied/planned per kind. Three shapes were offered (replace the total; keep it and append; put the ratios inside the details); replacing won. Shapes 1, 3 and 4 are unchanged — a failed apply has `?` numerators, so ratios add nothing there.
 
 **Shape 3 is `<details open>`.** Every other collapser stays closed. A failed apply is the one case nobody should have to click, and it is the case where the console tail carries the whole story (§7.2.1).
