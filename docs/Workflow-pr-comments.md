@@ -266,6 +266,16 @@ When two workflow runs against the same PR overlap (e.g. retrigger before the fi
 
 Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
 
+## 8.1 Comment ownership — two callers on one pull request
+
+A repository may call this reusable workflow from more than one workflow (a CI run and an integration-test run, say). They share the pull request's comment thread, and the aggregator's orphan pass deletes group comments whose group is not in **its** desired set. Two rules keep one caller from deleting another's comments:
+
+1. **A run that declares no groups at all deletes nothing.** An empty desired set means the run has no opinion about which group comments belong on the thread, not that none do.
+2. **A run where no environment has `add-pr-comment` enabled does not list, post or delete anything.** A caller told not to comment touches no comments. An *absent* `add-pr-comment` key in the job metadata counts as unknown, not false, so metadata from an older version cannot silently switch reconciliation off.
+
+Without these, the caller that finished first had its group heads deleted by the other and re-posted at the bottom of the thread by its own aggregator — defeating the seeding that exists to keep summaries at the top (§3.1). The cost of rule 1 is a group comment that outlives the removal of a repository's last group, on pull requests open across that change; a new pull request never gets one.
+
+
 ## 9. Degraded mode
 
 If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment`](../pr-comment/) and [`pr-comments-reconcile`](../pr-comments-reconcile/) enter degraded mode:

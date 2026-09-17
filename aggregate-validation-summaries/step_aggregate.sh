@@ -81,7 +81,7 @@ function build_desired_set {
 
   if [ ${#files[@]} -eq 0 ]; then
     log-info "No metadata files matched '${input_metadata_files_pattern}'."
-    log-info "Empty desired set — will run in sweep-only mode (still need to clean up any orphans)."
+    log-info "Empty desired set — sweep-only mode: orphans are cleaned up only if this run declares at least one group (see the orphan pass)."
     end-group
     return 0
   fi
@@ -744,6 +744,25 @@ function orphan_delete_pass {
     return 0
   fi
 
+  # An empty desired set means this run declared no groups at all — so it has
+  # no opinion about which group comments belong on the pull request, and the
+  # ones it can see belong to somebody else. A repository whose second workflow
+  # calls this same reusable workflow (an integration-test run, say, with
+  # add-pr-comment false and no groups) otherwise deletes the real run's group
+  # heads: they were seeded first, so they were the top comments on the thread,
+  # and the real aggregator then re-posted them at the bottom. The group
+  # summaries are meant to be the first thing a reviewer sees.
+  #
+  # The cost is a group comment that outlives the removal of a repository's last
+  # group, on pull requests that were open across that change — a new pull
+  # request never gets one, since nothing posts it. Small, and bounded, against
+  # deleting a comment that another workflow is actively maintaining.
+  if [ ${#DESIRED_GROUPS[@]} -eq 0 ]; then
+    log-info "Desired set is empty — this run declares no groups, so the ${#EXISTING_GROUP_COMMENTS[@]} existing group comment(s) are not ours to delete."
+    end-group
+    return 0
+  fi
+
   local existing_group entry created cid
   for existing_group in "${!EXISTING_GROUP_COMMENTS[@]}"; do
     # Only orphan if the group is NOT in the desired set. Desired groups
@@ -918,6 +937,35 @@ function _record_processed {
 # Main
 # ============================================================================
 
+# False only when this run POSITIVELY declares that nothing comments: every
+# metadata file carries add-pr-comment and every one of them says no. An absent
+# key is unknown, not false — metadata written by an older version of
+# capture-matrix-job-meta must not silently switch comment reconciliation off.
+#
+# A workflow configured not to comment has no business listing, posting or
+# deleting comments. Without this, a repository with a second caller of this
+# reusable workflow (an integration-test run with add-pr-comment false, say)
+# reaches the orphan pass, finds group heads it does not recognise, and deletes
+# the ones the real run seeded at the top of the thread — which then get
+# re-posted at the bottom, where nobody looks.
+function any_env_wants_comments {
+  shopt -s nullglob
+  local files=(${input_metadata_files_pattern})
+  shopt -u nullglob
+  [ ${#files[@]} -eq 0 ] && return 0
+
+  local f saw_key=false
+  for f in "${files[@]}"; do
+    jq -e 'has("matrix_context") and (.matrix_context.vars | has("add-pr-comment"))' "${f}" >/dev/null 2>&1 || continue
+    saw_key=true
+    if jq -e '.matrix_context.vars["add-pr-comment"] | (. == true or . == "true")' "${f}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  [ "${saw_key}" = 'true' ] && return 1
+  return 0
+}
+
 function main {
   log-info "Starting aggregate-validation-summaries..."
   log-info "Pattern:    ${input_metadata_files_pattern:-<unset>}"
@@ -934,6 +982,13 @@ function main {
   fi
 
   build_desired_set
+
+  if ! any_env_wants_comments; then
+    log-info "No environment in this run has add-pr-comment enabled — this workflow does not manage the pull request's comments; nothing to reconcile."
+    set-multiline-output "groups-processed-json" "[]"
+    return 0
+  fi
+
   list_pr_state
   orphan_delete_pass
   upsert_pass
