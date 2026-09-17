@@ -2699,6 +2699,41 @@ export input_status_destroy="failure"; export input_destroy_completed="false"
 _c=$(mktemp); echo "Error: deleting" >"${_c}"; export input_destroy_console_file="${_c}"
 run_test "§8.6 shape 5: '❌ Destroy failed — infrastructure may be partially destroyed'" assert_destroy_failed_wording
 
+# Q4: the head title says what the environment actually did.
+assert_title_plan_only() {
+  local head; head="$(body_of head-summary)"
+  [[ "${head}" == '### Terraform validation summary for environment: `dev`'* ]] ||
+    { echo "  plan-only env must keep the original title; got: $(printf '%s' "${head}" | head -n1)"; return 1; }
+  return 0
+}
+reset_defaults
+run_test "Head title: a plan-only env keeps 'Terraform validation summary' (C1 invariant)" assert_title_plan_only
+
+assert_title_mutating() {
+  local head; head="$(body_of head-summary)"
+  local step; step="$(body_of step-summary)"
+  local fails=""
+  [[ "${head}" == '### Terraform summary for environment: `dev`'* ]] ||
+    fails+="  head: got $(printf '%s' "${head}" | head -n1)\n"
+  [[ "${step}" == '### Terraform summary for environment: `dev`'* ]] ||
+    fails+="  step summary: got $(printf '%s' "${step}" | head -n1)\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+run_test "Head title: an env that applies on PR drops the word 'validation'" assert_title_mutating
+
+assert_title_destroy_only() {
+  local head; head="$(body_of head-summary)"
+  [[ "${head}" == '### Terraform summary for environment: `dev`'* ]] ||
+    { echo "  destroy-on-pr must also drop it; got: $(printf '%s' "${head}" | head -n1)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","destroy-plan","destroy","destroy-on-pr"]'
+run_test "Head title: destroy-on-pr alone is enough to drop it" assert_title_destroy_only
+
 # Extra kinds appear in the summary line only when non-zero, in the head's order.
 assert_plan_summary_extra_kinds() {
   local body; body="$(body_of plan-extract)"

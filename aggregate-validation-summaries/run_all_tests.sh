@@ -1512,6 +1512,25 @@ JSON
 
 # E8: Mode row — per-env value in each column; row omitted when no env in the
 # group mutates on PR; rendered from goals, before any outcome exists.
+# Q4: the group title follows the same rule as the per-env head.
+test_group_title_follows_mode() {
+  write_meta "alpha" "g"
+  write_meta "bravo" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local first; first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform validation summary for group: `g`' ]] ||
+    { echo "plan-only group must keep the original title; got: ${first}"; return 1; }
+
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform summary for group: `g`' ]] ||
+    { echo "a group with a mutating env must drop 'validation'; got: ${first}"; return 1; }
+  return 0
+}
+
 test_e8_mode_row_per_env() {
   write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
   write_meta "bravo" "g"
@@ -1630,6 +1649,7 @@ run_test "E7: destroy-plan (plan-shaped) and destroy (ratio) blocks"        test
 run_test "P2: failed apply renders ?/N in the grouped table, never 0/N"     test_failed_apply_renders_question_marks
 run_test "all blocks present → 22 rows in §8.1 order"                       test_full_row_order_with_all_blocks
 run_test "F1: per-group and per-env heads emit the same row set"            test_f1_row_set_in_sync_with_per_env_head
+run_test "Q4: group title drops 'validation' when the group mutates on PR"  test_group_title_follows_mode
 run_test "E8: Mode row renders per-env 🐙/☠/🐙☠/— and sits first"           test_e8_mode_row_per_env
 run_test "E8: Mode row omitted when no env in the group mutates on PR"      test_e8_mode_row_omitted_when_nobody_mutates
 run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals

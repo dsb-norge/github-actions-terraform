@@ -493,8 +493,21 @@ jobs:
           # Group heads (distinct non-empty pr-comment-group values).
           while IFS= read -r g; do
             [ -z "${g}" ] && continue
+            # Same title rule as the rendered head: a group whose envs only
+            # plan keeps "validation summary"; one that applies or destroys on
+            # PR gets the shorter title, so the placeholder does not rename
+            # itself mid-run.
+            g_title="Terraform validation summary"
+            if echo "${MATRIX_JSON}" | jq -e --arg g "${g}" '
+              .include
+              | map(select((.vars["pr-comment-group"] // "") == $g))
+              | map(.vars.goals // [] | tostring)
+              | any(test("apply-on-pr|destroy-on-pr"))
+            ' >/dev/null 2>&1; then
+              g_title="Terraform summary"
+            fi
             body=$(printf '%s\n\n%s' \
-              "### Terraform validation summary for group: \`${g}\`" \
+              "### ${g_title} for group: \`${g}\`" \
               "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
             heads_json=$(jq -n \
               --argjson cur "${heads_json}" \
@@ -520,8 +533,11 @@ jobs:
           # replaces it on the first render.
           while IFS=$'\t' read -r e mode; do
             [ -z "${e}" ] && continue
+            # ${mode} is non-empty exactly when this env mutates on PR.
+            e_title="Terraform validation summary"
+            [ -n "${mode}" ] && e_title="Terraform summary"
             body=$(printf '%s\n\n%s' \
-              "### Terraform validation summary for environment: \`${e}\`" \
+              "### ${e_title} for environment: \`${e}\`" \
               "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
             if [ -n "${mode}" ]; then
               body="${body}"$'\n\n'"${mode}"

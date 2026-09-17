@@ -106,7 +106,8 @@ This works because the purge happens before init — not after `create-validatio
 ### 5.1 Per-env head
 
 ```markdown
-### Terraform validation summary for environment: `<env>`
+### Terraform validation summary for environment: `<env>`   ← plan-only
+### Terraform summary for environment: `<env>`              ← applies and/or destroys on PR
 |  | Step | Result |
 |:---:|---|---|
 | <span title="Initialization">⚙️</span> | Initialization | `success` |
@@ -174,7 +175,8 @@ When `warning-count > 0`, a sibling `<details><summary>⚠️ N warnings</summar
 The rolled-up grouped table aggregates every env in the group (alphabetical column order):
 
 ```markdown
-### Terraform validation summary for group: `<group>`
+### Terraform validation summary for group: `<group>`   ← every env in the group only plans
+### Terraform summary for group: `<group>`              ← any env in the group mutates on PR
 |  | Step | <env-a> | <env-b> | <env-c> |
 |:---:|---|:---:|:---:|:---:|
 | <span title="Initialization">⚙️</span> | Initialization | <span title="success">✅</span> | <span title="failure">❌</span> | <span title="skipped">⏭️</span> |

@@ -363,7 +363,6 @@ function render_group_body {
   local group_name="${1}"
   local envs_nl="${2}"
   local prefix
-  prefix=$(_group_prefix "${group_name}")
 
   local -a envs=()
   while IFS= read -r e; do
@@ -393,6 +392,9 @@ function render_group_body {
   done
   # Col-1 icon is the union of what the group does on PR; the per-env head's
   # icon is per env. The tooltip label is 'Mode' in both.
+  # Title depends on the same any_mode the Mode row does, so it is resolved here
+  # rather than at the top of the function.
+  prefix=$(_group_prefix "${group_name}" "${any_mode}")
   local mode_row="| $(_render_step_icon_cell "${mode_icons:-🐙}" "Mode") | Mode |"
   local cell
   for cell in "${mode_cells[@]}"; do mode_row+=" ${cell} |"; done

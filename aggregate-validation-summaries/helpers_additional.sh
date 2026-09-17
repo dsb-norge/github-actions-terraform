@@ -19,9 +19,14 @@ declare -gr GROUP_COMMENT_MARKER_FAMILY='<!-- tf:head:group:'
 # at the top of the body). Kept for visible identification — users still
 # see "for group: \`<group>\`" — but no longer load-bearing for upsert
 # identity. The marker (_group_marker) is the load-bearing handle.
+#   $2 'true' when any env in the group mutates infrastructure on the pull
+#      request — the group then gets the shorter title, for the same reason the
+#      per-env head does: it did more than validate.
 function _group_prefix {
-  local group_name="${1}"
-  echo "### Terraform validation summary for group: \`${group_name}\`"
+  local group_name="${1}" any_mode="${2:-false}"
+  local title="Terraform validation summary"
+  [ "${any_mode}" = 'true' ] && title="Terraform summary"
+  echo "### ${title} for group: \`${group_name}\`"
 }
 
 # Per-group HTML marker. Unique per group so multiple groups on the same
