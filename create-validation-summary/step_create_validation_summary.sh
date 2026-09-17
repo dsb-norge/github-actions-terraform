@@ -98,7 +98,7 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # ============================================================================
 #
 # Body shape:
-#   ### Terraform validation summary for environment: `<env>`
+#   ### Terraform [validation ]summary for environment: `<env>`   (see render_head_summary)
 #   <validation table — ungrouped mode only>
 #   <blank>
 #   [Job log](<url>)
@@ -198,7 +198,18 @@ function _render_destroy_block {
 function render_head_summary {
   local job_url="${1}"
 
-  local head="### Terraform validation summary for environment: \`${input_environment_name}\`"
+  # "Validation summary" is the wrong word for an environment that also mutates
+  # infrastructure on the pull request — it validated AND applied AND destroyed.
+  # Plan-only environments keep the original title byte for byte; that is the
+  # invariant this feature is built on (§2, test C1). "Run summary" is taken:
+  # it titles the run-page rollup.
+  _parse_on_pr_goals
+  local head_title="Terraform validation summary"
+  if [ -n "${GOALS_APPLY_ON_PR}" ] || [ -n "${GOALS_DESTROY_ON_PR}" ]; then
+    head_title="Terraform summary"
+  fi
+
+  local head="### ${head_title} for environment: \`${input_environment_name}\`"
 
   # Any tag comment id turns the footer link into a Links row.
   local links_rendered=""
