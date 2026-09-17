@@ -2602,7 +2602,7 @@ assert_apply_shape_changes_golden() {
   local body; body="$(body_of apply-extract)"
   local expected='### Terraform apply for environment: `dev`
 
-<details><summary>Apply: 1 changes ✅</summary>
+<details><summary>Apply: 1/1 added, 0/0 changed, 0/0 destroyed ✅</summary>
 
 ```terraform
 azurerm_resource_group.rg: Creating...
@@ -2618,8 +2618,24 @@ _(outputs section omitted)_
 }
 reset_defaults
 export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_plan_count_add="1"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
 export input_apply_console_file=$(make_apply_console)
-run_test "§8.6 shape 2: 'Apply: N changes ✅' collapser is byte-exact" assert_apply_shape_changes_golden
+run_test "§8.6 shape 2: 'Apply: A/P added, C/P changed, D/P destroyed ✅' collapser is byte-exact" assert_apply_shape_changes_golden
+
+# Shape 2 with no plan counts (plan parsing failed or N/A): numerators stay,
+# denominators read '?' — never '0', which would claim "nothing was planned".
+assert_apply_shape_unknown_denominator() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *'<details><summary>Apply: 1/? added, 0/? changed, 0/? destroyed ✅</summary>'* ]] || { echo "  expected '1/? added, 0/? changed, 0/? destroyed'; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="true"; export input_apply_count_total="1"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_plan_count_add="N/A"; export input_plan_count_change="N/A"; export input_plan_count_destroy="N/A"
+export input_apply_console_file=$(make_apply_console)
+run_test "§8.6 shape 2: unknown plan counts → '?' denominators in the apply summary" assert_apply_shape_unknown_denominator
 
 # §8.6 shape 1: completed, no changes → plain line, no collapser.
 assert_apply_shape_no_changes() {
@@ -2661,13 +2677,14 @@ run_test "C20 / §8.6 shape 4: missing apply console → 'Apply not available �
 assert_destroy_shapes() {
   local body; body="$(body_of destroy-extract)"
   [[ "${body}" == *'### Terraform destroy for environment: `dev`'* ]] || { echo "  destroy heading"; return 1; }
-  [[ "${body}" == *'<details><summary>Destroy: 3 destroyed ✅</summary>'* ]] || { echo "  expected 'Destroy: 3 destroyed ✅'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
+  [[ "${body}" == *'<details><summary>Destroy: 3/3 destroyed ✅</summary>'* ]] || { echo "  expected 'Destroy: 3/3 destroyed ✅'; got: $(printf '%s' "${body}" | head -n4)"; return 1; }
   return 0
 }
 reset_defaults
 export input_status_destroy="success"; export input_destroy_completed="true"; export input_destroy_count_total="3"
+export input_destroy_count_destroy="3"; export input_destroy_plan_count_destroy="3"
 _c=$(mktemp); echo "Destroy complete! Resources: 3 destroyed." >"${_c}"; export input_destroy_console_file="${_c}"
-run_test "§8.6 shape 5: destroy wording — 'Destroy: N destroyed ✅'" assert_destroy_shapes
+run_test "§8.6 shape 5: destroy wording — 'Destroy: D/P destroyed ✅'" assert_destroy_shapes
 
 assert_destroy_failed_wording() {
   local body; body="$(body_of destroy-extract)"
