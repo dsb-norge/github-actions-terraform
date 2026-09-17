@@ -134,6 +134,15 @@ teardown() {
 # to the steps object. Empty = no mutating stage ran (the pre-feature shape,
 # which is also what an older action version's artifact looks like).
 # 8th arg (goals): the env's goals as a JSON array; default '["all"]'.
+# Same shape as write_meta, with add-pr-comment explicitly false — the shape a
+# caller that passes add-pr-comment: false produces.
+write_meta_no_comment() {
+  local env="${1}" group="${2:-}"
+  write_meta "${env}" "${group}"
+  local f="${TEST_DIR}/matrix-job-meta-${env}.json"
+  jq '.matrix_context.vars["add-pr-comment"] = false' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+}
+
 write_meta() {
   local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}" ops="${7:-}" goals="${8:-[\"all\"]}"
   local counts_default='{"count-add":"0","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
@@ -323,21 +332,50 @@ test_empty_desired_empty_existing_is_noop() {
   return 0
 }
 
-test_sweep_only_orphans() {
-  # No desired groups, but PR has an existing marker comment from a prior run
+test_no_groups_declared_touches_nothing() {
+  # A run that declares no groups at all does not own the group comments it can
+  # see — another workflow on the same pull request does. Deleting them moved
+  # the real run's group heads from the top of the thread to the bottom.
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:other-workflows-group -->\n### Terraform validation summary for group: `other-workflows-group`\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -qE 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "a run with no desired groups must not write anything; calls were:"
+    grep -E 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}" | sed 's/^/  /'
+    return 1
+  fi
+  return 0
+}
+
+test_orphan_deleted_when_this_run_owns_groups() {
+  # The legitimate sweep: this run declares group 'kept', so a group comment
+  # for a group it no longer declares really is stale and is removed.
+  write_meta "alpha" "kept"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/5001' "${GH_FAKE_CALL_LOG}"; then
-    echo "expected DELETE of orphan comment 5001"; return 1
+    echo "expected DELETE of orphan comment 5001 when the run owns a group"; return 1
   fi
-  if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
-    echo "did not expect POST when desired set is empty"; return 1
-  fi
-  if grep -q 'PATCH' "${GH_FAKE_CALL_LOG}"; then
-    echo "did not expect PATCH on orphan"; return 1
+  return 0
+}
+
+test_add_pr_comment_false_touches_nothing() {
+  # A caller that turns commenting off must not list, post or delete anything.
+  write_meta_no_comment "alpha" "some-group"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:some-group -->\n### Terraform validation summary for group: `some-group`\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -qE 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "add-pr-comment=false must not write anything; calls were:"
+    grep -E 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}" | sed 's/^/  /'
+    return 1
   fi
   return 0
 }
@@ -1595,7 +1633,9 @@ test_p30_mixed_success_and_skipped() {
 # ============================================================================
 
 run_test "empty desired + empty existing is a no-op"                       test_empty_desired_empty_existing_is_noop
-run_test "sweep mode: empty desired + orphan existing → delete only"       test_sweep_only_orphans
+run_test "a run declaring no groups deletes nothing it did not create"     test_no_groups_declared_touches_nothing
+run_test "orphan still deleted when this run declares a group of its own"  test_orphan_deleted_when_this_run_owns_groups
+run_test "add-pr-comment=false: the aggregator touches no comment at all"  test_add_pr_comment_false_touches_nothing
 run_test "post mode: desired + no existing → post only"                    test_post_when_no_existing
 run_test "mixed upsert: orphan deleted + matching marker patched in place" test_mixed_orphan_delete_and_patch
 run_test "envs render in alphabetical column order"                        test_alphabetical_column_order
