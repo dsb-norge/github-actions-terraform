@@ -238,6 +238,17 @@ if [[ -f "${WORKFLOW}" ]]; then
   assert_contains "guard scopes its paths with --list-files" "${wf}" "rewrite-internal-refs.sh --list-files"
   assert_contains "guard greps the script's REF_PATTERN verbatim" "${wf}" "${ref_pattern}"
   assert_contains "publish job runs this suite before publishing" "${wf}" "test-rewrite-internal-refs.sh"
+  # P33: the sweep addressed git/tags/<name> (the tag-object endpoint) instead of
+  # git/refs/tags/<name>, 404'd on every call, and swallowed it — so it deleted
+  # nothing for as long as it existed. Pin both halves of the fix.
+  assert_contains "cleanup deletes through git/<full ref>, not the tag-object endpoint" "${wf}" 'gh api -X DELETE "repos/${REPO}/git/${ref}"'
+  if [[ "${wf}" == *'git/${ref#refs/}'* ]]; then
+    fail "cleanup must not strip the refs/ prefix (P33)" "found: git/\${ref#refs/}"
+  else
+    pass "cleanup must not strip the refs/ prefix (P33)"
+  fi
+  assert_contains "cleanup verifies that no preview ref survived the sweep" "${wf}" "preview refs survived the sweep"
+
   excl="$(grep -oP "^EXCLUDED_WORKFLOWS=\(\K[^)]+" "${SCRIPT}")"
   assert_contains "pr-preview.yml is excluded from the rewrite" "${excl}" "pr-preview.yml"
   assert_contains "action-tests.yml is excluded from the rewrite" "${excl}" "action-tests.yml"

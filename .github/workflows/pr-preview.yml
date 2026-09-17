@@ -201,10 +201,36 @@ jobs:
           if ((${#refs[@]} == 0)); then
             echo "no preview refs for PR ${PR_NUMBER} (already absent)"
           fi
+          failed=0
           for ref in "${refs[@]}"; do
-            gh api -X DELETE "repos/${REPO}/git/${ref#refs/}" && echo "deleted ${ref}" ||
-              echo "could not delete ${ref} (already gone?)"
+            # DELETE /repos/{owner}/{repo}/git/refs/{ref}. The listed ref already
+            # starts with 'refs/', so it is appended whole: stripping that prefix
+            # addresses git/tags/<name>, the tag-OBJECT endpoint, which 404s for a
+            # lightweight tag. That is what this step did until 2026-09-17, and
+            # because the failure was swallowed with a cheerful "(already gone?)"
+            # the job stayed green while every tag it was meant to sweep survived.
+            if gh api -X DELETE "repos/${REPO}/git/${ref}" >/dev/null 2>&1; then
+              echo "deleted ${ref}"
+            elif ! gh api "repos/${REPO}/git/${ref}" >/dev/null 2>&1; then
+              echo "already gone: ${ref}"
+            else
+              echo "::error::could not delete ${ref} — it is still there"
+              failed=1
+            fi
           done
+
+          # State it as a check rather than a hope, the way the publish guard
+          # does: nothing matching this pull request may survive the sweep.
+          remaining="$(
+            gh api "repos/${REPO}/git/matching-refs/tags/preview/pr-${PR_NUMBER}" --jq '.[].ref' 2>/dev/null |
+              grep -E "^refs/tags/preview/pr-${PR_NUMBER}(-[0-9a-f]+)?\$" || true
+          )"
+          if [[ -n "${remaining}" ]]; then
+            echo "::error::preview refs survived the sweep for PR ${PR_NUMBER}:"
+            echo "${remaining}"
+            exit 1
+          fi
+          ((failed == 0))
 
       # The PR head commit outlives the branch (GitHub keeps refs/pull/<N>/head), and it is
       # the copy of pr-comment that wrote the comment.
