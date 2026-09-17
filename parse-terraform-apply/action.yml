@@ -22,6 +22,13 @@ inputs:
       not an error: counts are '?' and `completed` is 'false'.
     required: true
 outputs:
+  count-import:
+    description: |
+      Number of resources imported. '?' when no summary line was found, '0' when
+      terraform emitted no 'imported' segment (it only does so when import
+      blocks are in play). Counted in `count-total`: an apply that only adopted
+      existing objects is not a no-op.
+    value: ${{ steps.parse-apply-output.outputs.import-count }}
   count-add:
     description: Number of resources added. '?' when no summary line was found.
     value: ${{ steps.parse-apply-output.outputs.add-count }}
@@ -33,9 +40,10 @@ outputs:
     value: ${{ steps.parse-apply-output.outputs.destroy-count }}
   count-total:
     description: |
-      Sum of add + change + destroy. '?' when no summary line was found.
-      There is no import / move / remove: terraform's apply summary line
-      has no such fields.
+      Sum of import + add + change + destroy. '?' when no summary line was found.
+      Terraform's apply summary carries no move / remove segment, but it does
+      carry 'imported' — assuming otherwise once made a successful apply of five
+      imports report as a failed apply.
     value: ${{ steps.parse-apply-output.outputs.total-count }}
   completed:
     description: |

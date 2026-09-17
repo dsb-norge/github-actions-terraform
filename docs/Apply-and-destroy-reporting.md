@@ -206,23 +206,32 @@ A new action rather than a mode on [parse-terraform-plan](../parse-terraform-pla
 Recognised summary lines:
 
 ```
-Apply complete! Resources: <A> added, <C> changed, <D> destroyed.
+Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.
 Destroy complete! Resources: <D> destroyed.
 ```
+
+The segment list is **open-ended**, and this is parsed segment by segment, not as one anchored pattern — see P32.
 
 Outputs, deliberately named to match `parse-terraform-plan` so downstream wiring is symmetric:
 
 | Output | Notes |
 |---|---|
+| `count-import` | `?` when no summary line was found, `0` when terraform emitted no `imported` segment |
 | `count-add` / `count-change` / `count-destroy` | `?` when no summary line was found |
-| `count-total` | sum; `?` when no summary line was found |
+| `count-total` | sum **including imports**; `?` when no summary line was found |
 | `completed` | `true` when a summary line was found, `false` otherwise |
 | `apply-kind` | `apply` or `destroy`, from which summary line matched |
 | `filtered-console-file` | console file with progress-tick lines removed (§7.2.2) |
 
 `Destroy complete!` sets `count-add=0`, `count-change=0`.
 
-There is no `count-import` / `count-move` / `count-remove`: terraform's apply summary line has no such fields. Rendering must not assume the plan badge set — §8.3.
+There is no `count-move` / `count-remove`: terraform's apply summary carries no such segment. It **does** carry `imported`, which this section originally denied — see P32. Rendering still must not assume the plan badge set wholesale — §8.3.
+
+> **P32 — the apply summary line is a list, not a fixed triple.** It was first read with one pattern anchored at both ends to `added, changed, destroyed`. Terraform puts `N imported,` *before* `added` whenever import blocks are in play, so the match failed, `completed` stayed unset, and a **fully successful apply rendered as `❌ Apply failed — infrastructure may be partially applied` with `💫 ?/0 added`** — the exact inversion of the defect this feature exists to fix. Found on a calling repo that adopts existing objects with `import` blocks, which is the normal way to bring hand-made infrastructure under terraform.
+>
+> The fix is not an optional `imported` group; that would survive only until the next verb. Each segment is matched on its own — the way [parse-terraform-plan](../parse-terraform-plan/) has always read the `Plan:` line — and a segment whose verb is unknown is logged and left uncounted rather than failing the parse. **A finished apply must never be reported as a failed one**; under-reporting a count is the lesser error and the warning says so in the log.
+>
+> `count-total` includes imports, or an apply that only adopted existing objects renders as `Apply: no changes ✅` while five resources came under management.
 
 #### 7.2.1 The failure case is the important one
 
