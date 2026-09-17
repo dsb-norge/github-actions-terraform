@@ -99,8 +99,15 @@ function main {
   a_destroy=$(count-or-question-mark "${input_apply_count_destroy:-}")
   d_destroy=$(count-or-question-mark "${input_destroy_count_destroy:-}")
 
+  # Imports are named only when there are any: terraform omits the segment
+  # unless import blocks are in play, and this notice is the run-page summary
+  # of exactly what the apply did (P32).
+  local apply_counts="${a_add} added, ${a_change} changed, ${a_destroy} destroyed"
+  if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import}" -ne 0 ]; then
+    apply_counts="${apply_counts}, ${input_apply_count_import} imported"
+  fi
   annotate_operation "Apply" "${input_status_apply:-}" \
-    "${a_add} added, ${a_change} changed, ${a_destroy} destroyed" "${input_apply_time:-}" "applied"
+    "${apply_counts}" "${input_apply_time:-}" "applied"
   annotate_operation "Destroy" "${input_status_destroy:-}" \
     "${d_destroy} destroyed" "${input_destroy_time:-}" "destroyed"
 

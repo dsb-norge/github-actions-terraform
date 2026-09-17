@@ -104,6 +104,27 @@ assert "D1: notice is byte-exact" \
 teardown
 
 # ----------------------------------------------------------------------
+# P32 — an apply that adopted objects says so; one that did not stays quiet
+# ----------------------------------------------------------------------
+setup
+export input_status_apply="success"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_apply_count_import="2"; export input_apply_time="0:12"
+run_step
+assert "P32: the notice names the imports, last and only when there are any" \
+  grep -qxF '::notice title=Apply succeeded::dev — 1 added, 0 changed, 0 destroyed, 2 imported in 0:12' "${OUT_FILE}"
+teardown
+
+setup
+export input_status_apply="success"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_apply_count_import="0"; export input_apply_time="0:12"
+run_step
+assert "P32: zero imports are not mentioned at all" \
+  bash -c "! grep -q 'imported' '${OUT_FILE}'"
+teardown
+
+# ----------------------------------------------------------------------
 # D2 — apply failed → exactly one ::error naming the partial-state risk
 # ----------------------------------------------------------------------
 setup
