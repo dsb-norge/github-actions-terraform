@@ -79,7 +79,9 @@ inputs:
       `count-total` output). When numeric and zero, the plan-extract block
       is replaced by a single 'Plan: no changes ✅' line UNLESS
       `plan-has-output-only-changes` is true (see below). When numeric and
-      non-zero, the <details> summary becomes 'Plan: <N> changes ℹ️'. When
+      non-zero, the <details> summary lists each kind — 'Plan: <A> to add,
+      <C> to change, <D> to destroy ℹ️', with import / move / remove appended
+      when those counts are non-zero. When
       missing or the literal '?' (parse failed), the action falls back to
       the pre-v0.24 'Show Plan (last 65k characters)' summary.
     required: false
@@ -166,6 +168,10 @@ inputs:
     default: "N/A"
   destroy-time:
     description: Wall-clock duration of the destroy apply as mm:ss (terraform-apply's `apply-time` for the destroy invocation).
+    required: false
+    default: "N/A"
+  apply-count-import:
+    description: Resources imported by apply (parse-terraform-apply's `count-import`). Rendered, against the plan's import count, only when non-zero — terraform omits the segment unless import blocks are in play.
     required: false
     default: "N/A"
   apply-count-add:
@@ -409,6 +415,7 @@ runs:
         input_apply_time: ${{ inputs.apply-time }}
         input_destroy_plan_time: ${{ inputs.destroy-plan-time }}
         input_destroy_time: ${{ inputs.destroy-time }}
+        input_apply_count_import: ${{ inputs.apply-count-import }}
         input_apply_count_add: ${{ inputs.apply-count-add }}
         input_apply_count_change: ${{ inputs.apply-count-change }}
         input_apply_count_destroy: ${{ inputs.apply-count-destroy }}

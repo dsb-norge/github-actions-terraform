@@ -161,7 +161,7 @@ When the env's goals contain `apply-on-pr` and/or `destroy-on-pr`, a blockquote 
 
 1. `Plan: no changes ✅` — when `count-total` is numeric 0 and `has-output-only-changes` is not true.
 2. `<details><summary>Plan: output-only changes ℹ️</summary>…</details>` — when `count-total` is 0 but `has-output-only-changes=true` (the plan changes outputs but no resources).
-3. `<details><summary>Plan: N changes ℹ️</summary>…</details>` — when `count-total` is numeric > 0.
+3. `<details><summary>Plan: A to add, C to change, D to destroy ℹ️</summary>…</details>` — when `count-total` is numeric > 0. `, I to import` / `, M to move` / `, R to remove` are appended when those counts are non-zero, matching the head's Plan details row: the same badge vocabulary, the same order, the same only-when-non-zero rule. If any of the three core counts is not numeric the line falls back to `Plan: N changes ℹ️`.
 4. `<details><summary>Show Plan (last 65k characters)</summary>…</details>` — fallback when `count-total` is missing or `?` (parse failed).
 5. `Plan not available 🤷‍♀️` — when no plan output is available at all.
 
@@ -216,7 +216,7 @@ One tag per mutating invocation that ran, same lifecycle as the plan tag:
 ### Terraform destroy for environment: `<env>`
 ```
 
-The destroy plan is a plan and reuses the five plan-block shapes verbatim. Apply and destroy have their own: `Apply: no changes ✅` · `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…` (applied/planned per kind, `?` for an unknown side) · `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…` · `Apply not available 🤷‍♀️`, with destroy wording for the destroy tag. The failure shape is the **only** `<details open>` in the system. Each body has its own 65k budget with the same warnings-over-console priority as the plan tag, and carries its own warnings collapser (apply warnings live in the apply tag, never the plan tag).
+The destroy plan is a plan and reuses the five plan-block shapes, labelled `Destroy plan` rather than `Plan` in every one of them (it previously said `Plan:` under a `destroy plan` heading). Apply and destroy have their own: `Apply: no changes ✅` · `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…` (applied/planned per kind, `?` for an unknown side, `, I/P imported` appended when the apply imported anything) · `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…` · `Apply not available 🤷‍♀️`, with destroy wording for the destroy tag. The failure shape is the **only** `<details open>` in the system. Each body has its own 65k budget with the same warnings-over-console priority as the plan tag, and carries its own warnings collapser (apply warnings live in the apply tag, never the plan tag).
 
 By default the apply and destroy bodies strip everything from terraform's `Outputs:` line onward and append `_(outputs section omitted)_`: `terraform apply` prints every non-sensitive output's actual value there, which `terraform plan` never does. The workflow input `apply-extract-include-outputs` (per-env overridable) opts back in. Normative shapes and rationale: [Apply-and-destroy-reporting.md §8.6 and P3](Apply-and-destroy-reporting.md).
 

@@ -145,6 +145,10 @@ function _render_apply_block {
   out+="$(_render_ratio_badge "💫" "${input_apply_count_add:-}" "${input_plan_count_add:-}" "added" "${input_apply_completed:-}")"
   out+="<br>$(_render_ratio_badge "🛠️" "${input_apply_count_change:-}" "${input_plan_count_change:-}" "changed" "${input_apply_completed:-}")"
   out+="<br>$(_render_ratio_badge "💥" "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "destroyed" "${input_apply_completed:-}")"
+  # Same non-zero rule as the Plan details row's extra kinds, same 📥 badge.
+  if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import:-0}" -ne 0 ]; then
+    out+="<br>$(_render_ratio_badge "📥" "${input_apply_count_import}" "${input_plan_count_import:-}" "imported" "${input_apply_completed:-}")"
+  fi
   out+="</div> |"
   out+=$'\n'"| $(_render_step_icon_cell "⏱" "Apply time") | Apply time | $(_render_time_cell "${input_apply_time:-}") |"
   printf '%s' "${out}"
@@ -323,7 +327,8 @@ function render_head_summary {
 # Plan-block shapes:
 #   1. plan-count-total numeric 0 AND not output-only → 'Plan: no changes ✅'
 #   2. plan-count-total numeric 0 AND output-only     → '<details>Plan: output-only changes ℹ️…'
-#   3. plan-count-total numeric > 0                   → '<details>Plan: N changes ℹ️…'
+#   3. plan-count-total numeric > 0                   → '<details>Plan: A to add, C to change, D to destroy ℹ️…'
+#                                                       (import / move / remove appended when non-zero)
 #   4. plan-count-total missing/'?'                   → '<details>Show Plan (last 65k characters)…'
 # When plan output is entirely absent, render 'Plan not available 🤷‍♀️'.
 
@@ -390,6 +395,10 @@ function load_warnings_md {
 function _render_plan_like_extract {
   local heading="${1}" txt_file="${2}" console_file="${3}" total="${4}" output_only="${5:-false}"
   local warnings_file="${6}" warning_count="${7}" banner="${8}"
+  # ${9} labels every shape ('Plan' / 'Destroy plan') — the destroy-plan tag used
+  # to say 'Plan:' under a 'destroy plan' heading. ${10} is the per-kind count
+  # text for the one shape that has counts; empty falls back to the bare total.
+  local label="${9:-Plan}" counts_text="${10:-}"
   local plan="${heading}"
 
   # GitHub's comment-body limit is 65536; we cap at 65000 to leave headroom
@@ -441,16 +450,16 @@ ${banner%$'\n'}"
   if [ -z "${plan_out}" ]; then
     plan="${plan}
 
-Plan not available 🤷‍♀️"
+${label} not available 🤷‍♀️"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" != 'true' ]; then
     plan="${plan}
 
-Plan: no changes ✅"
+${label}: no changes ✅"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" = 'true' ]; then
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Plan: output-only changes ℹ️</summary>
+<details><summary>${label}: output-only changes ℹ️</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -460,7 +469,7 @@ ${plan_out}
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Plan: ${total} changes ℹ️</summary>
+<details><summary>${label}: ${counts_text:-${total} changes} ℹ️</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -470,7 +479,7 @@ ${plan_out}
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Show Plan (last 65k characters)</summary>
+<details><summary>Show ${label} (last 65k characters)</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -498,13 +507,35 @@ ${warnings_md}
   printf '%s' "${plan}"
 }
 
+# Per-kind text for a plan-like summary line: "30 to add, 0 to change, 0 to
+# destroy", with import / move / remove appended only when non-zero — the same
+# rule, vocabulary and order the head's Plan details row already uses. A bare
+# total says how much will happen but not what, which is the one thing a
+# reviewer reads the collapsed line for. Returns empty when the three core
+# counts are not all numeric, so the caller falls back to the bare total.
+function _plan_counts_text {
+  local add="${1}" change="${2}" destroy="${3}" imports="${4:-0}" moves="${5:-0}" removes="${6:-0}"
+  if ! [[ "${add}" =~ ^[0-9]+$ ]] || ! [[ "${change}" =~ ^[0-9]+$ ]] || ! [[ "${destroy}" =~ ^[0-9]+$ ]]; then
+    echo ""
+    return 0
+  fi
+  local text="${add} to add, ${change} to change, ${destroy} to destroy"
+  if [[ "${imports}" =~ ^[0-9]+$ ]] && [ "${imports}" -ne 0 ]; then text="${text}, ${imports} to import"; fi
+  if [[ "${moves}" =~ ^[0-9]+$ ]] && [ "${moves}" -ne 0 ]; then text="${text}, ${moves} to move"; fi
+  if [[ "${removes}" =~ ^[0-9]+$ ]] && [ "${removes}" -ne 0 ]; then text="${text}, ${removes} to remove"; fi
+  echo "${text}"
+}
+
 function render_plan_extract {
   _render_plan_like_extract \
     "### Terraform plan for environment: \`${input_environment_name}\`" \
     "${input_plan_txt_output_file:-}" "${input_plan_console_file:-}" \
     "${input_plan_count_total:-}" "${input_plan_has_output_only_changes:-false}" \
     "${input_warnings_markdown_file:-}" "${input_warning_count:-0}" \
-    "$(_render_plan_tag_banner)"
+    "$(_render_plan_tag_banner)" \
+    "Plan" \
+    "$(_plan_counts_text "${input_plan_count_add:-}" "${input_plan_count_change:-}" "${input_plan_count_destroy:-}" \
+        "${input_plan_count_import:-0}" "${input_plan_count_move:-0}" "${input_plan_count_remove:-0}")"
 }
 
 function render_destroy_plan_extract {
@@ -513,7 +544,10 @@ function render_destroy_plan_extract {
     "${input_destroy_plan_txt_output_file:-}" "${input_destroy_plan_console_file:-}" \
     "${input_destroy_plan_count_total:-}" "false" \
     "${input_destroy_plan_warnings_markdown_file:-}" "${input_destroy_plan_warning_count:-0}" \
-    ""
+    "" \
+    "Destroy plan" \
+    "$(_plan_counts_text "${input_destroy_plan_count_add:-}" "${input_destroy_plan_count_change:-}" "${input_destroy_plan_count_destroy:-}" \
+        "${input_destroy_plan_count_import:-0}" "${input_destroy_plan_count_move:-0}" "${input_destroy_plan_count_remove:-0}")"
 }
 
 # ============================================================================
@@ -593,6 +627,12 @@ ${verb}: no changes ✅"
     local summary_counts
     if [ "${kind}" = 'apply' ]; then
       summary_counts="$(_ratio_text "${input_apply_count_add:-}" "${input_plan_count_add:-}" "${completed}") added, $(_ratio_text "${input_apply_count_change:-}" "${input_plan_count_change:-}" "${completed}") changed, $(_ratio_text "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "${completed}") destroyed"
+      # Imports only when there are any — terraform omits the segment entirely
+      # unless import blocks are in play (P32), so a '0/0 imported' on every
+      # other apply would be noise.
+      if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import:-0}" -ne 0 ]; then
+        summary_counts="${summary_counts}, $(_ratio_text "${input_apply_count_import}" "${input_plan_count_import:-}" "${completed}") imported"
+      fi
     else
       summary_counts="$(_ratio_text "${input_destroy_count_destroy:-}" "${input_destroy_plan_count_destroy:-}" "${completed}") destroyed"
     fi
