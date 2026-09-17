@@ -52,9 +52,16 @@ cleanup() {
 run_count_test() {
   local name="${1}" fixture="${2}"
   local e_add="${3}" e_change="${4}" e_destroy="${5}" e_completed="${6}" e_kind="${7}"
+  # Optional 8th argument. Terraform omits the 'imported' segment entirely when
+  # no import blocks are in play, so the default is what that yields: 0 once a
+  # summary line parsed, '?' when none did.
+  local e_import="${8:-}"
+  if [ -z "${e_import}" ]; then
+    if [ "${e_completed}" = 'true' ]; then e_import=0; else e_import='?'; fi
+  fi
   local e_total='?'
-  if [[ "${e_add}${e_change}${e_destroy}" =~ ^[0-9]+$ ]]; then
-    e_total=$((e_add + e_change + e_destroy))
+  if [[ "${e_import}${e_add}${e_change}${e_destroy}" =~ ^[0-9]+$ ]]; then
+    e_total=$((e_import + e_add + e_change + e_destroy))
   fi
 
   TESTS_RUN=$((TESTS_RUN + 1))
@@ -70,7 +77,7 @@ run_count_test() {
   local failures=""
   [[ "${LAST_EXIT}" -eq 0 ]] || failures+="  exit code: expected 0, got ${LAST_EXIT}\n"
   local k v
-  for k in "add-count:${e_add}" "change-count:${e_change}" "destroy-count:${e_destroy}" \
+  for k in "import-count:${e_import}" "add-count:${e_add}" "change-count:${e_change}" "destroy-count:${e_destroy}" \
            "total-count:${e_total}" "completed:${e_completed}" "apply-kind:${e_kind}"; do
     v=$(get_output "${k%%:*}")
     [[ "${v}" == "${k#*:}" ]] || failures+="  ${k%%:*}: expected '${k#*:}', got '${v}'\n"
@@ -127,6 +134,50 @@ run_count_test "B10: non-ASCII resource names"          apply_non_ascii.log     
 run_count_test "B11: 'Apply complete!' inside an output value is not the summary line" \
                                                         apply_summary_text_inside_output_value.log    1   0   0  true  apply
 run_count_test "B6: ticks fixture counts"               apply_with_progress_ticks.log                 2   1   0  true  apply
+
+# --------------------------------------------------------------------------
+# B13-B14: the summary line is an open-ended list of "<N> <verb>" segments.
+# Terraform puts 'N imported' BEFORE 'added' when import blocks are in play,
+# and adds verbs as the language grows. A pattern anchored to exactly
+# "added, changed, destroyed" reported a completed apply as a failed one —
+# the inverse of what this action exists to do — so each verb is matched on
+# its own and an unknown segment is a warning, never a parse failure.
+#                                                        add change destroy completed kind  import
+# --------------------------------------------------------------------------
+run_count_test "B13: 'N imported' segment before 'added'" apply_complete_with_imports.log              0   1   0  true  apply 5
+run_count_test "B14: unknown segment does not fail the parse" apply_complete_unknown_segment.log       0   0   0  true  apply 3
+
+# B14 detail: the unrecognised segment is reported, and its wording names it.
+TESTS_RUN=$((TESTS_RUN + 1))
+echo -e "${BLUE}TEST ${TESTS_RUN}: B14: unknown segment is logged as a warning${NC}"
+export input_apply_console_file="${DATA_DIR}/apply_complete_unknown_segment.log"
+run_step
+if grep -q "unrecognised segment" /tmp/test_output_parse_apply.txt &&
+   grep -q "2 forgotten" /tmp/test_output_parse_apply.txt; then
+  echo -e "${GREEN}  PASS${NC}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}  FAIL${NC} expected a warning naming '2 forgotten'"
+  sed -n '1,12p' /tmp/test_output_parse_apply.txt | sed 's/^/       /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# B15: an import-only apply must not be mistaken for a no-op — count-total
+# carries the imports, so the renderer does not print 'Apply: no changes'.
+TESTS_RUN=$((TESTS_RUN + 1))
+echo -e "${BLUE}TEST ${TESTS_RUN}: B15: import-only apply has a non-zero total${NC}"
+_imp_only=$(mktemp)
+printf 'Apply complete! Resources: 4 imported, 0 added, 0 changed, 0 destroyed.\n' >"${_imp_only}"
+export input_apply_console_file="${_imp_only}"
+run_step
+_tot=$(get_output total-count)
+if [[ "${_tot}" == "4" ]]; then
+  echo -e "${GREEN}  PASS${NC}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}  FAIL${NC} total-count: expected '4', got '${_tot}'"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
 
 # --------------------------------------------------------------------------
 # B4 detail: a missing file path (not just empty) is also '?' and exit 0.

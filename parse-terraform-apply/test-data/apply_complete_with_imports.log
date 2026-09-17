@@ -1,0 +1,4 @@
+module.x.azurerm_role_assignment.this: Modifying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/x]
+module.x.azurerm_role_assignment.this: Modifications complete after 2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/x]
+
+Apply complete! Resources: 5 imported, 0 added, 1 changed, 0 destroyed.

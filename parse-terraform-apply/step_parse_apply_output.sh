@@ -7,8 +7,14 @@
 # progress-tick lines removed.
 #
 # Two summary-line grammars, one per verb:
-#   Apply complete! Resources: <A> added, <C> changed, <D> destroyed.
+#   Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.
 #   Destroy complete! Resources: <D> destroyed.
+#
+# The segment list is open-ended: terraform adds verbs as the language grows
+# ('imported' arrived with import blocks) and places them in its own order. Each
+# verb is therefore matched on its own, the way parse-terraform-plan reads the
+# 'Plan:' line, and an unrecognised segment is logged rather than treated as a
+# parse failure — a finished apply must never be reported as a failed one.
 # Both are anchored at line start AND only the console above the first
 # '^Outputs:$' line is scanned. Anchoring alone is not enough: an output
 # value rendered as a heredoc ('note = <<EOT' … 'EOT') prints its content
@@ -52,7 +58,7 @@ TICK_REGEX='^[^[:space:]].*: Still (creating|destroying|modifying|reading)\.\.\.
 function main {
   log-info "Starting parse-apply-output..."
 
-  local adds='?' changes='?' destroys='?' total='?'
+  local imports='?' adds='?' changes='?' destroys='?' total='?'
   local completed='false' apply_kind=''
 
   # Filtered copy sits next to the raw file in RUNNER_TEMP. Written in every
@@ -82,20 +88,31 @@ function main {
     summary_line=$(awk '/^Outputs:$/ {exit} {print}' "${input_apply_console_file}" \
       | grep -E '^(Apply|Destroy) complete! Resources: ' | head -n1)
 
-    if [[ "${summary_line}" =~ ^Apply\ complete!\ Resources:\ ([0-9]+)\ added,\ ([0-9]+)\ changed,\ ([0-9]+)\ destroyed\.$ ]]; then
-      adds="${BASH_REMATCH[1]}"
-      changes="${BASH_REMATCH[2]}"
-      destroys="${BASH_REMATCH[3]}"
-      completed='true'
-      apply_kind='apply'
-      log-info "apply completed: ${adds} added, ${changes} changed, ${destroys} destroyed"
-    elif [[ "${summary_line}" =~ ^Destroy\ complete!\ Resources:\ ([0-9]+)\ destroyed\.$ ]]; then
+    if [[ "${summary_line}" =~ ^(Apply|Destroy)\ complete!\ Resources:\ (.+)\.$ ]]; then
+      # Capture before matching anything else — a nested [[ =~ ]] overwrites BASH_REMATCH.
+      local complete_verb="${BASH_REMATCH[1]}" segments="${BASH_REMATCH[2]}"
+      imports=0
       adds=0
       changes=0
-      destroys="${BASH_REMATCH[1]}"
+      destroys=0
+      if [[ "${segments}" =~ ([0-9]+)\ imported ]]; then imports="${BASH_REMATCH[1]}"; fi
+      if [[ "${segments}" =~ ([0-9]+)\ added ]]; then adds="${BASH_REMATCH[1]}"; fi
+      if [[ "${segments}" =~ ([0-9]+)\ changed ]]; then changes="${BASH_REMATCH[1]}"; fi
+      if [[ "${segments}" =~ ([0-9]+)\ destroyed ]]; then destroys="${BASH_REMATCH[1]}"; fi
       completed='true'
-      apply_kind='destroy'
-      log-info "destroy completed: ${destroys} destroyed"
+      if [ "${complete_verb}" = 'Destroy' ]; then apply_kind='destroy'; else apply_kind='apply'; fi
+
+      # A verb we do not know is worth saying out loud — its resources are real
+      # and go uncounted — but it must never turn a finished apply into a
+      # reported failure, which is the whole reason this is segment-based.
+      local unknown
+      unknown=$(printf '%s' "${segments}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' \
+        | grep -vE '^[0-9]+ (imported|added|changed|destroyed)$' || true)
+      if [ -n "${unknown}" ]; then
+        log-warn "unrecognised segment(s) in the summary line, not counted: $(printf '%s' "${unknown}" | paste -sd';' -)"
+      fi
+
+      log-info "${apply_kind} completed: ${imports} imported, ${adds} added, ${changes} changed, ${destroys} destroyed"
     elif [ -n "${summary_line}" ]; then
       log-error "found a summary line but could not parse it: '${summary_line}'"
     else
@@ -103,10 +120,14 @@ function main {
     fi
   fi
 
-  if [[ "${adds}${changes}${destroys}" =~ ^[0-9]+$ ]]; then
-    total=$((adds + changes + destroys))
+  # Imports belong in the total: an apply that only adopted existing objects has
+  # zero added/changed/destroyed, and a total of 0 renders as
+  # 'Apply: no changes ✅' when five resources just came under management.
+  if [[ "${imports}${adds}${changes}${destroys}" =~ ^[0-9]+$ ]]; then
+    total=$((imports + adds + changes + destroys))
   fi
 
+  set-output 'import-count' "${imports}"
   set-output 'add-count' "${adds}"
   set-output 'change-count' "${changes}"
   set-output 'destroy-count' "${destroys}"
