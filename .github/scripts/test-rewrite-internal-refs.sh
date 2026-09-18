@@ -242,10 +242,21 @@ if [[ -f "${WORKFLOW}" ]]; then
   # git/refs/tags/<name>, 404'd on every call, and swallowed it — so it deleted
   # nothing for as long as it existed. Pin both halves of the fix.
   assert_contains "cleanup deletes through git/<full ref>, not the tag-object endpoint" "${wf}" 'gh api -X DELETE "repos/${REPO}/git/${ref}"'
-  if [[ "${wf}" == *'git/${ref#refs/}'* ]]; then
+  # Comment lines are stripped before these negative greps: the workflow explains
+  # both wrong forms in prose, and a test that matches its own warning fails for
+  # the wrong reason. (Reported by the maintainers who hit exactly that.)
+  local wf_code; wf_code="$(grep -vE '^[[:space:]]*#' "${WORKFLOW}")"
+  if [[ "${wf_code}" == *'git/${ref#refs/}'* ]]; then
     fail "cleanup must not strip the refs/ prefix (P33)" "found: git/\${ref#refs/}"
   else
     pass "cleanup must not strip the refs/ prefix (P33)"
+  fi
+  # P33b: GET git/refs/<ref> prefix-matches, so a per-ref probe answers for a
+  # sibling and can only produce false failures. The post-sweep check decides.
+  if [[ "${wf_code}" == *'! gh api "repos/${REPO}/git/${ref}"'* ]]; then
+    fail "cleanup must not probe a single ref with GET git/refs (P33b)" "found the prefix-matching probe"
+  else
+    pass "cleanup must not probe a single ref with GET git/refs (P33b)"
   fi
   assert_contains "cleanup verifies that no preview ref survived the sweep" "${wf}" "preview refs survived the sweep"
 
