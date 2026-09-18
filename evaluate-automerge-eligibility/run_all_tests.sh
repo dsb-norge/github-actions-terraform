@@ -1056,6 +1056,87 @@ else
 fi
 
 # ============================================================================
+# F7 — every `with:` key a workflow passes is declared by the thing it calls,
+# and every required input without a default is passed. GitHub enforces
+# neither for composite actions: an unknown key is a run-time warning nobody
+# reads, and a missing required input arrives as an empty string. Both have
+# already happened here — an undeclared `apply-count-import`, and a missing
+# `status-verify-lock` that rendered an empty badge in every module repo's
+# comment for as long as that call site existed.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F7 - workflow with-keys match the called action's inputs${NC}"
+echo -e "${BLUE}========================================${NC}"
+_contract_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, os, sys, yaml
+
+def load(path):
+    with open(path, encoding='utf-8') as fh:
+        return yaml.safe_load(fh) or {}
+
+def declared_inputs(target):
+    """Inputs of a composite action dir, or of a reusable workflow file."""
+    for candidate in (f"{target}/action.yml", f"{target}/action.yaml"):
+        if os.path.isfile(candidate):
+            return (load(candidate).get('inputs') or {}), f"action {target}"
+    if os.path.isfile(target):
+        # 'on' is parsed as the boolean True by YAML 1.1, hence both lookups.
+        doc = load(target)
+        on = doc.get(True, doc.get('on')) or {}
+        return ((on.get('workflow_call') or {}).get('inputs') or {}), f"workflow {target}"
+    return None, None
+
+def resolve(uses):
+    if uses.startswith('./'):
+        return uses[2:]
+    if 'dsb-norge/github-actions-terraform/' in uses:
+        return uses.split('dsb-norge/github-actions-terraform/')[1].split('@')[0]
+    return None  # third-party action: not ours to check
+
+problems, checked = [], 0
+for wf in sorted(glob.glob('.github/workflows/*.y*ml')):
+    doc = load(wf)
+    call_sites = []
+    for job_name, job in (doc.get('jobs') or {}).items():
+        if isinstance(job.get('uses'), str):
+            call_sites.append((job_name, job['uses'], job.get('with') or {}))
+        for step in (job.get('steps') or []):
+            if isinstance(step.get('uses'), str):
+                call_sites.append((job_name, step['uses'], step.get('with') or {}))
+    for job_name, uses, given in call_sites:
+        target = resolve(uses)
+        if target is None:
+            continue
+        declared, label = declared_inputs(target)
+        if declared is None:
+            problems.append(f"{wf} :: job '{job_name}' calls '{target}', which does not exist")
+            continue
+        checked += len(given)
+        for key in sorted(set(given) - set(declared)):
+            problems.append(f"{wf} :: job '{job_name}' passes '{key}' to {label}, which does not declare it")
+        for key, spec in sorted(declared.items()):
+            spec = spec or {}
+            if spec.get('required') is True and 'default' not in spec and key not in given:
+                problems.append(f"{wf} :: job '{job_name}' omits '{key}', required by {label} with no default")
+
+print(f"checked {checked} with-key(s)")
+for p in problems:
+    print(f"PROBLEM {p}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _contract_rc=0 || _contract_rc=$?
+if [[ "${_contract_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_contract_out}" | head -n1), all declared by their target"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_contract_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

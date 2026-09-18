@@ -199,6 +199,12 @@ jobs:
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
+          # Both required, and neither applies to a module: 'N/A' is how this
+          # action is told so. Omitting status-verify-lock rendered the Lock
+          # file row as an empty <kbd></kbd> badge in every module repo's
+          # comment — GitHub does not enforce a composite action's required
+          # inputs, so nothing complained.
+          status-verify-lock: "N/A"
           status-plan: "N/A"
         continue-on-error: true # allow job to continue, step outcome is ignored
 
