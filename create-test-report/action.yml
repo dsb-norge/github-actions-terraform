@@ -8,7 +8,7 @@ description: |
   for posting with the `pr-comment` action's `body-file` input. The body
   never travels through a step output — see the ARG_MAX section of the
   repository's CLAUDE.md and docs/Apply-and-destroy-reporting.md §7.15.
-author: "Peder Schmedling"
+author: "Artjoms Laivins, Peder Schmedling"
 inputs:
   test-file:
     description: File name of the test file.
