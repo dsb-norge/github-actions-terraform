@@ -201,7 +201,6 @@ jobs:
           if ((${#refs[@]} == 0)); then
             echo "no preview refs for PR ${PR_NUMBER} (already absent)"
           fi
-          failed=0
           for ref in "${refs[@]}"; do
             # DELETE /repos/{owner}/{repo}/git/refs/{ref}. The listed ref already
             # starts with 'refs/', so it is appended whole: stripping that prefix
@@ -211,16 +210,19 @@ jobs:
             # the job stayed green while every tag it was meant to sweep survived.
             if gh api -X DELETE "repos/${REPO}/git/${ref}" >/dev/null 2>&1; then
               echo "deleted ${ref}"
-            elif ! gh api "repos/${REPO}/git/${ref}" >/dev/null 2>&1; then
-              echo "already gone: ${ref}"
             else
-              echo "::error::could not delete ${ref} — it is still there"
-              failed=1
+              # Not a verdict. A DELETE can report failure on a ref that is gone
+              # (5xx, rate limit, a concurrent re-run), and the check below is
+              # what actually decides. Reading the exit status as proof is how
+              # the original bug survived for two weeks.
+              echo "delete call failed for ${ref}; the verification below decides"
             fi
           done
 
-          # State it as a check rather than a hope, the way the publish guard
-          # does: nothing matching this pull request may survive the sweep.
+          # The single authority on whether the sweep worked. Note the same
+          # prefix-matching trap as above: this is anchored, because GET on
+          # git/refs/<ref> prefix-matches too — a probe for pr-5 answers for
+          # pr-53's refs — which is why no per-ref GET decides anything here.
           remaining="$(
             gh api "repos/${REPO}/git/matching-refs/tags/preview/pr-${PR_NUMBER}" --jq '.[].ref' 2>/dev/null |
               grep -E "^refs/tags/preview/pr-${PR_NUMBER}(-[0-9a-f]+)?\$" || true
@@ -230,7 +232,7 @@ jobs:
             echo "${remaining}"
             exit 1
           fi
-          ((failed == 0))
+          echo "Verified: no preview ref for PR ${PR_NUMBER} remains."
 
       # The PR head commit outlives the branch (GitHub keeps refs/pull/<N>/head), and it is
       # the copy of pr-comment that wrote the comment.
