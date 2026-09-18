@@ -2221,11 +2221,17 @@ PLAN_ONLY_HEAD="$(_capture_plan_only_head)"
 # Everything up to and including the Plan time row — the part that must be
 # a prefix of every rendering. The footer ([Job log]) follows the table and
 # is what the blocks are inserted BEFORE, so it is excluded from the prefix.
-PLAN_ONLY_TABLE_PREFIX="$(printf '%s' "${PLAN_ONLY_HEAD}" | sed -n '1,/| Plan time |/p')"
+# The heading is deliberately NOT part of the prefix: it names what the
+# environment did, so it reads "Terraform summary" once an operation has run
+# and "Terraform validation summary" when none has. That a plan-only
+# environment keeps the original heading byte for byte is asserted separately,
+# by the head-title tests. Everything from the table header down to the Plan
+# time row is what must be identical.
+PLAN_ONLY_TABLE_PREFIX="$(printf '%s' "${PLAN_ONLY_HEAD}" | sed -n '2,/| Plan time |/p')"
 
 # C1b: with every block present, the plan-only table is a strict PREFIX.
 assert_plan_only_is_strict_prefix() {
-  local head="${3}"
+  local head; head="$(printf '%s' "${3}" | tail -n +2)"
   if [[ "${head}" != "${PLAN_ONLY_TABLE_PREFIX}"* ]]; then
     echo "  head-summary: plan-only table (through Plan time) is NOT a prefix of the full rendering"
     diff <(printf '%s' "${PLAN_ONLY_TABLE_PREFIX}") <(printf '%s' "${head}" | head -n "$(printf '%s\n' "${PLAN_ONLY_TABLE_PREFIX}" | wc -l)") | sed 's/^/    /'
@@ -2723,6 +2729,37 @@ assert_title_mutating() {
 reset_defaults
 export input_goals_json='["all","apply-on-pr"]'
 run_test "Head title: an env that applies on PR drops the word 'validation'" assert_title_mutating
+
+# The case a real nightly hit: goal is plain `apply` (not apply-on-pr), so the
+# goals say nothing, but the run applied and the Apply rows are right there.
+assert_title_applied_without_on_pr_goal() {
+  local head; head="$(body_of head-summary)"
+  local fails=""
+  [[ "${head}" == '### Terraform summary for environment: `dev`'* ]] ||
+    fails+="  title: got $(printf '%s' "${head}" | head -n1)\n"
+  [[ "${head}" == *'| Apply |'* ]] || fails+="  expected an Apply row in the same table\n"
+  [[ "${head}" != *'| Mode |'* ]] || fails+="  Mode row is about mutating on PR — it must stay absent here\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_goals_json='["init","plan","apply"]'
+export input_status_apply="success"; export input_apply_completed="true"
+export input_apply_count_total="0"; export input_apply_count_add="0"
+export input_apply_count_change="0"; export input_apply_count_destroy="0"
+run_test "Head title: an apply that ran drops 'validation' even without apply-on-pr" assert_title_applied_without_on_pr_goal
+
+# A skipped operation must not flip the title — that is the P30 rule again.
+assert_title_skipped_apply_stays_validation() {
+  local head; head="$(body_of head-summary)"
+  [[ "${head}" == '### Terraform validation summary for environment: `dev`'* ]] ||
+    { echo "  a skipped apply must leave the title alone; got: $(printf '%s' "${head}" | head -n1)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_goals_json='["init","plan","apply"]'
+export input_status_apply="skipped"
+run_test "Head title: a skipped apply leaves 'validation summary' in place (P30)" assert_title_skipped_apply_stays_validation
 
 assert_title_destroy_only() {
   local head; head="$(body_of head-summary)"

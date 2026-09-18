@@ -198,14 +198,24 @@ function _render_destroy_block {
 function render_head_summary {
   local job_url="${1}"
 
-  # "Validation summary" is the wrong word for an environment that also mutates
-  # infrastructure on the pull request — it validated AND applied AND destroyed.
+  # "Validation summary" is the wrong word for a table that also reports an
+  # apply and a destroy. Two signals, because they cover different moments:
+  #
+  #   - an operation actually ran in THIS run (the same _op_ran gate the blocks
+  #     use, so the title can never contradict the rows below it). This is what
+  #     catches an environment with the plain `apply` goal on push or schedule,
+  #     whose job summary otherwise said "validation summary" over an Apply row;
+  #   - failing that, the goals say it mutates on pull request — true before any
+  #     operation has run, which is what the seeded placeholder needs.
+  #
   # Plan-only environments keep the original title byte for byte; that is the
-  # invariant this feature is built on (§2, test C1). "Run summary" is taken:
-  # it titles the run-page rollup.
+  # invariant this feature is built on (§2, test C1). "Run summary" is taken: it
+  # titles the run-page rollup.
   _parse_on_pr_goals
   local head_title="Terraform validation summary"
-  if [ -n "${GOALS_APPLY_ON_PR}" ] || [ -n "${GOALS_DESTROY_ON_PR}" ]; then
+  if _op_ran "${input_status_apply:-}" || _op_ran "${input_status_destroy_plan:-}" ||
+    _op_ran "${input_status_destroy:-}" ||
+    [ -n "${GOALS_APPLY_ON_PR}" ] || [ -n "${GOALS_DESTROY_ON_PR}" ]; then
     head_title="Terraform summary"
   fi
 
