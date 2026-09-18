@@ -909,6 +909,7 @@ Pinned against the legacy action's output **before** conversion (P23).
 | F5 | must | gate ordering | assert the three new `🧐` steps appear **after** `upsert-head-apply` in the workflow's step list (P1). A structural grep, not a behavioural test — but P1 is the defect most likely to be reintroduced by a later refactor |
 | F6 | must | no inline bodies anywhere | assert no workflow in `.github/workflows/` passes a comment body through `${{ steps.*.outputs.* }}`; every `pr-comment` upsert uses `body-file:` |
 | F7 | could | golden file | full head + four tag bodies for one representative env |
+| F7 | must | every `with:` key a workflow passes is declared by the action or reusable workflow it calls, and every required input without a default is passed | GitHub enforces neither: an unknown key is a run-time warning nobody reads, and a missing required input arrives as an empty string. Both had already happened — an undeclared `apply-count-import`, and a `status-verify-lock` omission that rendered `<kbd></kbd>` in every module repo's comment |
 
 ### 10.10 What cannot be covered by tests
 
