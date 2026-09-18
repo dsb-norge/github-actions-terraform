@@ -1,0 +1,14 @@
+Test result for file: main.tftest.hcl
+overall result: failure
+exit code: -1
+ 
+output: 
+Test: "basic_create" -----> "pass" ✅ 
+Test: "basic_update" -----> "error" ❌ 
+See error details below: 
+  
+  | File: "tests/main.tftest.hcl"
+  | Resource: "azurerm_thing.x"
+  | Message: "Invalid value for variable"
+  
+==================== Test summary for file: "Failure! 1 passed, 1 failed." ====================

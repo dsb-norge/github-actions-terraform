@@ -1,0 +1,252 @@
+name: "PR preview ref"
+#
+# Zero-ritual testing of a pull request from a calling repo. Every same-repo PR gets a
+# `preview/pr-<N>` tag pointing at a GENERATED, DETACHED commit: the PR's tree with every
+# internal `uses: dsb-norge/github-actions-terraform/...@<ref>` rewritten to the immutable
+# per-push tag `preview/pr-<N>-<sha7>`, which points at that same commit — so the reusable
+# workflows and the composite actions resolve through one ref, self-consistently. The PR
+# branch is never touched and nothing generated ever lands on main. A sticky comment carries
+# the copy-paste line, the moving tag follows every push, and everything is deleted when the
+# PR closes.
+#
+# Spec: docs/Preview-refs.md. Rewrite and guard scope: .github/scripts/rewrite-internal-refs.sh.
+#
+# TOKEN: pushing a ref whose tree contains modified workflow files needs the `workflows`
+# permission, which GITHUB_TOKEN cannot be granted. The push uses a GitHub App installation
+# token — repository variable PREVIEW_APP_ID + secret PREVIEW_APP_PRIVATE_KEY (spec §5). Until
+# both exist the preview is unavailable and the sticky comment says so.
+#
+# Fork PRs are skipped: their runs get no secrets, and a maintainer can publish for a fork by
+# hand (docs/Development-and-release.md → fallback).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+# A close arriving while a publish for a late push is still running cancels that publish.
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  publish-preview:
+    name: "🏷️ Publish preview ref"
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout only — the tag push uses the App token
+      pull-requests: write # sticky comment
+    steps:
+      - name: "📥 Checkout PR head"
+        uses: actions/checkout@v6
+        with:
+          # The head, not the merge commit: the generated commit's parent must be the PR head
+          # so provenance is one `git log` away and does not move when main moves.
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # A broken rewriter must not publish. Offline, sub-second.
+      - name: "🧪 Self-test the rewrite script"
+        run: bash .github/scripts/test-rewrite-internal-refs.sh
+
+      - name: "🎫 Mint App token"
+        id: app-token
+        if: vars.PREVIEW_APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.PREVIEW_APP_ID }}
+          private-key: ${{ secrets.PREVIEW_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      - name: "🏗️ Build preview commit and push tags"
+        id: preview
+        if: steps.app-token.outcome == 'success'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          preview_ref="preview/pr-${PR_NUMBER}"
+          # Internal refs name the IMMUTABLE tag, never the moving one: a calling run resolves
+          # `uses:` at each job's Set up job, so a rebuild landing between two jobs of one run
+          # would otherwise serve that run two different engines. Spec §4.2.
+          pinned_ref="${preview_ref}-${HEAD_SHA:0:7}"
+
+          bash .github/scripts/rewrite-internal-refs.sh "${pinned_ref}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Detached generated commit: parent = the PR head, tree = the rewritten working
+          # tree. No branch points at it; the PR branch is never modified.
+          git add -A
+          tree="$(git write-tree)"
+          commit="$(git commit-tree "${tree}" -p "${HEAD_SHA}" \
+            -m "preview: ${pinned_ref} (generated from ${HEAD_SHA}, internal refs rewritten)")"
+
+          git tag -f "${pinned_ref}" "${commit}"
+          git tag -f "${preview_ref}" "${commit}"
+
+          # Guard (spec §3.3): every internal ref in the published tree names the pinned tag,
+          # the pinned tag is this commit, and the parent is the PR head. The path list comes
+          # from the script, so the rewrite and the check cannot disagree about scope.
+          mapfile -t files < <(bash .github/scripts/rewrite-internal-refs.sh --list-files)
+          bad_refs="$(git grep -hoE 'uses:[[:space:]]+dsb-norge/github-actions-terraform(/[^@[:space:]]*)?@[^[:space:]]+' \
+            "${commit}" -- "${files[@]}" | grep -vE "@${pinned_ref}\$" || true)"
+          if [[ -n "${bad_refs}" ]]; then
+            echo "::error::preview commit ${commit} has internal refs not pinned to ${pinned_ref}:"
+            echo "${bad_refs}"
+            exit 1
+          fi
+          if [[ "$(git rev-parse "${pinned_ref}^{commit}")" != "${commit}" ]]; then
+            echo "::error::${pinned_ref} does not resolve to the published commit ${commit}"
+            exit 1
+          fi
+          if [[ "$(git rev-parse "${commit}^")" != "${HEAD_SHA}" ]]; then
+            echo "::error::parent of ${commit} is not the PR head ${HEAD_SHA}"
+            exit 1
+          fi
+          echo "Guard: every internal ref in ${commit} names ${pinned_ref}, which is ${commit}; parent is ${HEAD_SHA}."
+
+          # --force is right here: the moving tag is meant to move, and the pinned one is a
+          # deterministic function of the head SHA (a re-run only refreshes its timestamp).
+          git push --force "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git" \
+            "refs/tags/${preview_ref}" "refs/tags/${pinned_ref}"
+
+          {
+            echo "preview-ref=${preview_ref}"
+            echo "pinned-ref=${pinned_ref}"
+            echo "preview-commit=${commit}"
+            echo "published=true"
+          } >>"${GITHUB_OUTPUT}"
+          echo "Published ${preview_ref} and ${pinned_ref} -> ${commit} (parent ${HEAD_SHA})"
+
+      - name: "📝 Compose sticky comment"
+        id: compose
+        env:
+          PUBLISHED: ${{ steps.preview.outputs.published }}
+          PREVIEW_REF: ${{ steps.preview.outputs.preview-ref }}
+          PINNED_REF: ${{ steps.preview.outputs.pinned-ref }}
+          PREVIEW_COMMIT: ${{ steps.preview.outputs.preview-commit }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          body_file="${RUNNER_TEMP}/preview-comment.md"
+          if [[ "${PUBLISHED}" != "true" ]]; then
+            cat >"${body_file}" <<'MD'
+          ### 🧪 Preview ref: unavailable (bootstrap)
+
+          Publishing a preview tag pushes rewritten workflow files, which needs a GitHub App with `workflows: write` — `GITHUB_TOKEN` cannot do it. Configure the repository variable `PREVIEW_APP_ID` and secret `PREVIEW_APP_PRIVATE_KEY` (`docs/Preview-refs.md` §5) and re-run this workflow; every PR then gets a `preview/pr-<N>` ref here automatically.
+          MD
+          else
+            cat >"${body_file}" <<MD
+          ### 🧪 Preview refs for this PR
+
+          | Ref | Moves | Use it for |
+          |---|:---:|---|
+          | \`${PREVIEW_REF}\` | on every push | quick try from a calling repo — edit the calling workflow once |
+          | \`${PINNED_REF}\` | never | anything longer than one job — a rebuild mid-run cannot change it under you |
+
+          ~~~yaml
+          jobs:
+            ci-cd:
+              # TODO revert to '@v0'
+              uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@${PREVIEW_REF}
+          ~~~
+
+          Built from \`${HEAD_SHA:0:7}\` → generated commit \`${PREVIEW_COMMIT:0:7}\`. The same ref serves \`terraform-module-ci.yaml\`, \`terraform-module-release.yaml\` and every composite action. Every push adds a \`${PREVIEW_REF}-<sha>\`; all are deleted when this PR closes — pin for validation, never for production.
+          MD
+          fi
+          cat "${body_file}" >>"${GITHUB_STEP_SUMMARY}"
+          echo "body-file=${body_file}" >>"${GITHUB_OUTPUT}"
+
+      - name: "💬 Upsert sticky comment"
+        uses: ./pr-comment
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- gat:preview-ref -->"
+          body-file: ${{ steps.compose.outputs.body-file }}
+
+  cleanup-preview:
+    name: "🧹 Delete preview refs"
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # delete the tags — a ref delete pushes no workflow content, so GITHUB_TOKEN may
+      pull-requests: write # drop the sticky comment
+    steps:
+      - name: "🧹 Delete preview/pr-<N>* tags"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Every push published an immutable preview/pr-<N>-<sha7> next to the moving
+          # preview/pr-<N>; sweep the whole family. matching-refs is a PREFIX match — pr-5
+          # also lists pr-53* — so anchor on the exact number before deleting anything.
+          mapfile -t refs < <(
+            gh api "repos/${REPO}/git/matching-refs/tags/preview/pr-${PR_NUMBER}" --jq '.[].ref' |
+              grep -E "^refs/tags/preview/pr-${PR_NUMBER}(-[0-9a-f]+)?\$" || true
+          )
+          if ((${#refs[@]} == 0)); then
+            echo "no preview refs for PR ${PR_NUMBER} (already absent)"
+          fi
+          for ref in "${refs[@]}"; do
+            # DELETE /repos/{owner}/{repo}/git/refs/{ref}. The listed ref already
+            # starts with 'refs/', so it is appended whole: stripping that prefix
+            # addresses git/tags/<name>, the tag-OBJECT endpoint, which 404s for a
+            # lightweight tag. That is what this step did until 2026-09-17, and
+            # because the failure was swallowed with a cheerful "(already gone?)"
+            # the job stayed green while every tag it was meant to sweep survived.
+            if gh api -X DELETE "repos/${REPO}/git/${ref}" >/dev/null 2>&1; then
+              echo "deleted ${ref}"
+            else
+              # Not a verdict. A DELETE can report failure on a ref that is gone
+              # (5xx, rate limit, a concurrent re-run), and the check below is
+              # what actually decides. Reading the exit status as proof is how
+              # the original bug survived for two weeks.
+              echo "delete call failed for ${ref}; the verification below decides"
+            fi
+          done
+
+          # The single authority on whether the sweep worked. Note the same
+          # prefix-matching trap as above: this is anchored, because GET on
+          # git/refs/<ref> prefix-matches too — a probe for pr-5 answers for
+          # pr-53's refs — which is why no per-ref GET decides anything here.
+          remaining="$(
+            gh api "repos/${REPO}/git/matching-refs/tags/preview/pr-${PR_NUMBER}" --jq '.[].ref' 2>/dev/null |
+              grep -E "^refs/tags/preview/pr-${PR_NUMBER}(-[0-9a-f]+)?\$" || true
+          )"
+          if [[ -n "${remaining}" ]]; then
+            echo "::error::preview refs survived the sweep for PR ${PR_NUMBER}:"
+            echo "${remaining}"
+            exit 1
+          fi
+          echo "Verified: no preview ref for PR ${PR_NUMBER} remains."
+
+      # The PR head commit outlives the branch (GitHub keeps refs/pull/<N>/head), and it is
+      # the copy of pr-comment that wrote the comment.
+      - name: "📥 Checkout PR head (for pr-comment)"
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: "💬 Delete sticky comment"
+        uses: ./pr-comment
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- gat:preview-ref -->"

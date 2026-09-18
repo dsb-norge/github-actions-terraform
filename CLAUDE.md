@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A collection of composite GitHub Actions and reusable workflows for terraform projects used by other DSB repositories. The two main consumption points are:
 
-- **`.github/workflows/terraform-ci-cd-default.yml`** — the reusable CI/CD workflow that orchestrates init → fmt → validate → lint → plan → apply with a `📊` PR comment summary and optional `🔒` lock file verification and PR auto-merge.
+- **`.github/workflows/terraform-ci-cd-default.yml`** — the reusable CI/CD workflow that orchestrates init → fmt → validate → lint → plan → apply (→ destroy-plan → destroy) with a `📊` PR comment summary, per-operation tag comments, a per-env `$GITHUB_STEP_SUMMARY` block plus a run-level rollup, and optional `🔒` lock file verification and PR auto-merge. The PR-comment model is `docs/Workflow-pr-comments.md`; apply/destroy reporting and its 29 indexed pitfalls are `docs/Apply-and-destroy-reporting.md`.
 - **Composite actions** in top-level directories (e.g. `terraform-init/`, `terraform-plan/`, `verify-terraform-lock/`, `create-validation-summary/`, …).
 
 Calling repos pin against either the rolling major tag (`@v0`) or a specific minor (`@v0.21`). The major tag is force-moved on every minor release, so changes shipped on `@v0` are immediately picked up by all calling repos — be mindful when touching anything in here.
@@ -32,11 +32,13 @@ Validation steps (init, fmt, validate, lint, plan, verify-lock) all use the same
 2. Its outcome is forwarded to `create-validation-summary` which posts a 📊 PR comment row.
 3. A separate `🧐 Validation outcome: <step>` step later in the job hard-fails on non-success, respecting `matrix.vars.allow-failing-terraform-operations` via `continue-on-error: ${{ fromJSON(...) }}`.
 
-When adding a new validation step, follow all three pieces. The validation-summary action's status inputs are all `required: true` — add a new one alongside `status-init`, `status-fmt`, etc.
+When adding a new validation step, follow all three pieces. The six original `status-*` inputs of `create-validation-summary` are `required: true`; the operation-block inputs added for apply / destroy-plan / destroy (`status-apply`, `apply-count-*`, …) are optional, default to an "absent" sentinel, and **gate their rows on being non-empty** — an environment that runs no mutating stage must render byte-identical to before (test C1). Follow that second pattern for anything not every environment produces.
+
+The three mutating steps have their own gates, placed **after** the phase-2 comment steps, not before: a gate exits 1 and would otherwise skip the render for exactly the failed apply the phase exists to report. Full ordering and rationale: `docs/Apply-and-destroy-reporting.md` §7.5 (P1); a structural test in `evaluate-automerge-eligibility/run_all_tests.sh` asserts it.
 
 ### Two flavors of action layout
 
-Modern actions follow `docs/Action-implementation-guide.md` strictly — see `verify-terraform-lock/`, `create-validation-summary/`, `capture-matrix-job-meta/`, `parse-terraform-plan/` as reference implementations. Layout:
+Modern actions follow `docs/Action-implementation-guide.md` strictly — see `verify-terraform-lock/`, `create-validation-summary/`, `capture-matrix-job-meta/`, `parse-terraform-plan/`, `parse-terraform-apply/`, `annotate-terraform-outcome/`, `create-run-summary/` as reference implementations. `create-test-report/` is the worked example of converting a legacy action safely: pin the legacy output as golden fixtures in one commit, convert in the next, goldens untouched. Layout:
 
 ```
 my-action/
@@ -77,6 +79,11 @@ Under `set -o allexport`, any shell variable holding large data (file contents, 
 - `gh api` responses — write the response to `mktemp`, then `jq` reads it (`aggregate-validation-summaries/step_aggregate.sh`, both `_resolve_per_env_job_urls` and `list_pr_state`).
 - Large JSON merge — `jq --slurpfile` (not `--argjson`, which puts the JSON on argv) and dereference with `[0]` (`capture-matrix-job-meta/step_capture.sh`).
 - Large gh CLI inputs — heredoc the body into a tempfile, post via `gh api -F body=@<tempfile>` (`pr-comment/action.yml`).
+- Comment bodies — never a step output. `create-validation-summary` publishes every body as a **file path** (`head-summary-file`, `plan-extract-file`, …) and `pr-comment` takes `body-file`. A string output enters the steps context, from there the metadata artifact, and from there envp via `toJSON(steps)`. `capture-matrix-job-meta` additionally caps every captured output at 4 KiB so the next unexpectedly large one degrades the artifact instead of killing the job.
+
+Two related traps in step scripts, hit three times in one change: `$(…)` runs in a subshell, so a function that sets a global for its caller loses it, and the substitution strips trailing newlines. Redirect to a file instead when you need both. `docs/Action-implementation-guide.md` → "Command substitution traps".
+
+Test harnesses must mirror their shim: a suite that `export`s a large input the production shim keeps shell-local will E2BIG the step's own `jq` on a big fixture and test the harness, not the step.
 
 ### PRs are gated by per-action test suites
 
@@ -102,16 +109,16 @@ python3 -c "import json; json.load(open('<path-to>.json'))"
 
 `create-tf-vars-matrix` has a modern `run_all_tests.sh` (helper unit tests + fixture-driven runs of the step source extracted from `action.yml` by `extract_step_source.py`) and is enrolled in CI like every other action. The older `test_action_source.sh` harness is a known-flaky direct-invocation harness that requires a real tty and may fail on pristine main — it is kept for manual debugging only and CI does not run it.
 
-## Development workflow (see `docs/Development-and-release.md` for full procedure)
+## Development workflow (see `docs/Development-and-release.md` and `docs/Preview-refs.md`)
 
-To test changes from a calling repo, the documented "dev-tag swap" flow is mandatory:
+To test changes from a calling repo, use the PR's **preview ref**. There is no dev-tag swap any more:
 
-1. **Rewrite `@v0` refs** in all `dsb-norge/github-actions-terraform/...@v0` lines in this repo to `@<your-feature-tag>`, with a `# TODO revert to @v0` marker above each — there's a documented vscode regex pattern for both the swap and the revert.
-2. **Commit on a feature branch**, push, then `git tag -f -a '<tag>' && git push -f origin 'refs/tags/<tag>'`. Re-tag and force-push each time you push more commits.
-3. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@<tag>`.
-4. **Before merge**: delete the dev tag locally and on origin, and revert all `@<tag>` refs back to `@v0` using the second documented regex.
+1. Open a (draft) PR. `.github/workflows/pr-preview.yml` publishes two tags on every push — `preview/pr-<N>` (moving) and `preview/pr-<N>-<sha7>` (immutable) — pointing at a generated, detached commit whose internal `uses: dsb-norge/github-actions-terraform/...@v0` refs are rewritten to the immutable tag. A sticky `🧪 Preview refs for this PR` comment carries the copy-paste line.
+2. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>`, with `# TODO revert to '@v0'` above it. The same ref serves every composite action.
+3. **Never commit a ref rewrite to the PR branch** — it keeps saying `@v0`. A branch that still carries an old-style swap commit (`@<tag>` refs with `# TODO revert to @v0` markers) should drop that commit; the preview publishes correctly either way.
+4. Closing or merging the PR deletes the tags and the comment.
 
-Branch + tag may share a name. To disambiguate locally, use `refs/heads/<name>` and `refs/tags/<name>` explicitly with `git push`.
+If the comment says *unavailable (bootstrap)*, the repository variable `PREVIEW_APP_ID` / secret `PREVIEW_APP_PRIVATE_KEY` are missing — `docs/Preview-refs.md` §5 has the one-time App setup. Fallback for fork PRs: `bash .github/scripts/rewrite-internal-refs.sh <ref>`, commit, tag and push by hand (Development-and-release.md → "Fallback: publishing by hand"), and revert with the same script and `v0` before merge.
 
 ## Release process (see `docs/Development-and-release.md`)
 

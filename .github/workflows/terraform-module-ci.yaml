@@ -199,16 +199,30 @@ jobs:
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
+          # Both required, and neither applies to a module: 'N/A' is how this
+          # action is told so. Omitting status-verify-lock rendered the Lock
+          # file row as an empty <kbd></kbd> badge in every module repo's
+          # comment — GitHub does not enforce a composite action's required
+          # inputs, so nothing complained.
+          status-verify-lock: "N/A"
           status-plan: "N/A"
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      - name: 🏷️ Add validation summary as pull request comment
+      # Marker-based upsert, PATCHed in place across runs — see the test
+      # report comment below for the rationale. Only the head body is posted:
+      # a module has no plan, so the plan body this action also renders is
+      # always 'Plan not available' and was noise in the comment.
+      - name: 🏷️ Upsert validation summary as pull request comment
         id: validation-summary-on-pr
         if: steps.create-validation-summary.outcome == 'success'
-        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
-          pr-comment-text: ${{ steps.create-validation-summary.outputs.summary }}
-          delete-comments-starting-with: ${{ steps.create-validation-summary.outputs.prefix }}
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:head:module -->"
+          body-file: ${{ steps.create-validation-summary.outputs.head-summary-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "🧐 Validation outcome: ⚙️ Init"
@@ -305,13 +319,26 @@ jobs:
           test-file: ${{ matrix.test-file }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
 
-      - name: 🏷️ Add validation summary as pull request comment
-        id: validation-summary-on-pr
+      # Marker-based upsert: the comment for a given test file is PATCHed in
+      # place across runs, so it keeps its position in the conversation and
+      # subscribers are not re-notified on every push. The previous
+      # delete-by-prefix flow re-POSTed it each run. The body travels as a
+      # file path, never as a step output — see
+      # docs/Apply-and-destroy-reporting.md §7.15.
+      #
+      # As before, a comment for a test file that is later deleted from the
+      # repository is not cleaned up — there is no seed/GC pass here.
+      - name: 🏷️ Upsert test report as pull request comment
+        id: test-report-on-pr
         if: steps.create-test-report.outcome == 'success'
-        uses: dsb-norge/github-actions/ci-cd/comment-on-pr@v2
+        uses: dsb-norge/github-actions-terraform/pr-comment@v0
         with:
-          pr-comment-text: ${{ steps.create-test-report.outputs.summary }}
-          delete-comments-starting-with: ${{ steps.create-test-report.outputs.prefix }}
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: "<!-- tf:head:test:${{ matrix.test-file }} -->"
+          body-file: ${{ steps.create-test-report.outputs.body-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "🧐 Validation outcome: ⚙️ Init"

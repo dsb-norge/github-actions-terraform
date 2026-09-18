@@ -3,10 +3,17 @@
 # Source for the create-validation-summary step
 #
 # Renders the per-env head and plan-extract bodies for a single environment's
-# matrix run. Emitted as two outputs so the caller workflow can post them as
-# two separate PR comments: a stable "head" (PATCHed in place across runs,
-# pre-allocated by the seed job) and a run-scoped "plan tag" (GC'd at next
-# run's seed and re-POSTed).
+# matrix run. Each body is written to a file under RUNNER_TEMP and the PATH
+# is published as an output, so the caller workflow can post them as two
+# separate PR comments via pr-comment's body-file input: a stable "head"
+# (PATCHed in place across runs, pre-allocated by the seed job) and a
+# run-scoped "plan tag" (GC'd at next run's seed and re-POSTed).
+#
+# The bodies themselves are never step outputs. A step output enters the
+# steps context, which capture-matrix-job-meta serialises wholesale into the
+# metadata artifact — ~65k per body per env, read by three downstream jobs
+# that never look at it — and it is the last place a 65k string could reach
+# envp via toJSON(steps). See docs/Apply-and-destroy-reporting.md §7.10.
 #
 # See docs/Workflow-pr-comments.md for the model.
 #
@@ -33,12 +40,52 @@
 #   input_plan_time            - Wall-clock duration of 'terraform plan' formatted as mm:ss (defaults to 'N/A')
 #   input_warning_count        - Total warning count across init+validate+plan (numeric; 0/missing/'?' suppresses the row + collapser)
 #   input_warnings_markdown_file - Path to rendered warnings markdown; appended as a sibling <details> after the plan-block when non-empty
+#   input_status_apply / input_status_destroy_plan / input_status_destroy
+#                              - Outcomes of the mutating steps. Non-empty gates
+#                                that operation's four-row block; empty (the
+#                                default) renders nothing — a plan-only env's
+#                                table is a strict prefix of the full one.
+#   input_apply_time / input_destroy_plan_time / input_destroy_time
+#                              - mm:ss per operation ('N/A' = em-dash)
+#   input_apply_count_{add,change,destroy,total}, input_apply_completed
+#                              - From parse-terraform-apply on the apply console
+#   input_destroy_plan_count_{add,change,destroy,import,move,remove,total}
+#                              - From parse-terraform-plan on the destroy plan
+#   input_destroy_count_{destroy,total}, input_destroy_completed
+#                              - From parse-terraform-apply on the destroy console
+#   input_{apply,destroy_plan,destroy}_warning_count
+#                              - One count per operation block (never summed)
+#   input_goals_json           - JSON array of the env's goals. 'apply-on-pr' /
+#                                'destroy-on-pr' drive the Mode row and the
+#                                plan-tag banner; anything malformed is ignored.
+#   input_apply_console_file / input_destroy_console_file
+#                              - Tick-filtered consoles (parse-terraform-apply's
+#                                filtered-console-file) for the apply / destroy
+#                                tag bodies
+#   input_destroy_plan_console_file / input_destroy_plan_txt_output_file
+#                              - The destroy plan's console / 'terraform show'
+#                                text, as for the plan
+#   input_apply_extract_include_outputs
+#                              - 'true' keeps the Outputs section in the apply /
+#                                destroy bodies; default strips it (P3)
+#   input_{apply,destroy_plan,destroy}_warnings_markdown_file
+#                              - Warning bodies for the three tag comments
+#   input_{apply,destroy_plan,destroy}_tag_comment_id
+#                              - Comment ids of the three tags, for the Links row
 #   input_job_check_run_id     - The check run ID for the current job
+#   input_output_file_suffix   - Optional. Appended (after a '-') to every body
+#                                file name. The workflow invokes this action
+#                                several times per job; without a distinct
+#                                suffix a later invocation overwrites the file
+#                                an earlier step's output still points at, and
+#                                the head-upsert fallback silently posts the
+#                                wrong body (docs/Apply-and-destroy-reporting.md P12).
 #
 # Standard GitHub environment variables used:
 #   GITHUB_SERVER_URL  - GitHub server URL
 #   GITHUB_REPOSITORY  - Repository owner/name
 #   GITHUB_RUN_ID      - Workflow run ID
+#   RUNNER_TEMP        - Where the body files are written (falls back to /tmp)
 #
 
 set +o nounset # allow unset variables (graceful handling of defaults)
@@ -51,10 +98,19 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # ============================================================================
 #
 # Body shape:
-#   ### Terraform validation summary for environment: `<env>`
+#   ### Terraform [validation ]summary for environment: `<env>`   (see render_head_summary)
 #   <validation table — ungrouped mode only>
 #   <blank>
 #   [Job log](<url>)
+#
+# Table row order (docs/Apply-and-destroy-reporting.md §8.1): the plan
+# block as it always was — steps, Warnings, Plan details, Plan time — then
+# one four-row block per mutating operation in the order the job runs them
+# (apply, destroy-plan, destroy), each block status · warnings · details ·
+# time, and Links last. Every operation block is gated on its status input
+# naming a step that RAN (non-empty and not 'skipped'), so a plan-only
+# environment renders exactly the table it rendered before these rows
+# existed, byte for byte.
 #
 # In grouped mode (input_pr_comment_group non-empty), the validation table
 # is omitted — it lives on the per-group head posted by
@@ -69,10 +125,108 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # adaptation; (2) the header shape and footer scope differ. See
 # docs/Workflow-pr-comments.md §5.1/§5.3.
 
+# ---- Operation blocks -------------------------------------------------------
+# Each returns zero or more table rows, each row PREFIXED with a newline so
+# the caller can append them straight after the Plan time row. Empty output
+# when the block's status input is empty.
+
+# Apply block: 🐙 Apply · ⚠️ Apply warnings · 📊 Apply details · ⏱ Apply time.
+# Details are applied/planned: numerators from parse-terraform-apply,
+# denominators from parse-terraform-plan. Only the three badges terraform's
+# apply summary has — no move/import/remove (§8.3).
+function _render_apply_block {
+  _op_ran "${input_status_apply:-}" || return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "🐙" "Apply") | Apply | $(format-status "${input_status_apply}") |"
+  if _is_positive_int "${input_apply_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Apply warnings") | Apply warnings | <span title=\"Warnings from apply\">⚠️ ${input_apply_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Apply details") | Apply details | <div align=\"left\">"
+  out+="$(_render_ratio_badge "💫" "${input_apply_count_add:-}" "${input_plan_count_add:-}" "added" "${input_apply_completed:-}")"
+  out+="<br>$(_render_ratio_badge "🛠️" "${input_apply_count_change:-}" "${input_plan_count_change:-}" "changed" "${input_apply_completed:-}")"
+  out+="<br>$(_render_ratio_badge "💥" "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "destroyed" "${input_apply_completed:-}")"
+  # Same non-zero rule as the Plan details row's extra kinds, same 📥 badge.
+  if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import:-0}" -ne 0 ]; then
+    out+="<br>$(_render_ratio_badge "📥" "${input_apply_count_import}" "${input_plan_count_import:-}" "imported" "${input_apply_completed:-}")"
+  fi
+  out+="</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Apply time") | Apply time | $(_render_time_cell "${input_apply_time:-}") |"
+  printf '%s' "${out}"
+}
+
+# Destroy plan block: ☠📖 Destroy plan · ⚠️ · 📊 Destroy plan details · ⏱.
+# A destroy plan is a plan, so its details cell is the plan badge set with
+# the plan's present-tense verbs, optional move/import/remove included —
+# the same cell shape as Plan details, byte for byte.
+function _render_destroy_plan_block {
+  _op_ran "${input_status_destroy_plan:-}" || return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "☠📖" "Destroy plan") | Destroy plan | $(format-status "${input_status_destroy_plan}") |"
+  if _is_positive_int "${input_destroy_plan_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Destroy plan warnings") | Destroy plan warnings | <span title=\"Warnings from destroy-plan\">⚠️ ${input_destroy_plan_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Destroy plan details") | Destroy plan details | <div align=\"left\"><span title=\"Resources to be added\">\`💫 ${input_destroy_plan_count_add:-N/A}\` add</span><br><span title=\"Resources to be changed\">\`🛠️ ${input_destroy_plan_count_change:-N/A}\` change</span><br><span title=\"Resources to be destroyed\">\`💥 ${input_destroy_plan_count_destroy:-N/A}\` destroy</span>"
+  if [ -n "${input_destroy_plan_count_move:-}" ] && [ "${input_destroy_plan_count_move}" != '0' ] && [ "${input_destroy_plan_count_move}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be moved\">\`🔀 ${input_destroy_plan_count_move}\` move</span>"
+  fi
+  if [ -n "${input_destroy_plan_count_import:-}" ] && [ "${input_destroy_plan_count_import}" != '0' ] && [ "${input_destroy_plan_count_import}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be imported\">\`📥 ${input_destroy_plan_count_import}\` import</span>"
+  fi
+  if [ -n "${input_destroy_plan_count_remove:-}" ] && [ "${input_destroy_plan_count_remove}" != '0' ] && [ "${input_destroy_plan_count_remove}" != 'N/A' ]; then
+    out+="<br><span title=\"Resources to be removed\">\`⛓️‍💥 ${input_destroy_plan_count_remove}\` remove</span>"
+  fi
+  out+="</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Destroy plan time") | Destroy plan time | $(_render_time_cell "${input_destroy_plan_time:-}") |"
+  printf '%s' "${out}"
+}
+
+# Destroy block: ☠ Destroy · ⚠️ · 📊 Destroy details · ⏱. Details are a
+# single destroyed/planned badge, the denominator being the destroy plan's
+# destroy count.
+function _render_destroy_block {
+  _op_ran "${input_status_destroy:-}" || return 0
+  local out=""
+  out+=$'\n'"| $(_render_step_icon_cell "☠" "Destroy") | Destroy | $(format-status "${input_status_destroy}") |"
+  if _is_positive_int "${input_destroy_warning_count:-0}"; then
+    out+=$'\n'"| $(_render_step_icon_cell "⚠️" "Destroy warnings") | Destroy warnings | <span title=\"Warnings from destroy\">⚠️ ${input_destroy_warning_count}</span> |"
+  fi
+  out+=$'\n'"| $(_render_step_icon_cell "📊" "Destroy details") | Destroy details | <div align=\"left\">$(_render_ratio_badge "💥" "${input_destroy_count_destroy:-}" "${input_destroy_plan_count_destroy:-}" "destroyed" "${input_destroy_completed:-}")</div> |"
+  out+=$'\n'"| $(_render_step_icon_cell "⏱" "Destroy time") | Destroy time | $(_render_time_cell "${input_destroy_time:-}") |"
+  printf '%s' "${out}"
+}
+
 function render_head_summary {
   local job_url="${1}"
 
-  local head="### Terraform validation summary for environment: \`${input_environment_name}\`"
+  # "Validation summary" is the wrong word for a table that also reports an
+  # apply and a destroy. Two signals, because they cover different moments:
+  #
+  #   - an operation actually ran in THIS run (the same _op_ran gate the blocks
+  #     use, so the title can never contradict the rows below it). This is what
+  #     catches an environment with the plain `apply` goal on push or schedule,
+  #     whose job summary otherwise said "validation summary" over an Apply row;
+  #   - failing that, the goals say it mutates on pull request — true before any
+  #     operation has run, which is what the seeded placeholder needs.
+  #
+  # Plan-only environments keep the original title byte for byte; that is the
+  # invariant this feature is built on (§2, test C1). "Run summary" is taken: it
+  # titles the run-page rollup.
+  _parse_on_pr_goals
+  local head_title="Terraform validation summary"
+  if _op_ran "${input_status_apply:-}" || _op_ran "${input_status_destroy_plan:-}" ||
+    _op_ran "${input_status_destroy:-}" ||
+    [ -n "${GOALS_APPLY_ON_PR}" ] || [ -n "${GOALS_DESTROY_ON_PR}" ]; then
+    head_title="Terraform summary"
+  fi
+
+  local head="### ${head_title} for environment: \`${input_environment_name}\`"
+
+  # Any tag comment id turns the footer link into a Links row.
+  local links_rendered=""
+  if [ -n "${input_plan_tag_comment_id:-}" ] || [ -n "${input_apply_tag_comment_id:-}" ] \
+     || [ -n "${input_destroy_plan_tag_comment_id:-}" ] || [ -n "${input_destroy_tag_comment_id:-}" ]; then
+    links_rendered="true"
+  fi
 
   # Logs go to stderr so they don't pollute the captured stdout when this
   # function is called via $(). Same trick the rest of the action uses for
@@ -82,10 +236,12 @@ function render_head_summary {
   else
     log-info "ungrouped mode — head includes full validation table" 1>&2
 
+    # Mode row first (§8.2) — present only for an env that mutates on PR, so
+    # the plan-only table still starts with Initialization as it always has.
     # don't touch the indenting here
     head="${head}
 |  | Step | Result |
-|:---:|---|---|
+|:---:|---|---|$(_render_mode_row)
 | $(_render_step_icon_cell "⚙️" "Initialization") | Initialization | $(format-status "${input_status_init}") |
 | $(_render_step_icon_cell "🔒" "Lock file") | Lock file | $(format-status "${input_status_verify_lock}") |
 | $(_render_step_icon_cell "🖌" "Format and Style") | Format and Style | $(format-status "${input_status_fmt}") |
@@ -143,21 +299,31 @@ function render_head_summary {
     head="${head}
 | $(_render_step_icon_cell "⏱" "Plan time") | Plan time | ${plan_time_cell} |"
 
-    # Links row — only rendered when the caller supplied
-    # plan-tag-comment-id (typically the id of this run's per-env plan tag,
-    # captured from pr-comment's POST output). Mirrors the per-group head's
-    # Links column (docs/Workflow-pr-comments.md §6.3) so reviewers learn
-    # one navigation pattern.
+    # ---- Operation blocks (§8.1 rows 11-22) ----
+    # Appended after Plan time, before Links; see the header comment.
+    head="${head}$(_render_apply_block)$(_render_destroy_plan_block)$(_render_destroy_block)"
+
+    # Links row — rendered when the caller supplied any tag comment id
+    # (captured from pr-comment's POST outputs). One line per tag in the
+    # order the operations run, then the job log. Mirrors the per-group
+    # head's Links column (docs/Workflow-pr-comments.md §6.3) so reviewers
+    # learn one navigation pattern.
     # When the Links row is rendered, the standalone '[Job log]' footer
     # below the table is dropped — the same link sits inside the cell.
-    if [ -n "${input_plan_tag_comment_id:-}" ]; then
+    if [ -n "${links_rendered}" ]; then
+      local links_cell=""
+      [ -n "${input_plan_tag_comment_id:-}" ]         && links_cell+="[log extract](#issuecomment-${input_plan_tag_comment_id})<br>"
+      [ -n "${input_apply_tag_comment_id:-}" ]        && links_cell+="[apply log](#issuecomment-${input_apply_tag_comment_id})<br>"
+      [ -n "${input_destroy_plan_tag_comment_id:-}" ] && links_cell+="[destroy plan log](#issuecomment-${input_destroy_plan_tag_comment_id})<br>"
+      [ -n "${input_destroy_tag_comment_id:-}" ]      && links_cell+="[destroy log](#issuecomment-${input_destroy_tag_comment_id})<br>"
+      links_cell+="[job log](${job_url})"
       # don't touch the indenting here
       head="${head}
-| $(_render_step_icon_cell "🔗" "Links") | Links | [log extract](#issuecomment-${input_plan_tag_comment_id})<br>[job log](${job_url}) |"
+| $(_render_step_icon_cell "🔗" "Links") | Links | ${links_cell} |"
     fi
   fi
 
-  if [ -z "${input_plan_tag_comment_id:-}" ] || [ -n "${input_pr_comment_group}" ]; then
+  if [ -z "${links_rendered}" ] || [ -n "${input_pr_comment_group}" ]; then
     # Legacy / grouped path: keep the standalone '[Job log]' footer outside
     # the table. Grouped mode still uses it (table is omitted entirely, so
     # the footer is all that's there); ungrouped without a plan-tag-id
@@ -182,7 +348,8 @@ function render_head_summary {
 # Plan-block shapes:
 #   1. plan-count-total numeric 0 AND not output-only → 'Plan: no changes ✅'
 #   2. plan-count-total numeric 0 AND output-only     → '<details>Plan: output-only changes ℹ️…'
-#   3. plan-count-total numeric > 0                   → '<details>Plan: N changes ℹ️…'
+#   3. plan-count-total numeric > 0                   → '<details>Plan: A to add, C to change, D to destroy ℹ️…'
+#                                                       (import / move / remove appended when non-zero)
 #   4. plan-count-total missing/'?'                   → '<details>Show Plan (last 65k characters)…'
 # When plan output is entirely absent, render 'Plan not available 🤷‍♀️'.
 
@@ -241,8 +408,19 @@ function load_warnings_md {
     "${truncated}" "${cap}"
 }
 
-function render_plan_extract {
-  local plan="### Terraform plan for environment: \`${input_environment_name}\`"
+# Render a plan-shaped tag body. Used for the plan tag and — because a
+# destroy plan is a plan — the destroy-plan tag, with the sources swapped.
+#   $1 heading, $2 'terraform show' txt file, $3 console file, $4 count-total,
+#   $5 has-output-only-changes, $6 warnings markdown file, $7 warning count,
+#   $8 banner (may be empty; printed between heading and block)
+function _render_plan_like_extract {
+  local heading="${1}" txt_file="${2}" console_file="${3}" total="${4}" output_only="${5:-false}"
+  local warnings_file="${6}" warning_count="${7}" banner="${8}"
+  # ${9} labels every shape ('Plan' / 'Destroy plan') — the destroy-plan tag used
+  # to say 'Plan:' under a 'destroy plan' heading. ${10} is the per-kind count
+  # text for the one shape that has counts; empty falls back to the bare total.
+  local label="${9:-Plan}" counts_text="${10:-}"
+  local plan="${heading}"
 
   # GitHub's comment-body limit is 65536; we cap at 65000 to leave headroom
   # under that AND under Linux's per-string execve limit (MAX_ARG_STRLEN,
@@ -254,11 +432,11 @@ function render_plan_extract {
   local WARN_CAP=60000 # warnings get most-but-not-all of the budget
 
   local warnings_md=""
-  warnings_md=$(load_warnings_md "${input_warnings_markdown_file:-}" "${WARN_CAP}")
+  warnings_md=$(load_warnings_md "${warnings_file:-}" "${WARN_CAP}")
   local warnings_size
   warnings_size=$(printf '%s' "${warnings_md}" | wc -c)
 
-  local plan_budget=$((HARD_LIMIT - OVERHEAD - warnings_size))
+  local plan_budget=$((HARD_LIMIT - OVERHEAD - warnings_size - ${#banner}))
   [ "${plan_budget}" -lt 0 ] && plan_budget=0
 
   # Pick the source file for plan output. txt-output-file is the post-
@@ -267,12 +445,12 @@ function render_plan_extract {
   # the selected providers…" header so we drop init/refresh noise above.
   local source_file=""
   local sliced_console=""
-  if [ -f "${input_plan_txt_output_file:-}" ]; then
-    source_file="${input_plan_txt_output_file}"
-  elif [ -f "${input_plan_console_file:-}" ]; then
+  if [ -f "${txt_file:-}" ]; then
+    source_file="${txt_file}"
+  elif [ -f "${console_file:-}" ]; then
     sliced_console="${RUNNER_TEMP:-/tmp}/plan-sliced-$$.txt"
     sed -n '/Terraform used the selected providers to generate the following execution/,$p' \
-      "${input_plan_console_file}" >"${sliced_console}"
+      "${console_file}" >"${sliced_console}"
     source_file="${sliced_console}"
   fi
 
@@ -281,22 +459,28 @@ function render_plan_extract {
     plan_out=$(line_anchored_tail "${source_file}" "${plan_budget}")
   fi
 
-  local total="${input_plan_count_total:-}"
-  local output_only="${input_plan_has_output_only_changes:-false}"
+  # Banner (the env mutates on PR) sits between heading and block. Its
+  # trailing newline plus the block's leading blank line give exactly one
+  # empty line between them.
+  if [ -n "${banner}" ]; then
+    plan="${plan}
+
+${banner%$'\n'}"
+  fi
 
   if [ -z "${plan_out}" ]; then
     plan="${plan}
 
-Plan not available 🤷‍♀️"
+${label} not available 🤷‍♀️"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" != 'true' ]; then
     plan="${plan}
 
-Plan: no changes ✅"
+${label}: no changes ✅"
   elif [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ] && [ "${output_only}" = 'true' ]; then
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Plan: output-only changes ℹ️</summary>
+<details><summary>${label}: output-only changes ℹ️</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -306,7 +490,7 @@ ${plan_out}
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Plan: ${total} changes ℹ️</summary>
+<details><summary>${label}: ${counts_text:-${total} changes} ℹ️</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -316,7 +500,7 @@ ${plan_out}
     # don't touch the indenting here
     plan="${plan}
 
-<details><summary>Show Plan (last 65k characters)</summary>
+<details><summary>Show ${label} (last 65k characters)</summary>
 
 \`\`\`terraform
 ${plan_out}
@@ -328,7 +512,6 @@ ${plan_out}
   # Rendered regardless of plan-block shape, including 'no changes ✅' —
   # warnings are interesting even when the plan itself is.
   if [ -n "${warnings_md}" ]; then
-    local warning_count="${input_warning_count:-0}"
     [[ "${warning_count}" =~ ^[0-9]+$ ]] || warning_count=0
     # don't touch the indenting here
     plan="${plan}
@@ -345,6 +528,189 @@ ${warnings_md}
   printf '%s' "${plan}"
 }
 
+# Per-kind text for a plan-like summary line: "30 to add, 0 to change, 0 to
+# destroy", with import / move / remove appended only when non-zero — the same
+# rule, vocabulary and order the head's Plan details row already uses. A bare
+# total says how much will happen but not what, which is the one thing a
+# reviewer reads the collapsed line for. Returns empty when the three core
+# counts are not all numeric, so the caller falls back to the bare total.
+function _plan_counts_text {
+  local add="${1}" change="${2}" destroy="${3}" imports="${4:-0}" moves="${5:-0}" removes="${6:-0}"
+  if ! [[ "${add}" =~ ^[0-9]+$ ]] || ! [[ "${change}" =~ ^[0-9]+$ ]] || ! [[ "${destroy}" =~ ^[0-9]+$ ]]; then
+    echo ""
+    return 0
+  fi
+  local text="${add} to add, ${change} to change, ${destroy} to destroy"
+  if [[ "${imports}" =~ ^[0-9]+$ ]] && [ "${imports}" -ne 0 ]; then text="${text}, ${imports} to import"; fi
+  if [[ "${moves}" =~ ^[0-9]+$ ]] && [ "${moves}" -ne 0 ]; then text="${text}, ${moves} to move"; fi
+  if [[ "${removes}" =~ ^[0-9]+$ ]] && [ "${removes}" -ne 0 ]; then text="${text}, ${removes} to remove"; fi
+  echo "${text}"
+}
+
+function render_plan_extract {
+  _render_plan_like_extract \
+    "### Terraform plan for environment: \`${input_environment_name}\`" \
+    "${input_plan_txt_output_file:-}" "${input_plan_console_file:-}" \
+    "${input_plan_count_total:-}" "${input_plan_has_output_only_changes:-false}" \
+    "${input_warnings_markdown_file:-}" "${input_warning_count:-0}" \
+    "$(_render_plan_tag_banner)" \
+    "Plan" \
+    "$(_plan_counts_text "${input_plan_count_add:-}" "${input_plan_count_change:-}" "${input_plan_count_destroy:-}" \
+        "${input_plan_count_import:-0}" "${input_plan_count_move:-0}" "${input_plan_count_remove:-0}")"
+}
+
+function render_destroy_plan_extract {
+  _render_plan_like_extract \
+    "### Terraform destroy plan for environment: \`${input_environment_name}\`" \
+    "${input_destroy_plan_txt_output_file:-}" "${input_destroy_plan_console_file:-}" \
+    "${input_destroy_plan_count_total:-}" "false" \
+    "${input_destroy_plan_warnings_markdown_file:-}" "${input_destroy_plan_warning_count:-0}" \
+    "" \
+    "Destroy plan" \
+    "$(_plan_counts_text "${input_destroy_plan_count_add:-}" "${input_destroy_plan_count_change:-}" "${input_destroy_plan_count_destroy:-}" \
+        "${input_destroy_plan_count_import:-0}" "${input_destroy_plan_count_move:-0}" "${input_destroy_plan_count_remove:-0}")"
+}
+
+# ============================================================================
+# apply / destroy extract renderer (docs/Apply-and-destroy-reporting.md §8.6)
+# ============================================================================
+#
+# Body shape:
+#   ### Terraform <apply|destroy> for environment: `<env>`
+#   <blank>
+#   <block — one of four shapes>
+#   [<blank> <warnings collapser>]
+#
+# Block shapes:
+#   1. completed=true,  total 0       → 'Apply: no changes ✅'
+#   2. completed=true,  total > 0     → '<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…'
+#                                      (applied/planned per kind, '?' for either side that is unknown — the
+#                                       same rule as the head's Apply details row, docs §8.3)
+#   3. completed=false, console given → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
+#   4. no console at all              → 'Apply not available 🤷‍♀️'
+# Destroy: 'Destroy: no changes ✅' / 'Destroy: D/P destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
+#
+# Shape 3 is the only <details open> anywhere: a failed apply is the one
+# case nobody should have to click, and the console tail is the whole story.
+#   $1 'apply' | 'destroy'
+function render_op_extract {
+  local kind="${1}"
+  local verb console_file total completed warnings_file warning_count
+  if [ "${kind}" = 'apply' ]; then
+    verb="Apply"; console_file="${input_apply_console_file:-}"
+    total="${input_apply_count_total:-}"; completed="${input_apply_completed:-}"
+    warnings_file="${input_apply_warnings_markdown_file:-}"; warning_count="${input_apply_warning_count:-0}"
+  else
+    verb="Destroy"; console_file="${input_destroy_console_file:-}"
+    total="${input_destroy_count_total:-}"; completed="${input_destroy_completed:-}"
+    warnings_file="${input_destroy_warnings_markdown_file:-}"; warning_count="${input_destroy_warning_count:-0}"
+  fi
+  local body="### Terraform ${kind} for environment: \`${input_environment_name}\`"
+
+  local HARD_LIMIT=65000
+  local OVERHEAD=500
+  local WARN_CAP=60000
+
+  local warnings_md=""
+  warnings_md=$(load_warnings_md "${warnings_file}" "${WARN_CAP}")
+  local warnings_size
+  warnings_size=$(printf '%s' "${warnings_md}" | wc -c)
+  local budget=$((HARD_LIMIT - OVERHEAD - warnings_size))
+  [ "${budget}" -lt 0 ] && budget=0
+
+  # P3: drop the Outputs section unless the caller opted in to keep it.
+  _strip_outputs_section "${console_file}" "${input_apply_extract_include_outputs:-false}"
+  local render_file="${STRIP_RESULT_FILE}"
+
+  local console_out=""
+  if [ -n "${render_file}" ] && [ -s "${render_file}" ]; then
+    console_out=$(line_anchored_tail "${render_file}" "${budget}")
+  fi
+  local omitted_note=""
+  [ "${OUTPUTS_STRIPPED}" = 'true' ] && omitted_note=$'\n\n'"_(outputs section omitted)_"
+
+  local failed_note
+  if [ "${kind}" = 'apply' ]; then failed_note="applied"; else failed_note="destroyed"; fi
+
+  if [ -z "${console_out}" ]; then
+    body="${body}
+
+${verb} not available 🤷‍♀️"
+  elif [ "${completed}" = 'true' ] && [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ]; then
+    body="${body}
+
+${verb}: no changes ✅"
+  elif [ "${completed}" = 'true' ]; then
+    # The collapsed line is all most readers see: say applied/planned per
+    # kind, the question a reviewer actually has, rather than a bare total
+    # the head already shows. Denominators are the plan (apply) or the
+    # destroy plan (destroy); '?' when either side is unknown.
+    local summary_counts
+    if [ "${kind}" = 'apply' ]; then
+      summary_counts="$(_ratio_text "${input_apply_count_add:-}" "${input_plan_count_add:-}" "${completed}") added, $(_ratio_text "${input_apply_count_change:-}" "${input_plan_count_change:-}" "${completed}") changed, $(_ratio_text "${input_apply_count_destroy:-}" "${input_plan_count_destroy:-}" "${completed}") destroyed"
+      # Imports only when there are any — terraform omits the segment entirely
+      # unless import blocks are in play (P32), so a '0/0 imported' on every
+      # other apply would be noise.
+      if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import:-0}" -ne 0 ]; then
+        summary_counts="${summary_counts}, $(_ratio_text "${input_apply_count_import}" "${input_plan_count_import:-}" "${completed}") imported"
+      fi
+    else
+      summary_counts="$(_ratio_text "${input_destroy_count_destroy:-}" "${input_destroy_plan_count_destroy:-}" "${completed}") destroyed"
+    fi
+    # don't touch the indenting here
+    body="${body}
+
+<details><summary>${verb}: ${summary_counts} ✅</summary>
+
+\`\`\`terraform
+${console_out}
+\`\`\`${omitted_note}
+</details>"
+  else
+    # don't touch the indenting here
+    body="${body}
+
+<details open><summary>❌ ${verb} failed — infrastructure may be partially ${failed_note}</summary>
+
+\`\`\`terraform
+${console_out}
+\`\`\`${omitted_note}
+</details>"
+  fi
+
+  if [ -n "${warnings_md}" ]; then
+    [[ "${warning_count}" =~ ^[0-9]+$ ]] || warning_count=0
+    # don't touch the indenting here
+    body="${body}
+
+<details><summary>⚠️ ${warning_count} warnings</summary>
+
+${warnings_md}
+</details>"
+  fi
+
+  [ "${render_file}" != "${console_file}" ] && [ -f "${render_file}" ] && rm -f "${render_file}"
+  printf '%s' "${body}"
+}
+
+# ============================================================================
+# step-summary renderer (docs/Apply-and-destroy-reporting.md §8.7)
+# ============================================================================
+#
+# The per-env block for $GITHUB_STEP_SUMMARY: the head's table, always in
+# its ungrouped shape (a grouped env has no table in its PR head, but the
+# job page has no per-group table to defer to), with the Links row replaced
+# by the plain '[Job log](<url>)' footer — there is no PR to anchor into.
+# Rendered by reusing render_head_summary with the group and every tag id
+# blanked, which is exactly the legacy footer branch; one renderer, no copy
+# to drift. The workflow renders on every event; only posting is PR-gated.
+function render_step_summary {
+  local job_url="${1}"
+  local input_pr_comment_group="" input_plan_tag_comment_id="" input_apply_tag_comment_id="" \
+        input_destroy_plan_tag_comment_id="" input_destroy_tag_comment_id=""
+  render_head_summary "${job_url}"
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -354,26 +720,52 @@ function main {
 
   local job_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${input_job_check_run_id}#logs"
 
-  local head_summary plan_extract
-  head_summary=$(render_head_summary "${job_url}")
-  plan_extract=$(render_plan_extract)
+  _parse_on_pr_goals
 
+  local head_summary plan_extract apply_extract destroy_plan_extract destroy_extract step_summary
+  head_summary=$(render_head_summary "${job_url}")
+  step_summary=$(render_step_summary "${job_url}")
+  plan_extract=$(render_plan_extract)
+  apply_extract=$(render_op_extract apply)
+  destroy_plan_extract=$(render_destroy_plan_extract)
+  destroy_extract=$(render_op_extract destroy)
+
+  # Kept deliberately: with the bodies no longer in the step-output log,
+  # these groups are where a reviewer reads what was rendered.
   log-multiline "head-summary " "${head_summary}"
   log-multiline "plan-extract " "${plan_extract}"
+  log-multiline "apply-extract " "${apply_extract}"
+  log-multiline "destroy-plan-extract " "${destroy_plan_extract}"
+  log-multiline "destroy-extract " "${destroy_extract}"
+  log-multiline "step-summary " "${step_summary}"
 
-  # Back-compat outputs: the legacy `summary` + `prefix` outputs are kept so
-  # callers still on the pre-overhaul commenting flow (e.g. terraform-module-ci
-  # via comment-on-pr@v2's delete-by-prefix mechanism) continue to work.
-  # Both outputs are deprecated and will be dropped once those callers migrate
-  # to head-summary/plan-extract + the pr-comment action.
-  local legacy_prefix="### Terraform validation summary for environment: \`${input_environment_name}\`"
-  local legacy_summary
-  legacy_summary=$(printf '%s\n%s' "${head_summary}" "${plan_extract}")
+  local suffix=""
+  [ -n "${input_output_file_suffix:-}" ] && suffix="-${input_output_file_suffix}"
+  local out_dir="${RUNNER_TEMP:-/tmp}"
+  local head_file="${out_dir}/tf-comment-${input_environment_name}-head${suffix}.md"
+  local plan_file="${out_dir}/tf-comment-${input_environment_name}-plan${suffix}.md"
+  local apply_file="${out_dir}/tf-comment-${input_environment_name}-apply${suffix}.md"
+  local destroy_plan_file="${out_dir}/tf-comment-${input_environment_name}-destroy-plan${suffix}.md"
+  local destroy_file="${out_dir}/tf-comment-${input_environment_name}-destroy${suffix}.md"
+  local step_summary_file="${out_dir}/tf-comment-${input_environment_name}-step-summary${suffix}.md"
 
-  set-multiline-output 'head-summary' "${head_summary}"
-  set-multiline-output 'plan-extract' "${plan_extract}"
-  set-output 'prefix' "${legacy_prefix}"
-  set-multiline-output 'summary' "${legacy_summary}"
+  # printf '%s' — no trailing newline, so the file is byte-identical to the
+  # string the multiline output used to carry. The three operation bodies
+  # are always written (a 'not available' body when the operation did not
+  # run); the workflow decides, by step outcome, which tags to post.
+  printf '%s' "${head_summary}" >"${head_file}"
+  printf '%s' "${plan_extract}" >"${plan_file}"
+  printf '%s' "${apply_extract}" >"${apply_file}"
+  printf '%s' "${destroy_plan_extract}" >"${destroy_plan_file}"
+  printf '%s' "${destroy_extract}" >"${destroy_file}"
+  printf '%s' "${step_summary}" >"${step_summary_file}"
+
+  set-output 'head-summary-file' "${head_file}"
+  set-output 'plan-extract-file' "${plan_file}"
+  set-output 'apply-extract-file' "${apply_file}"
+  set-output 'destroy-plan-extract-file' "${destroy_plan_file}"
+  set-output 'destroy-extract-file' "${destroy_file}"
+  set-output 'step-summary-file' "${step_summary_file}"
 
   log-info "create-validation-summary completed."
   return 0

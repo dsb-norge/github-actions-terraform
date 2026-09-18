@@ -1,0 +1,14 @@
+azurerm_storage_account.sa: Destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample]
+azurerm_storage_account.sa: Destruction complete after 9s
+azurerm_resource_group.rg: Destroying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+azurerm_resource_group.rg: Destruction complete after 46s
+
+Warning: Deprecated Resource
+
+  with azurerm_storage_account.sa,
+  on main.tf line 10, in resource "azurerm_storage_account" "sa":
+  10: resource "azurerm_storage_account" "sa" {
+
+The resource has been deprecated and will be removed in a future version.
+
+Destroy complete! Resources: 2 destroyed.

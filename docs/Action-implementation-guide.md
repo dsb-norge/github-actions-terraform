@@ -664,6 +664,15 @@ exit ${_main_exit_code}
 
 ---
 
+## Command substitution traps
+
+`$(…)` runs the command in a **subshell**. Two consequences bit this repo three times in one change ([Apply-and-destroy-reporting.md P28](Apply-and-destroy-reporting.md)):
+
+- **Globals set inside are lost.** `result=$(strip_outputs "${file}")` cannot also set `OUTPUTS_STRIPPED=true` for the caller — the assignment happened in the subshell. Return through stdout only, or call the function directly and have it set globals (`strip_outputs "${file}"; result="${STRIP_RESULT_FILE}"`). For a function that must both render a body *and* report counts, redirect instead of substituting: `render >"${tmp}"` runs in the current shell, `body=$(cat "${tmp}")` does not.
+- **Trailing newlines are stripped.** `rows+="$(render_block)"` drops the block's final newline, so the next row lands on the same line as the block's last one. Re-append `$'\n'` after a non-empty substitution, or write rows to a file.
+
+Neither shows up as an error. Both show up as a wrong comment on a PR.
+
 ## Anti-pattern: exporting heredoc-captured JSON
 
 **Don't do this:**

@@ -47,9 +47,14 @@ run_test() {
   export GITHUB_REF="refs/pull/123/merge"
   export GITHUB_SHA="abc123def456"
 
-  # Run the step_capture.sh script in a subshell
+  # Run the step_capture.sh script in a subshell. No allexport, and the
+  # three JSON inputs are deliberately NOT exported by reset_defaults —
+  # both to match the action.yml shim, which heredoc-captures them as
+  # shell-locals precisely so they never reach envp (see the shim's
+  # comment on the production E2BIG incident). A harness that exported
+  # them would E2BIG the step's own jq on the oversize fixtures below and
+  # test the harness, not the cap.
   (
-    set -o allexport
     source "${_this_script_dir}/step_capture.sh"
   ) > /tmp/test_output.txt 2>&1
   local exit_code=$?
@@ -88,15 +93,16 @@ run_test() {
 # Function to reset all variables to defaults
 reset_defaults() {
   export input_environment_name="test-env"
-  export input_matrix_context_json='{
+  # Plain assignments, not exports — see run_test.
+  input_matrix_context_json='{
     "environment": "test-env",
     "vars": {
       "github-environment": "test-env",
       "goals": ["all"]
     }
   }'
-  export input_github_context_json='{"repository": "test/repo"}'
-  export input_steps_context_json='{
+  input_github_context_json='{"repository": "test/repo"}'
+  input_steps_context_json='{
     "init": {"outputs": {}, "outcome": "success", "conclusion": "success"},
     "fmt": {"outputs": {}, "outcome": "success", "conclusion": "success"},
     "validate": {"outputs": {}, "outcome": "success", "conclusion": "success"},
@@ -119,7 +125,7 @@ run_test "Basic capture with minimal inputs" '.metadata.environment' "test-env"
 # Test 2: Capture with step outcomes
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "init": {"outputs": {}, "outcome": "success", "conclusion": "success"},
   "plan": {"outputs": {}, "outcome": "failure", "conclusion": "failure"}
 }'
@@ -129,14 +135,14 @@ run_test "Capture with step outcomes" '.steps["plan"].outcome' "failure"
 # Test 3: Handle missing/empty JSON gracefully
 # ============================================================================
 reset_defaults
-export input_matrix_context_json=""
+input_matrix_context_json=""
 run_test "Handle missing matrix context JSON" '.matrix_context' "{}"
 
 # ============================================================================
 # Test 4: Capture step outputs correctly
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "parse-plan": {"outputs": {"count-add": "5", "count-change": "2"}, "outcome": "success", "conclusion": "success"}
 }'
 run_test "Capture step outputs" '.steps["parse-plan"].outputs["count-add"]' "5"
@@ -145,7 +151,7 @@ run_test "Capture step outputs" '.steps["parse-plan"].outputs["count-add"]' "5"
 # Test 5: Filter sensitive data from matrix context
 # ============================================================================
 reset_defaults
-export input_matrix_context_json='{
+input_matrix_context_json='{
   "environment": "test",
   "vars": {
     "github-environment": "test",
@@ -165,7 +171,7 @@ run_test "Schema version is set" '.metadata.schema_version' "2.0.0"
 # Test 7: Steps are captured dynamically
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "step1": {"outputs": {}, "outcome": "success", "conclusion": "success"},
   "step2": {"outputs": {}, "outcome": "success", "conclusion": "success"},
   "step3": {"outputs": {}, "outcome": "success", "conclusion": "success"}
@@ -176,7 +182,7 @@ run_test "Steps captured dynamically (count)" '.steps | keys | length' "3"
 # Test 8: Handle empty steps context gracefully
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{}'
+input_steps_context_json='{}'
 run_test "Handle empty steps context" '.steps | keys | length' "0"
 
 # ============================================================================
@@ -189,28 +195,28 @@ run_test "Workflow run_id captured" '.workflow.run_id' "12345678"
 # Test 10: Filter password fields from context
 # ============================================================================
 reset_defaults
-export input_github_context_json='{"repository": "test/repo", "token": "secret-token-value"}'
+input_github_context_json='{"repository": "test/repo", "token": "secret-token-value"}'
 run_test "Filter token from github context" '.github_context | has("token")' "false"
 
 # ============================================================================
 # Test 11: Preserve non-sensitive fields
 # ============================================================================
 reset_defaults
-export input_github_context_json='{"repository": "test/repo", "event_name": "pull_request", "ref": "refs/heads/main"}'
+input_github_context_json='{"repository": "test/repo", "event_name": "pull_request", "ref": "refs/heads/main"}'
 run_test "Preserve event_name field" '.github_context.event_name' "pull_request"
 
 # ============================================================================
 # Test 12: Handle null JSON input
 # ============================================================================
 reset_defaults
-export input_matrix_context_json="null"
+input_matrix_context_json="null"
 run_test "Handle null JSON input" '.matrix_context' "{}"
 
 # ============================================================================
 # Test 13: Capture step conclusion (different from outcome)
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "init": {"outputs": {}, "outcome": "failure", "conclusion": "success"}
 }'
 run_test "Capture step conclusion" '.steps["init"].conclusion' "success"
@@ -232,7 +238,7 @@ run_test "Timestamp is present" '.metadata.captured_at | length > 0' "true"
 # Test 16: Step names are preserved correctly
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "setup-terraform-cache": {"outputs": {"plugin-cache-directory": "/cache"}, "outcome": "success", "conclusion": "success"}
 }'
 run_test "Step names preserved" '.steps["setup-terraform-cache"].outputs["plugin-cache-directory"]' "/cache"
@@ -241,14 +247,14 @@ run_test "Step names preserved" '.steps["setup-terraform-cache"].outputs["plugin
 # Test 17: Handle null steps context
 # ============================================================================
 reset_defaults
-export input_steps_context_json="null"
+input_steps_context_json="null"
 run_test "Handle null steps context" '.steps | keys | length' "0"
 
 # ============================================================================
 # Test 18: Many steps are captured
 # ============================================================================
 reset_defaults
-export input_steps_context_json='{
+input_steps_context_json='{
   "step1": {"outputs": {}, "outcome": "success", "conclusion": "success"},
   "step2": {"outputs": {}, "outcome": "success", "conclusion": "success"},
   "step3": {"outputs": {}, "outcome": "success", "conclusion": "success"},
@@ -261,6 +267,39 @@ export input_steps_context_json='{
   "step10": {"outputs": {}, "outcome": "success", "conclusion": "success"}
 }'
 run_test "Many steps captured" '.steps | keys | length' "10"
+
+# ============================================================================
+# Per-output size cap (docs/Apply-and-destroy-reporting.md §7.12, I1–I3)
+# ============================================================================
+reset_defaults
+_big=$(head -c 6000 </dev/zero | tr '\0' 'x')
+input_steps_context_json="{\"cvs\": {\"outputs\": {\"big\": \"${_big}\", \"small\": \"ok\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I1: output over the cap is replaced by a <truncated: N bytes> marker" '.steps.cvs.outputs.big' "<truncated: 6000 bytes>"
+reset_defaults
+input_steps_context_json="{\"cvs\": {\"outputs\": {\"big\": \"${_big}\", \"small\": \"ok\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I2: output under the cap passes through byte-identically" '.steps.cvs.outputs.small' "ok"
+reset_defaults
+input_steps_context_json="{\"cvs\": {\"outputs\": {\"path\": \"/tmp/tf-comment-dev-head.md\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I2: a file path (the normal large-body carrier now) is untouched" '.steps.cvs.outputs.path' "/tmp/tf-comment-dev-head.md"
+# Exactly at the cap is kept; one byte over is truncated.
+reset_defaults
+_at=$(head -c 4096 </dev/zero | tr '\0' 'y'); _over=$(head -c 4097 </dev/zero | tr '\0' 'z')
+input_steps_context_json="{\"s\": {\"outputs\": {\"at\": \"${_at}\", \"over\": \"${_over}\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I1: 4096 bytes is kept, 4097 is truncated (boundary)" '[(.steps.s.outputs.at | length), .steps.s.outputs.over] | @json' '[4096,"<truncated: 4097 bytes>"]'
+# Multi-byte: the cap counts bytes, not characters.
+reset_defaults
+_mb=$(python3 -c "print('—' * 2000, end='')")  # 2000 chars × 3 bytes = 6000 bytes
+input_steps_context_json="{\"s\": {\"outputs\": {\"mb\": \"${_mb}\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I1: cap is measured in bytes — 2000 em-dashes (6000 bytes) are truncated" '.steps.s.outputs.mb' "<truncated: 6000 bytes>"
+# I3: every output oversize → still valid JSON, no E2BIG, outcomes intact.
+reset_defaults
+_huge=$(head -c 200000 </dev/zero | tr '\0' 'h')
+input_steps_context_json="{\"a\": {\"outputs\": {\"x\": \"${_huge}\", \"y\": \"${_huge}\"}, \"outcome\": \"failure\", \"conclusion\": \"failure\"}, \"b\": {\"outputs\": {\"z\": \"${_huge}\"}, \"outcome\": \"success\", \"conclusion\": \"success\"}}"
+run_test "I3: every output oversize (3 × 200k) → result parses, outcomes intact" '[.steps.a.outcome, .steps.b.outcome, (.steps.a.outputs.x | startswith("<truncated"))] | @json' '["failure","success",true]'
+# Non-string outputs (numbers/bools/null) are left alone.
+reset_defaults
+input_steps_context_json='{"s": {"outputs": {"n": 42, "b": true, "nul": null}, "outcome": "success", "conclusion": "success"}}'
+run_test "cap leaves non-string output values alone" '[.steps.s.outputs.n, .steps.s.outputs.b, .steps.s.outputs.nul] | @json' '[42,true,null]'
 
 # ============================================================================
 # Summary

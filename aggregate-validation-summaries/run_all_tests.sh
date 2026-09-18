@@ -129,8 +129,22 @@ teardown() {
 # "plan-time" entry — mimicking what terraform-plan@v0 now publishes.
 # Empty / unset preserves the pre-plan-time fixture shape so older tests
 # stay backwards-compatible.
+# 7th arg (ops): a JSON fragment of extra step entries — e.g. the output of
+# ops_apply / ops_destroy_plan / ops_destroy below, comma-joined — appended
+# to the steps object. Empty = no mutating stage ran (the pre-feature shape,
+# which is also what an older action version's artifact looks like).
+# 8th arg (goals): the env's goals as a JSON array; default '["all"]'.
+# Same shape as write_meta, with add-pr-comment explicitly false — the shape a
+# caller that passes add-pr-comment: false produces.
+write_meta_no_comment() {
+  local env="${1}" group="${2:-}"
+  write_meta "${env}" "${group}"
+  local f="${TEST_DIR}/matrix-job-meta-${env}.json"
+  jq '.matrix_context.vars["add-pr-comment"] = false' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+}
+
 write_meta() {
-  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}"
+  local env="${1}" group="${2:-}" fmt_outcome="${3:-success}" counts="${4:-}" plan_time="${5:-}" warnings="${6:-}" ops="${7:-}" goals="${8:-[\"all\"]}"
   local counts_default='{"count-add":"0","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
   local counts_use="${counts:-${counts_default}}"
   local plan_outputs='{}'
@@ -156,7 +170,7 @@ write_meta() {
                "workflow_name": "Terraform CI", "job_name": "terraform-ci-cd",
                "actor": "test-user", "event_name": "pull_request",
                "ref": "refs/pull/123/merge", "sha": "abc"},
-  "matrix_context": {"environment": "${env}", "vars": {"environment": "${env}", "pr-comment-group": "${group}"}},
+  "matrix_context": {"environment": "${env}", "vars": {"environment": "${env}", "pr-comment-group": "${group}", "goals": ${goals}}},
   "github_context": {"actor": "test-user"},
   "steps": {
     "init":        {"outcome": "success", "conclusion": "success", "outputs": {}},
@@ -165,11 +179,46 @@ write_meta() {
     "validate":    {"outcome": "success", "conclusion": "success", "outputs": {}},
     "lint":        {"outcome": "success", "conclusion": "success", "outputs": {}},
     "plan":        {"outcome": "success", "conclusion": "success", "outputs": ${plan_outputs}},
-    "parse-plan":  {"outcome": "success", "conclusion": "success", "outputs": ${counts_use}}${parse_warnings_json}
+    "parse-plan":  {"outcome": "success", "conclusion": "success", "outputs": ${counts_use}}${parse_warnings_json}${ops:+,${ops}}
   }
 }
 JSON
 }
+
+# Step-entry fragments for the mutating operations, as capture-matrix-job-
+# meta would record them. Each takes the step outcome and a few knobs.
+#   ops_apply <outcome> <completed> <add> <change> <destroy> <time> <warnings>
+ops_apply() {
+  local outcome="${1}" completed="${2:-true}" add="${3:-0}" change="${4:-0}" destroy="${5:-0}" time="${6:-}" warnings="${7:-}"
+  local t=""; [ -n "${time}" ] && t="\"apply-time\": \"${time}\""
+  local w=""; [ -n "${warnings}" ] && w=",\"parse-apply-warnings\": {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${warnings}\"}}"
+  printf '"apply": {"outcome":"%s","conclusion":"%s","outputs":{%s}},"parse-apply": {"outcome":"success","conclusion":"success","outputs":{"count-add":"%s","count-change":"%s","count-destroy":"%s","completed":"%s","apply-kind":"apply"}}%s' \
+    "${outcome}" "${outcome}" "${t}" "${add}" "${change}" "${destroy}" "${completed}" "${w}"
+}
+#   ops_destroy_plan <outcome> <destroy-count> <time> <warnings> [remove-count]
+ops_destroy_plan() {
+  local outcome="${1}" destroy="${2:-0}" time="${3:-}" warnings="${4:-}" remove="${5:-0}"
+  local t=""; [ -n "${time}" ] && t="\"plan-time\": \"${time}\""
+  local w=""; [ -n "${warnings}" ] && w=",\"parse-destroy-plan-warnings\": {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${warnings}\"}}"
+  printf '"destroy-plan": {"outcome":"%s","conclusion":"%s","outputs":{%s}},"parse-destroy-plan": {"outcome":"success","conclusion":"success","outputs":{"count-add":"0","count-change":"0","count-destroy":"%s","count-import":"0","count-move":"0","count-remove":"%s"}}%s' \
+    "${outcome}" "${outcome}" "${t}" "${destroy}" "${remove}" "${w}"
+}
+#   ops_destroy <outcome> <completed> <destroy-count> <time> <warnings>
+ops_destroy() {
+  local outcome="${1}" completed="${2:-true}" destroy="${3:-0}" time="${4:-}" warnings="${5:-}"
+  local t=""; [ -n "${time}" ] && t="\"apply-time\": \"${time}\""
+  local w=""; [ -n "${warnings}" ] && w=",\"parse-destroy-warnings\": {\"outcome\":\"success\",\"conclusion\":\"success\",\"outputs\":{\"warning-count\":\"${warnings}\"}}"
+  printf '"destroy": {"outcome":"%s","conclusion":"%s","outputs":{%s}},"parse-destroy-apply": {"outcome":"success","conclusion":"success","outputs":{"count-add":"0","count-change":"0","count-destroy":"%s","completed":"%s","apply-kind":"destroy"}}%s' \
+    "${outcome}" "${outcome}" "${t}" "${destroy}" "${completed}" "${w}"
+}
+
+# The rendered body for one group, from the step log ("Body:" up to the
+# blank line that closes the ##[group]).
+rendered_body() {
+  awk '/Body:$/ {f=1; next} f && /^::endgroup::/ {exit} f' "${TEST_DIR}/step.log"
+}
+# One table row by its label, from the rendered body.
+row() { rendered_body | grep -F "| ${1} |" | head -n1; }
 
 # Set up the fake Jobs API response so per-env job URL resolution succeeds.
 # Each env arg gets a synthetic html_url. The job name format mirrors what
@@ -283,21 +332,50 @@ test_empty_desired_empty_existing_is_noop() {
   return 0
 }
 
-test_sweep_only_orphans() {
-  # No desired groups, but PR has an existing marker comment from a prior run
+test_no_groups_declared_touches_nothing() {
+  # A run that declares no groups at all does not own the group comments it can
+  # see — another workflow on the same pull request does. Deleting them moved
+  # the real run's group heads from the top of the thread to the bottom.
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:other-workflows-group -->\n### Terraform validation summary for group: `other-workflows-group`\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -qE 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "a run with no desired groups must not write anything; calls were:"
+    grep -E 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}" | sed 's/^/  /'
+    return 1
+  fi
+  return 0
+}
+
+test_orphan_deleted_when_this_run_owns_groups() {
+  # The legitimate sweep: this run declares group 'kept', so a group comment
+  # for a group it no longer declares really is stale and is removed.
+  write_meta "alpha" "kept"
   cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
 [{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:stale-group -->\n### Terraform validation summary for group: `stale-group`\nold body"}]
 JSON
   run_step
   [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
   if ! grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/5001' "${GH_FAKE_CALL_LOG}"; then
-    echo "expected DELETE of orphan comment 5001"; return 1
+    echo "expected DELETE of orphan comment 5001 when the run owns a group"; return 1
   fi
-  if grep -q 'POST' "${GH_FAKE_CALL_LOG}"; then
-    echo "did not expect POST when desired set is empty"; return 1
-  fi
-  if grep -q 'PATCH' "${GH_FAKE_CALL_LOG}"; then
-    echo "did not expect PATCH on orphan"; return 1
+  return 0
+}
+
+test_add_pr_comment_false_touches_nothing() {
+  # A caller that turns commenting off must not list, post or delete anything.
+  write_meta_no_comment "alpha" "some-group"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 5001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:some-group -->\n### Terraform validation summary for group: `some-group`\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -qE 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}"; then
+    echo "add-pr-comment=false must not write anything; calls were:"
+    grep -E 'DELETE|POST|PATCH' "${GH_FAKE_CALL_LOG}" | sed 's/^/  /'
+    return 1
   fi
   return 0
 }
@@ -1237,12 +1315,327 @@ test_post_failure_recorded_without_aborting() {
   return 0
 }
 
+
+# ============================================================================
+# Operation blocks (apply / destroy-plan / destroy) and their tag anchors —
+# docs/Apply-and-destroy-reporting.md §7.11, §8.8, tests E1–E9, F1.
+# ============================================================================
+
+# E1: mixed apply outcomes — Apply row present; the env without renders '—'.
+test_e1_apply_row_mixed_envs() {
+  local plan_counts='{"count-add":"1","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
+  write_meta "alpha" "g" success "${plan_counts}" "0:04" "" "$(ops_apply success true 1 0 0 1:07)"
+  write_meta "bravo" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Apply)"
+  local expected='| <span title="Apply">🐙</span> | Apply | <span title="success">✅</span> | <span title="not applicable">—</span> |'
+  [[ "${r}" == "${expected}" ]] || { echo "Apply row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  r="$(row 'Apply details')"
+  expected='| <span title="Apply details">📊</span> | Apply details | <div align="left"><span title="Applied / planned">`💫 1/1` added</span><br><span title="Applied / planned">`🛠️ 0/0` changed</span><br><span title="Applied / planned">`💥 0/0` destroyed</span></div> | N/A |'
+  [[ "${r}" == "${expected}" ]] || { echo "Apply details row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  r="$(row 'Apply time')"
+  expected='| <span title="Apply time">⏱</span> | Apply time | <span title="mm:ss (minutes:seconds)">`1:07`</span> | <span title="mm:ss (minutes:seconds)">—</span> |'
+  [[ "${r}" == "${expected}" ]] || { echo "Apply time row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  return 0
+}
+
+# E2 / E9: no env has an apply outcome (incl. an older artifact with no
+# apply keys at all) → the whole block is omitted, table intact.
+test_e2_no_apply_anywhere_omits_block() {
+  write_meta "alpha" "g"
+  write_meta "bravo" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  for label in 'Apply' 'Apply warnings' 'Apply details' 'Apply time' 'Destroy plan' 'Destroy plan details' 'Destroy' 'Destroy details'; do
+    if [ -n "$(row "${label}")" ]; then echo "row '${label}' must be omitted when no env ran it"; return 1; fi
+  done
+  [ -n "$(row 'Plan time')" ] && [ -n "$(row Links)" ] || { echo "Plan time / Links must still render"; return 1; }
+  return 0
+}
+
+# E3: apply tag comment for the env → Links gains [apply log].
+test_e3_apply_tag_anchor_in_links() {
+  write_meta "myenv" "g" success "" "" "" "$(ops_apply success true 1 0 0)"
+  with_jobs_for "myenv"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 4242, "body": "<!-- tf:tag:plan:myenv:run-id-999:attempt-1 -->\nplan extract"},
+  {"id": 4343, "body": "<!-- tf:tag:apply:myenv:run-id-999:attempt-1 -->\napply extract"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Links)"
+  local expected='| <span title="Links">🔗</span> | Links | [log extract](#issuecomment-4242)<br>[apply log](#issuecomment-4343)<br>[job log](https://github.com/dsb-norge/test-repo/actions/runs/999/job/myenv#logs) |'
+  [[ "${r}" == "${expected}" ]] || { echo "Links row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  return 0
+}
+
+# E4: env names where one is a prefix of another — the trailing ':' after
+# the env segment keeps 'prod' from matching 'prod-dr' (P8).
+test_e4_env_prefix_does_not_cross_match() {
+  write_meta "prod" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  write_meta "prod-dr" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 5100, "body": "<!-- tf:tag:apply:prod-dr:run-id-999:attempt-1 -->\nprod-dr apply"},
+  {"id": 5200, "body": "<!-- tf:tag:plan:prod-dr:run-id-999:attempt-1 -->\nprod-dr plan"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Links)"
+  # Columns are alphabetical: prod, prod-dr. prod's cell must be EMPTY.
+  local expected='| <span title="Links">🔗</span> | Links |  | [log extract](#issuecomment-5200)<br>[apply log](#issuecomment-5100) |'
+  [[ "${r}" == "${expected}" ]] || { echo "Links row mismatch (prod must not inherit prod-dr's tags)"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  return 0
+}
+
+# E5: a destroy-plan tag must not be taken as the destroy anchor, and vice
+# versa — the operation segment is terminated by ':' too (P8).
+test_e5_destroy_vs_destroy_plan_markers_do_not_cross_match() {
+  write_meta "e" "g" success "" "" "" "$(ops_destroy_plan success 2),$(ops_destroy success true 2)"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 6100, "body": "<!-- tf:tag:destroy-plan:e:run-id-999:attempt-1 -->\ndestroy plan extract"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Links)"
+  [[ "${r}" == *'[destroy plan log](#issuecomment-6100)'* ]] || { echo "expected [destroy plan log] anchor 6100; got: ${r}"; return 1; }
+  [[ "${r}" != *'[destroy log]'* ]] || { echo "a destroy-plan tag must NOT resolve as the destroy anchor; got: ${r}"; return 1; }
+  return 0
+}
+
+# E6: four warning counts, each its own row, each gated group-wide.
+test_e6_four_warning_rows_independent() {
+  write_meta "a" "g" success "" "" "1:0:1" "$(ops_apply success true 0 0 0 "" 3),$(ops_destroy_plan success 1 "" 0),$(ops_destroy success true 1 "" 2)"
+  write_meta "b" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r
+  r="$(row Warnings)"
+  [[ "${r}" == *'<span title="Warnings from init+validate+plan">⚠️ 2</span>'* ]] || { echo "Warnings (init+validate+plan) row wrong: ${r}"; return 1; }
+  r="$(row 'Apply warnings')"
+  [[ "${r}" == '| <span title="Apply warnings">⚠️</span> | Apply warnings | <span title="Warnings from apply">⚠️ 3</span> | <span title="Warnings from apply">—</span> |' ]] || { echo "Apply warnings row wrong: ${r}"; return 1; }
+  [ -z "$(row 'Destroy plan warnings')" ] || { echo "Destroy plan warnings row must be omitted at group total 0"; return 1; }
+  r="$(row 'Destroy warnings')"
+  [[ "${r}" == *'<span title="Warnings from destroy">⚠️ 2</span>'* ]] || { echo "Destroy warnings row wrong: ${r}"; return 1; }
+  # And the init+validate+plan sum must NOT include the apply/destroy counts.
+  [[ "${r}" != *'⚠️ 7'* ]] && [[ "$(row Warnings)" != *'⚠️ 7'* ]] || { echo "counts were summed across operations"; return 1; }
+  return 0
+}
+
+# E7: destroy-plan and destroy blocks — presence and cell shapes. The
+# destroy plan is a plan (plan badge set, present tense); destroy is a
+# single destroyed/planned badge.
+test_e7_destroy_plan_and_destroy_blocks() {
+  write_meta "e" "g" success "" "" "" "$(ops_destroy_plan success 5 0:31 "" 1),$(ops_destroy success true 5 0:44)"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r
+  r="$(row 'Destroy plan')"
+  [[ "${r}" == '| <span title="Destroy plan">☠📖</span> | Destroy plan | <span title="success">✅</span> |' ]] || { echo "Destroy plan row: ${r}"; return 1; }
+  r="$(row 'Destroy plan details')"
+  [[ "${r}" == '| <span title="Destroy plan details">📊</span> | Destroy plan details | <div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 5` destroy</span><br><span title="Resources to be removed">`⛓️‍💥 1` remove</span></div> |' ]] || { echo "Destroy plan details row: ${r}"; return 1; }
+  r="$(row 'Destroy plan time')"
+  [[ "${r}" == *'`0:31`'* ]] || { echo "Destroy plan time row: ${r}"; return 1; }
+  r="$(row Destroy)"
+  [[ "${r}" == '| <span title="Destroy">☠</span> | Destroy | <span title="success">✅</span> |' ]] || { echo "Destroy row: ${r}"; return 1; }
+  r="$(row 'Destroy details')"
+  [[ "${r}" == '| <span title="Destroy details">📊</span> | Destroy details | <div align="left"><span title="Applied / planned">`💥 5/5` destroyed</span></div> |' ]] || { echo "Destroy details row: ${r}"; return 1; }
+  r="$(row 'Destroy time')"
+  [[ "${r}" == *'`0:44`'* ]] || { echo "Destroy time row: ${r}"; return 1; }
+  [ -z "$(row Apply)" ] || { echo "Apply block must be absent"; return 1; }
+  return 0
+}
+
+# P2 in the grouped table: a failed apply renders '?/N', never '0/N'.
+test_failed_apply_renders_question_marks() {
+  local plan_counts='{"count-add":"9","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
+  write_meta "e" "g" success "${plan_counts}" "" "" "$(ops_apply failure false '?' '?' '?')"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row 'Apply details')"
+  [[ "${r}" == *'`💫 ?/9` added'* ]] || { echo "expected ?/9 for a failed apply, got: ${r}"; return 1; }
+  [[ "${r}" != *'`💫 0/9`'* ]] || { echo "a failed apply must never render 0/9 (P2)"; return 1; }
+  [[ "$(row Apply)" == *'<span title="failure">❌</span>'* ]] || { echo "Apply status must be ❌"; return 1; }
+  return 0
+}
+
+# Full row order with every block and optional row present (no Mode row yet).
+test_full_row_order_with_all_blocks() {
+  local plan_counts='{"count-add":"1","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
+  write_meta "e" "g" success "${plan_counts}" "0:04" "1:0:0" "$(ops_apply success true 1 0 0 1:07 1),$(ops_destroy_plan success 1 0:31 1),$(ops_destroy success true 1 0:44 1)"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local labels
+  labels=$(rendered_body | grep -oE '^\| <span title="[^"]+">' | sed -E 's/^\| <span title="([^"]+)">/\1/')
+  local expected='Initialization
+Lock file
+Format and Style
+Validate
+TFLint
+Plan
+Warnings
+Plan details
+Plan time
+Apply
+Apply warnings
+Apply details
+Apply time
+Destroy plan
+Destroy plan warnings
+Destroy plan details
+Destroy plan time
+Destroy
+Destroy warnings
+Destroy details
+Destroy time
+Links'
+  [[ "${labels}" == "${expected}" ]] || { echo "row order mismatch"; diff <(echo "${expected}") <(echo "${labels}") | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# F1 — table sync (docs/Workflow-pr-comments.md §5.1, Apply-and-destroy-
+# reporting.md P9). Render a fully populated group through THIS action and a
+# fully populated env through create-validation-summary, and compare the
+# sets of row labels the two renderers actually emit. Behavioural, not a
+# grep: a row added to one renderer and not the other fails here.
+test_f1_row_set_in_sync_with_per_env_head() {
+  local plan_counts='{"count-add":"1","count-change":"0","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
+  write_meta "e" "g" success "${plan_counts}" "0:04" "1:0:0" "$(ops_apply success true 1 0 0 1:07 1),$(ops_destroy_plan success 1 0:31 1),$(ops_destroy success true 1 0:44 1)" '["all","apply-on-pr","destroy-on-pr"]'
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 1, "body": "<!-- tf:tag:plan:e:run-id-999:attempt-1 -->\nx"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local grouped_labels
+  grouped_labels=$(rendered_body | grep -oE '^\| <span title="[^"]+">' | sed -E 's/^\| <span title="([^"]+)">/\1/' | sort -u)
+
+  # Per-env head with every block, every optional row and a Links row.
+  local cvs="${_this_script_dir}/../create-validation-summary"
+  local per_env_labels
+  per_env_labels=$(
+    export GITHUB_OUTPUT=$(mktemp) RUNNER_TEMP=$(mktemp -d)
+    export GITHUB_ACTION_PATH="${cvs}" GITHUB_WORKSPACE="${TEST_DIR}"
+    export GITHUB_SERVER_URL="https://github.com" GITHUB_REPOSITORY="dsb-norge/test-repo" GITHUB_RUN_ID="999"
+    export input_environment_name="e" input_job_check_run_id="1"
+    export input_status_init=success input_status_verify_lock=success input_status_fmt=success
+    export input_status_validate=success input_status_lint=success input_status_plan=success
+    export input_pr_comment_group="" input_include_plan_details=true
+    export input_plan_count_add=1 input_plan_count_change=0 input_plan_count_destroy=0
+    export input_plan_count_import=0 input_plan_count_move=0 input_plan_count_remove=0 input_plan_count_total=1
+    export input_plan_time="0:04" input_warning_count=1 input_plan_tag_comment_id=1
+    export input_goals_json='["all","apply-on-pr","destroy-on-pr"]'
+    export input_status_apply=success input_apply_completed=true input_apply_count_add=1 input_apply_count_change=0 input_apply_count_destroy=0 input_apply_time="1:07" input_apply_warning_count=1
+    export input_status_destroy_plan=success input_destroy_plan_count_add=0 input_destroy_plan_count_change=0 input_destroy_plan_count_destroy=1 input_destroy_plan_time="0:31" input_destroy_plan_warning_count=1
+    export input_status_destroy=success input_destroy_completed=true input_destroy_count_destroy=1 input_destroy_time="0:44" input_destroy_warning_count=1
+    ( source "${cvs}/step_create_validation_summary.sh" ) >/dev/null 2>&1
+    grep -oE '^\| <span title="[^"]+">' "$(grep '^head-summary-file=' "${GITHUB_OUTPUT}" | cut -d= -f2-)" | sed -E 's/^\| <span title="([^"]+)">/\1/' | sort -u
+  )
+  [ -n "${per_env_labels}" ] || { echo "per-env head rendered no rows — check create-validation-summary inputs"; return 1; }
+  if [[ "${grouped_labels}" != "${per_env_labels}" ]]; then
+    echo "row sets differ between the per-group head (this action) and the per-env head (create-validation-summary):"
+    diff <(echo "${per_env_labels}") <(echo "${grouped_labels}") | sed 's/^/  /'
+    return 1
+  fi
+  local n; n=$(echo "${grouped_labels}" | wc -l)
+  [ "${n}" -eq 23 ] || { echo "expected exactly 23 distinct rows (incl. Mode) in the fully populated table, got ${n}"; return 1; }
+  return 0
+}
+
+
+# E8: Mode row — per-env value in each column; row omitted when no env in the
+# group mutates on PR; rendered from goals, before any outcome exists.
+# Q4: the group title follows the same rule as the per-env head.
+test_group_title_follows_mode() {
+  write_meta "alpha" "g"
+  write_meta "bravo" "g"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local first; first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform validation summary for group: `g`' ]] ||
+    { echo "plan-only group must keep the original title; got: ${first}"; return 1; }
+
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform summary for group: `g`' ]] ||
+    { echo "a group with a mutating env must drop 'validation'; got: ${first}"; return 1; }
+  return 0
+}
+
+test_e8_mode_row_per_env() {
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  write_meta "bravo" "g"
+  write_meta "charlie" "g" success "" "" "" "" '["all","destroy-plan","apply-on-pr","destroy-on-pr"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Mode)"
+  local t='This environment mutates infrastructure on pull request'
+  local expected="| <span title=\"Mode\">🐙☠</span> | Mode | <span title=\"${t}\">🐙</span> | <span title=\"${t}\">—</span> | <span title=\"${t}\">🐙☠</span> |"
+  [[ "${r}" == "${expected}" ]] || { echo "Mode row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  # First row of the table, before Initialization.
+  local first; first=$(rendered_body | grep -E '^\| <span title="' | head -n1)
+  [[ "${first}" == "| <span title=\"Mode\">"* ]] || { echo "Mode must be the first row; first row is: ${first}"; return 1; }
+  return 0
+}
+
+test_e8_mode_row_omitted_when_nobody_mutates() {
+  write_meta "alpha" "g" success "" "" "" "" '["all"]'
+  write_meta "bravo" "g" success "" "" "" "" '["all","apply"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [ -z "$(row Mode)" ] || { echo "Mode row must be omitted when no env has an on-PR goal"; return 1; }
+  local first; first=$(rendered_body | grep -E '^\| <span title="' | head -n1)
+  [[ "${first}" == '| <span title="Initialization">'* ]] || { echo "first row must still be Initialization; got: ${first}"; return 1; }
+  return 0
+}
+
+# Older artifact without a goals field → no Mode row, no crash.
+test_e8_mode_row_tolerates_missing_goals() {
+  write_meta "alpha" "g"
+  # Strip the goals key to mimic an artifact captured before this feature.
+  jq 'del(.matrix_context.vars.goals)' "${TEST_DIR}/matrix-job-meta-alpha.json" > "${TEST_DIR}/tmp.json" && mv "${TEST_DIR}/tmp.json" "${TEST_DIR}/matrix-job-meta-alpha.json"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [ -z "$(row Mode)" ] || { echo "Mode row must be omitted without goals"; return 1; }
+  return 0
+}
+
+# P30: 'skipped' outcomes must not open a block.
+test_p30_all_skipped_no_block() {
+  write_meta "a" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy-plan": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  write_meta "b" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  for label in 'Apply' 'Apply details' 'Destroy plan' 'Destroy'; do
+    [ -z "$(row "${label}")" ] || { echo "row '${label}' must be omitted when every env skipped the step"; return 1; }
+  done
+  return 0
+}
+test_p30_mixed_success_and_skipped() {
+  write_meta "a" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  write_meta "b" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local r; r="$(row Apply)"
+  [[ "${r}" == '| <span title="Apply">🐙</span> | Apply | <span title="success">✅</span> | <span title="skipped">⏭️</span> |' ]] || { echo "expected ✅ / ⏭️ row, got: ${r}"; return 1; }
+  return 0
+}
+
 # ============================================================================
 # Run tests
 # ============================================================================
 
 run_test "empty desired + empty existing is a no-op"                       test_empty_desired_empty_existing_is_noop
-run_test "sweep mode: empty desired + orphan existing → delete only"       test_sweep_only_orphans
+run_test "a run declaring no groups deletes nothing it did not create"     test_no_groups_declared_touches_nothing
+run_test "orphan still deleted when this run declares a group of its own"  test_orphan_deleted_when_this_run_owns_groups
+run_test "add-pr-comment=false: the aggregator touches no comment at all"  test_add_pr_comment_false_touches_nothing
 run_test "post mode: desired + no existing → post only"                    test_post_when_no_existing
 run_test "mixed upsert: orphan deleted + matching marker patched in place" test_mixed_orphan_delete_and_patch
 run_test "envs render in alphabetical column order"                        test_alphabetical_column_order
@@ -1286,6 +1679,22 @@ run_test "legacy prefix-only comment → ignored (no-migration policy)"      tes
 run_test "body starts with marker on line 1, H3 next non-blank"            test_body_starts_with_marker_then_h3
 run_test "multiple groups: each marker patched independently"              test_multiple_groups_each_patched
 run_test "PATCH failure → fall back to POST"                               test_patch_failure_falls_back_to_post
+run_test "E1: Apply block renders; env without apply shows — / N/A"       test_e1_apply_row_mixed_envs
+run_test "E2/E9: no env ran apply → whole block omitted, table intact"      test_e2_no_apply_anywhere_omits_block
+run_test "E3: apply tag anchor → [apply log] line in Links"                 test_e3_apply_tag_anchor_in_links
+run_test "E4: 'prod' does not inherit 'prod-dr' tag anchors (P8)"           test_e4_env_prefix_does_not_cross_match
+run_test "E5: destroy-plan tag is not the destroy anchor (P8)"              test_e5_destroy_vs_destroy_plan_markers_do_not_cross_match
+run_test "E6: four warning rows, independently gated, never summed"         test_e6_four_warning_rows_independent
+run_test "E7: destroy-plan (plan-shaped) and destroy (ratio) blocks"        test_e7_destroy_plan_and_destroy_blocks
+run_test "P2: failed apply renders ?/N in the grouped table, never 0/N"     test_failed_apply_renders_question_marks
+run_test "all blocks present → 22 rows in §8.1 order"                       test_full_row_order_with_all_blocks
+run_test "F1: per-group and per-env heads emit the same row set"            test_f1_row_set_in_sync_with_per_env_head
+run_test "Q4: group title drops 'validation' when the group mutates on PR"  test_group_title_follows_mode
+run_test "E8: Mode row renders per-env 🐙/☠/🐙☠/— and sits first"           test_e8_mode_row_per_env
+run_test "E8: Mode row omitted when no env in the group mutates on PR"      test_e8_mode_row_omitted_when_nobody_mutates
+run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals
+run_test "P30: every env skipped the step → no block at all"                test_p30_all_skipped_no_block
+run_test "P30: one env ran, one skipped → row with ✅ and ⏭️"                test_p30_mixed_success_and_skipped
 
 # ============================================================================
 echo ""

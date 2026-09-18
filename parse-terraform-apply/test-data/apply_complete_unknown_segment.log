@@ -1,0 +1,4 @@
+null_resource.a: Creating...
+null_resource.a: Creation complete after 0s [id=1]
+
+Apply complete! Resources: 3 imported, 0 added, 0 changed, 0 destroyed, 2 forgotten.

@@ -1,0 +1,76 @@
+name: "Parse terraform apply output"
+description: |
+  Parses the console output of 'terraform apply' (or of applying a
+  '-destroy' plan) to extract the resource change counts from its summary
+  line, and produces a copy of the console with terraform's progress-tick
+  lines removed for embedding in a PR comment.
+
+  Recognised summary lines:
+    Apply complete! Resources: <A> added, <C> changed, <D> destroyed.
+    Destroy complete! Resources: <D> destroyed.
+
+  A failed apply prints no summary line. Every count is then '?' and
+  `completed` is 'false' — never zeros, which would read as "nothing
+  happened" for what may be a partially applied infrastructure.
+  See docs/Apply-and-destroy-reporting.md §7.2.
+author: "Peder Schmedling"
+inputs:
+  apply-console-file:
+    description: |
+      Path of the file with apply output captured from the console
+      (terraform-apply's `console-output-file` output). Missing or empty is
+      not an error: counts are '?' and `completed` is 'false'.
+    required: true
+outputs:
+  count-import:
+    description: |
+      Number of resources imported. '?' when no summary line was found, '0' when
+      terraform emitted no 'imported' segment (it only does so when import
+      blocks are in play). Counted in `count-total`: an apply that only adopted
+      existing objects is not a no-op.
+    value: ${{ steps.parse-apply-output.outputs.import-count }}
+  count-add:
+    description: Number of resources added. '?' when no summary line was found.
+    value: ${{ steps.parse-apply-output.outputs.add-count }}
+  count-change:
+    description: Number of resources changed. '?' when no summary line was found.
+    value: ${{ steps.parse-apply-output.outputs.change-count }}
+  count-destroy:
+    description: Number of resources destroyed. '?' when no summary line was found.
+    value: ${{ steps.parse-apply-output.outputs.destroy-count }}
+  count-total:
+    description: |
+      Sum of import + add + change + destroy. '?' when no summary line was found.
+      Terraform's apply summary carries no move / remove segment, but it does
+      carry 'imported' — assuming otherwise once made a successful apply of five
+      imports report as a failed apply.
+    value: ${{ steps.parse-apply-output.outputs.total-count }}
+  completed:
+    description: |
+      'true' when a summary line was found — terraform prints one only on
+      full success — 'false' otherwise. The signal consumers use to render
+      '?' instead of a count.
+    value: ${{ steps.parse-apply-output.outputs.completed }}
+  apply-kind:
+    description: |
+      'apply' or 'destroy', from which summary line matched. Empty when
+      `completed` is 'false'.
+    value: ${{ steps.parse-apply-output.outputs.apply-kind }}
+  filtered-console-file:
+    description: |
+      Path of a copy of the console file with terraform's progress-tick
+      lines ('<addr>: Still creating... [10s elapsed]') removed. A long
+      apply emits thousands of those; a 65k tail of the raw console would
+      be almost entirely ticks. Always populated; empty when the input is.
+    value: ${{ steps.parse-apply-output.outputs.filtered-console-file }}
+runs:
+  using: "composite"
+  steps:
+    - id: parse-apply-output
+      shell: bash
+      env:
+        input_apply_console_file: ${{ inputs.apply-console-file }}
+      run: |
+        # Extract resource change counts and a tick-free copy from the apply console output
+        set -o allexport
+        source "${{ github.action_path }}/step_parse_apply_output.sh"

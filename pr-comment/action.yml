@@ -57,13 +57,36 @@ inputs:
     required: true
   body:
     description: |
-      Markdown body to post or patch. Required when `mode=upsert`; ignored
-      for `delete`.
+      Markdown body to post or patch. Ignored for `delete`.
+
+      For `upsert`, exactly one of `body` and `body-file` is required.
 
       The action prepends the marker as line 1 and a blank line as line 2,
       then the body verbatim from line 3 onward.
 
       Pass multi-line bodies via a YAML literal block scalar (`|`).
+
+      Prefer `body-file` for anything a renderer produced. A body passed
+      here is interpolated into the composite step's script text, so a
+      65k plan extract becomes 65k of inline shell — see `body-file`.
+    required: false
+    default: ""
+  body-file:
+    description: |
+      Absolute path of a file holding the markdown body to post or patch.
+      Ignored for `delete`.
+
+      For `upsert`, exactly one of `body` and `body-file` is required.
+
+      The file is read from disk at post time; its content never enters the
+      step's script text, argv or envp. This is the path to use for bodies
+      produced by another action (create-validation-summary's `*-file`
+      outputs, create-test-report's `body-file`). It is also what keeps a
+      65k body off the Linux per-string execve limit — see the ARG_MAX
+      section of the repository's CLAUDE.md.
+
+      The file must exist and be non-empty; the step fails before any API
+      call otherwise, so a broken producer never posts a blank comment.
     required: false
     default: ""
 
@@ -91,21 +114,27 @@ runs:
         input_issue_number: ${{ inputs.issue-number }}
         input_mode: ${{ inputs.mode }}
         input_marker: ${{ inputs.marker }}
+        input_body_file: ${{ inputs.body-file }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Upsert or delete the PR comment identified by the marker
         #
-        # Body is passed via a heredoc with a quoted delimiter so multi-line
-        # markdown is preserved verbatim, not subjected to YAML expression
-        # interpolation as it would be in the env: list above.
+        # Inline body is passed via a heredoc with a quoted delimiter so
+        # multi-line markdown is preserved verbatim, not subjected to YAML
+        # expression interpolation as it would be in the env: list above.
         #
         # Intentionally NOT exported. step_pr_comment.sh is sourced from
         # this same shell and reads ${input_body} as a shell-local, so it
-        # never needs to be in envp. Bodies carry the plan-extract output
-        # (~65k chars, capped); a single env var that size sits just under
-        # Linux's per-string execve limit (MAX_ARG_STRLEN = 128k). Keeping
-        # it out of envp removes the only realistic ARG_MAX exposure on
-        # this action's surface.
+        # never needs to be in envp. A single env var the size of a plan
+        # extract (~65k, capped) sits just under Linux's per-string execve
+        # limit (MAX_ARG_STRLEN = 128k). Keeping it out of envp removes the
+        # only realistic ARG_MAX exposure on this action's surface.
+        #
+        # The heredoc still expands `${{ inputs.body }}` into this script's
+        # text even when the caller used body-file — GitHub interpolates
+        # before bash runs. That is fine: the default is the empty string,
+        # so a body-file caller contributes nothing here. What body-file
+        # removes is the large-body case of that interpolation.
         input_body=$(cat <<'EOF_PR_COMMENT_BODY'
         ${{ inputs.body }}
         EOF_PR_COMMENT_BODY

@@ -1,0 +1,19 @@
+module.app.azuread_application.this: Creating...
+module.app.azurerm_storage_account.this: Creating...
+module.app.azuread_application.this: Still creating... [10s elapsed]
+module.app.azurerm_storage_account.this: Still creating... [10s elapsed]
+module.app.azuread_application.this: Creation complete after 12s [id=/applications/11111111-1111-1111-1111-111111111111]
+module.app.azurerm_storage_account.this: Still creating... [20s elapsed]
+module.app.azurerm_storage_account.this: Still creating... [30s elapsed]
+module.app.azurerm_storage_account.this: Still creating... [1m0s elapsed]
+module.app.azurerm_storage_account.this: Still creating... [1m10s elapsed]
+module.app.azurerm_storage_account.this: Still creating... [1h0m10s elapsed]
+module.app.azurerm_storage_account.this: Creation complete after 1h0m14s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample]
+module.app.azurerm_role_assignment.this: Modifying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments/22222222-2222-2222-2222-222222222222]
+module.app.azurerm_role_assignment.this: Still modifying... [id=/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments/22222222-2222-2222-2222-222222222222, 10s elapsed]
+module.app.azurerm_role_assignment.this: Modifications complete after 14s [id=/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments/22222222-2222-2222-2222-222222222222]
+data.azurerm_client_config.current: Reading...
+data.azurerm_client_config.current: Still reading... [10s elapsed]
+data.azurerm_client_config.current: Read complete after 11s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD0=]
+
+Apply complete! Resources: 2 added, 1 changed, 0 destroyed.

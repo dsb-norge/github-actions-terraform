@@ -46,6 +46,12 @@ declare -gA EXISTING_GROUP_COMMENTS=()
 # the env has no per-env comment posted yet; the Links cell drops the line.
 declare -gA PER_ENV_ANCHOR=()
 
+# per_env_tag_anchor["<kind>/<env>"]="#issuecomment-<id>" for the mutating
+# operations' tags (kind ∈ apply, destroy-plan, destroy). Same run-id-scoped
+# marker-prefix lookup as PER_ENV_ANCHOR. Feeds the Links row's
+# `apply log` / `destroy plan log` / `destroy log` lines.
+declare -gA PER_ENV_TAG_ANCHOR=()
+
 # per_env_job_url[env_name]="https://github.com/.../actions/runs/<run_id>/job/<check_run_id>#logs"
 # Resolved at step 2 via the Jobs API (gh api .../runs/<id>/jobs). Missing
 # entries mean the env's matrix job couldn't be matched by name; the Links
@@ -75,7 +81,7 @@ function build_desired_set {
 
   if [ ${#files[@]} -eq 0 ]; then
     log-info "No metadata files matched '${input_metadata_files_pattern}'."
-    log-info "Empty desired set — will run in sweep-only mode (still need to clean up any orphans)."
+    log-info "Empty desired set — sweep-only mode: orphans are cleaned up only if this run declares at least one group (see the orphan pass)."
     end-group
     return 0
   fi
@@ -281,35 +287,50 @@ function list_pr_state {
   # step purges prior ones before POSTing), but the newest-by-id
   # tiebreaker handles the unlikely case where two coexist.
   local run_id="${GITHUB_RUN_ID:-0}"
-  local group env
+  local group env kind
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
-      local plan_tag_prefix
-      plan_tag_prefix="<!-- tf:tag:plan:${env}:run-id-${run_id}:"
+      # One lookup per tag kind. The marker is '<!-- tf:tag:<kind>:<env>:run-id-<id>:'
+      # — every segment terminated by ':' so 'destroy' cannot match a
+      # 'destroy-plan' tag and 'prod' cannot match 'prod-dr'
+      # (docs/Apply-and-destroy-reporting.md P8).
+      for kind in plan apply destroy-plan destroy; do
+        local tag_prefix="<!-- tf:tag:${kind}:${env}:run-id-${run_id}:"
 
-      local matched_ids
-      matched_ids=$(jq -r --arg m "${plan_tag_prefix}" '.[] | select(.body | contains($m)) | .id' \
-          <"${normalized_file}" 2>/dev/null) || matched_ids=""
+        local matched_ids
+        matched_ids=$(jq -r --arg m "${tag_prefix}" '.[] | select(.body | contains($m)) | .id' \
+            <"${normalized_file}" 2>/dev/null) || matched_ids=""
 
-      # Count lines safely: grep -c returns exit 1 with no matches which
-      # would otherwise trigger a fallback that appends a stray "0".
-      local count=0
-      if [ -n "${matched_ids}" ]; then
-        count=$(echo "${matched_ids}" | wc -l | tr -d ' ')
-      fi
+        # Count lines safely: grep -c returns exit 1 with no matches which
+        # would otherwise trigger a fallback that appends a stray "0".
+        local count=0
+        if [ -n "${matched_ids}" ]; then
+          count=$(echo "${matched_ids}" | wc -l | tr -d ' ')
+        fi
 
-      if [ "${count}" = "0" ]; then
-        log-debug "  env '${env}': no plan tag found for run ${run_id} — Links cell will show only job log"
-      elif [ "${count}" = "1" ]; then
-        PER_ENV_ANCHOR[${env}]="#issuecomment-${matched_ids}"
-        log-info "  env '${env}': resolved log-extract anchor to ${PER_ENV_ANCHOR[${env}]}"
-      else
-        local newest
-        newest=$(echo "${matched_ids}" | sort -nr | head -n1)
-        PER_ENV_ANCHOR[${env}]="#issuecomment-${newest}"
-        log-warn "  env '${env}': ${count} plan tags match for run ${run_id}; using newest id=${newest}"
-      fi
+        local anchor=""
+        if [ "${count}" = "0" ]; then
+          [ "${kind}" = "plan" ] && log-debug "  env '${env}': no plan tag found for run ${run_id} — Links cell will show only job log"
+        elif [ "${count}" = "1" ]; then
+          anchor="#issuecomment-${matched_ids}"
+          [ "${kind}" = "plan" ] && log-info "  env '${env}': resolved log-extract anchor to ${anchor}"
+          [ "${kind}" != "plan" ] && log-info "  env '${env}': resolved ${kind} tag anchor to ${anchor}"
+        else
+          local newest
+          newest=$(echo "${matched_ids}" | sort -nr | head -n1)
+          anchor="#issuecomment-${newest}"
+          log-warn "  env '${env}': ${count} ${kind} tags match for run ${run_id}; using newest id=${newest}"
+        fi
+
+        if [ -n "${anchor}" ]; then
+          if [ "${kind}" = "plan" ]; then
+            PER_ENV_ANCHOR[${env}]="${anchor}"
+          else
+            PER_ENV_TAG_ANCHOR["${kind}/${env}"]="${anchor}"
+          fi
+        fi
+      done
     done <<<"${DESIRED_GROUPS[${group}]}"
   done
 
@@ -342,7 +363,6 @@ function render_group_body {
   local group_name="${1}"
   local envs_nl="${2}"
   local prefix
-  prefix=$(_group_prefix "${group_name}")
 
   local -a envs=()
   while IFS= read -r e; do
@@ -357,6 +377,27 @@ function render_group_body {
     header+=" ${env} |"
     sep+=":---:|"
   done
+
+  # ---- Mode row (§8.2, §8.8) — first, and only when some env mutates on PR ----
+  # Two passes: collect each env's flags (and the union for the col-1 icon),
+  # then build the row.
+  local any_mode=false mode_icons="" apply_on_pr destroy_on_pr
+  local -a mode_cells=()
+  for env in "${envs[@]}"; do
+    apply_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "apply-on-pr")
+    destroy_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "destroy-on-pr")
+    mode_cells+=("$(_render_mode_cell "${apply_on_pr}" "${destroy_on_pr}")")
+    [ "${apply_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *🐙* ]] && mode_icons+="🐙"
+    [ "${destroy_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *☠* ]] && mode_icons+="☠"
+  done
+  # Col-1 icon is the union of what the group does on PR; the per-env head's
+  # icon is per env. The tooltip label is 'Mode' in both.
+  # Title depends on the same any_mode the Mode row does, so it is resolved here
+  # rather than at the top of the function.
+  prefix=$(_group_prefix "${group_name}" "${any_mode}")
+  local mode_row="| $(_render_step_icon_cell "${mode_icons:-🐙}" "Mode") | Mode |"
+  local cell
+  for cell in "${mode_cells[@]}"; do mode_row+=" ${cell} |"; done
 
   # ---- Step rows ----
   local rows=""
@@ -429,6 +470,22 @@ function render_group_body {
     plan_time_row+=" $(_render_plan_time_cell "${pt}") |"
   done
 
+  # ---- Operation blocks (apply, destroy-plan, destroy) ----
+  # Rendered here, assembled below after Plan time. Each block is four rows
+  # — status · warnings · details · time — gated group-wide on any env
+  # having an outcome for the step; the warnings row further on any env
+  # having a positive count. Mirrors create-validation-summary's
+  # _render_*_block (docs/Apply-and-destroy-reporting.md §8.1, §8.8).
+  local op_rows="" block
+  local block_def op_step op_emoji op_label op_warn_step op_time_key
+  for block_def in "${GROUPED_TABLE_OP_BLOCKS[@]}"; do
+    IFS='|' read -r op_step op_emoji op_label op_warn_step op_time_key <<<"${block_def}"
+    # $(...) strips the block's trailing newline; put it back, or the
+    # block's last row and the next row land on one line.
+    block="$(_render_op_block "${group_name}" "${op_step}" "${op_emoji}" "${op_label}" "${op_warn_step}" "${op_time_key}" "${envs[@]}")"
+    [ -n "${block}" ] && op_rows+="${block}"$'\n'
+  done
+
   # ---- Links row ----
   local links_row="| $(_render_step_icon_cell "🔗" "Links") | Links |"
   for env in "${envs[@]}"; do
@@ -436,7 +493,10 @@ function render_group_body {
     # _render_links_cell drops the line in that case (we don't emit wrong URLs).
     local job_log_url="${PER_ENV_JOB_URL[${env}]:-}"
     local anchor="${PER_ENV_ANCHOR[${env}]:-}"
-    links_row+=" $(_render_links_cell "${anchor}" "${job_log_url}") |"
+    links_row+=" $(_render_links_cell "${anchor}" "${job_log_url}" \
+      "${PER_ENV_TAG_ANCHOR[apply/${env}]:-}" \
+      "${PER_ENV_TAG_ANCHOR[destroy-plan/${env}]:-}" \
+      "${PER_ENV_TAG_ANCHOR[destroy/${env}]:-}") |"
   done
 
   # ---- Footer ----
@@ -461,12 +521,19 @@ function render_group_body {
   [ "${group_warning_total}" -gt 0 ] && mid_rows+="${warnings_row}"$'\n'
   [ "${group_has_plan_data}" = true ] && mid_rows+="${plan_details_row}"$'\n'
   mid_rows+="${plan_time_row}"$'\n'
+  # Operation blocks sit between Plan time and Links. op_rows is empty for a
+  # plan-only group; when present every row already ends in a newline.
+  mid_rows+="${op_rows}"
   mid_rows+="${links_row}"
 
-  printf '%s\n%s\n%s\n%s%s\n\n%s\n' \
+  local top_rows=""
+  [ "${any_mode}" = true ] && top_rows="${mode_row}"$'\n'
+
+  printf '%s\n%s\n%s\n%s%s%s\n\n%s\n' \
     "${prefix}" \
     "${header}" \
     "${sep}" \
+    "${top_rows}" \
     "${rows}" \
     "${mid_rows}" \
     "${footer}"
@@ -475,6 +542,111 @@ function render_group_body {
 # ----------------------------------------------------------------------------
 # Render helpers (private)
 # ----------------------------------------------------------------------------
+
+# Render one operation block (status · warnings · details · time) for the
+# grouped table, or nothing when no env in the group RAN the step (outcome
+# non-empty and not 'skipped'). Rows end in a newline. An env that skipped a
+# step another env ran still gets its ⏭️ cell. Details cells differ per operation:
+# applied/planned badges for apply and destroy, the plan badge set for the
+# destroy plan (it is a plan). Denominators come from the matching plan
+# step's parse output.
+#   $1 group, $2 step id, $3 emoji, $4 label, $5 warnings step id,
+#   $6 time output name, $7… envs
+function _render_op_block {
+  local group="${1}" step="${2}" emoji="${3}" label="${4}" warn_step="${5}" time_key="${6}"
+  shift 6
+  local -a envs=("${@}")
+
+  local env outcome any_outcome=false
+  local status_row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
+  for env in "${envs[@]}"; do
+    outcome=$(_extract_step_outcome "${group}" "${env}" "${step}")
+    _op_ran "${outcome}" && any_outcome=true
+    status_row+=" $(_render_status_cell "${outcome}") |"
+  done
+  [ "${any_outcome}" = true ] || return 0
+
+  local warn_label="${label} warnings"
+  local warn_title="Warnings from ${step}"
+  local warnings_row="| $(_render_step_icon_cell "⚠️" "${warn_label}") | ${warn_label} |"
+  local warn_total=0 wc meta_file
+  for env in "${envs[@]}"; do
+    meta_file="${DESIRED_META[${group}/${env}]:-}"
+    wc=$(_extract_step_output "${meta_file}" "${warn_step}" "warning-count")
+    warnings_row+=" $(_render_warning_count_cell "${wc}" "${warn_title}") |"
+    [[ "${wc}" =~ ^[0-9]+$ ]] && warn_total=$((warn_total + wc))
+  done
+
+  local details_label="${label} details"
+  local details_row="| $(_render_step_icon_cell "📊" "${details_label}") | ${details_label} |"
+  for env in "${envs[@]}"; do
+    meta_file="${DESIRED_META[${group}/${env}]:-}"
+    case "${step}" in
+      apply)
+        details_row+=" $(_render_apply_details_cell \
+          "$(_extract_step_output "${meta_file}" parse-apply count-add)" \
+          "$(_extract_step_output "${meta_file}" parse-apply count-change)" \
+          "$(_extract_step_output "${meta_file}" parse-apply count-destroy)" \
+          "$(_extract_step_output "${meta_file}" parse-plan count-add)" \
+          "$(_extract_step_output "${meta_file}" parse-plan count-change)" \
+          "$(_extract_step_output "${meta_file}" parse-plan count-destroy)" \
+          "$(_extract_step_output "${meta_file}" parse-apply completed)") |"
+        ;;
+      destroy-plan)
+        details_row+=" $(_render_plan_details_cell \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-add)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-change)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-destroy)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-import)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-move)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-remove)") |"
+        ;;
+      destroy)
+        details_row+=" $(_render_destroy_details_cell \
+          "$(_extract_step_output "${meta_file}" parse-destroy-apply count-destroy)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-plan count-destroy)" \
+          "$(_extract_step_output "${meta_file}" parse-destroy-apply completed)") |"
+        ;;
+    esac
+  done
+
+  local time_label="${label} time"
+  local time_row="| $(_render_step_icon_cell "⏱" "${time_label}") | ${time_label} |"
+  for env in "${envs[@]}"; do
+    meta_file="${DESIRED_META[${group}/${env}]:-}"
+    time_row+=" $(_render_plan_time_cell "$(_extract_step_output "${meta_file}" "${step}" "${time_key}")") |"
+  done
+
+  printf '%s\n' "${status_row}"
+  [ "${warn_total}" -gt 0 ] && printf '%s\n' "${warnings_row}"
+  printf '%s\n' "${details_row}"
+  printf '%s\n' "${time_row}"
+}
+
+# Extract one step output from a metadata file. Empty when the file, the
+# step or the output is missing, or the value is JSON null.
+function _extract_step_output {
+  local file="${1}" step="${2}" key="${3}"
+  [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
+  local val
+  val=$(jq -r --arg s "${step}" --arg k "${key}" '.steps[$s].outputs[$k] // ""' "${file}" 2>/dev/null || echo "")
+  [ "${val}" = "null" ] && val=""
+  echo "${val}"
+}
+
+# 'true' when the env's goals (matrix_context.vars.goals, a JSON array)
+# contain the given goal; '' otherwise, including when goals are missing or
+# not an array (older artifacts).
+function _extract_goal_flag {
+  local group="${1}" env="${2}" goal="${3}"
+  local file="${DESIRED_META[${group}/${env}]:-}"
+  [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
+  if jq -e --arg g "${goal}" '(.matrix_context.vars.goals // []) | (type == "array") and (index($g) != null)' "${file}" >/dev/null 2>&1; then
+    echo "true"
+  else
+    echo ""
+  fi
+}
 
 # Extract step outcome from a matrix-job-meta file. Returns "" if step not present.
 function _extract_step_outcome {
@@ -568,6 +740,25 @@ function orphan_delete_pass {
 
   if [ ${#EXISTING_GROUP_COMMENTS[@]} -eq 0 ]; then
     log-info "No existing group comments — nothing to clean up."
+    end-group
+    return 0
+  fi
+
+  # An empty desired set means this run declared no groups at all — so it has
+  # no opinion about which group comments belong on the pull request, and the
+  # ones it can see belong to somebody else. A repository whose second workflow
+  # calls this same reusable workflow (an integration-test run, say, with
+  # add-pr-comment false and no groups) otherwise deletes the real run's group
+  # heads: they were seeded first, so they were the top comments on the thread,
+  # and the real aggregator then re-posted them at the bottom. The group
+  # summaries are meant to be the first thing a reviewer sees.
+  #
+  # The cost is a group comment that outlives the removal of a repository's last
+  # group, on pull requests that were open across that change — a new pull
+  # request never gets one, since nothing posts it. Small, and bounded, against
+  # deleting a comment that another workflow is actively maintaining.
+  if [ ${#DESIRED_GROUPS[@]} -eq 0 ]; then
+    log-info "Desired set is empty — this run declares no groups, so the ${#EXISTING_GROUP_COMMENTS[@]} existing group comment(s) are not ours to delete."
     end-group
     return 0
   fi
@@ -746,6 +937,35 @@ function _record_processed {
 # Main
 # ============================================================================
 
+# False only when this run POSITIVELY declares that nothing comments: every
+# metadata file carries add-pr-comment and every one of them says no. An absent
+# key is unknown, not false — metadata written by an older version of
+# capture-matrix-job-meta must not silently switch comment reconciliation off.
+#
+# A workflow configured not to comment has no business listing, posting or
+# deleting comments. Without this, a repository with a second caller of this
+# reusable workflow (an integration-test run with add-pr-comment false, say)
+# reaches the orphan pass, finds group heads it does not recognise, and deletes
+# the ones the real run seeded at the top of the thread — which then get
+# re-posted at the bottom, where nobody looks.
+function any_env_wants_comments {
+  shopt -s nullglob
+  local files=(${input_metadata_files_pattern})
+  shopt -u nullglob
+  [ ${#files[@]} -eq 0 ] && return 0
+
+  local f saw_key=false
+  for f in "${files[@]}"; do
+    jq -e 'has("matrix_context") and (.matrix_context.vars | has("add-pr-comment"))' "${f}" >/dev/null 2>&1 || continue
+    saw_key=true
+    if jq -e '.matrix_context.vars["add-pr-comment"] | (. == true or . == "true")' "${f}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  [ "${saw_key}" = 'true' ] && return 1
+  return 0
+}
+
 function main {
   log-info "Starting aggregate-validation-summaries..."
   log-info "Pattern:    ${input_metadata_files_pattern:-<unset>}"
@@ -762,6 +982,13 @@ function main {
   fi
 
   build_desired_set
+
+  if ! any_env_wants_comments; then
+    log-info "No environment in this run has add-pr-comment enabled — this workflow does not manage the pull request's comments; nothing to reconcile."
+    set-multiline-output "groups-processed-json" "[]"
+    return 0
+  fi
+
   list_pr_state
   orphan_delete_pass
   upsert_pass

@@ -887,6 +887,256 @@ run_test "Environment with remove count exceeds zero limit" "false"
 cleanup_test_dir
 
 # ============================================================================
+# F2 — the step id this action reads by literal name must exist in the
+# reusable workflow (docs/Apply-and-destroy-reporting.md §5.1, P7, F2).
+#
+# extract_environment_data looks up .steps["parse-destroy-plan"].outputs.*
+# in the captured metadata. For a long time no step with that id existed,
+# so every destroy-plan-max-count-* limit compared against an empty string
+# and was never enforced — with every test here green, because the tests
+# write the metadata themselves. This is a structural check across the two
+# files that have to agree; it is the only thing standing between that
+# defect and a silent recurrence on the next workflow refactor.
+# ============================================================================
+_workflow="${_this_script_dir}/../.github/workflows/terraform-ci-cd-default.yml"
+_helper="${_this_script_dir}/helpers_additional.sh"
+
+# The step ids the helper reads out of the metadata, by literal string.
+_ids_read_by_helper=$(grep -oE 'get_step_output(_success)? "\$\{file\}" "[a-z-]+"' "${_helper}" | grep -oE '"[a-z-]+"$' | tr -d '"' | sort -u)
+# The step ids the workflow's matrix job actually defines.
+_ids_in_workflow=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for step in wf["jobs"]["terraform-ci-cd"]["steps"]:
+    if "id" in step:
+        print(step["id"])
+PYEOF
+)
+
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F2 - every step id the helper reads exists in the workflow${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f2_missing=""
+for _id in ${_ids_read_by_helper}; do
+  if ! grep -qx "${_id}" <<<"${_ids_in_workflow}"; then
+    _f2_missing+=" ${_id}"
+  fi
+done
+if [[ -z "${_f2_missing}" ]] && grep -qx "parse-destroy-plan" <<<"${_ids_read_by_helper}"; then
+  echo -e "${GREEN}✓ PASSED${NC}: helper reads [$(echo ${_ids_read_by_helper} | tr '\n' ' ')] — all defined in the workflow"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: step id(s) read by helpers_additional.sh but not defined in terraform-ci-cd-default.yml:${_f2_missing:- (parse-destroy-plan no longer read by the helper?)}"
+  echo "  helper reads:  $(echo ${_ids_read_by_helper} | tr '\n' ' ')"
+  echo "  workflow has:  $(echo ${_ids_in_workflow} | tr '\n' ' ')"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F5 — the three mutating-step outcome gates must come AFTER the phase-2
+# comment steps (docs/Apply-and-destroy-reporting.md P1, F5).
+#
+# A gate exits 1. With allow-failing-terraform-operations=false that fails
+# the job and skips every later step without always(). A gate placed
+# before the phase-2 render would make a failed apply the one case that
+# skips its own reporting. Structural, not behavioural — but P1 is the
+# defect most likely to be reintroduced by a later refactor that "tidies"
+# the gates together.
+# ============================================================================
+_step_order=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for i, step in enumerate(wf["jobs"]["terraform-ci-cd"]["steps"]):
+    print(i, step.get("id") or step.get("name"))
+PYEOF
+)
+_pos() { grep -F -- " ${1}" <<<"${_step_order}" | head -n1 | cut -d' ' -f1; }
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5 - apply/destroy outcome gates sit after the phase-2 comment steps${NC}"
+echo -e "${BLUE}========================================${NC}"
+_upsert=$(_pos "upsert-head-apply")
+_gate_apply=$(_pos "🧐 Validation outcome: 🐙 Apply")
+_gate_dplan=$(_pos "🧐 Validation outcome: ☠📖 Destroy Plan")
+_gate_destroy=$(_pos "🧐 Validation outcome: ☠ Destroy")
+_capture=$(_pos "capture-metadata")
+if [[ -n "${_upsert}" && -n "${_gate_apply}" && -n "${_gate_dplan}" && -n "${_gate_destroy}" && -n "${_capture}" ]] \
+   && [ "${_gate_apply}" -gt "${_upsert}" ] && [ "${_gate_dplan}" -gt "${_upsert}" ] && [ "${_gate_destroy}" -gt "${_upsert}" ] \
+   && [ "${_gate_apply}" -lt "${_capture}" ] && [ "${_gate_dplan}" -lt "${_capture}" ] && [ "${_gate_destroy}" -lt "${_capture}" ]; then
+  echo -e "${GREEN}✓ PASSED${NC}: upsert-head-apply@${_upsert} < gates@${_gate_apply},${_gate_dplan},${_gate_destroy} < capture-metadata@${_capture}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: gate ordering — upsert-head-apply=${_upsert:-?} gates=${_gate_apply:-?},${_gate_dplan:-?},${_gate_destroy:-?} capture=${_capture:-?}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# The phase-2 render must also come after every mutating step and its parsers.
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5 - phase-2 render follows destroy and every parse step${NC}"
+echo -e "${BLUE}========================================${NC}"
+_cvs2=$(_pos "cvs-apply"); _destroy=$(_pos "destroy"); _pdw=$(_pos "parse-destroy-warnings"); _pda=$(_pos "parse-destroy-apply")
+if [[ -n "${_cvs2}" && -n "${_destroy}" && -n "${_pdw}" && -n "${_pda}" ]] && [ "${_cvs2}" -gt "${_destroy}" ] && [ "${_cvs2}" -gt "${_pdw}" ] && [ "${_cvs2}" -gt "${_pda}" ]; then
+  echo -e "${GREEN}✓ PASSED${NC}: cvs-apply@${_cvs2} after destroy@${_destroy}, parse-destroy-apply@${_pda}, parse-destroy-warnings@${_pdw}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: cvs-apply=${_cvs2:-?} destroy=${_destroy:-?} parse-destroy-apply=${_pda:-?} parse-destroy-warnings=${_pdw:-?}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F5c — every step from the first parse step after apply through the three
+# gates must carry always() (docs/Apply-and-destroy-reporting.md P31).
+#
+# apply/destroy fail the job on the spot (continue-on-error is
+# allow-failing-terraform-operations, default false), and a later step whose
+# if: lacks always() is skipped even when the if: is true. The first real
+# failed apply lost its parse step that way. F5 checks order; this checks
+# the guard, mechanically, so the next step added here cannot forget it.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F5c - every step after apply up to the gates carries always()${NC}"
+echo -e "${BLUE}========================================${NC}"
+_missing_always=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+steps = wf["jobs"]["terraform-ci-cd"]["steps"]
+names = [s.get("id") or s.get("name") for s in steps]
+start = names.index("parse-apply")
+end = names.index("capture-metadata")
+# The terraform steps themselves are deliberately NOT always(): destroy-plan
+# must not run after a failed init, destroy not after a failed destroy-plan.
+exempt = {"destroy-plan", "destroy"}
+for s in steps[start:end]:
+    name = s.get("id") or s.get("name")
+    if name in exempt:
+        continue
+    if "always()" not in str(s.get("if", "")):
+        print(name)
+PYEOF
+)
+if [[ -z "${_missing_always}" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: every parse / render / post / upsert / annotate / gate step between parse-apply and capture-metadata carries always()"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: steps missing always() in their if::"
+  echo "${_missing_always}" | sed 's/^/    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F6 — no comment body travels inline anywhere in the workflows: every
+# pr-comment upsert uses body-file, and no step interpolates a *-extract or
+# head-summary output as a string (docs/Apply-and-destroy-reporting.md §7.10).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F6 - no inline comment bodies in any workflow${NC}"
+echo -e "${BLUE}========================================${NC}"
+_wf_dir="${_this_script_dir}/../.github/workflows"
+_inline_bodies=$(grep -nE '^\s+body:\s' "${_wf_dir}"/*.y*ml || true)
+_string_outputs=$(grep -nE 'outputs\.(head-summary|plan-extract|apply-extract|destroy-plan-extract|destroy-extract|summary|prefix)\s*\}\}' "${_wf_dir}"/*.y*ml | grep -vE 'test\.outputs\.summary|-file\s*\}\}' || true)
+_legacy=$(grep -n 'comment-on-pr' "${_wf_dir}"/*.y*ml || true)
+if [[ -z "${_inline_bodies}" && -z "${_string_outputs}" && -z "${_legacy}" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: every pr-comment upsert uses body-file; no body string is interpolated; comment-on-pr@v2 is gone"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  [ -n "${_inline_bodies}" ] && { echo "  inline 'body:' in a workflow:"; echo "${_inline_bodies}" | sed 's/^/    /'; }
+  [ -n "${_string_outputs}" ] && { echo "  a body-string output interpolated:"; echo "${_string_outputs}" | sed 's/^/    /'; }
+  [ -n "${_legacy}" ] && { echo "  comment-on-pr still referenced:"; echo "${_legacy}" | sed 's/^/    /'; }
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F7 — every `with:` key a workflow passes is declared by the thing it calls,
+# and every required input without a default is passed. GitHub enforces
+# neither for composite actions: an unknown key is a run-time warning nobody
+# reads, and a missing required input arrives as an empty string. Both have
+# already happened here — an undeclared `apply-count-import`, and a missing
+# `status-verify-lock` that rendered an empty badge in every module repo's
+# comment for as long as that call site existed.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F7 - workflow with-keys match the called action's inputs${NC}"
+echo -e "${BLUE}========================================${NC}"
+_contract_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, os, sys, yaml
+
+def load(path):
+    with open(path, encoding='utf-8') as fh:
+        return yaml.safe_load(fh) or {}
+
+def declared_inputs(target):
+    """Inputs of a composite action dir, or of a reusable workflow file."""
+    for candidate in (f"{target}/action.yml", f"{target}/action.yaml"):
+        if os.path.isfile(candidate):
+            return (load(candidate).get('inputs') or {}), f"action {target}"
+    if os.path.isfile(target):
+        # 'on' is parsed as the boolean True by YAML 1.1, hence both lookups.
+        doc = load(target)
+        on = doc.get(True, doc.get('on')) or {}
+        return ((on.get('workflow_call') or {}).get('inputs') or {}), f"workflow {target}"
+    return None, None
+
+def resolve(uses):
+    if uses.startswith('./'):
+        return uses[2:]
+    if 'dsb-norge/github-actions-terraform/' in uses:
+        return uses.split('dsb-norge/github-actions-terraform/')[1].split('@')[0]
+    return None  # third-party action: not ours to check
+
+problems, checked = [], 0
+for wf in sorted(glob.glob('.github/workflows/*.y*ml')):
+    doc = load(wf)
+    call_sites = []
+    for job_name, job in (doc.get('jobs') or {}).items():
+        if isinstance(job.get('uses'), str):
+            call_sites.append((job_name, job['uses'], job.get('with') or {}))
+        for step in (job.get('steps') or []):
+            if isinstance(step.get('uses'), str):
+                call_sites.append((job_name, step['uses'], step.get('with') or {}))
+    for job_name, uses, given in call_sites:
+        target = resolve(uses)
+        if target is None:
+            continue
+        declared, label = declared_inputs(target)
+        if declared is None:
+            problems.append(f"{wf} :: job '{job_name}' calls '{target}', which does not exist")
+            continue
+        checked += len(given)
+        for key in sorted(set(given) - set(declared)):
+            problems.append(f"{wf} :: job '{job_name}' passes '{key}' to {label}, which does not declare it")
+        for key, spec in sorted(declared.items()):
+            spec = spec or {}
+            if spec.get('required') is True and 'default' not in spec and key not in given:
+                problems.append(f"{wf} :: job '{job_name}' omits '{key}', required by {label} with no default")
+
+print(f"checked {checked} with-key(s)")
+for p in problems:
+    print(f"PROBLEM {p}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _contract_rc=0 || _contract_rc=$?
+if [[ "${_contract_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_contract_out}" | head -n1), all declared by their target"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_contract_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

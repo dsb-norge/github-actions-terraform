@@ -50,6 +50,14 @@ case "$*" in
     if [ "${GH_FAKE_PATCH_EXIT:-0}" != "0" ]; then
       exit "${GH_FAKE_PATCH_EXIT}"
     fi
+    # Capture the posted body so tests can assert on its exact content.
+    # gh is handed '-F body=@<file>'; the file is deleted by the step right
+    # after the call, so copy it now.
+    for arg in "$@"; do
+      if [[ "${arg}" == body=@* ]] && [ -n "${GH_FAKE_BODY_CAPTURE:-}" ]; then
+        cp "${arg#body=@}" "${GH_FAKE_BODY_CAPTURE}"
+      fi
+    done
     for arg in "$@"; do
       if [[ "${arg}" == repos/*"/issues/comments/"* ]]; then
         echo "${arg##*/}"
@@ -61,6 +69,11 @@ case "$*" in
     if [ "${GH_FAKE_POST_EXIT:-0}" != "0" ]; then
       exit "${GH_FAKE_POST_EXIT}"
     fi
+    for arg in "$@"; do
+      if [[ "${arg}" == body=@* ]] && [ -n "${GH_FAKE_BODY_CAPTURE:-}" ]; then
+        cp "${arg#body=@}" "${GH_FAKE_BODY_CAPTURE}"
+      fi
+    done
     POST_COUNTER_FILE="${TEST_DIR:-/tmp}/.post-counter"
     COUNTER=$(cat "${POST_COUNTER_FILE}" 2>/dev/null || echo 9000)
     COUNTER=$((COUNTER + 1))
@@ -73,7 +86,9 @@ FAKE_GH
 
   export GH_FAKE_CALL_LOG="${TEST_DIR}/gh-calls.log"
   export GH_FAKE_LIST_RESPONSE_FILE="${TEST_DIR}/list-response.json"
+  export GH_FAKE_BODY_CAPTURE="${TEST_DIR}/posted-body.md"
   unset GH_FAKE_LIST_EXIT GH_FAKE_DELETE_EXIT GH_FAKE_POST_EXIT GH_FAKE_PATCH_EXIT
+  unset input_body_file
   echo "[]" > "${GH_FAKE_LIST_RESPONSE_FILE}"
   : > "${GH_FAKE_CALL_LOG}"
 
@@ -98,7 +113,7 @@ FAKE_GH
 }
 
 teardown() {
-  unset input_repo input_issue_number input_mode input_marker input_body
+  unset input_repo input_issue_number input_mode input_marker input_body input_body_file
   rm -rf "${TEST_DIR}" 2>/dev/null || true
   unset TEST_DIR
 }
@@ -332,8 +347,8 @@ test_input_validation_upsert_missing_body() {
   unset input_body
   run_step
   [[ ${STEP_EXIT_CODE} -ne 0 ]] || { echo "expected non-zero exit for upsert with no body"; return 1; }
-  if ! grep -q "input_body is required" "${TEST_DIR}/step.log"; then
-    echo "expected error mentioning input_body required"; return 1
+  if ! grep -q "input_body or input_body_file is required" "${TEST_DIR}/step.log"; then
+    echo "expected error naming both body sources as required"; return 1
   fi
   return 0
 }
@@ -378,6 +393,132 @@ JSON
   return 0
 }
 
+
+# ============================================================================
+# body-file — the file-path body source (docs/Apply-and-destroy-reporting.md
+# §7.10 / §10.6). The inline `body` path is covered by every test above;
+# these pin the file path and the exactly-one-of rule.
+# ============================================================================
+
+# H1: body-file upsert posts <marker>\n\n<file content> verbatim.
+test_body_file_upsert_posts_file_content_verbatim() {
+  unset input_body
+  export input_body_file="${TEST_DIR}/body.md"
+  printf '### dev\n\nline two with `code` and — a dash\nno trailing newline' > "${input_body_file}"
+  echo "[]" > "${GH_FAKE_LIST_RESPONSE_FILE}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST, got $(count_calls POST)"; return 1; }
+  [ -f "${GH_FAKE_BODY_CAPTURE}" ] || { echo "fake gh did not capture the posted body"; return 1; }
+  local expected
+  expected="$(printf '%s\n\n' "${input_marker}"; cat "${input_body_file}")"
+  local actual
+  actual="$(cat "${GH_FAKE_BODY_CAPTURE}")"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "posted body is not <marker>\\n\\n<file> verbatim"
+    diff <(printf '%s' "${expected}") <(printf '%s' "${actual}") | sed 's/^/    /'
+    return 1
+  fi
+  # Byte-exact including the absent trailing newline: cmp against a
+  # reconstruction, since $(...) strips trailing newlines.
+  { printf '%s\n\n' "${input_marker}"; cat "${input_body_file}"; } > "${TEST_DIR}/expected.md"
+  cmp -s "${TEST_DIR}/expected.md" "${GH_FAKE_BODY_CAPTURE}" || { echo "byte-level mismatch (trailing newline?)"; return 1; }
+  [[ "$(get_output action)" == "created" ]] || { echo "action='$(get_output action)'"; return 1; }
+  return 0
+}
+
+# H1b: body-file also drives the PATCH path.
+test_body_file_upsert_patches_existing() {
+  unset input_body
+  export input_body_file="${TEST_DIR}/body.md"
+  printf 'fresh body from file' > "${input_body_file}"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 1201, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- tf:head:env:dev -->\nold body"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls PATCH)" -eq 1 ]] || { echo "expected 1 PATCH"; return 1; }
+  grep -q 'fresh body from file' "${GH_FAKE_BODY_CAPTURE}" || { echo "PATCHed body missing file content"; return 1; }
+  return 0
+}
+
+# H2: both body and body-file → fail-fast, no API write.
+test_body_and_body_file_both_set_fails() {
+  export input_body="inline"
+  export input_body_file="${TEST_DIR}/body.md"
+  printf 'from file' > "${input_body_file}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -ne 0 ]] || { echo "expected non-zero exit when both body sources are set"; return 1; }
+  grep -q "mutually exclusive" "${TEST_DIR}/step.log" || { echo "expected 'mutually exclusive' error"; return 1; }
+  [[ "$(count_calls POST)" -eq 0 && "$(count_calls PATCH)" -eq 0 ]] || { echo "no API write may happen on validation failure"; return 1; }
+  return 0
+}
+
+# H3: neither (upsert) — covered by test_input_validation_upsert_missing_body
+# above (its expected message now names both sources).
+
+# H4: body-file path does not exist → fail-fast, no partial POST.
+test_body_file_missing_fails_before_any_api_call() {
+  unset input_body
+  export input_body_file="${TEST_DIR}/nope/does-not-exist.md"
+  run_step
+  [[ ${STEP_EXIT_CODE} -ne 0 ]] || { echo "expected non-zero exit for missing body-file"; return 1; }
+  grep -q "does not exist" "${TEST_DIR}/step.log" || { echo "expected 'does not exist' error naming the file"; return 1; }
+  # Validation runs before the comments listing, so not even a GET happened.
+  [ ! -s "${GH_FAKE_CALL_LOG}" ] || { echo "expected zero gh calls, got:"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  return 0
+}
+
+# H4b: body-file exists but is empty → fail-fast. A producer that silently
+# rendered nothing must not become a blank comment on the PR.
+test_body_file_empty_fails() {
+  unset input_body
+  export input_body_file="${TEST_DIR}/empty.md"
+  : > "${input_body_file}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -ne 0 ]] || { echo "expected non-zero exit for empty body-file"; return 1; }
+  grep -q "is empty" "${TEST_DIR}/step.log" || { echo "expected 'is empty' error"; return 1; }
+  [[ "$(count_calls POST)" -eq 0 ]] || { echo "must not POST an empty body"; return 1; }
+  return 0
+}
+
+# H5: a 64k body-file posts intact — the size that would sit at the edge of
+# MAX_ARG_STRLEN if it ever transited a variable under allexport.
+test_body_file_64k_posts_intact() {
+  unset input_body
+  export input_body_file="${TEST_DIR}/big.md"
+  {
+    printf '### dev\n\n```terraform\n'
+    yes '  + resource "azurerm_thing" "x" { name = "a-reasonably-long-line-to-pad-the-body-out" }' | head -c 64000
+    printf '\n```\n'
+  } > "${input_body_file}"
+  echo "[]" > "${GH_FAKE_LIST_RESPONSE_FILE}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST"; return 1; }
+  { printf '%s\n\n' "${input_marker}"; cat "${input_body_file}"; } > "${TEST_DIR}/expected.md"
+  cmp -s "${TEST_DIR}/expected.md" "${GH_FAKE_BODY_CAPTURE}" || { echo "64k body did not arrive byte-identical"; return 1; }
+  local size
+  size=$(wc -c < "${GH_FAKE_BODY_CAPTURE}")
+  [ "${size}" -gt 64000 ] || { echo "posted body unexpectedly small (${size} bytes)"; return 1; }
+  return 0
+}
+
+# H7: mode=delete ignores body-file entirely — a bogus path must not fail
+# a delete, exactly as a bogus inline body does not today.
+test_delete_ignores_body_file() {
+  export input_mode="delete"
+  unset input_body
+  export input_body_file="${TEST_DIR}/nope/does-not-exist.md"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 1301, "created_at": "2026-01-01T00:00:00Z", "body": "<!-- tf:head:env:dev -->\nfoo"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "delete must not care about body-file; exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls DELETE)" -eq 1 ]] || { echo "expected 1 DELETE"; return 1; }
+  return 0
+}
+
 # ============================================================================
 # Run all
 # ============================================================================
@@ -399,6 +540,13 @@ run_test "validation: upsert + missing input_body → fail-fast"          test_i
 run_test "delete does NOT require input_body"                           test_delete_does_not_require_body
 run_test "pagination: multi-page list flattened before scan"            test_pagination_flattens_multiple_pages
 run_test "marker match uses contains() — not anchored to line 1"        test_marker_substring_match_not_anchored
+run_test "body-file: upsert posts <marker>\\n\\n<file> verbatim (POST)"   test_body_file_upsert_posts_file_content_verbatim
+run_test "body-file: upsert PATCHes existing with file content"          test_body_file_upsert_patches_existing
+run_test "body-file: body AND body-file set → fail-fast, no API write"   test_body_and_body_file_both_set_fails
+run_test "body-file: missing file → fail before any API call"            test_body_file_missing_fails_before_any_api_call
+run_test "body-file: empty file → fail, never POST a blank comment"      test_body_file_empty_fails
+run_test "body-file: 64k body posts byte-identical"                      test_body_file_64k_posts_intact
+run_test "body-file: ignored for mode=delete"                            test_delete_ignores_body_file
 
 # ============================================================================
 echo ""

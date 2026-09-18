@@ -22,6 +22,13 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
 | `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
 | `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt | Matrix job for that env |
+| `<!-- tf:tag:apply:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt **that ran apply** | Matrix job for that env (phase 2) |
+| `<!-- tf:tag:destroy-plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt that ran destroy-plan | Matrix job for that env (phase 2) |
+| `<!-- tf:tag:destroy:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt that ran destroy | Matrix job for that env (phase 2) |
+| `<!-- tf:head:module -->` | Head | One | [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) validation summary |
+| `<!-- tf:head:test:<test-file> -->` | Head | One per test file | [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) test report |
+
+The three operation tags follow the plan tag's lifecycle exactly (purged at the top of the matrix job, POSTed fresh) and are presence-gated on the step having run — an env that only plans keeps exactly the two comments it always had. See [Apply-and-destroy-reporting.md §7.6](Apply-and-destroy-reporting.md).
 
 Marker name conventions:
 
@@ -30,13 +37,15 @@ Marker name conventions:
 
 Markers are treated as opaque substrings by the underlying actions: matching is `body.contains(marker)`. The exact format is enforced by convention in this doc, not by the actions themselves — any unique-enough string works.
 
+Because matching is by substring, **every segment is terminated by `:`**. The purge marker `<!-- tf:tag:destroy:<env>:` cannot match a `tf:tag:destroy-plan:` tag, and `<!-- tf:tag:plan:prod:` cannot match `prod-dr`'s tag, only because of those colons. Never introduce a marker whose segment is a prefix of another's without the separator ([Apply-and-destroy-reporting.md P8](Apply-and-destroy-reporting.md)).
+
 ## 3. Lifecycle of a single workflow run
 
 ```mermaid
 flowchart TD
     cm["create-matrix"]
     seed["Seed phase - top of workflow, before matrix<br>seed-pr-comments job<br>- reconcile heads, POST or PATCH per marker<br>- heads only; plan-tag GC lives in the matrix, see section 3.2"]
-    matrix["Matrix jobs - parallel, one per env<br>- DELETE prior tf-tag-plan-ENV-star<br>- PATCH tf-head-env-ENV with results<br>- POST tf-tag-plan-ENV-run-id-ID-attempt-N with fresh plan-extract"]
+    matrix["Matrix jobs - parallel, one per env<br>- DELETE prior tf-tag-plan / apply / destroy-plan / destroy tags for ENV<br>- phase 1 after plan: PATCH tf-head-env-ENV, POST tf-tag-plan-ENV<br>- phase 2 after apply / destroy: POST tf-tag-apply / destroy-plan / destroy tags, PATCH tf-head-env-ENV again"]
     agg["Aggregator job - after matrix<br>- PATCH each tf-head-group-GROUP head with the rolled-up grouped table"]
 
     cm --> seed --> matrix --> agg
@@ -61,7 +70,11 @@ Each env's matrix job runs the validation pipeline and emits comments in the fol
 2. **Plan tag** (after [`create-validation-summary`](../create-validation-summary/) has rendered the bodies) — `pr-comment` upsert with marker `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->`. The purge step at the top of the job already wiped everything, so the upsert resolves to a fresh POST.
 3. **Head** — `pr-comment` upsert with marker `<!-- tf:head:env:<env> -->` (ungrouped envs only). Since the seed job already POSTed this marker, this resolves to a PATCH that replaces the `⏳ Awaiting results…` placeholder with the validation table + Links row.
 
-Steps 2 and 3 are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed.
+Steps 2 and 3 are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed. Together they are **phase 1** — the reviewer's first feedback, at plan time.
+
+4. **Phase 2** — after `apply`, `destroy-plan` and `destroy` have run, [`create-validation-summary`](../create-validation-summary/) renders again with the operation outcomes, counts, times and warnings; one tag is POSTed per operation that ran (markers `tf:tag:apply:` / `tf:tag:destroy-plan:` / `tf:tag:destroy:`, purged at the top of the job like the plan tag); and the head is PATCHed a second time. `pr-comment` short-circuits on an unchanged body, so a plan-only env costs one API read and no write. Every phase-2 step carries `always()`, and the three new `🧐 Validation outcome` gates for the mutating steps come **after** it — a gate exits 1 and would otherwise skip the render for exactly the failed apply the phase exists to report. The full rationale, ordering and pitfalls: [Apply-and-destroy-reporting.md §7.5](Apply-and-destroy-reporting.md).
+
+Phase 2's render also runs on non-PR events and for `add-pr-comment: false` envs — not to post anything, but to feed the per-env block that [`annotate-terraform-outcome`](../annotate-terraform-outcome/) writes to the job's `$GITHUB_STEP_SUMMARY`. That block, plus the run-level table the `run-summary` job writes, is the only reporting surface on `push` / `schedule` / `workflow_dispatch` runs and on fork PRs. See [Apply-and-destroy-reporting.md §8.7](Apply-and-destroy-reporting.md).
 
 Trade-off of the early-purge placement: if the matrix job crashes between the purge and step 2, the env has no plan tag for this attempt at all. Acceptable — stale plan output from a prior attempt is a worse signal than no plan output. The per-env head still refreshes (step 3 has `always()`), and the per-group head's Links column drops the `log extract` line for unanchored envs rather than rendering a wrong link.
 
@@ -80,7 +93,7 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 
 ### Tags
 
-1. Each matrix job's **first** post-checkout step deletes any existing plan tag for its own env (`<!-- tf:tag:plan:<env>:` substring match, regardless of run-id or attempt). This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
+1. Each matrix job's **first** post-checkout steps delete any existing tag for its own env — one purge per tag kind (`<!-- tf:tag:plan:<env>:`, `…apply…`, `…destroy-plan…`, `…destroy…`), substring match regardless of run-id or attempt. This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
 2. The matrix job then runs the validation pipeline (init → fmt → validate → lint → plan), and after that POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
 3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
 
@@ -93,7 +106,8 @@ This works because the purge happens before init — not after `create-validatio
 ### 5.1 Per-env head
 
 ```markdown
-### Terraform validation summary for environment: `<env>`
+### Terraform validation summary for environment: `<env>`   ← plan-only
+### Terraform summary for environment: `<env>`              ← applies and/or destroys on PR
 |  | Step | Result |
 |:---:|---|---|
 | <span title="Initialization">⚙️</span> | Initialization | `success` |
@@ -106,11 +120,15 @@ This works because the purge happens before init — not after `create-validatio
 | <span title="Links">🔗</span> | Links | [log extract](#issuecomment-<plan-tag-id>)<br>[job log](<job-url>) |
 ```
 
+The rows above are the plan-only shape — what an environment that runs no mutating stage renders, byte for byte. An environment that applies or destroys gains a `🐙 / ☠ Mode` row first and one four-row block per operation (status · warnings · details · time) after `Plan time`; the full 23-row set, its order and its presence rules are normative in [Apply-and-destroy-reporting.md §8.1](Apply-and-destroy-reporting.md), and the two heads' row sets are asserted equal by a test in [`aggregate-validation-summaries`](../aggregate-validation-summaries/).
+
 This table is kept structurally in sync with the per-group head (§5.3) — same row set, labels, col-1 icon tooltips (`<span title="…">`), and Plan-details / Plan-time / Warnings cell conventions and row-presence rules. Two differences are **intentional**, not drift: (1) step-status cells here use text (`` `success` `` / `<kbd>failure</kbd>`) vs emoji in the grouped head — a column-width adaptation (one wide Result column vs many narrow per-env columns); (2) the header shape and footer scope (`[Job log]` job-scoped here vs `[Workflow log]` run-scoped in §5.3). When changing one head's row set or cell shape, change the other to match unless it's one of these two.
 
 The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§5.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§5.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
 
-The Links row is rendered by `create-validation-summary` when its `plan-tag-comment-id` input is supplied. The matrix calls `create-validation-summary` twice for ungrouped envs: once initially to get `plan-extract` (used to POST the plan tag), then again with the resulting comment id supplied to re-render `head-summary` with the Links row. Grouped envs only call it once (their `head-summary` output is unused — see §5.1 grouped mode below).
+The Links row is rendered by `create-validation-summary` when any `*-tag-comment-id` input is supplied, one line per tag in operation order — `[log extract]`, `[apply log]`, `[destroy plan log]`, `[destroy log]` — then `[job log]`. The matrix calls `create-validation-summary` twice per phase for ungrouped envs: once to get the tag body files (used to POST the tags), then again with the resulting comment ids supplied to re-render the head with the Links row. Grouped envs skip the second call (their head body is unused — see grouped mode below).
+
+Bodies leave the action as **file paths** (`head-summary-file`, `plan-extract-file`, `apply-extract-file`, …), never as string outputs, and reach `pr-comment` through its `body-file` input. A string output would enter the steps context and from there the metadata artifact and envp — see [Apply-and-destroy-reporting.md §7.10](Apply-and-destroy-reporting.md). Each invocation in a job passes a distinct `output-file-suffix` so the head-upsert fallback never resolves to a file a later invocation overwrote.
 
 Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
@@ -138,11 +156,13 @@ When `pr-comment-group` is non-empty, the env has **no per-env head at all** —
 <plan-block>
 ```
 
+When the env's goals contain `apply-on-pr` and/or `destroy-on-pr`, a blockquote banner sits between the heading and the block — `> 🐙 This environment applies on pull request — the plan below was applied to real infrastructure. …` — so a reviewer cannot mistake "planned" for "applied". It carries no anchor to the apply tag (that tag does not exist yet when the plan tag is POSTed); the head's Links row does. See [Apply-and-destroy-reporting.md §8.5](Apply-and-destroy-reporting.md).
+
 `<plan-block>` is one of five shapes:
 
 1. `Plan: no changes ✅` — when `count-total` is numeric 0 and `has-output-only-changes` is not true.
 2. `<details><summary>Plan: output-only changes ℹ️</summary>…</details>` — when `count-total` is 0 but `has-output-only-changes=true` (the plan changes outputs but no resources).
-3. `<details><summary>Plan: N changes ℹ️</summary>…</details>` — when `count-total` is numeric > 0.
+3. `<details><summary>Plan: A to add, C to change, D to destroy ℹ️</summary>…</details>` — when `count-total` is numeric > 0. `, I to import` / `, M to move` / `, R to remove` are appended when those counts are non-zero, matching the head's Plan details row: the same badge vocabulary, the same order, the same only-when-non-zero rule. If any of the three core counts is not numeric the line falls back to `Plan: N changes ℹ️`.
 4. `<details><summary>Show Plan (last 65k characters)</summary>…</details>` — fallback when `count-total` is missing or `?` (parse failed).
 5. `Plan not available 🤷‍♀️` — when no plan output is available at all.
 
@@ -155,7 +175,8 @@ When `warning-count > 0`, a sibling `<details><summary>⚠️ N warnings</summar
 The rolled-up grouped table aggregates every env in the group (alphabetical column order):
 
 ```markdown
-### Terraform validation summary for group: `<group>`
+### Terraform validation summary for group: `<group>`   ← every env in the group only plans
+### Terraform summary for group: `<group>`              ← any env in the group mutates on PR
 |  | Step | <env-a> | <env-b> | <env-c> |
 |:---:|---|:---:|:---:|:---:|
 | <span title="Initialization">⚙️</span> | Initialization | <span title="success">✅</span> | <span title="failure">❌</span> | <span title="skipped">⏭️</span> |
@@ -173,6 +194,8 @@ The rolled-up grouped table aggregates every env in the group (alphabetical colu
 
 This table is kept structurally in sync with the per-env head (§5.1) — same row set, labels, col-1 icon tooltips, and cell conventions / row-presence rules. The two intentional differences are noted in §5.1: status cells use emoji here (vs text) and the footer is run-scoped `[Workflow log]` (vs job-scoped `[Job log]`).
 
+As in §5.1, the rows shown are the plan-only shape. A group in which any env mutates on PR gains a `Mode` row first (`🐙` / `☠` / `🐙☠` per env, `—` for plan-only columns), and any env having run apply / destroy-plan / destroy adds that operation's four-row block after `Plan time`, group-wide gated. The Links cell gains `[apply log]`, `[destroy plan log]` and `[destroy log]` lines resolved by the same run-id-scoped marker lookup. [Apply-and-destroy-reporting.md §8.8](Apply-and-destroy-reporting.md).
+
 Status cells map outcomes to emoji + tooltip: ✅ / ❌ / 🚫 / ⏭️ / — (empty outcome).
 
 Plan details cells stack the count badges in a `<div align="left">` so they anchor left in the otherwise center-aligned column. The badges (`💫 N add`, `🛠️ N change`, `💥 N destroy`) always render; `🔀 move`, `📥 import`, `⛓️‍💥 remove` are appended only when non-zero. The whole Plan details **row** is omitted when no env in the group has plan data (parse-plan didn't run anywhere) — matching the per-env head's `include-plan-details` gate. When shown, data-less envs render `N/A`.
@@ -185,6 +208,20 @@ Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomme
 
 The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§5.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
+### 5.4 Per-env operation tags
+
+One tag per mutating invocation that ran, same lifecycle as the plan tag:
+
+```markdown
+### Terraform apply for environment: `<env>`
+### Terraform destroy plan for environment: `<env>`
+### Terraform destroy for environment: `<env>`
+```
+
+The destroy plan is a plan and reuses the five plan-block shapes, labelled `Destroy plan` rather than `Plan` in every one of them (it previously said `Plan:` under a `destroy plan` heading). Apply and destroy have their own: `Apply: no changes ✅` · `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…` (applied/planned per kind, `?` for an unknown side, `, I/P imported` appended when the apply imported anything) · `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…` · `Apply not available 🤷‍♀️`, with destroy wording for the destroy tag. The failure shape is the **only** `<details open>` in the system. Each body has its own 65k budget with the same warnings-over-console priority as the plan tag, and carries its own warnings collapser (apply warnings live in the apply tag, never the plan tag).
+
+By default the apply and destroy bodies strip everything from terraform's `Outputs:` line onward and append `_(outputs section omitted)_`: `terraform apply` prints every non-sensitive output's actual value there, which `terraform plan` never does. The workflow input `apply-extract-include-outputs` (per-env overridable) opts back in. Normative shapes and rationale: [Apply-and-destroy-reporting.md §8.6 and P3](Apply-and-destroy-reporting.md).
+
 ## 6. Configuration
 
 Workflow inputs:
@@ -192,6 +229,7 @@ Workflow inputs:
 | Input | Effect |
 |---|---|
 | `add-pr-comment` (global default `true`) | When `false`, suppresses both the env's head + plan tag for that environment. The env does not appear in the seed manifest either. |
+| `apply-extract-include-outputs` (global default `false`, per env) | When `true`, the apply and destroy tags keep terraform's `Outputs:` section — the actual output values. See §5.4. |
 | `pr-comment-group` (per env, optional) | When non-empty, the env is represented in that group's per-group head only — no standalone per-env head is created (the env's row in the per-group head's table is its summary surface). The env's own plan tag is still POSTed and is reachable from the per-group head's Links column. When empty (default), the env is "ungrouped" and gets its own per-env head with the full validation table. |
 
 Triggering rules: comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Forks cannot post (the workflow guards against `github.event.pull_request.head.repo.fork == true` at the seed-job level).
@@ -220,13 +258,23 @@ flowchart TD
     older --> g1 --> g2 --> gDots --> e1 --> e2 --> eDots --> p1 --> p2 --> pDots --> human --> newer
 ```
 
-On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Plan tags are wiped per-env by the matrix delete-first step and re-POSTed at the bottom of the conversation. Order between heads never changes.
+On subsequent runs, heads stay at their original `created_at` positions (PATCH preserves it). Tags — plan and, for envs that ran them, apply / destroy-plan / destroy — are wiped per-env by the matrix delete-first steps and re-POSTed at the bottom of the conversation, the operation tags after the plan tag because they are POSTed in phase 2. Order between heads never changes.
 
 ## 8. Concurrency caveat
 
 When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), each run's matrix delete-first step will wipe plan tags from the env it's about to post for — including any in-flight tag the other run just POSTed. The result is some plan tags briefly disappearing and reappearing while both runs are in flight. Each run's aggregator scopes its anchor lookup to its own `run-id`, so the per-group head's Links column resolves to that run's tags rather than the competing run's.
 
 Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
+
+## 8.1 Comment ownership — two callers on one pull request
+
+A repository may call this reusable workflow from more than one workflow (a CI run and an integration-test run, say). They share the pull request's comment thread, and the aggregator's orphan pass deletes group comments whose group is not in **its** desired set. Two rules keep one caller from deleting another's comments:
+
+1. **A run that declares no groups at all deletes nothing.** An empty desired set means the run has no opinion about which group comments belong on the thread, not that none do.
+2. **A run where no environment has `add-pr-comment` enabled does not list, post or delete anything.** A caller told not to comment touches no comments. An *absent* `add-pr-comment` key in the job metadata counts as unknown, not false, so metadata from an older version cannot silently switch reconciliation off.
+
+Without these, the caller that finished first had its group heads deleted by the other and re-posted at the bottom of the thread by its own aggregator — defeating the seeding that exists to keep summaries at the top (§3.1). The cost of rule 1 is a group comment that outlives the removal of a repository's last group, on pull requests open across that change; a new pull request never gets one.
+
 
 ## 9. Degraded mode
 
@@ -246,5 +294,7 @@ Duplicates from degraded runs self-heal on the next clean run: the matrix's per-
 | §3.2 Matrix phase per-env head | matrix step "Upsert per-env head comment" calling [`pr-comment`](../pr-comment/) (mode `upsert`) |
 | §3.2 Matrix phase plan tag | matrix step "Post per-env plan-extract tag" calling [`pr-comment`](../pr-comment/) (mode `upsert`, run-id-scoped marker) |
 | §3.3 Aggregator phase | `pr-comment-aggregator` job in the workflow, calling [`aggregate-validation-summaries`](../aggregate-validation-summaries/) |
-| §5.1, §5.2 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary` + `plan-extract` |
+| §3.2 phase 2 | matrix steps `cvs-apply`, `post-apply-tag` / `post-destroy-plan-tag` / `post-destroy-tag`, `cvs-apply-final`, `upsert-head-apply` |
+| §5.1, §5.2, §5.4 body rendering | [`create-validation-summary`](../create-validation-summary/) outputs `head-summary-file`, `plan-extract-file`, `apply-extract-file`, `destroy-plan-extract-file`, `destroy-extract-file` (paths; posted via `pr-comment`'s `body-file`) |
 | §5.3 grouped body rendering | [`aggregate-validation-summaries`](../aggregate-validation-summaries/) `render_group_body` |
+| Run-page surfaces (not PR comments) | [`annotate-terraform-outcome`](../annotate-terraform-outcome/) per env, [`create-run-summary`](../create-run-summary/) per run — [Apply-and-destroy-reporting.md §8.7](Apply-and-destroy-reporting.md) |

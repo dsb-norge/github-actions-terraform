@@ -1,0 +1,3 @@
+module.fleet.azurerm_linux_virtual_machine.vm["vm-0149"]: Creation complete after 3m2s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-fleet/providers/Microsoft.Compute/virtualMachines/vm-0149]
+
+Apply complete! Resources: 150 added, 200 changed, 100 destroyed.

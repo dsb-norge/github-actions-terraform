@@ -1,0 +1,15 @@
+azurerm_resource_group.rg: Creating...
+azurerm_resource_group.rg: Creation complete after 1s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example]
+azurerm_storage_account.sa: Creating...
+azurerm_key_vault.kv: Creating...
+azurerm_storage_account.sa: Creation complete after 21s [id=/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample]
+╷
+│ Error: creating Key Vault (Subscription: "00000000-0000-0000-0000-000000000000"
+│ Resource Group Name: "rg-example"
+│ Key Vault Name: "kv-example"): performing CreateOrUpdate: unexpected status 409 (409 Conflict) with error: ConflictError: A vault with the same name already exists in deleted state. You need to either recover or purge existing key vault.
+│ 
+│   with azurerm_key_vault.kv,
+│   on main.tf line 19, in resource "azurerm_key_vault" "kv":
+│   19: resource "azurerm_key_vault" "kv" {
+│ 
+╵

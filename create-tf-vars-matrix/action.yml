@@ -250,6 +250,7 @@ runs:
         REQ_FIELDS=(
           add-pr-comment
           allow-failing-terraform-operations
+          apply-extract-include-outputs
           cache-terraform-modules
           caller-repo-calling-branch
           caller-repo-default-branch
@@ -276,6 +277,7 @@ runs:
         NOT_EMPTY_FIELDS=(
           add-pr-comment
           allow-failing-terraform-operations
+          apply-extract-include-outputs
           cache-terraform-modules
           caller-repo-calling-branch
           caller-repo-default-branch

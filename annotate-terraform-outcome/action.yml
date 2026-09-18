@@ -1,0 +1,84 @@
+name: "Annotate terraform apply/destroy outcome"
+description: |
+  The run-page surface for one environment's terraform run: appends the
+  environment's validation block to the job's $GITHUB_STEP_SUMMARY and
+  emits a ::notice or ::error annotation for the apply and destroy
+  outcomes.
+
+  This is the only surface that exists on push / schedule /
+  workflow_dispatch runs, on fork pull requests, and for environments with
+  add-pr-comment false — none of those get a PR comment. It must therefore
+  run on every event; the caller passes no pull_request guard.
+  See docs/Apply-and-destroy-reporting.md §7.8, §8.7.
+author: "Peder Schmedling"
+inputs:
+  environment-name:
+    description: Name of the current deployment environment.
+    required: true
+  step-summary-file:
+    description: |
+      Path of the rendered per-env block (create-validation-summary's
+      `step-summary-file`). Appended verbatim to $GITHUB_STEP_SUMMARY. A
+      missing file yields a minimal fallback block, never a failed step.
+    required: false
+    default: ""
+  status-apply:
+    description: Outcome of the apply step. Empty when it did not run — no annotation is emitted then.
+    required: false
+    default: ""
+  apply-count-import:
+    description: |
+      Resources imported by the apply (parse-terraform-apply's `count-import`).
+      Appended to the success notice only when non-zero — terraform emits no
+      such segment unless import blocks are in play.
+    required: false
+    default: "N/A"
+  apply-count-add:
+    description: Resources added (parse-terraform-apply's `count-add`).
+    required: false
+    default: "?"
+  apply-count-change:
+    description: Resources changed.
+    required: false
+    default: "?"
+  apply-count-destroy:
+    description: Resources destroyed.
+    required: false
+    default: "?"
+  apply-time:
+    description: Wall-clock duration of apply as mm:ss.
+    required: false
+    default: ""
+  status-destroy:
+    description: Outcome of the destroy step. Empty when it did not run.
+    required: false
+    default: ""
+  destroy-count-destroy:
+    description: Resources destroyed by the destroy apply.
+    required: false
+    default: "?"
+  destroy-time:
+    description: Wall-clock duration of the destroy apply as mm:ss.
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - id: annotate
+      shell: bash
+      env:
+        input_environment_name: ${{ inputs.environment-name }}
+        input_step_summary_file: ${{ inputs.step-summary-file }}
+        input_status_apply: ${{ inputs.status-apply }}
+        input_apply_count_import: ${{ inputs.apply-count-import }}
+        input_apply_count_add: ${{ inputs.apply-count-add }}
+        input_apply_count_change: ${{ inputs.apply-count-change }}
+        input_apply_count_destroy: ${{ inputs.apply-count-destroy }}
+        input_apply_time: ${{ inputs.apply-time }}
+        input_status_destroy: ${{ inputs.status-destroy }}
+        input_destroy_count_destroy: ${{ inputs.destroy-count-destroy }}
+        input_destroy_time: ${{ inputs.destroy-time }}
+      run: |
+        # Write the per-env block to the job summary and annotate the apply/destroy outcome
+        set -o allexport
+        source "${{ github.action_path }}/step_annotate.sh"
