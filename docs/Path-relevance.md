@@ -37,7 +37,7 @@ was nothing to verify.
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Relevance is decided per environment inside the workflow, from `paths` / `paths-ignore` keys in `environments-yml`, evaluated against the changed files of the run. | One workflow file, one configuration, one check that always reports. |
-| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a behaviour change on `v0` and is called out in the release note. |
+| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a default change and therefore part of the **v1** major release ([Migration-v1.md](Migration-v1.md)). |
 | D3 | Relevance is evaluated on the **whole change**, never per commit: the pull request's full diff against its merge base, or everything a push carried. | An environment the pull request touches is affected on every run of that pull request; every commit of a rebase merge is in scope on push. |
 | D4 | Every uncertainty **fails open** to "everything is relevant". Running too much is the safe error. | A missed environment is silent drift; an extra plan costs minutes. |
 | D5 | Relevance applies on pull requests and on push. An environment whose apply failed on one push is not retried by an unrelated later push. | Symmetry with the need; the escape hatch is a dispatch, which is always mode `all`. |
@@ -45,7 +45,7 @@ was nothing to verify.
 | D7 | The conclusion is green when everything that should have run succeeded, **including when nothing should have run**. It reads named job results and the matrix builder's counts, never `contains(needs.*.result, …)`. | "Skipped" alone cannot distinguish "nothing to verify" from "something upstream broke"; only the builder's count can. |
 | D8 | A pull request that affected no environment is **auto-merge eligible**, subject to the same configuration, enabled and actor checks as any other. | Nothing can exceed the plan limits, but an actor-restricted repository must stay restricted. |
 | D9 | Callers remove `on.paths` and `on.paths-ignore` from their calling workflows. The user guide says so in bold with before and after. | It is the filter that leaves the check pending forever. |
-| D10 | A global input `path-relevance-enabled` (default `true`) switches relevance off for a caller. | The default ships on the force-moved `v0` tag and changes what runs everywhere; a caller must be able to opt out in one line. |
+| D10 | A global input `path-relevance-enabled` (default `true`) switches relevance off for a caller. | A caller moving to v1 must be able to keep today's always-run behaviour in one line while it sorts out its paths. |
 | D11 | Tests (Terraform-tests.md) are not relevance-filtered in this spec. | Their `root` field is the hook for a later refinement. |
 
 ## 3. Caller-facing API
@@ -176,11 +176,13 @@ validation may redden `create-matrix`.
 Inputs: `enabled`, `event-name`, `repository`, `pr-number`, `pr-head-sha`, `before`, `after`,
 `created`, `forced`, `deleted`, `github-token`.
 
-Outputs, all small: `relevance-mode` (`all` | `diff`), `relevance-reason` (one of §4.2 or `diff`),
-`changed-count`. The file list is **not** an output: three thousand paths are a quarter of a
-megabyte and would enter envp through the steps context the first time a step interpolated them
+Outputs, all small: `available`, `truncated`, `error`, `api-head-sha`, `changed-count` and the
+file path. The action reports facts and decides nothing; the decision engine
+([Decision-engine.md](Decision-engine.md) §3.1) turns them, together with the event fields, into
+the mode and reason of §4.2. The file list is **not** an output: three thousand paths are a quarter
+of a megabyte and would enter envp through the steps context the first time a step interpolated them
 (P5). It is written to `$RUNNER_TEMP/changed-files.txt`, one path per line, and handed to the
-matrix builder by path.
+engine by path.
 
 All API responses go through `mktemp` files and `jq`, via `gh api` with the job token, never
 through the inline `curl` pattern (P6).
@@ -200,9 +202,10 @@ Permissions used by `create-matrix`: `pull-requests: read` for the pull request 
 
 ### 5.1 Row selection
 
-`create-tf-vars-matrix` gains inputs `changed-files-file`, `relevance-mode` and
-`relevance-reason`. For each environment it resolves `paths` (expanding `auto` with the
-environment's normalised `project-dir` and additional dirs) and `paths-ignore`, then:
+The decision engine, called by `create-tf-vars-matrix`, receives the adapter's facts and the
+changed-file path, derives the mode and reason of §4.2, and for each environment resolves `paths`
+(expanding `auto` with the environment's normalised `project-dir` and additional dirs) and
+`paths-ignore`, then:
 
 - mode `all`: every environment is affected, matched rule `all:<reason>`.
 - mode `diff`: an environment is affected when any changed file is relevant to it (§3.3); the
@@ -548,7 +551,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 | P16 | A failed apply on push N is not retried by an unrelated push N+1. | Drift until the next relevant change. | The notice lists the environment; a dispatch is mode `all` (D5). |
 | P17 | The Environments view shows the last affected run's deployment for an environment. | A reviewer may read an old deployment as current. | Documented in the user guide. |
 | P18 | A pull request with a merge conflict gets no run. | Its check stays "Expected", which looks like this feature failing. | Documented (§7.4). |
-| P19 | `relevance` is the default on the force-moved `v0` tag. | Every caller's docs-only changes stop planning on the next release. | `path-relevance-enabled` (D10); release note. |
+| P19 | Relevance is the default in v1. | A caller's docs-only changes stop planning on the move to v1, and a change outside the `auto` set with an environment that reads it silently stops planning that environment. | `path-relevance-enabled` (D10); the migration guide's checklist asks each caller to review its `paths`. Never shipped on a rolling major tag. |
 
 ## 13. Test coverage
 
