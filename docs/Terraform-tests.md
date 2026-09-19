@@ -486,7 +486,6 @@ terraform-test:
     !cancelled()
     && needs.create-matrix.result == 'success'
     && needs.create-matrix.outputs.tests-active == 'true'
-    && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
   runs-on: ${{ matrix.test.runs-on }}
   timeout-minutes: ${{ matrix.test.timeout-minutes }}
   permissions:
@@ -508,7 +507,6 @@ terraform-test-env:
     !cancelled()
     && needs.create-matrix.result == 'success'
     && needs.create-matrix.outputs.tests-env-active == 'true'
-    && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
   runs-on: ${{ matrix.test.runs-on }}
   timeout-minutes: ${{ matrix.test.timeout-minutes }}
   permissions:
@@ -529,6 +527,9 @@ terraform-test-env:
 - `tests-active` and `tests-env-active` fold enabled, count and event into one output each,
   because a job-level `if:` cannot parse YAML and a job must never receive an empty matrix
   (P1, P2).
+- The seed job's result is deliberately not tested: its steps are `continue-on-error`, `needs:`
+  alone keeps the ordering, and testing it let a broken seed skip a stage silently while the
+  conclusion stayed green ([Path-relevance.md](Path-relevance.md) P3).
 - Both jobs share the display name, so the summary's lookup by name (§6.2) and every
   downstream consumer treat them as one stage. A structural test asserts the two definitions are
   identical apart from the three differences named above.
@@ -868,15 +869,16 @@ tests::1 failed, 12 passed` otherwise (tolerated failures produce a `::warning`)
 
 ## 7. Conclusion and gating
 
-`conclusion.needs` becomes `[create-matrix, terraform-ci-cd, terraform-test, terraform-test-env]`.
-The existing rule
-fails the check on `failure` or `cancelled` and treats `skipped` as success, which is right here:
-the test job is skipped when the stage is disabled, when there are no test files, or on an event
-that does not run tests. A non-tolerated failing test is a `failure` and blocks the merge; auto-merge
-already requires the conclusion, so nothing else changes.
+`conclusion.needs` gains `terraform-test` and `terraform-test-env`. The normative result table
+lives in [Path-relevance.md §7.2](Path-relevance.md); for the test jobs it says: `success` is
+fine; `skipped` is fine only while the builder's `tests-active` / `tests-env-active` is not
+`'true'` (stage disabled, no test files, event not applicable); `skipped` while active, `failure`
+and `cancelled` are red. A tolerated failure is a green job and therefore green. Tests are judged
+independently of the environments, so a docs-only pull request still runs and is judged on its
+tests. A non-tolerated failing test blocks the merge; auto-merge already requires the conclusion,
+so nothing else changes.
 
-`terraform-test-summary` stays out of `needs`. A later spec makes the conclusion explicit about
-which skips are benign; until then the structural test in
+`terraform-test-summary` stays out of `needs`. The structural test in
 [`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts that both test jobs
 are in the list.
 
@@ -891,7 +893,7 @@ are in the list.
 | Explicit conclusion (separate spec) | Adds "skipped for a benign reason" precision and the fork guard; this spec only adds the `needs` entry. |
 | Test-root lock files (separate spec) | This spec honours a committed lock read-only and uses the cache when one exists; verification of test-root locks, and the CLI's part, live there. `lockfile-mode: readonly-if-present` is the hook. |
 | Single-file dispatch (separate spec) | Will add `workflow_dispatch` to the event rule together with a `tests-filter` input; the lane and slug vocabulary is what it filters on. |
-| Per-environment path relevance (separate spec) | May later skip test roots no changed file touches; the `root` field is what it keys on. |
+| Per-environment path relevance ([Path-relevance.md](Path-relevance.md)) | Tests are not filtered by relevance yet; the `root` field is the hook. The conclusion table there judges tests independently of environments, and the test jobs' `if:` drop the seed-result clause for the reason its P3 gives. |
 | Notifications (separate spec) | A failed test job on `push` is a trigger; the metadata artifacts and §6.5 are the data. |
 | Module CI | Unchanged (§9.7). |
 
