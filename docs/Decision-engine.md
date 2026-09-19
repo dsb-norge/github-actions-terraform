@@ -44,7 +44,7 @@ fails the suite below 100 percent of lines and branches.
 | D8 | The engine **never fails open silently and never fails closed silently**: every drop of an environment or file carries a reason, and validation errors stop the run with a message. | Reasons are the contract with the reader of the run summary. |
 | D9 | Row variables keep **today's types**: a forwarded workflow input is a string (`"true"`, `"5"`), a per-environment YAML value keeps the type YAML gave it, and only `allow-failing-terraform-operations` is a JSON boolean. Typed values live in `workflow_inputs` and in the engine's own decisions. | The workflow's gates compare strings (`== 'true'`), and GitHub's expression rules make `true == 'true'` false. The port pins the current types; retyping is a separate, deliberate change (P11). |
 | D10 | Granted goals reach the workflow through a new row variable **`goals-granted`** (the eight-goal vocabulary, no `all`, no `-on-pr`); `vars.goals` stays the raw list. | Three renderers read the raw list for `apply-on-pr`; the operation gates switch to `goals-granted` so a dispatch cap can remove `apply`, with their event and branch clauses kept as defence in depth. |
-| D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. [Migration-v1.md](Migration-v1.md). |
+| D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. [Road-to-v1.md](Road-to-v1.md). |
 
 ## 3. Where it lives and how it is called
 
