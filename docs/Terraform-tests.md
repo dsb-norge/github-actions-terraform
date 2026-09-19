@@ -53,6 +53,12 @@ trade-offs written out; the rationale is kept short.
 | D9 | Test jobs default to `ubuntu-latest`, overridable per lane. | Many short jobs; a unit lane needs registry access only. Lanes that must reach a restricted network set `runs-on` themselves. |
 | D10 | **One PR comment** for all tests, shape A (§6.4): headline, failed files first with their failed run blocks, everything else collapsed per test root. Job logs and output artifacts are linked, never inlined. | A comment per file is noise at 30 files; a 65 k body cannot hold logs. |
 | D11 | Terraform **1.12.0 is the floor**, enforced at runtime; 1.14.1 recommended where a test root commits a lock file. | The empty-root layout needs 1.12 (§4.2); `providers lock` only sees test-only providers from 1.14.1 (§5.3). |
+| D12 | Credentials reach a lane in two ways, both supported: explicit secret-name mapping from the caller's secrets, and a **GitHub Environment per lane** (§3.6). | The mapping is the environments' existing model; the environment adds lane-scoped secrets, a lane-specific OIDC subject and a place collaborators can fill without admin rights. |
+| D13 | Environment names are computed: `github-environment: auto` means `tftest-<lane>`. An explicit name must carry the same prefix. | Predictable names make the federated-credential wildcard and the bring-up steps identical in every repository. The prefix is one nobody uses for a real environment and matches the prefix test objects carry. |
+| D14 | Only lanes that opt in run inside an environment, and they run with `deployment: false`. | A unit lane has nothing to keep secret. `deployment: false` keeps the secrets and drops the deployment record, so nothing reaches the pull request timeline. |
+| D15 | In an environment lane, secrets named `ARM_*` and `TF_VAR_*` are exported verbatim. Lanes without an environment get no prefix export. | Add two secrets to the environment and the lane works. Relies on the calling organisations' naming rule for organisation and repository secrets (§3.6, P28). |
+| D16 | `ARM_USE_OIDC=true` is assumed for environment lanes unless the lane overrides it. | Federated credentials are the only authentication the pattern supports, and the workflow-level variables where callers set it do not flow into tests. |
+| D17 | Isolation from plan and apply identities rests on two stated preconditions: apply credentials are environment secrets, and apply identities hold `environment:` federated credentials only (§3.6). | Client IDs are not secret; only the subject the identity trusts keeps a test job from minting its token. |
 
 ## 3. Caller-facing API
 
@@ -90,24 +96,22 @@ terraform-test-lanes-yml: |
   - name: directory
     match:
       - "**/integration-directory-*.tftest.hcl"
-    extra-envs-yml:
-      ARM_USE_OIDC: true
-    extra-envs-from-secrets-yml:
-      ARM_TENANT_ID: TESTS_DIRECTORY_TENANT_ID
-      ARM_CLIENT_ID: TESTS_DIRECTORY_CLIENT_ID
-      TF_VAR_test_client_id: TESTS_DIRECTORY_CLIENT_ID
+    github-environment: auto          # → tftest-directory; ARM_* and TF_VAR_* secrets there are exported
   - name: subscription
     match:
       - "**/integration-subscription-*.tftest.hcl"
+    github-environment: auto          # → tftest-subscription
     runs-on: "some-runner-group"
     timeout-minutes: 60
     allow-failing-terraform-tests: true
-    extra-envs-yml:
+  - name: legacy
+    match:
+      - "**/integration-legacy-*.tftest.hcl"
+    extra-envs-yml:                   # no environment: everything explicit, from repository secrets
       ARM_USE_OIDC: true
     extra-envs-from-secrets-yml:
-      ARM_TENANT_ID: TESTS_SUBSCRIPTION_TENANT_ID
-      ARM_SUBSCRIPTION_ID: TESTS_SUBSCRIPTION_ID
-      ARM_CLIENT_ID: TESTS_SUBSCRIPTION_CLIENT_ID
+      ARM_TENANT_ID: REPO_TESTS_LEGACY_TENANT_ID
+      ARM_CLIENT_ID: REPO_TESTS_LEGACY_CLIENT_ID
 ```
 
 | Key | Required | Meaning |
@@ -120,7 +124,7 @@ terraform-test-lanes-yml: |
 | `terraform-version` | no | Overrides `terraform-version`. |
 | `timeout-minutes` | no | Overrides `terraform-test-timeout-minutes`. |
 | `allow-failing-terraform-tests` | no | Overrides the global input. |
-| `github-environment` | reserved | Rejected with "not implemented" for now. A later spec lets a lane take a GitHub Environment for environment-scoped secrets and an `environment:<name>` OIDC subject; the key is reserved so the schema does not move. |
+| `github-environment` | no | `auto` resolves to `tftest-<lane>`; an explicit value must match `^tftest-[a-z0-9-]{1,40}$`. The lane's jobs then run inside that GitHub Environment: its secrets, its OIDC subject, no deployment record. §3.6. |
 
 Any other key is a validation error (P4). Per-lane keys reuse the global input names on purpose:
 the "same key overrides" idiom from `environments-yml` applies unchanged.
@@ -135,8 +139,11 @@ Rules:
 - **Precedence** for a lane value: lane key, else global input, else the input's default.
   Nothing from `extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml` or
   `extra-envs-from-secrets-per-goal-yml` at workflow level reaches a test job (D6).
-- A lane with a non-empty `extra-envs-from-secrets-yml` is a **credentialed lane**; its files are
-  not runnable where secrets are unavailable (§4.7).
+- A lane with `github-environment`, or with a non-empty `extra-envs-from-secrets-yml`, is a
+  **credentialed lane**; its files are not runnable where secrets are unavailable (§4.7).
+- In an environment lane, the exported variables are, in order: the prefix export of §3.6, then
+  `extra-envs-from-secrets-yml`, then `extra-envs-yml`; a later source overrides an earlier one, so a
+  lane can always pin a value explicitly.
 
 Authoring note for lane variables: from Terraform 1.13 a test file must declare a
 `variable "x" {}` block for every `var.x` it references, so a lane that sets `TF_VAR_x` only helps
@@ -148,7 +155,9 @@ a test file that declares `x`. The block is harmless on older versions.
 `ARM_CLIENT_ID` are all set after the lane's variables are exported: the same rule the environment
 job uses. A directory-only lane omits the subscription and never logs in; the `azuread` and
 `azurerm` providers mint their own OIDC tokens from `ARM_USE_OIDC` plus client and tenant ID. The
-job therefore always carries `permissions: id-token: write` (P14).
+job therefore always carries `permissions: id-token: write` (P14). Environment lanes get
+`ARM_USE_OIDC=true` unless their `extra-envs-yml` sets it (D16); a lane that deliberately
+authenticates with a client secret sets it to `false` there.
 
 ### 3.4 Events
 
@@ -172,6 +181,124 @@ blocks cannot declare `parallel`. The message names the floor and points here.
 Recommended: **1.14.1** or later wherever a test root commits a `.terraform.lock.hcl`, because
 `terraform providers lock` ignores providers required only by tests before that version and a
 readonly init then rejects the lock (P8).
+
+### 3.6 GitHub Environments per lane
+
+A lane that sets `github-environment` runs its jobs inside a GitHub Environment. That gives the lane
+three things repository-level secrets cannot: secrets scoped to the lane, an OIDC subject that names
+the lane, and a place a collaborator can fill without admin rights.
+
+**Naming.** `auto` resolves to `tftest-<lane>`. An explicit value must match
+`^tftest-[a-z0-9-]{1,40}$`; anything else is a validation error, so the wildcard credential below
+always covers it. GitHub compares environment names case-insensitively; the builder lowercases and
+rejects a lane environment equal to any Terraform environment's `github-environment` in the same
+run. It cannot see environments other workflows in the repository reference (P30).
+
+**What the job gets.** `environment: { name: tftest-<lane>, deployment: false }`. With
+`secrets: inherit` the job's secret bag holds organisation, repository and this environment's
+secrets, and a same-named environment secret shadows the levels above. `deployment: false` keeps
+the secrets and variables and creates no deployment object, so no "deployed to" entry reaches the
+pull request timeline and nothing flaps in the repository's Environments view; it cannot be combined
+with a custom deployment protection rule (P27). The OIDC token's subject is
+`repo:<owner>/<repo>:environment:tftest-<lane>`, or with the immutable format
+`repo:<owner>@<owner-id>/<repo>@<repo-id>:environment:tftest-<lane>`, and its `job_workflow_ref`
+names this reusable workflow and the ref it was called at.
+
+**Secret export.** Every secret in the bag whose name starts with `ARM_` or `TF_VAR_` is exported
+as an environment variable of the same name, before `azure/login`. The explicit
+`extra-envs-from-secrets-yml` mapping still works for any other name, and `extra-envs-yml`
+overrides both (§3.2). Lanes without an environment get no prefix export, so a unit lane can never
+pick up a repository-level `ARM_*` secret by accident. The convention relies on a naming rule of the
+calling organisations: organisation secrets are named `ORG_*` and repository secrets `REPO_*`, so
+no `ARM_*` or `TF_VAR_*` secret exists above environment level and the prefix export can only ever
+select the lane's own environment secrets (P28). A job cannot tell which level a secret came from;
+the rule is what makes the export safe, and the guide states it as a precondition.
+
+**Credential check.** Before init, an environment lane verifies that `ARM_TENANT_ID` and
+`ARM_CLIENT_ID` are set. When they are not, the job fails with reason `no-credentials` and prints
+the bring-up commands below with the environment name filled in; the summary shows the same. That
+is what the first run on a fresh repository looks like, by design.
+
+**Bring-up.** Environments are created by admins, or by any workflow that references one: GitHub
+documents that running a workflow which references an environment that does not exist creates it,
+with no protection rules and no secrets. Environment secrets are set through the REST API by anyone
+with write access to the repository; the settings UI path requires admin. So:
+
+1. Add the lane with `github-environment: auto` and open a pull request. The first run creates
+   `tftest-<lane>`, and the lane's jobs fail with `no-credentials`. Set
+   `allow-failing-terraform-tests: true` on the lane if the pull request must stay green meanwhile.
+2. A collaborator with write access sets the secrets (the environment must exist first):
+
+   ```bash
+   gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<tenant-id>'
+   gh secret set ARM_CLIENT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<client-id>'
+   gh secret set ARM_SUBSCRIPTION_ID --repo <owner>/<repo> --env tftest-<lane> --body '<subscription-id>'   # subscription lanes only
+   gh secret list --repo <owner>/<repo> --env tftest-<lane>
+   ```
+
+3. The identity's owner adds a federated credential for the lane's subject (below). The values it
+   needs come from `gh api repos/<owner>/<repo> --jq '{id: .id, owner_id: .owner.id}'`, and
+   `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` shows whether the repository emits
+   immutable subjects.
+4. Re-run the failed jobs: `gh run rerun <run-id> --repo <owner>/<repo> --failed`. Environment
+   secrets are read at job start.
+
+Never add protection rules to a `tftest-*` environment: required reviewers put every job of every
+pull request into "Waiting" and fail it after 30 days, and a deployment-branch policy without
+`refs/pull/*/merge` refuses every pull-request run before a step runs (P29).
+
+**Federated credentials.** Lanes that need different privilege levels get one identity each, with
+a classic credential and an exact subject:
+
+```json
+{
+  "name": "gha-<repo>-tftest-directory",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:<owner>/<repo>:environment:tftest-directory",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+```
+
+One identity for every test lane of a repository takes a flexible credential (preview; created
+through Graph beta, the portal, or `azuread_application_flexible_federated_identity_credential`
+from azuread provider 3.7.0; `repository_id` is mandatory for GitHub):
+
+```json
+{
+  "name": "gha-<repo>-tftest-lanes",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "audiences": ["api://AzureADTokenExchange"],
+  "claimsMatchingExpression": {
+    "value": "claims['sub'] matches 'repo:<owner>*/<repo>*:environment:tftest-*' and claims['repository_id'] eq '<repo-id>'",
+    "languageVersion": 1
+  }
+}
+```
+
+The `*` after the owner and repository names absorbs the optional `@<id>` of the immutable format,
+so the credential survives the repository opting in; `repository_id` is what binds it. Appending
+`and claims['job_workflow_ref'] matches 'dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@*'`
+also pins the workflow; keep the `@*` so preview refs keep working. Repositories created, renamed or
+transferred after 15 July 2026 emit the immutable subject; read a real token's `sub` before writing a
+classic credential, and remember that opting an existing repository in is repository-wide and
+changes the plan and apply jobs' subjects too (P31). Once a lane has its own subject, a
+repository-level `pull_request` or `ref:refs/heads/main` credential on the test identity is no
+longer needed and should be removed.
+
+**Isolation.** A test job can neither read nor use a plan or apply identity when two preconditions
+hold, and the guide states both:
+
+1. Plan and apply credentials are environment secrets of the Terraform environments, never
+   repository or organisation secrets. Only a job that declares that environment sees them; test
+   jobs declare `tftest-*` or nothing.
+2. Plan and apply identities carry federated credentials for `environment:<terraform-environment>`
+   subjects only. The environment job always runs with `environment:`, so it needs nothing else; a
+   leftover `pull_request` or branch credential would accept the subject a no-environment test job
+   presents on the same event (P32).
+
+With both, the secrets are invisible and the token exchange is refused. Client IDs are not secret,
+so the second precondition is what stops a lane author from borrowing the apply identity through
+`extra-envs-yml`.
 
 ## 4. Discovery and the matrix
 
@@ -266,6 +393,7 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
     "terraform-version": "1.15.x",
     "timeout-minutes": 30,
     "allow-failing-terraform-tests": false,
+    "github-environment": "",
     "fork-safe": true,
     "extra-envs": {},
     "extra-envs-from-secrets": {}
@@ -276,6 +404,9 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
 - `extra-envs` holds the lane's verbatim variables; `extra-envs-from-secrets` holds env-name to
   secret-name pairs. **Names only, never values.** The matrix JSON is printed in every job's setup
   log, as the environment matrix already is.
+- `github-environment` is the resolved, lowercased environment name or empty. Rows with a value go
+  into the second matrix, `tests-env-matrix-json`, because a job cannot carry an empty
+  `environment:` (§5.1).
 - `fork-safe` is `false` for credentialed lanes. It is named for what it is, not
   `requires-credentials`: [`capture-matrix-job-meta`](../capture-matrix-job-meta/) strips any key
   whose name contains `secret`, `credential`, `token`, `auth` or `password`, and the summary needs
@@ -284,9 +415,11 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
 - `allow-failing-terraform-tests` is a JSON boolean because the workflow passes it to `fromJSON()`
   in `continue-on-error`; `fromJSON('')` is a hard error, so the builder always emits one.
 
-Outputs of the builder: `tests-matrix-json`, `tests-count` (rows that will run), `tests-active`
-(`'true'` when enabled and count > 0 and the event qualifies), `tests-not-run-json` (a list of
-`{file, lane, reason}` for misplaced and secrets-unavailable files, consumed by the summary).
+Outputs of the builder: `tests-matrix-json` and `tests-env-matrix-json` (rows without and with an
+environment), `tests-count` (rows that will run, both matrices), `tests-active` and
+`tests-env-active` (`'true'` when enabled, the event qualifies and that matrix has rows),
+`tests-not-run-json` (a list of `{file, lane, reason}` for misplaced and secrets-unavailable files,
+consumed by the summary).
 
 ### 4.6 Slugs and names
 
@@ -303,11 +436,14 @@ construction and the key the summary uses to find the job in the Jobs API (§6.2
 
 ### 4.7 Fork and Dependabot pull requests
 
-Secrets are not available to a pull request from a fork, and the token is read-only; Dependabot
-pull requests likewise run without repository secrets. Rows whose lane is credentialed are dropped
-by the builder when `github.event.pull_request.head.repo.fork == true` or `github.actor ==
-'dependabot[bot]'`, and listed with reason `secrets unavailable` (§6.4). Fork-safe rows run. On a
-fork the PR comment is not posted at all (the seed job already skips forks); the step summary is.
+Secrets are not available to a pull request from a fork, and the token is read-only, so no OIDC
+token can be minted either; Dependabot runs are treated like fork runs and see only Dependabot's own
+secrets. Rows whose lane is credentialed, by environment or by mapping, are dropped by the builder
+when `github.event.pull_request.head.repo.fork == true` or `github.actor == 'dependabot[bot]'`
+(the actor GitHub's own guidance keys on), and listed with reason `secrets unavailable` (§6.4).
+Dropping them also keeps a fork run from referencing, and thereby creating, a `tftest-*`
+environment in the base repository. Fork-safe rows run. On a fork the PR comment is not posted at
+all (the seed job already skips forks); the step summary is.
 
 ### 4.8 Limits
 
@@ -337,6 +473,11 @@ or `tests/` beside a module. Callers who want a guard rail add `envs/**` to
 
 ### 5.1 Job definition
 
+Two jobs, because a job cannot carry an empty `environment:` and lanes without one must not get a
+placeholder (referencing a name creates the environment). They differ only in the `if:`, the matrix
+source and the `environment:` block; the step list is written once and reused with a YAML anchor,
+which GitHub supports in workflow files since September 2025 (merge keys are not supported).
+
 ```yaml
 terraform-test:
   name: "Terraform test (${{ matrix.test.file }})"
@@ -357,10 +498,40 @@ terraform-test:
   concurrency:
     group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
     cancel-in-progress: false
+  steps: &terraform-test-steps
+    # §5.2
+
+terraform-test-env:
+  name: "Terraform test (${{ matrix.test.file }})"
+  needs: [create-matrix, seed-pr-comments]
+  if: |
+    !cancelled()
+    && needs.create-matrix.result == 'success'
+    && needs.create-matrix.outputs.tests-env-active == 'true'
+    && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
+  runs-on: ${{ matrix.test.runs-on }}
+  timeout-minutes: ${{ matrix.test.timeout-minutes }}
+  permissions:
+    contents: read
+    id-token: write
+  environment:
+    name: ${{ matrix.test.github-environment }}
+    deployment: false
+  strategy:
+    fail-fast: false
+    matrix: ${{ fromJSON(needs.create-matrix.outputs.tests-env-matrix-json) }}
+  concurrency:
+    group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
+    cancel-in-progress: false
+  steps: *terraform-test-steps
 ```
 
-- `tests-active` folds enabled, count and event into one output because a job-level `if:` cannot
-  parse YAML and must never receive an empty matrix (P1, P2).
+- `tests-active` and `tests-env-active` fold enabled, count and event into one output each,
+  because a job-level `if:` cannot parse YAML and a job must never receive an empty matrix
+  (P1, P2).
+- Both jobs share the display name, so the summary's lookup by name (§6.2) and every
+  downstream consumer treat them as one stage. A structural test asserts the two definitions are
+  identical apart from the three differences named above.
 - Concurrency is **per test file**, not per lane: a per-lane group would leave one row running, one
   pending and cancel the rest of this run's own matrix, and cancelled reddens the conclusion (P11).
   Per-file groups serialise the same file across overlapping runs, which is what protects
@@ -369,7 +540,8 @@ terraform-test:
   the workflow later adopts `queue: max` there, it adopts it here too.
 - `timeout-minutes` is per lane because a job killed mid-apply leaves objects that no state file
   knows about (P12).
-- There is no `environment:` on the job. That is the reserved `github-environment` lane key (§3.2).
+- `deployment: false` is what keeps ten credentialed files from posting ten deployment entries per
+  run; without it every job referencing an environment records a deployment (P27).
 
 ### 5.2 Steps, in order
 
@@ -380,17 +552,19 @@ groups need readable titles.
 |---|---|---|
 | 1 | `🧹 Clean workspace` | `dsb-norge/directory-recreate@v1`. `runs-on` is caller-overridable to self-hosted groups where a stale `.terraform/` survives checkout. |
 | 2 | `⬇ Checkout` | `actions/checkout@v6`. |
-| 3 | `🔧 Export lane environment variables` | `export-env-vars@v0` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`. |
-| 4 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the three ARM variables are set (§3.3). |
-| 5 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
-| 6 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v0`, then `actions/cache` keyed on `<root>/.terraform.lock.hcl` when it exists, else the monthly rolling key the module CI uses (P13). |
-| 7 | `⚙️ Terraform init` | `terraform-init@v0`, `working-directory: matrix.test.root`, `additional-dirs-json: "[]"`, `github-token: github.token`, `backend: false`, `lockfile-mode: readonly-if-present` (§5.3). `continue-on-error: true`. |
-| 8 | `🧪 Terraform test` | `terraform-test@v0`, `if: steps.init.outcome == 'success'`, `working-directory: matrix.test.root`, `test-file: matrix.test.rel`. `continue-on-error: true`. Writes its own per-job step summary block (§5.8). |
-| 9 | `📤 Upload test output` | `actions/upload-artifact`, name `terraform-test-log-<slug>`, paths: the JSON log, the text report, the JUnit file when present. `if: always()`, `continue-on-error: true`. Its `artifact-url` output is what the summary links as "output". |
-| 10 | `📦 Capture test job metadata` | `capture-matrix-job-meta@v0` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>` (§9.4). `if: always()`. |
-| 11 | `📤 Upload test job metadata` | `if: always()`, `continue-on-error: true`. |
-| 12 | `🧐 Validation outcome: ⚙️ Init` | `exit 1` unless init succeeded. `continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}`. |
-| 13 | `🧐 Validation outcome: 🧪 Test` | `exit 1` unless the test status is `pass`. Same `continue-on-error`. |
+| 3 | `🔧 Export lane environment variables` | `export-env-vars@v0` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`. |
+| 4 | `🔐 Verify lane credentials` | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init and test; the reporting steps still run. |
+| 5 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the three ARM variables are set (§3.3). |
+| 6 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
+| 7 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v0`, then `actions/cache` keyed on `<root>/.terraform.lock.hcl` when it exists, else the monthly rolling key the module CI uses (P13). |
+| 8 | `⚙️ Terraform init` | `terraform-init@v0`, `working-directory: matrix.test.root`, `additional-dirs-json: "[]"`, `github-token: github.token`, `backend: false`, `lockfile-mode: readonly-if-present` (§5.3). `continue-on-error: true`. |
+| 9 | `🧪 Terraform test` | `terraform-test@v0`, `if: steps.init.outcome == 'success'`, `working-directory: matrix.test.root`, `test-file: matrix.test.rel`. `continue-on-error: true`. Writes its own per-job step summary block (§5.8). |
+| 10 | `📤 Upload test output` | `actions/upload-artifact`, name `terraform-test-log-<slug>`, paths: the JSON log, the text report, the JUnit file when present. `if: always()`, `continue-on-error: true`. Its `artifact-url` output is what the summary links as "output". |
+| 11 | `📦 Capture test job metadata` | `capture-matrix-job-meta@v0` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>` (§9.4). `if: always()`. |
+| 12 | `📤 Upload test job metadata` | `if: always()`, `continue-on-error: true`. |
+| 13 | `🧐 Validation outcome: 🔐 Credentials` | `exit 1` when step 4 ran and failed. `continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}`. |
+| 14 | `🧐 Validation outcome: ⚙️ Init` | `exit 1` unless init succeeded. Same `continue-on-error`. |
+| 15 | `🧐 Validation outcome: 🧪 Test` | `exit 1` unless the test status is `pass`. Same `continue-on-error`. |
 
 The gates come **after** every reporting step, as in the environment job: a gate exits 1 and would
 otherwise skip the very upload that explains the failure. Nothing needs shredding here; there is no
@@ -449,6 +623,7 @@ derives `status` and `reason` from the JSON stream, in this order:
 
 | # | Condition | `status` | `reason` |
 |---|---|---|---|
+| 0 | the credential check of an environment lane failed (init and test skipped) | `error` | `no-credentials` |
 | 1 | init step did not succeed (the test step is skipped) | `error` | `init` |
 | 2 | Terraform below the floor (§3.5) | `error` | `terraform-version` |
 | 3 | no `test_abstract` message; diagnostics match "Module not installed", "there is no package for", "Inconsistent dependency lock file" | `error` | `not-initialised` |
@@ -525,7 +700,7 @@ step summary say "tolerated". The conclusion job (§7) sees `success` for it.
 ```yaml
 terraform-test-summary:
   name: "Terraform tests summary"
-  needs: [create-matrix, terraform-test]
+  needs: [create-matrix, terraform-test, terraform-test-env]
   if: |
     always()
     && needs.create-matrix.result == 'success'
@@ -557,6 +732,10 @@ a head from an earlier push that had tests (§6.3).
    anchor. When the step is not found, link `html_url#logs`. When the API call fails, the Links
    column drops the job link and the body says so in one line; the job never fails (P18).
 4. The output link is the `artifact-url` recorded in the metadata; absent when the upload failed.
+5. Reconcile: every row of both matrices must appear in the body. A row with no metadata, because
+   its job was refused by an environment protection rule, cancelled, or is still waiting, is rendered
+   from the Jobs API conclusion with reason `job did not run`, so the body never silently loses a
+   file the conclusion counts (P33).
 
 ### 6.3 The head comment
 
@@ -689,7 +868,8 @@ tests::1 failed, 12 passed` otherwise (tolerated failures produce a `::warning`)
 
 ## 7. Conclusion and gating
 
-`conclusion.needs` becomes `[create-matrix, terraform-ci-cd, terraform-test]`. The existing rule
+`conclusion.needs` becomes `[create-matrix, terraform-ci-cd, terraform-test, terraform-test-env]`.
+The existing rule
 fails the check on `failure` or `cancelled` and treats `skipped` as success, which is right here:
 the test job is skipped when the stage is disabled, when there are no test files, or on an event
 that does not run tests. A non-tolerated failing test is a `failure` and blocks the merge; auto-merge
@@ -697,8 +877,8 @@ already requires the conclusion, so nothing else changes.
 
 `terraform-test-summary` stays out of `needs`. A later spec makes the conclusion explicit about
 which skips are benign; until then the structural test in
-[`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts that `terraform-test`
-is in the list.
+[`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts that both test jobs
+are in the list.
 
 ## 8. Interplay with the rest of the workflow and with other specs
 
@@ -707,6 +887,7 @@ is in the list.
 | Environment jobs | Independent. Same `create-matrix` and `seed-pr-comments` dependencies, no `needs` between them (D8). The environment matrix's 256-job cap and the test matrix's are separate. |
 | Environment init | Loads test files in the environment root (§4.9). Not something this spec can change; documented. |
 | Per-goal environment variables | Do not reach test jobs (D6). |
+| GitHub Environments | Lane environments are `tftest-*`, disjoint from the Terraform environments' `github-environment` values; the builder rejects a collision. The isolation preconditions of §3.6 are about the Terraform environments' credentials and are stated in the user guide. |
 | Explicit conclusion (separate spec) | Adds "skipped for a benign reason" precision and the fork guard; this spec only adds the `needs` entry. |
 | Test-root lock files (separate spec) | This spec honours a committed lock read-only and uses the cache when one exists; verification of test-root locks, and the CLI's part, live there. `lockfile-mode: readonly-if-present` is the hook. |
 | Single-file dispatch (separate spec) | Will add `workflow_dispatch` to the event rule together with a `tests-filter` input; the lane and slug vocabulary is what it filters on. |
@@ -722,10 +903,12 @@ line opening every `run:` block, bodies and large data as files.
 
 ### 9.1 `create-tftest-matrix` (modernised, renamed `action.yaml` → `action.yml`)
 
-Inputs: `lanes-yml`, `exclude-paths-yml`, `enabled`, `event-name`, `is-fork`, `actor`, and the global
-defaults (`runs-on`, `terraform-version`, `timeout-minutes`, `allow-failing-terraform-tests`).
-Outputs: §4.5. Validation (P4): lane schema, unique names, at most one fallback lane, glob grammar,
-the 256 cap. Fixtures: the layouts of §4.2, every misplaced case of §4.3, glob cases of §4.4
+Inputs: `lanes-yml`, `exclude-paths-yml`, `enabled`, `event-name`, `is-fork`, `actor`,
+`environment-names-json` (the Terraform environments' resolved `github-environment` values, for the
+collision check), and the global defaults (`runs-on`, `terraform-version`, `timeout-minutes`,
+`allow-failing-terraform-tests`). Outputs: §4.5. Validation (P4): lane schema, unique names, at most
+one fallback lane, glob grammar, the `tftest-` name pattern, environment-name collisions, the 256
+cap per matrix. Fixtures: the layouts of §4.2, every misplaced case of §4.3, glob cases of §4.4
 including the root-level `**/` case, a collision, a fork run, a Dependabot run, a disabled run, a
 `push` and a `schedule` event.
 
@@ -747,8 +930,10 @@ Inputs: `metadata-files-pattern` (default `terraform-test-meta-*.json`), `not-ru
 `run-url`, `job-links-json-file` (resolved by a helper in the same action from the Jobs API, or
 passed in by tests), `output-file-suffix`. Outputs: `body-file`, `step-summary-file`, `failed-count`,
 `tolerated-count`, `passed-count`, `not-run-count`. Golden files for: all green; one failure; a
-tolerated error; an init error; misplaced and secrets-unavailable rows; a body over budget at each
-trim step; a run with zero rows; missing job links. ARG_MAX: the Jobs API response and every
+tolerated error; an init error; a `no-credentials` error carrying the bring-up commands; misplaced
+and secrets-unavailable rows; a matrix row without metadata rendered from the job conclusion; a
+body over budget at each trim step; a run with zero rows; missing job links. ARG_MAX: the Jobs API
+response and every
 metadata file are read from disk with `jq --slurpfile` or `-f`; the body is assembled by appending to
 a file, never in a shell variable.
 
@@ -770,10 +955,11 @@ to a writable lock and a plugin cache directory is set.
 - `create-matrix`: a second step calling `create-tftest-matrix`; new job outputs
   `tests-matrix-json`, `tests-count`, `tests-active`, `tests-not-run-json`.
 - `seed-pr-comments`: the tests head in the manifest after the environment heads (§6.3).
-- `terraform-test` job (§5) and `terraform-test-summary` job (§6).
+- `terraform-test` and `terraform-test-env` jobs (§5) and the `terraform-test-summary` job (§6).
 - `conclusion.needs` (§7).
-- Structural tests: the two new jobs' `with:` keys against their actions' inputs; gates after
-  reporting steps; `terraform-test` in the conclusion's needs; `terraform-test-summary` not.
+- Structural tests: the three new jobs' `with:` keys against their actions' inputs; gates after
+  reporting steps; both test jobs in the conclusion's needs; `terraform-test-summary` not; the two
+  test jobs identical apart from `if:`, matrix source and `environment:`.
 
 ### 9.7 Module CI
 
@@ -782,6 +968,15 @@ output, the old `terraform-test` behaviour behind the modernised action's compat
 workflow passes `working-directory: ${{ github.workspace }}` and `test-file: tests/<file>` after
 migration), and `create-test-report`. Migrating it to the summary job is a follow-up once this has
 run for a while.
+
+### 9.8 `export-env-vars` (modernised)
+
+Converted to the layout guide with its current behaviour pinned as goldens first, then one new
+optional input, `export-secrets-with-prefixes-json` (JSON array of name prefixes, default `[]`):
+every secret in `secrets-json` whose name starts with one of the prefixes is exported under its own
+name, before the explicit mapping and the plain variables are applied, so those override it
+(§3.2). Existing callers see no change. The prefix export is the only new code path; its tests
+cover prefix selection, case, ordering and an empty list.
 
 ## 10. Pitfalls
 
@@ -814,6 +1009,16 @@ Indexed so implementation commits and future specs can cite them.
 | P23 | The seed placeholder's title must equal the final title. | The head renames itself mid-run and reads as a different comment. | One title constant, tested. |
 | P24 | `secrets: inherit` is what makes lane secrets resolvable; a caller without it gets empty values. | Credentialed lanes fail with an unhelpful error. | `export-env-vars` already fails on a missing secret; the guide repeats the requirement. |
 | P25 | `TF_VAR_*` from a lane needs a `variable` block in the test file from Terraform 1.13. | "Variables not allowed" or undefined-variable errors. | Authoring note (§3.2). |
+| P26 | GitHub documents that a called job which declares `environment:` uses that environment's secrets; in practice they resolve empty unless the caller also passes `secrets: inherit`. | A caller without `inherit` gets an environment lane with empty credentials. | `secrets: inherit` is already mandatory (P24); the credential check turns the symptom into a named error. Verified on the test-bed (§12). |
+| P27 | `deployment: false` cannot be combined with a custom deployment protection rule on the environment; without the key every job records a deployment. | Either a job that cannot start, or ten timeline entries per run. | No protection rules on `tftest-*` environments (§3.6). |
+| P28 | The prefix export takes `ARM_*` and `TF_VAR_*` from the whole secret bag; a job cannot tell which level a secret came from. | An organisation- or repository-level secret with such a name would reach every environment lane. | Precondition: organisation and repository secrets follow the `ORG_*` / `REPO_*` naming rule, stated in the guide. Lanes without an environment get no prefix export. |
+| P29 | Required reviewers or a branch policy on a `tftest-*` environment. | Every pull request's test jobs wait 30 days and fail, or are refused before a step runs. | Never add protection rules to `tftest-*` environments; the summary renders refused jobs from the Jobs API (P33). |
+| P30 | The builder sees only this run's Terraform environments; another workflow in the repository may reference a `tftest-*` environment, and anyone who can edit workflows can create one. | The wildcard credential trusts every `tftest-*` environment in the repository. | Acceptable for a sandbox identity; documented. Use exact-subject credentials where it is not. |
+| P31 | Repositories created, renamed or transferred after 15 July 2026 emit the immutable subject; opting an existing repository in is repository-wide. | A name-based classic credential stops matching; opting in also changes the plan and apply jobs' subjects. | Read a real token before writing a credential; prefer the flexible form of §3.6; migrate every credential of the repository together. |
+| P32 | A plan or apply identity that still trusts `pull_request` or a branch subject. | A no-environment test job on the same event can mint its token; client IDs are not secret. | Isolation precondition 2 (§3.6): apply identities carry `environment:` credentials only. |
+| P33 | A job refused by a protection rule, cancelled before its first step, or waiting for approval produces no metadata artifact. | The summary would lose the file while the conclusion counts it. | The summary reconciles matrix rows against metadata and renders the rest from the Jobs API (§6.2). |
+| P34 | Environment secrets can be set through the REST API with write access, but the environment must exist and the settings UI needs admin. | A collaborator who goes through the UI is told they cannot; one who runs `gh secret set --env` before the first run gets a 404. | Bring-up order in §3.6: first run creates the environment, then the secrets. |
+| P35 | GitHub compares environment names case-insensitively; the credential expression's case behaviour is not documented. | A mixed-case explicit name matches the environment but not the credential. | The `tftest-` pattern is lowercase only; the builder lowercases before comparing. |
 
 ## 11. Test coverage
 
@@ -825,7 +1030,11 @@ Indexed so implementation commits and future specs can cite them.
   Dependabot with the right reason; `tests-active` false for `schedule`, `workflow_dispatch`,
   disabled, and zero files; a collision gets a deterministic suffix; unknown lane keys, two fallback
   lanes, a bad glob and 257 files fail with the documented messages; the matrix JSON has `slug` at
-  top level and a JSON boolean for `allow-failing-terraform-tests`.
+  top level and a JSON boolean for `allow-failing-terraform-tests`; `github-environment: auto`
+  resolves to `tftest-<lane>`, an explicit name without the prefix or with upper case is rejected,
+  a name equal to a Terraform environment's `github-environment` is rejected case-insensitively,
+  rows with an environment land in `tests-env-matrix-json` only, and an environment lane is
+  `fork-safe: false` even with an empty mapping.
 - `terraform-test`: each classification of §5.5 from its fixture; the version gate; `-junit-xml`
   passed only from 1.11; outputs match the fixture's counts; `elapsed-ms` from timestamps; diagnostic
   files prefixed with the root; at most ten annotations plus the warning; report capped at 65 000;
@@ -834,6 +1043,9 @@ Indexed so implementation commits and future specs can cite them.
   sort order; missing links omitted; zero rows renders the "no test files" body; a metadata file
   with an unknown schema version is skipped with a warning.
 - `capture-matrix-job-meta`: `artifact-name` sets artifact and basename; default unchanged (golden).
+- `export-env-vars`: goldens of the current behaviour before the conversion; the prefix export
+  selects exactly the names with a listed prefix, is case-sensitive, is overridden by the explicit
+  mapping and by plain variables, and does nothing for an empty list.
 - `terraform-init`: `backend: false` adds the flag; `readonly-if-present` adds `-lockfile=readonly`
   with a lock and the may-break variable without; default unchanged.
 - Workflow structural tests: §9.6.
@@ -851,10 +1063,11 @@ Indexed so implementation commits and future specs can cite them.
   discovery agrees (needs a Terraform binary in CI).
 - A rendered-size test that a 256-row summary fits the budget after trimming.
 
-**What tests cannot cover**: real OIDC token minting per lane, `azure/login` skipping, artifact URL
-validity, the `#step:N:1` anchor, the 256-job cap, the exact behaviour of an environment root with
-a real backend. These are verified through a preview ref on a test-bed calling repository and
-recorded in §15.
+**What tests cannot cover**: real OIDC token minting per lane and the subject it carries, environment
+secrets reaching a called job, `deployment: false`, a collaborator with write access setting
+environment secrets, `azure/login` skipping, artifact URL validity, the `#step:N:1` anchor, the
+256-job cap, the exact behaviour of an environment root with a real backend. These are verified
+through a preview ref on a test-bed calling repository and recorded in §15.
 
 ## 12. Open questions
 
@@ -876,8 +1089,24 @@ Things that need testing or exploration, not decisions:
    expects (the CLI helper scripts use `true`; the docs example uses `1`).
 8. **Job name length**: GitHub truncates long job names in the UI; confirm the Jobs API returns the
    full name for a 120-character path so `endswith` still matches.
-9. **Reserved `github-environment`**: whether a job-level `environment:` may be empty. Not needed
-   here; noted so the later spec starts with the answer.
+9. **One job instead of two**: whether a job-level `environment:` whose name expression evaluates
+   to an empty string means "no environment" or is rejected. If it means no environment, the two
+   jobs of §5.1 collapse into one.
+10. **`deployment: false` and the token**: confirm the OIDC subject still carries
+    `environment:<name>` when no deployment is recorded, on the test-bed, with a step that decodes
+    the token's `sub`, `repository_id` and `job_workflow_ref`.
+11. **Write access sets environment secrets**: confirm `gh secret set --env` succeeds with a
+    write-role token on an organisation repository, and fails with a 404 before the environment
+    exists. The bring-up procedure rests on it.
+12. **Environment secrets in a called job**: confirm the environment's secrets resolve in
+    `terraform-test-env` with `secrets: inherit`, and record what happens without it (P26).
+13. **Fork runs and environment creation**: confirm whether a fork pull request referencing an
+    environment would create it in the base repository. The design never references one from a
+    fork, so this is for the pitfalls table only.
+14. **Case in credential expressions**: whether `matches` in a flexible credential is
+    case-sensitive; the design lowercases both sides regardless.
+15. **Isolation, end to end**: from a unit-lane job, decode the token subject and attempt
+    `azure/login` with an apply identity's client ID; expect the token exchange to be refused.
 
 ## 13. Implementation order
 
@@ -886,19 +1115,24 @@ One commit each, in this order, each green on its own:
 1. `docs:` this spec.
 2. `feat(terraform-init):` `backend` and `lockfile-mode` inputs, tests.
 3. `feat(capture-matrix-job-meta):` `entity-name` and `artifact-name` inputs, tests.
-4. `test(terraform-test):` pin the current outputs as goldens before touching the action.
-5. `refactor(terraform-test):` modernise to the layout guide; behaviour unchanged, goldens green.
-6. `feat(terraform-test):` working directory, version gate, classification, annotations, outputs;
+4. `test(export-env-vars):` pin the current behaviour as goldens.
+5. `refactor(export-env-vars):` modernise to the layout guide; goldens green.
+6. `feat(export-env-vars):` `export-secrets-with-prefixes-json`, tests.
+7. `test(terraform-test):` pin the current outputs as goldens before touching the action.
+8. `refactor(terraform-test):` modernise to the layout guide; behaviour unchanged, goldens green.
+9. `feat(terraform-test):` working directory, version gate, classification, annotations, outputs;
    JSON fixtures per classification.
-7. `refactor(create-tftest-matrix):` modernise and rename `action.yaml` → `action.yml`; `all-tests`
-   unchanged.
-8. `feat(create-tftest-matrix):` discovery, roots, lanes, exclusions, outputs; fixtures.
-9. `feat(create-test-summary):` the new action with goldens.
-10. `feat(workflow):` `create-matrix` outputs, seed manifest, `terraform-test` job,
-    `terraform-test-summary` job, conclusion `needs`; structural tests.
-11. `docs:` user guide, PR comments spec, README index, CLAUDE.md overview.
-12. Validation through a preview ref on the test-bed calling repository, with fixtures for every
-    classification and a credentialed lane; findings into §15 and the pitfalls table.
+10. `refactor(create-tftest-matrix):` modernise and rename `action.yaml` → `action.yml`;
+    `all-tests` unchanged.
+11. `feat(create-tftest-matrix):` discovery, roots, lanes, environments, exclusions, outputs;
+    fixtures.
+12. `feat(create-test-summary):` the new action with goldens.
+13. `feat(workflow):` `create-matrix` outputs, seed manifest, the two test jobs, the summary job,
+    conclusion `needs`; structural tests.
+14. `docs:` user guide including the bring-up procedure and the isolation preconditions, PR comments
+    spec, README index, CLAUDE.md overview.
+15. Validation through a preview ref on the test-bed calling repository, with fixtures for every
+    classification, a mapped lane and an environment lane; findings into §15 and the pitfalls table.
 
 AI-assistant configuration files are never in these commits.
 
@@ -906,7 +1140,8 @@ AI-assistant configuration files are never in these commits.
 
 - [Workflow-terraform-ci-default.md](Workflow-terraform-ci-default.md): the new inputs, the lane
   example, the layout guidance of §4.2 and §4.9, the two-caller rule, the `secrets: inherit`
-  reminder.
+  reminder, the environment bring-up procedure, the two isolation preconditions and the
+  federated-credential forms of §3.6.
 - [Workflow-pr-comments.md](Workflow-pr-comments.md): the `tf:head:tests:<caller>` marker in the
   namespace table, its seed position in §3.1, the delete rule in §4, §8.1's two-caller note.
 - [Testing-in-ci.md](Testing-in-ci.md): nothing; the new actions enrol in CI like every other.
