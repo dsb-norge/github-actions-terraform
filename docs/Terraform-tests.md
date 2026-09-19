@@ -967,12 +967,12 @@ line opening every `run:` block, bodies and large data as files.
 
 ### 9.1 `create-tftest-matrix` (modernised, renamed `action.yaml` → `action.yml`)
 
-Inputs: `lanes-yml`, `exclude-paths-yml`, `enabled`, `event-name`, `is-fork`, `actor`,
-`environment-names-json` (the Terraform environments' resolved `github-environment` values, for the
-collision check), and the global defaults (`runs-on`, `terraform-version`, `timeout-minutes`,
-`allow-failing-terraform-tests`). Outputs: §4.5. Validation (P4): lane schema, unique names, at most
-one fallback lane, glob grammar, the `tftest-` name pattern, environment-name collisions, the 256
-cap per matrix. Fixtures: the layouts of §4.2, every misplaced case of §4.3, glob cases of §4.4
+The action is an adapter of the [decision engine](Decision-engine.md): it lists the committed test
+files, the directories holding `.tf` files and the environments' lock files by `project-dir`, and
+reports them; the engine derives roots, lanes, environments, provider sets and rows, and performs
+every validation of this spec (P4): lane schema, unique names, at most one fallback lane, glob
+grammar, the `tftest-` name pattern, environment-name collisions, the 256 cap per matrix. The
+outputs of §4.5 are the engine's `tests` section written out by the `create-matrix` shim. Fixtures: the layouts of §4.2, every misplaced case of §4.3, glob cases of §4.4
 including the root-level `**/` case, a collision, a fork run, a Dependabot run, a disabled run, a
 `push` and a `schedule` event.
 
