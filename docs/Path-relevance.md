@@ -37,7 +37,7 @@ was nothing to verify.
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Relevance is decided per environment inside the workflow, from `paths` / `paths-ignore` keys in `environments-yml`, evaluated against the changed files of the run. | One workflow file, one configuration, one check that always reports. |
-| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a default change and therefore part of the **v1** major release ([Migration-v1.md](Migration-v1.md)). |
+| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a default change and therefore part of the **v1** major release ([Road-to-v1.md](Road-to-v1.md)). |
 | D3 | Relevance is evaluated on the **whole change**, never per commit: the pull request's full diff against its merge base, or everything a push carried. | An environment the pull request touches is affected on every run of that pull request; every commit of a rebase merge is in scope on push. |
 | D4 | Every uncertainty **fails open** to "everything is relevant". Running too much is the safe error. | A missed environment is silent drift; an extra plan costs minutes. |
 | D5 | Relevance applies on pull requests and on push. An environment whose apply failed on one push is not retried by an unrelated later push. | Symmetry with the need; the escape hatch is a dispatch, which is always mode `all`. |
