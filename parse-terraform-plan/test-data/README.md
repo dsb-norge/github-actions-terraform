@@ -14,6 +14,8 @@ Wording established by the captures, for the record:
 - Moves and removals have **no** segment on the `Plan:` line. They are counted from the resource lines — `# a has moved to b` and `# a will no longer be managed by Terraform, but will not be destroyed` — and a removal also prints `Warning: Some objects will no longer be managed by Terraform`.
 - An output-only plan prints **no** `Plan:` line: only `Changes to Outputs:` and the sentence `…without changing any real infrastructure.`, and exits 2.
 - A `-refresh-only` plan with nothing drifted says `No changes. Your infrastructure still matches the configuration.` — a different sentence from the ordinary `No changes. Your infrastructure matches the configuration.`
+- A `-destroy` plan with nothing to destroy says `No changes. No objects need to be destroyed.` and exits **0** — a third `No changes.` sentence, and the only plan console with no `Plan:` line that is not output-only.
+- A move whose resource also changes is rendered as `# a will be updated in-place` followed by `# (moved from b)` on its own line, not as `# b has moved to a`. Both forms count as one move.
 
 | Fixture | Provenance | Terraform | Shape it pins |
 |---|---|---|---|
@@ -32,6 +34,8 @@ Wording established by the captures, for the record:
 | `plan_interrupted.log` | captured (`interrupted`) | 1.16.2 | the ordinary plan of an apply later interrupted |
 | `plan_check_warnings.log` | captured (`check_warnings`) | 1.16.2 | `Warning: Check block assertion failed` after the `Plan:` line |
 | `plan_progress_ticks.log` | captured (`progress_ticks`) | 1.16.2 | the plan of a slow create |
+| `plan_moved_block_with_change.log` | captured (`moved_block_with_change`) | 1.16.2 | a move **and** an in-place change on the same resource: the `(moved from` form plus `0 to add, 1 to change, 0 to destroy` — move 1 + change 1 = total 2 |
+| `plan_destroy_plan_empty.log` | captured (`destroy_plan_empty`) | 1.16.2 | a `-destroy` plan of an empty configuration: `No changes. No objects need to be destroyed.`, exit 0 |
 | `plan_with_actions.log` | hand-written | 1.14+ | `Plan: 1 to add, 0 to change, 0 to destroy. Actions: 2 to invoke.` — the actions sentence Terraform 1.14+ appends after the counts (#37689) does not disturb the per-segment regexes (P38); no built-in action type exists to capture from |
 | `plan_0_changes.log` | sanitised | — | `No changes.` with many refreshed resources |
 | `plan_0_changes_with_data_read.log` | sanitised | — | a deferred data read with a zero `Plan:` line and the words `Changes to Outputs:` inside a heredoc value |

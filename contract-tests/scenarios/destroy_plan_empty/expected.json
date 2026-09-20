@@ -1,0 +1,16 @@
+{
+  "description": "A -destroy plan of an empty configuration — 'No changes. No objects need to be destroyed.', exit 0, and an apply that still prints a zero summary line.",
+  "operation": "destroy-plan",
+  "plan": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "move": 0, "remove": 0, "total": 0,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_destroy_plan_empty.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "total": 0,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_destroy_plan_empty.log"
+  }
+}

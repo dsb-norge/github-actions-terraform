@@ -1023,11 +1023,13 @@ Every summary shape the parsers must accept is pinned as **real** console output
 | `destroys_only` | `0 to add, 0 to change, 1 to destroy` | `0 added, 0 changed, 1 destroyed` |
 | `import_block` | `Plan: 1 to import, 1 to add, 0 to change, 0 to destroy.` | `Apply complete! Resources: 1 imported, 1 added, 0 changed, 0 destroyed.` (P32) |
 | `moved_block` | `has moved to`, zero `Plan:` line | zero summary line (P36) |
+| `moved_block_with_change` | `(moved from` on a resource that is also updated in place: `0 to add, 1 to change, 0 to destroy` — move 1 + change 1 = total 2 | `0 added, 1 changed, 0 destroyed` — the move is absent here too, so the apply total is 1 (P36) |
 | `removed_block_forget` | `will no longer be managed by Terraform`, zero `Plan:` line, a warning | zero summary line (P36) |
 | `no_changes` | `No changes. Your infrastructure matches the configuration.`, exit 0 | zero summary line |
 | `outputs_only` | no `Plan:` line; `Changes to Outputs:`; exit 2 | zero summary line + `Outputs:` |
 | `refresh_only` | `No changes. Your infrastructure still matches the configuration.`, exit 0 | zero summary line |
 | `destroy_plan_applied` | `-destroy`: `0 to add, 0 to change, 2 to destroy` | `Apply complete! Resources: 0 added, 0 changed, 2 destroyed.` (P33) |
+| `destroy_plan_empty` | `-destroy` with nothing to destroy: `No changes. No objects need to be destroyed.`, exit **0** | `Apply complete! Resources: 0 added, 0 changed, 0 destroyed.` — an empty destroy is a completed apply, not an unparsable console |
 | `destroy_command` | — (`terraform destroy` carries its own plan) | `Destroy complete! Resources: 1 destroyed.` |
 | `failed_provisioner` | `2 to add` | no summary line; `Error: local-exec provisioner error`; exit 1 (P2) |
 | `cancelled_at_prompt` | — | `Apply cancelled.`; exit 1 |
@@ -1035,7 +1037,7 @@ Every summary shape the parsers must accept is pinned as **real** console output
 | `check_warnings` | `Warning: Check block assertion failed` after the `Plan:` line | the same warning between the progress lines and the summary line |
 | `progress_ticks` | `1 to add` | `Still creating... [00m10s elapsed]` (1.12+; `[10s elapsed]` on 1.11) then the summary line (P35) |
 
-Wording facts these established, none of which the spec had right: imports are a segment of *both* lines and come first; moves and removals are on *neither*; a saved destroy plan applied says `Apply complete!`; an output-only plan has no `Plan:` line; a refresh-only plan uses a different "no changes" sentence; the tick's elapsed time is `00m10s` from 1.12 (`10s` up to 1.11).
+Wording facts these established, none of which the spec had right: imports are a segment of *both* lines and come first; moves and removals are on *neither*; a saved destroy plan applied says `Apply complete!`; an output-only plan has no `Plan:` line; a refresh-only plan uses a different "no changes" sentence, and an empty destroy plan a third one; a move that also changes its resource is rendered as `(moved from`, not `has moved to`; the tick's elapsed time is `00m10s` from 1.12 (`10s` up to 1.11).
 
 All scenarios use the built-in `terraform_data` resource — it supports `import`, `moved` and `removed` blocks and `local-exec` provisioners, so no provider is downloaded and `init` is offline. The hand-written fixtures that pre-date this (provider errors, ANSI colour, three-digit counts, the `forgotten` verb — OpenTofu's wording, not Terraform's) stay, labelled as such in the README.
 
