@@ -25,8 +25,8 @@ move deliberately, one repository at a time, with this document.
 | [Terraform-tests.md](Terraform-tests.md) | `terraform test` as a stage: one job per file, credential lanes, GitHub Environments per lane, provider versions inherited from the environments, one summary comment | 1, 2, 10 |
 | [Dispatch-and-triggers.md](Dispatch-and-triggers.md) | Run one environment with a chosen goal from a standard dispatch block; per-environment trigger events; schedule opt-in | 9 |
 | ordering between environments | *pending* | 5 |
-| concurrency queueing | *pending*; candidate for a `v0` minor, see §6 | 6 |
-| apply reporting hardening | *pending*; candidate for a `v0` minor, see §6 | 7 |
+| concurrency queueing | no spec: [PR #56](https://github.com/dsb-norge/github-actions-terraform/pull/56), `queue: max` on the environment job; a `v0` minor, see §6 | 6 |
+| apply reporting hardening | no spec: [PR #57](https://github.com/dsb-norge/github-actions-terraform/pull/57), stacked on PR #53: the outcome invariant, real-output fixtures for every summary shape, and contract tests against the newest six Terraform minors resolved at run time; a `v0` minor, see §6 | 7 |
 | notifications | *pending* | 8 |
 
 The required check keeps its name, `tf / Terraform conclusion`, in every spec. Nothing in v1
@@ -93,7 +93,7 @@ early.
 
 | Step | What | Why here |
 |---|---|---|
-| 0 | Concurrency `queue: max` and the apply-reporting invariant and fixtures (needs 6 and 7, specs pending) as **`v0` minors** | Both are additive and safe on the rolling tag; callers get them without waiting for v1, and v1 inherits them. To be confirmed when those specs are written. |
+| 0 | Concurrency `queue: max` ([PR #56](https://github.com/dsb-norge/github-actions-terraform/pull/56)) and the apply-reporting invariant, fixtures and contract tests ([PR #57](https://github.com/dsb-norge/github-actions-terraform/pull/57), after PR #53) as **`v0` minors** | Both are additive and safe on the rolling tag; callers get them without waiting for v1, and v1 inherits them. Neither has a spec; the pull requests are the record. |
 | 1 | Decision-engine.md §12: the engine, the port behind goldens, the shim, CI discovery | Everything after this puts logic into the engine; building features in bash first means writing them twice. |
 | 2 | Path-relevance.md §15: relevance rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | The conclusion rewrite is what the other stages' `needs` entries depend on, and it fixes the blocked pull request. |
 | 3 | Terraform-tests.md §13: the test stage, lanes, environments, provider sets, summary | Depends on the conclusion table and the engine. |
@@ -134,12 +134,11 @@ early.
 | Terraform-tests.md | yes | no | no | no |
 | Dispatch-and-triggers.md | yes | no | no | no |
 | ordering between environments | no | | | |
-| concurrency queueing | no | | | |
-| apply reporting hardening | no | | | |
+| concurrency queueing (PR #56) | yes | yes | yes, from the test-bed | no spec |
+| apply reporting hardening (PR #57) | yes | yes | in CI on six Terraform minors | no spec |
 | notifications | no | | | |
 
 ## 10. Open cross-cutting questions
 
-1. Which of needs 6 and 7 ship as `v0` minors before the freeze (§6 step 0).
-2. The `v0` support period after v1 (§7).
-3. Whether the module CI workflow moves to the engine and the test summary in v1 or after.
+1. The `v0` support period after v1 (§7).
+2. Whether the module CI workflow moves to the engine and the test summary in v1 or after.
