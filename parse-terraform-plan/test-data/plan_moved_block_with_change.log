@@ -1,0 +1,17 @@
+terraform_data.new: Refreshing state... [id=80922953-27be-9185-1892-3fa88d7b6b1f]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # terraform_data.new will be updated in-place
+  # (moved from terraform_data.old)
+  ~ resource "terraform_data" "new" {
+        id     = "80922953-27be-9185-1892-3fa88d7b6b1f"
+      ~ input  = "generation-1" -> "generation-2"
+      ~ output = "generation-1" -> (known after apply)
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.

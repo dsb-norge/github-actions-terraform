@@ -183,7 +183,7 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# R1–R17: real console output, captured by contract-tests/run.sh from the
+# R1–R19: real console output, captured by contract-tests/run.sh from the
 # scenarios under contract-tests/scenarios/ (provenance and terraform version
 # in test-data/README.md). One fixture per summary shape the parser must
 # accept; the contract tests prove these are still what terraform prints.
@@ -214,6 +214,10 @@ run_count_test "R16: a check-block warning before the summary line" \
                                                         apply_check_warnings.log                      0   1   0  true  apply
 run_count_test "R17: a real progress tick ('[00m10s elapsed]', P35)" \
                                                         apply_progress_ticks.log                      1   0   0  true  apply
+run_count_test "R18: a move alongside an in-place change — only the change counts (P36)" \
+                                                        apply_moved_block_with_change.log             0   1   0  true  apply
+run_count_test "R19: an empty -destroy plan applied still prints a zero summary line" \
+                                                        apply_destroy_plan_empty.log                  0   0   0  true  apply
 
 # R17 detail: the real tick shape is filtered (P5 pinned against real output,
 # not a hand-written line — the elapsed format has already changed once).

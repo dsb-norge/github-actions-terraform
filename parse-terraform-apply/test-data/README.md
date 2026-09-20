@@ -26,6 +26,8 @@ Two kinds of provenance:
 | `apply_interrupted.log` | captured (`interrupted`) | 1.16.2 | SIGINT mid-apply: `Interrupt received.`, `Error: execution halted`, exit 1, no summary line |
 | `apply_check_warnings.log` | captured (`check_warnings`) | 1.16.2 | a `Warning: Check block assertion failed` block between the progress lines and the summary line |
 | `apply_progress_ticks.log` | captured (`progress_ticks`) | 1.16.2 | a real progress tick, `Still creating... [00m10s elapsed]` — the zero-padded form Terraform 1.12.0+ prints (#36368); 1.11 prints `[10s elapsed]` (P35) |
+| `apply_moved_block_with_change.log` | captured (`moved_block_with_change`) | 1.16.2 | a move alongside an in-place change: `0 added, 1 changed, 0 destroyed` — the move is absent here too, so the apply total is 1 where the plan total was 2 (P36) |
+| `apply_destroy_plan_empty.log` | captured (`destroy_plan_empty`) | 1.16.2 | an empty `-destroy` plan applied — a full `Apply complete! Resources: 0 added, 0 changed, 0 destroyed.` line, not an unparsable console |
 | `apply_complete_1_add_0_change_0_destroy.log` | hand-written | — | the plain summary line with a cloud resource address |
 | `apply_complete_0_changes.log` | hand-written | — | the zero summary line alone |
 | `apply_complete_with_outputs.log` | hand-written | — | parsing through a trailing `Outputs:` section |

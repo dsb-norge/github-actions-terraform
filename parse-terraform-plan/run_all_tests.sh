@@ -218,7 +218,7 @@ run_test "Empty file yields fallback values" \
 rm -f "${_empty_file}"
 
 # --------------------------------------------------
-# R1–R15: real console output, captured by contract-tests/run.sh from the
+# R1–R17: real console output, captured by contract-tests/run.sh from the
 # scenarios under contract-tests/scenarios/ (provenance and terraform version
 # in test-data/README.md). One fixture per plan shape; the contract tests
 # prove these are still what terraform prints. Wording found on capture:
@@ -265,6 +265,12 @@ export input_plan_console_file="${_this_script_dir}/test-data/plan_check_warning
 run_test "R14: a check-block warning after the Plan line" "0" "0" "1" "0" "0" "0"
 export input_plan_console_file="${_this_script_dir}/test-data/plan_progress_ticks.log"
 run_test "R15: a slow create's plan"                      "0" "1" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_moved_block_with_change.log"
+run_test "R16: a move rendered as '(moved from' on a changed resource" \
+                                                          "0" "0" "1" "0" "1" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_destroy_plan_empty.log"
+run_test "R17: an empty -destroy plan — 'No objects need to be destroyed.'" \
+                                                          "0" "0" "0" "0" "0" "0" "false"
 
 # --------------------------------------------------
 # H1: Terraform 1.14+ appends 'Actions: N to invoke.' to the 'Plan:' line
