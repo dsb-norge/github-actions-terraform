@@ -1,0 +1,11 @@
+{
+  "description": "Approval prompt declined — 'Apply cancelled.', exit 1, no summary line.",
+  "operation": "prompt-decline",
+  "plan": null,
+  "apply": {
+    "exitcode": 1,
+    "import": "?", "add": "?", "change": "?", "destroy": "?", "total": "?",
+    "completed": false, "kind": "",
+    "fixture": "parse-terraform-apply/test-data/apply_cancelled_at_prompt.log"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "description": "One resource replaced (destroy then create) via triggers_replace.",
+  "operation": "apply",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 1, "change": 0, "destroy": 1, "move": 0, "remove": 0, "total": 2,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_replace.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 1, "change": 0, "destroy": 1, "total": 2,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_replace.log"
+  }
+}

@@ -1,0 +1,128 @@
+name: "Terraform contract tests"
+#
+# Real terraform, real console output, every supported minor: proves that the
+# fixtures pinned under parse-terraform-plan/test-data/ and
+# parse-terraform-apply/test-data/ are still what terraform prints, and that
+# the two parsers still read them right. A wording change in a new terraform
+# release fails a job here and names the line.
+#
+# Spec: docs/Apply-and-destroy-reporting.md §16. Runner: contract-tests/run.sh.
+# Version window: contract-tests/versions.json, resolved at run time by
+# contract-tests/resolve-versions.sh — nothing in this file names a release.
+#
+# Not on the required-check path (action-tests.yml is), which is why the
+# pull_request trigger is path-filtered. The weekly schedule is the point: it
+# runs when nobody has pushed anything, which is exactly when a new terraform
+# release lands.
+#
+
+on:
+  pull_request:
+    paths:
+      - "parse-terraform-plan/**"
+      - "parse-terraform-apply/**"
+      # run.sh mirrors these two actions' command lines; a flag change there
+      # must re-run the scenarios.
+      - "terraform-plan/**"
+      - "terraform-apply/**"
+      - "contract-tests/**"
+      - ".github/workflows/terraform-contract-tests.yml"
+  workflow_dispatch:
+  schedule:
+    # Mondays 05:17 UTC — a few days after HashiCorp's usual mid-week release.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-contract-tests-${{ github.event.pull_request.number || github.ref }}
+  # Only a newer push to the same PR supersedes a run. A manual dispatch and
+  # the weekly schedule share the default-branch group and must never cancel
+  # each other: the scheduled run is the one that catches a new release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve-versions:
+    name: "🔎 Resolve terraform versions"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      - name: "🔎 Resolve the newest minors from the releases API"
+        id: resolve
+        run: |
+          # Turn contract-tests/versions.json into the exact-version matrix
+          bash contract-tests/resolve-versions.sh
+
+  contract:
+    name: "🧪 terraform ${{ matrix.terraform }}"
+    needs: resolve-versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ${{ fromJSON(needs.resolve-versions.outputs.matrix) }}
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      - name: "🔧 Setup terraform ${{ matrix.terraform }}"
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ matrix.terraform }}
+          # The wrapper rewrites stdout; the scenarios must see terraform's own
+          # console, exactly as the actions do (they set the same).
+          terraform_wrapper: false
+
+      - name: "🧪 Run every scenario through the parsers"
+        run: |
+          # Plan and apply every scenario with this terraform; parse and compare
+          bash contract-tests/run.sh
+
+      # The consoles are what a drift failure has to be judged from; the job
+      # log carries only their tails. run.sh keeps every scenario's work dir
+      # under ${RUNNER_TEMP}/contract-tests.
+      - name: "📤 Upload the scenario work dirs on failure"
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: contract-tests-${{ matrix.terraform }}
+          path: ${{ runner.temp }}/contract-tests
+          retention-days: 7
+
+  # One status for the whole matrix, so a scheduled failure reads as one
+  # red job rather than N. Mirrors action-tests.yml's tests-conclusion.
+  contract-conclusion:
+    name: "contract-conclusion"
+    needs: [resolve-versions, contract]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: "🛑 Verify every version passed"
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve-versions.result }}
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+        run: |
+          # Fail unless both the resolver and every matrix leg succeeded
+          echo "resolve-versions result: ${RESOLVE_RESULT}"
+          echo "contract result:         ${CONTRACT_RESULT}"
+          if [[ "${RESOLVE_RESULT}" != "success" ]]; then
+            echo "::error title=Version resolution failed::resolve-versions result was '${RESOLVE_RESULT}'"
+            exit 1
+          fi
+          if [[ "${CONTRACT_RESULT}" != "success" ]]; then
+            echo "::error title=Contract tests failed::contract result was '${CONTRACT_RESULT}' — a terraform version prints something the parsers or their fixtures do not expect; see the failed job's annotations"
+            exit 1
+          fi
+          echo "Every terraform version in the window passed."

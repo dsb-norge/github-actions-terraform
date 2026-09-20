@@ -1,0 +1,16 @@
+{
+  "description": "A moved block — counted from 'has moved to' in the plan; absent from the apply summary line.",
+  "operation": "apply",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "move": 1, "remove": 0, "total": 1,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_moved_block.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "total": 0,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_moved_block.log"
+  }
+}

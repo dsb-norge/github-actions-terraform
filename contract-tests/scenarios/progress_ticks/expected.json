@@ -1,0 +1,17 @@
+{
+  "description": "A slow create that emits a real progress-tick line; the filtered console must drop it (P5).",
+  "operation": "apply",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 1, "change": 0, "destroy": 0, "move": 0, "remove": 0, "total": 1,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_progress_ticks.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 1, "change": 0, "destroy": 0, "total": 1,
+    "completed": true, "kind": "apply",
+    "ticks": true,
+    "fixture": "parse-terraform-apply/test-data/apply_progress_ticks.log"
+  }
+}

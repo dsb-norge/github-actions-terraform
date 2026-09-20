@@ -1,0 +1,16 @@
+{
+  "description": "A -refresh-only plan with nothing drifted, then applied.",
+  "operation": "refresh-only",
+  "plan": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "move": 0, "remove": 0, "total": 0,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_refresh_only.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "total": 0,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_refresh_only.log"
+  }
+}

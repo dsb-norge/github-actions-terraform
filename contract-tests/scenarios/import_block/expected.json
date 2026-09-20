@@ -1,0 +1,17 @@
+{
+  "description": "An import block plus one create — 'N imported' precedes 'N added' on the summary line (P32).",
+  "operation": "apply",
+  "min-terraform": "1.5.0",
+  "plan": {
+    "exitcode": 2,
+    "import": 1, "add": 1, "change": 0, "destroy": 0, "move": 0, "remove": 0, "total": 2,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_import_block.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 1, "add": 1, "change": 0, "destroy": 0, "total": 2,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_import_block.log"
+  }
+}
