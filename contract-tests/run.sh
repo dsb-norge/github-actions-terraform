@@ -264,7 +264,7 @@ function run_scenario {
           # terraform's own pid: the first attempt backgrounded a
           # "( cd … && terraform … )" subshell and sent kill -INT to THAT pid,
           # and a subshell does not forward the signal to its child, so the
-          # apply ran to completion (P36). It is not that a background
+          # apply ran to completion (P37). It is not that a background
           # terraform ignores SIGINT — Go re-installs its handler either way.
           cmd_in "${work}" "${apply_console}" timeout --preserve-status --signal=INT --kill-after=60 5 \
             "${TF_BIN}" apply -input=false -auto-approve -no-color "${work}/tfplan"

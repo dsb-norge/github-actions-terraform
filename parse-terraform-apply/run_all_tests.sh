@@ -212,7 +212,7 @@ run_count_test "R14: declined at the prompt ('Apply cancelled.') → '?'" \
 run_count_test "R15: interrupted (SIGINT) → '?'"        apply_interrupted.log                         '?' '?' '?' false ""
 run_count_test "R16: a check-block warning before the summary line" \
                                                         apply_check_warnings.log                      0   1   0  true  apply
-run_count_test "R17: a real progress tick ('[00m10s elapsed]', P34)" \
+run_count_test "R17: a real progress tick ('[00m10s elapsed]', P35)" \
                                                         apply_progress_ticks.log                      1   0   0  true  apply
 
 # R17 detail: the real tick shape is filtered (P5 pinned against real output,

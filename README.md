@@ -60,4 +60,5 @@ See [docs](docs/Workflow-terraform-module-release.md) for workflow information, 
 - [Development-and-release.md](docs/Development-and-release.md) — testing a PR from a calling repo (preview refs), cutting a release, moving the major tag.
 - [Preview-refs.md](docs/Preview-refs.md) — how `pr-preview.yml` publishes a `preview/pr-<N>` tag for every PR, and the one-time GitHub App bootstrap.
 - [Testing-in-ci.md](docs/Testing-in-ci.md) — the per-action test suites that gate every PR.
+- [contract-tests/](contract-tests/README.md) — real terraform, the newest `newest-minors` minors (six today), weekly: proves the console parsers' fixtures are still what terraform prints (`.github/workflows/terraform-contract-tests.yml`).
 - [Action-implementation-guide.md](docs/Action-implementation-guide.md) — how a composite action in this repo is built and tested.

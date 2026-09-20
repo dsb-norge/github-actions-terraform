@@ -119,7 +119,7 @@ For the resulting table across the example:
 
 ##### The cheaper alternative
 
-Terraform's own `TF_CLI_ARGS_<subcommand>` mechanism already works through plain `extra-envs-yml` with no per-goal configuration at all, and covers anything expressible as a CLI flag. Reach for it first. One caveat: `TF_CLI_ARGS_plan` applies to **both** plan invocations, `plan` and `destroy-plan`.
+Terraform's own `TF_CLI_ARGS_<subcommand>` mechanism already works through plain `extra-envs-yml` with no per-goal configuration at all, and covers anything expressible as a CLI flag. Reach for it first. One caveat: `TF_CLI_ARGS_plan` applies to **both** plan invocations, `plan` and `destroy-plan`. Another: `-compact-warnings` changes the diagnostic shape — one `Warnings:` list of summaries instead of a `Warning:` block per diagnostic — so `parse-terraform-warnings` counts zero and the warning annotations and the warnings section of the plan comment disappear; the count parsers are unaffected.
 
 Full design, including why the values are passed as a file path rather than as a payload: [Per-goal-environment-variables.md](./Per-goal-environment-variables.md).
 

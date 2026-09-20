@@ -219,8 +219,8 @@ Outputs, deliberately named to match `parse-terraform-plan` so downstream wiring
 | `count-import` | `?` when no summary line was found, `0` when terraform emitted no `imported` segment |
 | `count-add` / `count-change` / `count-destroy` | `?` when no summary line was found |
 | `count-total` | sum **including imports**; `?` when no summary line was found |
-| `completed` | `true` when a summary line was found, `false` otherwise |
-| `apply-kind` | `apply` or `destroy`, from which summary line matched |
+| `completed` | `true` when a summary line was found and parsed, `false` otherwise. Says whether the **counts** are available — not whether the apply succeeded; that is the step outcome (§14) |
+| `apply-kind` | `apply` or `destroy`, from which summary line matched. The default workflow's destroy step applies a saved `-destroy` plan, which prints `Apply complete!` — so `apply` there too (P33) |
 | `filtered-console-file` | console file with progress-tick lines removed (§7.2.2) |
 
 `Destroy complete!` sets `count-add=0`, `count-change=0`.
@@ -753,6 +753,11 @@ Collected from §7-§8 for review convenience. Each is expanded at its source.
 | P21 | §7.14 | New workflow input must reach the matrix validators and fixtures |
 | P22 | §7.15 | The module-ci migration changes a second workflow's user-visible comment behaviour on the same force-moved `@v0` |
 | P23 | §7.15 | `create-test-report` has no tests today — pin its current output before converting it, or the conversion is unverifiable |
+| P24–P31 | §13 | Found during implementation — see the table there |
+| P32 | §7.2, §14 | The apply summary line is a list, not a fixed triple; and no renderer may derive the outcome from whether it parsed |
+| P33 | §13 | A saved `-destroy` plan applied prints `Apply complete!` — see the table there |
+| P34 | §7.2, §14 | A tag's shape must not contradict the head's status row — the outcome is the step's, never the parse's |
+| P35–P37 | §13 | Found while capturing real output for the contract tests — see the table there |
 
 ## 10. Test coverage
 
@@ -923,7 +928,7 @@ Stated so review does not assume more coverage than exists.
 - **Ordering inside the real workflow.** F5/F5c grep the YAML; they do not prove the runtime behaviour. `action-tests.yml` runs action suites, not the reusable workflow. Verification is manual, via the PR's preview ref ([Preview-refs.md](Preview-refs.md)) against a calling repo with `apply-on-pr`, checking that a **deliberately failed** apply still updates the head comment.
 
   **Done, 2026-09-16**, against a calling repo's throwaway environment: `null` provider only, local backend, two resources where the second fails in a `local-exec` provisioner — a genuine partial apply with no cloud access needed, repeatable on every run because the state dies with the job. Three runs: the first never reached apply (lint) but proved phase 2 runs after a failed job; the second reached apply and found P31; the third showed the full expected result — job fails on the apply step, head reads `Apply | failure` with `💫 ?/2 added`, the apply tag is `<details open>❌ Apply failed …` with the console tail, both `Apply failed` annotations are on the check run, and the run summary reads `0 applied · 1 failed`. The successful-apply shapes, grouped environments and `push`-event surfaces are not covered by that environment and are validated from a real calling repo next.
-- **Real terraform output drift.** Every fixture is a snapshot. A future terraform version changing the `Apply complete!` wording breaks parsing in production with green tests. Mitigated only by B4/B5 failing loudly (`?`) rather than silently (`0`).
+- **Real terraform output drift** — *covered since §16.* Every fixture is a snapshot; a future terraform version changing the `Apply complete!` wording used to break parsing in production with green unit tests, mitigated only by B4/B5 failing loudly (`?`) rather than silently (`0`). The contract tests (§16) now run the real binary weekly across the newest `newest-minors` minors (six today) and diff the wording against the fixtures, and the outcome invariant (§14) means such a change can no longer render a successful apply as failed — only its counts as `?`, with a run-page warning asking for the console.
 - **The secret-exposure surface of error messages** (P3 residual risk).
 - **The run-level rollup's rendering on the real run page.** Tested as a string; the GitHub markdown renderer is not in the loop.
 
@@ -961,3 +966,101 @@ Recorded here because each would have been invisible in a green test run had the
 | P29 | test harnesses | Two suites exported large inputs that the production shim deliberately does not — `capture-matrix-job-meta` (JSON contexts) and, historically, `create-validation-summary` (allexport). A harness that exports what the shim keeps local E2BIGs the step's own `jq` on a large fixture and tests the harness, not the step. Both now mirror their shim. |
 | P30 | §7.4, §8.1 | **Found in the first real run.** A step whose `if:` was false has the outcome string `skipped`, not `""`. Gating the operation blocks on "non-empty" rendered `Apply | skipped`, `Destroy plan | skipped`, `Destroy | skipped` on every plan-only environment — the §2 invariant broken in production while every unit test was green, because C1 only exercised the empty case. Both renderers now gate on "ran" (non-empty and not `skipped`), as `annotate-terraform-outcome` already did; tests cover all-skipped and mixed. The spec's own §7.4 wording was wrong about GitHub's semantics. |
 | P31 | §7.3, §7.5 | **Found in the second real run.** The three `parse-*` steps after apply / destroy-plan / destroy had the same `if:` as `parse-plan` — without `always()`. apply fails the job on the spot (its `continue-on-error` is `allow-failing-terraform-operations`, default false), and an `if:` without `always()` is skipped after a failure even when it evaluates true. So the first real failed apply lost its parse step, hence its counts and console, and the apply tag read `Apply not available`. `parse-plan` never needed `always()` because plan runs with `continue-on-error: true`. Fixed; the phase-2 renders now also fall back to the raw console when the filtered one is absent; and F5c mechanically requires `always()` on every step between `parse-apply` and the gates — F5 checks order, which cannot see this. |
+| P32 | §7.2, §14 | **Found on a calling repository.** The summary line is a list, not a fixed triple — and, the deeper defect, the renderers took "the line did not parse" for "the apply failed". Expanded at §7.2; the invariant that closes it is §14. |
+| P33 | §7.2, §15 | **Applying a saved `-destroy` plan prints `Apply complete! Resources: 0 added, 0 changed, N destroyed.`**, not `Destroy complete!`. Only `terraform destroy` (and `apply -destroy` without a plan file) prints the latter. The default workflow's destroy step is a saved destroy plan applied, so in production `apply-kind` is `apply` for destroys and the destroy count sits in the `destroyed` segment of an apply line. The renderers never keyed on `apply-kind`, so nothing was wrong — but the spec and the hand-written destroy fixture both assumed `Destroy complete!` was what a destroy prints. Both shapes are now captured for real. |
+| P34 | §7.2, §14 | **Found in review.** The tag's failure shape was chosen from `completed` alone, so a successful apply whose summary line could not be read posted "❌ Apply failed — infrastructure may be partially applied" beside a head row reading `success`. Expanded at §7.2; the invariant it belongs to is §14. |
+| P35 | §7.2.2 | **The progress-tick elapsed format changed in 1.12.** Terraform 1.12.0+ prints `Still creating... [00m10s elapsed]` (zero-padded minutes, #36368); 1.11 prints `[10s elapsed]`. Hours differ too: `[1h0m10s elapsed]` up to 1.11, `[60m10s elapsed]` from 1.12. The hand-written fixture (`apply_with_progress_ticks.log`) is therefore the real 1.11 shape, not an older guess, and the captured one (`apply_progress_ticks.log`) is 1.12+. The filter regex accepts both because its hour and minute groups are optional and its digit runs unbounded — by construction, not by luck, but nothing had checked. The contract tests now assert the filter removes the real tick on every version in the window — the drift P5 warned about, caught by the mechanism P5 asked for. |
+| P36 | §7.2 | **Neither `moved` nor `removed` blocks leave any trace on the summary lines.** A move prints `has moved to` in the plan and nothing on the `Plan:` line or the apply line; a `removed` block with `destroy = false` prints `will no longer be managed by Terraform` plus a warning in the plan, and again nothing on either summary line — Terraform has no `forgotten` segment (1.16 included). OpenTofu does: since 1.10 its line reads `… N destroyed, M forgotten.` `apply_complete_unknown_segment.log` (`2 forgotten`) is therefore hypothetical for Terraform and real wording elsewhere, kept because the *mechanism* — an unknown verb must warn, not fail — is what it pins. |
+| P37 | §16 | **A signal sent to a backgrounded subshell never reaches terraform.** The interrupt scenario first ran `( cd … && terraform apply … ) &` and sent `kill -INT "$!"` — the pid of the subshell, not of terraform. A bash subshell does not forward a signal to its child (and, as an asynchronous command with job control off, had SIGINT set to ignored itself), so terraform never saw it and applied to completion, exit 0, summary line and all. It is *not* that a background terraform ignores SIGINT: Go re-installs its own handler when the program calls `signal.Notify`, even for a signal inherited as ignored, so terraform would have stopped had the signal reached its pid. `coreutils timeout --signal=INT` signals the command it ran — terraform itself — and stays the right tool. Worth knowing before writing the next "cancel it after N seconds" test. |
+
+## 14. The outcome invariant
+
+**A finished apply must never be rendered as failed.** Stated as P32, met again as P34; enforced here.
+
+The rendered outcome of apply, destroy-plan and destroy — the status cell in the per-env head and the per-group table, the tag comment's shape, the `::notice` / `::error` annotation, the per-env job-summary block, the run-level headline's *applied* / *destroyed* / *failed* counts, and the `🧐` gates — is derived from the **step outcome**, which is terraform's exit code, and from nothing else. Whether the parser recognised terraform's summary line decides only whether the **counts** are known. Counts are decoration: `?` when unavailable, never zeros (P2), never a verdict.
+
+| Surface | Outcome from | Counts from | Where enforced |
+|---|---|---|---|
+| Head / grouped status cell | `status-apply` etc. — `steps.<id>.outcome` | — | always was |
+| Head details row, run-summary cells | — | `count-*`, numerators `?` unless `completed=true` | `_render_ratio_badge`, `apply_cell` |
+| Apply / destroy tag shape | `status-apply` / `status-destroy`: a step that ran and did not succeed gets `❌ … failed`, `<details open>`; a step that succeeded whose summary line could not be read gets the closed, amber `⚠️ … finished, but its counts could not be read` block instead, which claims nothing about partial state (P34) | `completed` + `count-total` pick *no changes* vs the success collapser; `?` ratios for an unknown side | `render_op_extract` |
+| Annotation level | `status-apply` / `status-destroy` | `?` for non-numeric counts | `annotate_operation` |
+| Run-summary headline | `steps.apply.outcome == success` alone | — | `render_summary` |
+| `🧐` gates | `steps.<id>.outcome` | — | always were |
+
+`parse-terraform-apply` never decides the outcome. Given the exit code (`apply-exitcode`, wired from `terraform-apply`'s `exitcode`), it names the one mismatch worth a human look, as **one `::warning title=Terraform output not recognised`** on the run page:
+
+- exit 0 and no recognised summary line — a successful apply always prints one, so this is a wording change or a shape the parser has not met; the warning says the apply is still reported as succeeded, that the counts render `?`, and asks for the console to be reported;
+- a summary line carrying a verb the parser does not know — the line proves the apply finished whatever the exit code, the unknown resources go uncounted, and the warning names the verb.
+
+Exit non-zero with no summary line is the ordinary failed apply and warns about nothing. Exit non-zero *with* a complete summary line — something after the apply itself failed — keeps terraform's counts, and the head status row, the annotation and the run-page headline all read failure: the exit code's call. `render_op_extract` is the one surface that would still reach the success collapser there, because it tests `completed` before the status; terraform prints its summary line only once the apply itself has finished, so nothing has produced that combination yet, and if something ever does the status must win there too.
+
+The output is still called `completed`. Renaming it would touch every wire on the branch for no behaviour; its description now says what it means — *the counts are available* — and this section is what stops the next reader from taking it for an outcome.
+
+Tested where the outcome is derived, so a regression in any one renderer fails on its own:
+
+| Case | `parse-terraform-apply` | `create-validation-summary` | `annotate-terraform-outcome` | `create-run-summary` |
+|---|---|---|---|---|
+| exit 0 + no summary line | counts `?`, `completed=false`, one warning naming the file (§14 tests) | P34: head row `success`, the amber `⚠️ … counts could not be read` block, never `❌` and never "partially applied" | `::notice` with `?` counts, no `::error` | P34: counted as applied, `?/N` cell |
+| exit 1 + no summary line | counts `?`, `completed=false`, no warning | P34: the red, open, partial-state block | D2: `::error`, no `::notice` | not counted as applied |
+| exit 1 + a complete summary line | terraform's counts, `completed=true`, no warning | — | D2 | §14: counted as failed, terraform's counts still render, ❌ |
+| exit 0 + unknown verb | known verbs counted, `completed=true`, one warning naming the verb | (renders as a recognised success) | — | — |
+| destroy variants | — | P34: the same rule for destroy | D9 | §14: counted as destroyed, `?/N` cell |
+
+The renderer rows are pinned by the tests that landed with P34; the `parse-terraform-apply` cases are what the contract tests (§16) exercise against the real binary.
+
+## 15. Fixture inventory
+
+Every summary shape the parsers must accept is pinned as **real** console output — captured by `contract-tests/run.sh --capture` from a local-only configuration, not hand-written — under `parse-terraform-apply/test-data/` and `parse-terraform-plan/test-data/`. The `README.md` next to each set records provenance and the terraform version per fixture; the scenarios that produce them live under `contract-tests/scenarios/`.
+
+| Scenario | Plan line | Apply line |
+|---|---|---|
+| `adds_only` | `Plan: 2 to add, 0 to change, 0 to destroy.` | `Apply complete! Resources: 2 added, 0 changed, 0 destroyed.` |
+| `change_in_place` | `0 to add, 1 to change, 0 to destroy` + `Changes to Outputs:` | `0 added, 1 changed, 0 destroyed` + `Outputs:` |
+| `replace` | `must be replaced` → `1 to add, 0 to change, 1 to destroy` | `1 added, 0 changed, 1 destroyed` |
+| `destroys_only` | `0 to add, 0 to change, 1 to destroy` | `0 added, 0 changed, 1 destroyed` |
+| `import_block` | `Plan: 1 to import, 1 to add, 0 to change, 0 to destroy.` | `Apply complete! Resources: 1 imported, 1 added, 0 changed, 0 destroyed.` (P32) |
+| `moved_block` | `has moved to`, zero `Plan:` line | zero summary line (P36) |
+| `removed_block_forget` | `will no longer be managed by Terraform`, zero `Plan:` line, a warning | zero summary line (P36) |
+| `no_changes` | `No changes. Your infrastructure matches the configuration.`, exit 0 | zero summary line |
+| `outputs_only` | no `Plan:` line; `Changes to Outputs:`; exit 2 | zero summary line + `Outputs:` |
+| `refresh_only` | `No changes. Your infrastructure still matches the configuration.`, exit 0 | zero summary line |
+| `destroy_plan_applied` | `-destroy`: `0 to add, 0 to change, 2 to destroy` | `Apply complete! Resources: 0 added, 0 changed, 2 destroyed.` (P33) |
+| `destroy_command` | — (`terraform destroy` carries its own plan) | `Destroy complete! Resources: 1 destroyed.` |
+| `failed_provisioner` | `2 to add` | no summary line; `Error: local-exec provisioner error`; exit 1 (P2) |
+| `cancelled_at_prompt` | — | `Apply cancelled.`; exit 1 |
+| `interrupted` | `1 to add` | `Interrupt received.` … `Error: execution halted`; exit 1 |
+| `check_warnings` | `Warning: Check block assertion failed` after the `Plan:` line | the same warning between the progress lines and the summary line |
+| `progress_ticks` | `1 to add` | `Still creating... [00m10s elapsed]` (1.12+; `[10s elapsed]` on 1.11) then the summary line (P35) |
+
+Wording facts these established, none of which the spec had right: imports are a segment of *both* lines and come first; moves and removals are on *neither*; a saved destroy plan applied says `Apply complete!`; an output-only plan has no `Plan:` line; a refresh-only plan uses a different "no changes" sentence; the tick's elapsed time is `00m10s` from 1.12 (`10s` up to 1.11).
+
+All scenarios use the built-in `terraform_data` resource — it supports `import`, `moved` and `removed` blocks and `local-exec` provisioners, so no provider is downloaded and `init` is offline. The hand-written fixtures that pre-date this (provider errors, ANSI colour, three-digit counts, the `forgotten` verb — OpenTofu's wording, not Terraform's) stay, labelled as such in the README.
+
+## 16. Contract tests
+
+`.github/workflows/terraform-contract-tests.yml` runs `contract-tests/run.sh` under a matrix of terraform versions. For each version and each scenario of §15 it runs the configuration, captures the console the way `terraform-plan` and `terraform-apply` do (`-detailed-exitcode`, `-input=false`, `-no-color`, saved plan applied, `TF_IN_AUTOMATION=true`), feeds it through the two parsers' step scripts unmodified, and asserts:
+
+1. the plan's and apply's exit codes;
+2. every `count-*`, `has-output-only-changes`, `completed` and `apply-kind` against `expected.json`;
+3. that a console the scenario expects to be recognised produced no *Terraform output not recognised* warning;
+4. for the tick scenario, that a real tick line was printed and the filtered console has none;
+5. that the **summary-bearing lines** of the captured console — `Plan:`, `Apply complete!`, `No changes.`, the "without changing any real infrastructure" sentence, `Changes to Outputs:`, `Warning:`, `Error:`, the resource-action lines (including both move forms), the tick shape with its elapsed time normalised — match the pinned fixture. A mismatch fails the job with one `::error` per console that lists the lines `Terraform <v> emits` which the fixture lacks and the lines `the fixture <path> has` which that version does not emit, then `update the fixture (contract-tests/run.sh --capture <scenario>) if intended`; the last forty lines of each console follow in the job log, and the whole scratch directory is uploaded as the `contract-tests-<version>` artifact.
+
+Only those lines are compared, not the whole console: resource ids, durations and the order two parallel creates finish in are noise. Because every `Warning:` line is in the signature, a release that prints a new warning in every console fails every scenario at once — on purpose, since that warning would reach every calling repository's PR comment too.
+
+A scenario whose language feature is newer than the oldest version in the window carries `min-terraform` in its `expected.json` (`import_block`: 1.5, `removed_block_forget`: 1.7). Below the floor it is skipped with a one-line note, counted as neither passed nor failed, and listed as skipped in the job summary.
+
+**Triggers.** `pull_request` filtered to the parsers, the fixtures, the scenarios, the workflow itself and the two actions whose command lines the runner mirrors (`terraform-plan`, `terraform-apply`) — this is not a required check (action-tests.yml is), so path filtering is fine; `workflow_dispatch`; and a **weekly schedule**, which is the point: a new terraform release lands when nobody has pushed anything.
+
+**Version window.** `contract-tests/versions.json` is the one place it lives:
+
+```json
+{ "newest-minors": 6, "extra": [] }
+```
+
+The newest `newest-minors` minor series (six today), each at its latest patch — today 1.11 through 1.16, every version the calling repositories pin, and the newest minor is always included so `latest` is always covered. `extra` pins exact versions below the window for a caller that needs one. Nothing names a release: `contract-tests/resolve-versions.sh` resolves the window against `https://api.releases.hashicorp.com/v1/releases/terraform` at run time (pre-releases skipped, 20 per page, paged with `after=<timestamp>` until two minors beyond the window have been seen), and fails the run loudly when the API is unreachable or returns fewer minors than asked — a silently empty matrix would be a green run that tested nothing. A `contract-conclusion` job gives the matrix one status.
+
+**When it fails.** Read the message. If terraform changed its wording and the parser still counts correctly, re-pin with `contract-tests/run.sh --capture <scenario>` under that version and record the version in the fixture README. If the parser no longer counts correctly, that is a parser bug caught before a calling repository saw it. Either way the outcome invariant (§14) means a calling repository running the new version in the meantime saw `?` counts and a warning, not a failed apply.
+
+**Not covered.** Provider-shaped output (the sanitised plan fixtures cover some of it, unrefreshed), remote backends, the reusable workflow's own wiring (§10.10), and `terraform-test` output.
