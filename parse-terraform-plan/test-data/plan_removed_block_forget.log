@@ -1,0 +1,24 @@
+terraform_data.example_kept: Refreshing state... [id=ecda392b-aa88-4a6b-e877-230ceb523eb7]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+
+Terraform will perform the following actions:
+
+ # terraform_data.example_forgotten will no longer be managed by Terraform, but will not be destroyed
+ # (destroy = false is set in the configuration)
+ . resource "terraform_data" "example_forgotten" {
+        id     = "bb8b72bd-9e80-3ab0-e5a4-875d78b3d442"
+        # (2 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 0 to change, 0 to destroy.
+
+Warning: Some objects will no longer be managed by Terraform
+
+If you apply this plan, Terraform will discard its tracking information for
+the following objects, but it will not delete them:
+ - terraform_data.example_forgotten
+
+After applying this plan, Terraform will no longer manage these objects. You
+will need to import them into Terraform to manage them again.

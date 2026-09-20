@@ -218,6 +218,67 @@ run_test "Empty file yields fallback values" \
 rm -f "${_empty_file}"
 
 # --------------------------------------------------
+# R1–R15: real console output, captured by contract-tests/run.sh from the
+# scenarios under contract-tests/scenarios/ (provenance and terraform version
+# in test-data/README.md). One fixture per plan shape; the contract tests
+# prove these are still what terraform prints. Wording found on capture:
+#   - imports are a segment of the "Plan:" line, FIRST: "Plan: 1 to import, 1 to add, …"
+#   - moves and removals have NO segment on the "Plan:" line; they are counted
+#     from "has moved to" / "will no longer be managed by Terraform"
+#   - an output-only plan has no "Plan:" line at all
+#   - a -refresh-only plan with nothing drifted says "No changes. Your
+#     infrastructure still matches the configuration."
+# --------------------------------------------------
+#                                                       imports adds changes destroys moves removes [output-only]
+export input_plan_console_file="${_this_script_dir}/test-data/plan_adds_only.log"
+run_test "R1: adds only"                                  "0" "2" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_change_in_place.log"
+run_test "R2: change in place, plus an output change → not output-only" \
+                                                          "0" "0" "1" "0" "0" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_replace.log"
+run_test "R3: replace = 1 to add + 1 to destroy"          "0" "1" "0" "1" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_destroys_only.log"
+run_test "R4: destroys only"                              "0" "0" "0" "1" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_import_block.log"
+run_test "R5: import block — 'N to import' leads the Plan line" \
+                                                          "1" "1" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_moved_block.log"
+run_test "R6: moved block — counted from 'has moved to'"  "0" "0" "0" "0" "1" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_removed_block_forget.log"
+run_test "R7: removed block (forget) — counted from 'will no longer be managed'" \
+                                                          "0" "0" "0" "0" "0" "1"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_no_changes.log"
+run_test "R8: no changes"                                 "0" "0" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_outputs_only.log"
+run_test "R9: outputs only — no Plan line, output-only flag" \
+                                                          "0" "0" "0" "0" "0" "0" "true"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_refresh_only.log"
+run_test "R10: -refresh-only with nothing drifted"        "0" "0" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_destroy_plan_applied.log"
+run_test "R11: a -destroy plan"                           "0" "0" "0" "2" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_failed_provisioner.log"
+run_test "R12: the plan of an apply that later fails is an ordinary plan" \
+                                                          "0" "2" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_interrupted.log"
+run_test "R13: the plan of an apply later interrupted"    "0" "1" "0" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_check_warnings.log"
+run_test "R14: a check-block warning after the Plan line" "0" "0" "1" "0" "0" "0"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_progress_ticks.log"
+run_test "R15: a slow create's plan"                      "0" "1" "0" "0" "0" "0"
+
+# --------------------------------------------------
+# H1: Terraform 1.14+ appends 'Actions: N to invoke.' to the 'Plan:' line
+# (#37689). The per-segment regexes read 'N to add' / 'to change' / 'to
+# destroy' one at a time, so the extra sentence is invisible to them — pinned
+# so that stays true. The apply parser needed a fix for the same suffix on its
+# summary line (P37). Hand-written: no built-in action type exists to capture
+# from.
+# --------------------------------------------------
+export input_plan_console_file="${_this_script_dir}/test-data/plan_with_actions.log"
+run_test "H1: 'Actions: 2 to invoke.' after the Plan line's counts" \
+                                                          "0" "1" "0" "0" "0" "0"
+
+# --------------------------------------------------
 # Summary
 # --------------------------------------------------
 echo ""

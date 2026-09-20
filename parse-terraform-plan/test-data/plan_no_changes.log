@@ -1,0 +1,6 @@
+terraform_data.example: Refreshing state... [id=fe4ad3c7-a357-0c20-d757-1db4a7ae2300]
+
+No changes. Your infrastructure matches the configuration.
+
+Terraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.

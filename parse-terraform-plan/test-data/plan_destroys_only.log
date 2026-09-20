@@ -1,0 +1,18 @@
+terraform_data.example_removed: Refreshing state... [id=f764bb97-9339-17a1-84a0-393d71bcc7df]
+terraform_data.example_kept: Refreshing state... [id=646ca85f-33c5-18ae-4bec-479579cc8a05]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # terraform_data.example_removed will be destroyed
+  # (because terraform_data.example_removed is not in configuration)
+  - resource "terraform_data" "example_removed" {
+      - id     = "f764bb97-9339-17a1-84a0-393d71bcc7df" -> null
+      - input  = "removed" -> null
+      - output = "removed" -> null
+    }
+
+Plan: 0 to add, 0 to change, 1 to destroy.
