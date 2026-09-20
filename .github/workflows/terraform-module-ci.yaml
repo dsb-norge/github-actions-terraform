@@ -41,7 +41,10 @@ on:
         type: string
         default: "."
 
-# only run one workflow at a time for the same branch or tag
+# only run one workflow at a time for the same branch or tag. The default
+# queue depth (one pending run) is deliberate here: a pending run is a
+# superseded commit of the same ref and nothing in this workflow applies to
+# shared state, so dropping it when a newer push arrives is the right outcome.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 

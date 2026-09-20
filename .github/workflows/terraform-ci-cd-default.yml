@@ -617,9 +617,19 @@ jobs:
     environment:
       name: ${{ matrix.vars.github-environment }}
       url: ${{ matrix.vars.url }}
+    # One job at a time for a given environment. GitHub's default queue depth
+    # is one: a third run entering the group cancels the pending one to take
+    # its place, and the cancelled run's `Terraform conclusion` check fails,
+    # indistinguishable from a real failure. That once dropped the run queued
+    # behind a production apply in a calling repository. `queue: max` keeps
+    # up to 100 pending runs in (best-effort) arrival order instead. It is
+    # only valid together with cancel-in-progress false, which is what we
+    # want anyway. The group is the bare environment name, shared by every
+    # workflow in the calling repository that uses it.
     concurrency:
-      group: ${{ matrix.vars.github-environment }} # one job at a time for a given environment
-      cancel-in-progress: false # do not cancel in progress apply
+      group: ${{ matrix.vars.github-environment }}
+      cancel-in-progress: false # never cancel an in-progress apply
+      queue: max
     defaults:
       run:
         shell: bash
