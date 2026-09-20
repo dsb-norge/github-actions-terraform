@@ -1,0 +1,17 @@
+{
+  "description": "A removed block (destroy = false) — counted from 'will no longer be managed' in the plan; no summary segment anywhere.",
+  "operation": "apply",
+  "min-terraform": "1.7.0",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "move": 0, "remove": 1, "total": 1,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_removed_block_forget.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 0, "total": 0,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_removed_block_forget.log"
+  }
+}

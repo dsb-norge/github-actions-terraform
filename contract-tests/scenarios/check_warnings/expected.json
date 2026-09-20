@@ -1,0 +1,16 @@
+{
+  "description": "A failing check block — a warning interleaved before the summary line, in plan and apply.",
+  "operation": "apply",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 0, "change": 1, "destroy": 0, "move": 0, "remove": 0, "total": 1,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_check_warnings.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 1, "destroy": 0, "total": 1,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_check_warnings.log"
+  }
+}

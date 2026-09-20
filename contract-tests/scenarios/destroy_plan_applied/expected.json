@@ -1,0 +1,16 @@
+{
+  "description": "A saved -destroy plan applied, as the default workflow does it — an 'Apply complete!' line with destroys (P33).",
+  "operation": "destroy-plan",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 0, "change": 0, "destroy": 2, "move": 0, "remove": 0, "total": 2,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_destroy_plan_applied.log"
+  },
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 2, "total": 2,
+    "completed": true, "kind": "apply",
+    "fixture": "parse-terraform-apply/test-data/apply_destroy_plan_applied.log"
+  }
+}

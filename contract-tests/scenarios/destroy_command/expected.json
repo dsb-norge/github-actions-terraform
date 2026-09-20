@@ -1,0 +1,11 @@
+{
+  "description": "'terraform destroy' — the only invocation that prints 'Destroy complete!'.",
+  "operation": "destroy",
+  "plan": null,
+  "apply": {
+    "exitcode": 0,
+    "import": 0, "add": 0, "change": 0, "destroy": 1, "total": 1,
+    "completed": true, "kind": "destroy",
+    "fixture": "parse-terraform-apply/test-data/destroy_command_complete.log"
+  }
+}

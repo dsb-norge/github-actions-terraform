@@ -1,0 +1,16 @@
+{
+  "description": "Interrupted (SIGINT) mid-apply — 'Interrupt received', 'execution halted', exit 1, no summary line.",
+  "operation": "interrupt",
+  "plan": {
+    "exitcode": 2,
+    "import": 0, "add": 1, "change": 0, "destroy": 0, "move": 0, "remove": 0, "total": 1,
+    "has-output-only-changes": false,
+    "fixture": "parse-terraform-plan/test-data/plan_interrupted.log"
+  },
+  "apply": {
+    "exitcode": 1,
+    "import": "?", "add": "?", "change": "?", "destroy": "?", "total": "?",
+    "completed": false, "kind": "",
+    "fixture": "parse-terraform-apply/test-data/apply_interrupted.log"
+  }
+}
