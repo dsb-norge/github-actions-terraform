@@ -461,3 +461,9 @@ done
 ### 12.3 Suite-conformance sweep on legacy modernization
 
 When converting a legacy action to gain a `run_all_tests.sh`, run the conformance sweep from §12.1 against just the new file before opening the PR. CI will catch drift on push (§4.2), but failing fast locally saves a round-trip.
+
+## 13. Contract tests are a separate workflow
+
+[`.github/workflows/terraform-contract-tests.yml`](../.github/workflows/terraform-contract-tests.yml) is **not** part of this workflow and is not discovered by §2.1: `contract-tests/` has no `action.yml`. It runs real terraform binaries — the newest `newest-minors` minors (six today), resolved from the HashiCorp releases API at run time — against local-only scenarios, feeds the captured console through `parse-terraform-plan` and `parse-terraform-apply`, and diffs the summary-bearing lines against the fixtures those parsers pin. It needs the network, takes about a minute per version, runs on a path-filtered `pull_request`, on `workflow_dispatch` and **weekly on a schedule**, and is not a required check. Spec: [Apply-and-destroy-reporting.md §16](Apply-and-destroy-reporting.md); runner and version window: [`contract-tests/`](../contract-tests/README.md).
+
+The suites here stay hermetic: every fixture the parsers test against is a file in the repo, and `run_all_tests.sh` never invokes terraform.
