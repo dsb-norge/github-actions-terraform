@@ -1,0 +1,6 @@
+terraform_data.example_second: Creating...
+terraform_data.example_second: Creation complete after 0s [id=4ef54839-cfdb-573e-e783-b2aa8b6c8ac3]
+terraform_data.example_first: Creating...
+terraform_data.example_first: Creation complete after 0s [id=5bcad8f9-03b4-ae22-7c3a-ceeb691f2150]
+
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.

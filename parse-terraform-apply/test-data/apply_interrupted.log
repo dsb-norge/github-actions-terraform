@@ -1,0 +1,23 @@
+terraform_data.example_slow: Creating...
+terraform_data.example_slow: Provisioning with 'local-exec'...
+terraform_data.example_slow (local-exec): Executing: ["/bin/sh" "-c" "sleep 30"]
+Stopping operation...
+
+Interrupt received.
+Please wait for Terraform to exit or data loss may occur.
+Gracefully shutting down...
+
+
+Error: execution halted
+
+
+Error: execution halted
+
+
+Error: local-exec provisioner error
+
+  with terraform_data.example_slow,
+  on main.tf line 7, in resource "terraform_data" "example_slow":
+   7:   provisioner "local-exec" {
+
+Error running command 'sleep 30': signal: killed. Output: 

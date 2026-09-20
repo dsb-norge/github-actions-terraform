@@ -1,0 +1,16 @@
+terraform_data.example_broken: Creating...
+terraform_data.example_ok: Creating...
+terraform_data.example_broken: Provisioning with 'local-exec'...
+terraform_data.example_ok: Creation complete after 0s [id=1f90e90d-3cc2-81f3-1f42-89d9181dfd32]
+terraform_data.example_broken (local-exec): Executing: ["/bin/sh" "-c" "echo 'simulated provider failure' >&2; exit 1"]
+terraform_data.example_broken (local-exec): simulated provider failure
+
+Error: local-exec provisioner error
+
+  with terraform_data.example_broken,
+  on main.tf line 11, in resource "terraform_data" "example_broken":
+  11:   provisioner "local-exec" {
+
+Error running command 'echo 'simulated provider failure' >&2; exit 1': exit
+status 1. Output: simulated provider failure
+

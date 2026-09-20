@@ -1,0 +1,6 @@
+terraform_data.example_adopted: Importing... [id=adopted-0001]
+terraform_data.example_adopted: Import complete [id=adopted-0001]
+terraform_data.example_created: Creating...
+terraform_data.example_created: Creation complete after 0s [id=ede5b839-f1e8-8d27-8234-e420d76dfb3e]
+
+Apply complete! Resources: 1 imported, 1 added, 0 changed, 0 destroyed.

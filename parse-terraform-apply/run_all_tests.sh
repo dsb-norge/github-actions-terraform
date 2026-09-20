@@ -180,6 +180,48 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# R1–R17: real console output, captured by contract-tests/run.sh from the
+# scenarios under contract-tests/scenarios/ (provenance and terraform version
+# in test-data/README.md). One fixture per summary shape the parser must
+# accept; the contract tests prove these are still what terraform prints.
+#                                                        add change destroy completed kind  import
+# --------------------------------------------------------------------------
+run_count_test "R1: adds only"                          apply_adds_only.log                           2   0   0  true  apply
+run_count_test "R2: change in place (+ outputs)"        apply_change_in_place.log                     0   1   0  true  apply
+run_count_test "R3: replace = 1 added + 1 destroyed"    apply_replace.log                             1   0   1  true  apply
+run_count_test "R4: destroys only, on an apply line"    apply_destroys_only.log                       0   0   1  true  apply
+run_count_test "R5: import block — 'imported' before 'added' (P32)" \
+                                                        apply_import_block.log                        1   0   0  true  apply 1
+run_count_test "R6: moved block — nothing on the summary line" \
+                                                        apply_moved_block.log                         0   0   0  true  apply
+run_count_test "R7: removed block (forget) — nothing on the summary line" \
+                                                        apply_removed_block_forget.log                0   0   0  true  apply
+run_count_test "R8: no changes"                         apply_no_changes.log                          0   0   0  true  apply
+run_count_test "R9: outputs only (+ Outputs section)"   apply_outputs_only.log                        0   0   0  true  apply
+run_count_test "R10: -refresh-only plan applied"        apply_refresh_only.log                        0   0   0  true  apply
+run_count_test "R11: a saved -destroy plan applied prints 'Apply complete!' (P33)" \
+                                                        apply_destroy_plan_applied.log                0   0   2  true  apply
+run_count_test "R12: 'terraform destroy' prints 'Destroy complete!'" \
+                                                        destroy_command_complete.log                  0   0   1  true  destroy
+run_count_test "R13: failed provisioner → '?', not zeros" apply_failed_provisioner.log                '?' '?' '?' false ""
+run_count_test "R14: declined at the prompt ('Apply cancelled.') → '?'" \
+                                                        apply_cancelled_at_prompt.log                 '?' '?' '?' false ""
+run_count_test "R15: interrupted (SIGINT) → '?'"        apply_interrupted.log                         '?' '?' '?' false ""
+run_count_test "R16: a check-block warning before the summary line" \
+                                                        apply_check_warnings.log                      0   1   0  true  apply
+run_count_test "R17: a real progress tick ('[00m10s elapsed]', P34)" \
+                                                        apply_progress_ticks.log                      1   0   0  true  apply
+
+# R17 detail: the real tick shape is filtered (P5 pinned against real output,
+# not a hand-written line — the elapsed format has already changed once).
+export input_apply_console_file="${DATA_DIR}/apply_progress_ticks.log"
+run_step
+FILTERED="$(get_output filtered-console-file)"
+assert "R17: the real '[00m10s elapsed]' tick is removed" \
+  bash -c "grep -q 'Still creating... \[00m10s elapsed\]' '${input_apply_console_file}' && ! grep -q 'Still creating' '${FILTERED}'"
+cleanup
+
+# --------------------------------------------------------------------------
 # B4 detail: a missing file path (not just empty) is also '?' and exit 0.
 # --------------------------------------------------------------------------
 export input_apply_console_file="${DATA_DIR}/does-not-exist.log"
