@@ -947,7 +947,7 @@ are in the list.
 
 | Concern | Relationship |
 |---|---|
-| Environment jobs | Independent. Same `create-matrix` and `seed-pr-comments` dependencies, no `needs` between them (D8). The environment matrix's 256-job cap and the test matrix's are separate. |
+| Environment jobs | Independent of the tests: same `create-matrix` and `seed-pr-comments` dependencies, and no `needs` between tests and environments (D8). The environment *stages* do have `needs` between themselves ([Environment-ordering.md](Environment-ordering.md)), which does not change D8: gating the first stage on tests would still delay every plan on every pull request by the slowest test, and would cost the reviewer the plan as well as the test result. The environment matrix's 256-job cap and the test matrix's are separate. |
 | Environment init | Loads test files in the environment root (§4.9). Not something this spec can change; documented. |
 | Per-goal environment variables | Do not reach test jobs (D6). |
 | GitHub Environments | Lane environments are `tftest-*`, disjoint from the Terraform environments' `github-environment` values; the builder rejects a collision. The isolation preconditions of §3.6 are about the Terraform environments' credentials and are stated in the user guide. |
