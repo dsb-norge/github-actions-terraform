@@ -1,0 +1,8 @@
+terraform_data.example: Modifying... [id=c8f339ad-c956-e0dc-7e6e-f0c04f9ba297]
+terraform_data.example: Modifications complete after 0s [id=c8f339ad-c956-e0dc-7e6e-f0c04f9ba297]
+
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+
+Outputs:
+
+example_output = "generation-2"

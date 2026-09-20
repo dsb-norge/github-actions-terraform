@@ -1,0 +1,13 @@
+terraform_data.example: Modifying... [id=1917718e-6d06-ec42-66e1-939e3fbae83b]
+terraform_data.example: Modifications complete after 0s [id=1917718e-6d06-ec42-66e1-939e3fbae83b]
+
+Warning: Check block assertion failed
+
+  on main.tf line 11, in check "example_input_is_expected":
+  11:     condition     = terraform_data.example.input == "something else"
+    ├────────────────
+    │ terraform_data.example.input is "generation-2"
+
+Input is not what the check expects; this warning is intentional.
+
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.

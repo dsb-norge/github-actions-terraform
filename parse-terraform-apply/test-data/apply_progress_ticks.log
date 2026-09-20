@@ -1,0 +1,7 @@
+terraform_data.example_slow: Creating...
+terraform_data.example_slow: Provisioning with 'local-exec'...
+terraform_data.example_slow (local-exec): Executing: ["/bin/sh" "-c" "sleep 11"]
+terraform_data.example_slow: Still creating... [00m10s elapsed]
+terraform_data.example_slow: Creation complete after 11s [id=65b0abdd-764b-efd2-ea5f-6fd301a00718]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.

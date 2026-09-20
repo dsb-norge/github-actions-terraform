@@ -1,0 +1,6 @@
+terraform_data.example_second: Destroying... [id=8064f829-ba22-ff5c-3515-260e7910bea1]
+terraform_data.example_second: Destruction complete after 0s
+terraform_data.example_first: Destroying... [id=150dd15d-0a03-4a6b-d61a-c1d5e277a979]
+terraform_data.example_first: Destruction complete after 0s
+
+Apply complete! Resources: 0 added, 0 changed, 2 destroyed.
