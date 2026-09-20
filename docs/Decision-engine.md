@@ -18,7 +18,7 @@ of the features that depend on the engine: [Terraform-tests.md](Terraform-tests.
 The matrix builder started as a loop that copied workflow inputs into per-environment rows. Three
 specs now put real decisions in front of that loop: which environments a change is relevant to,
 which test files run in which lane against which provider set, and which environment a dispatch
-targets with which goal. A later one adds ordering. Every one of those decisions can cause a
+targets with which goal, and in which order those environments apply. Every one of those decisions can cause a
 mutating Terraform operation to run, or not run, against a real tenant. The failure the maintainer
 named is the right one to design against: a manual reconcile of a non-production environment that
 ends up applying production.
@@ -171,12 +171,14 @@ stderr.
   "notices": ["relevance diff (pull request #87, 3 changed files): 1 of 3 environments affected"],
   "relevance": { "mode": "diff", "reason": "diff", "changed_count": 3 },
   "environments": [
-    { "environment": "prod", "verdict": "run", "reasons": ["trigger-events: pull_request", "relevance: envs/prod/**"],
+    { "environment": "prod", "verdict": "run", "reasons": ["trigger-events: pull_request", "relevance: envs/prod/**", "ordering: stage 2"],
+      "stage": 2, "depends_on": ["shared"],
       "goals": ["init","format","validate","lint","plan"], "vars": { … the matrix row vars … } },
     { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "goals": [], "vars": { … } }
   ],
-  "matrix": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] },
-  "counts": { "affected": 1, "unaffected": 1 },
+  "matrices": { "1": { "environment": ["shared"], "include": [ … ] }, "2": { "environment": ["prod"], "include": [ … ] }, "3": { "environment": [], "include": [] } },
+  "counts": { "affected": 2, "unaffected": 1, "by_stage": { "1": 1, "2": 1, "3": 0 } },
+  "ordering": { "enabled": true, "stages_used": 2, "cap": 3, "bypass": null },
   "tests": {
     "matrix": { "include": [ … ] }, "env_matrix": { "include": [ … ] },
     "count": 12, "active": true, "env_active": false,
@@ -193,8 +195,12 @@ stderr.
 }
 ```
 
-- `matrix` and every `vars` object are what the workflow consumes today, unchanged in shape and in
-  value types (D9); the port (§9) proves it. The one addition is `vars.goals-granted` (D10), equal
+- Each per-stage matrix and every `vars` object is what the workflow consumes today, unchanged in
+  shape and in value types (D9); the port (§9) proves it. Before ordering ships there is one
+  matrix, named `"1"`.
+- **Held back is not an engine concept.** The engine assigns stages; whether a stage ran is a fact
+  of the run graph it never sees. A held-back environment is composed downstream from its `stage`,
+  the stage's row count and the stage job's result ([Environment-ordering.md](Environment-ordering.md) §7). The one addition is `vars.goals-granted` (D10), equal
   to the environment's `goals` in the decision record (I16).
 - Row order is `environments-yml` order; list outputs are sorted where the input has no order;
   JSON is emitted with sorted keys. Two runs with the same input document produce byte-identical
@@ -230,7 +236,8 @@ not evaluated:
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
 | 5 | Goals: expand the environment's `goals` to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
-| 6 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
+| 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
+| 7 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
 
 Secrets availability is not a rule for environments: a fork pull request's environments run and
 fail on authentication, as today (Path-relevance.md §7.4). It is a rule for test rows, in `tests.py`,
@@ -251,7 +258,7 @@ even when the case's expected output matches.
 | I4 | When secrets are unavailable (fork, Dependabot), no test row has a credentialed lane or a non-empty `github-environment`. Environment rows are unaffected. |
 | I6 | Relevance mode `all` implies every environment that passed rules 2, 3 and 5 has verdict `run`. |
 | I7 | When `errors` is empty, environments with verdict `run` plus verdict `skip` equal the environments declared, and no environment name appears twice. |
-| I8 | The matrix contains exactly the environments with verdict `run`, in `environments-yml` order. |
+| I8 | The union of the per-stage matrices contains exactly the environments with verdict `run`; within a stage, rows are in `environments-yml` order; no environment appears in more than one matrix. |
 | I9 | A test row's environment name matches `^tftest-[a-z0-9-]{1,40}$` and, compared case-insensitively, equals no environment's `github-environment`. |
 | I10 | `model.py` rejects unknown top-level keys, no schema field holds a secret value, and the shim test plants a sentinel in the process environment and in secret-shaped variables and asserts it never appears in the input file or any output. |
 | I11 | Every `skip` verdict and every `not_run` entry has a non-empty reason from the fixed vocabulary. |
@@ -261,6 +268,13 @@ even when the case's expected output matches.
 | I15 | `destroy` is never granted on `schedule`; on `workflow_dispatch` it is granted only when the environment's own goals hold it and the ref is the default branch, never through the `goal` input. |
 | I16 | `environments[].goals` equals `vars.goals-granted` for every `run` row. |
 | I17 | A dispatch with a non-empty `environment` input yields at least one `run` verdict or an error, never a green empty matrix. On `schedule` the empty case is permitted, with the documented notice. |
+| I18 | Every environment with verdict `run` carries exactly one integer `stage` between 1 and the cap, and appears in exactly one per-stage matrix. No environment with verdict `skip` carries a stage. `counts.by_stage[k]` equals the number of `run` environments with stage `k`, and the sum over all `k` equals `counts.affected`. |
+| I19 | For every `run` environment and every name in its resolved `depends-on`: either that name is a `run` environment with a strictly lower stage, or it is not `run` in this decision and the dependent records `ordering: depends-on '<name>' not in this run (<the dependency's own reason>)`. A `depends-on` naming an environment that `environments-yml` does not declare is a validation error, never a trivially satisfied dependency. |
+| I20 | The declared `depends-on` graph is acyclic, and no environment names itself. A violation is a validation error naming every environment on one cycle in `environments-yml` order, and such an output document carries no non-empty matrix. |
+| I21 | An environment is assigned a stage above 1 only when at least one environment in the decision is granted `apply` or `destroy`. When none is, every `run` environment has stage 1 and `ordering.stages_used` is 1. |
+| I22 | On `workflow_dispatch` with a non-empty `environment` input, every `run` environment has stage 1 whatever its `depends-on`, and `ordering.bypass` is `single-environment-dispatch`. The bypass appears in `record` and in `notices[]` only when the named environment declares at least one dependency. |
+| I23 | The longest path of the **declared** graph never exceeds the cap; a deeper graph is a validation error naming the chain. The check is against the declared graph, not the graph restricted to this run, so a configuration's validity does not depend on which files changed. |
+| I24 | `stage` is a pure function of the resolved `depends-on` graph restricted to the `run` set and of the last-stage rule for free-standing environments. With I12 this makes stage assignment byte-stable across runs of the same input document. |
 
 I5 of the first draft restated rule 2 and is folded into it.
 
@@ -281,8 +295,9 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
 2. **Table cases**: `cases/<name>/input.json` and `expected.json`, one per scenario in the three
    feature specs' example sections, plus every validation error with its message.
 3. **Generated cases**: `generate_cases.py` enumerates event × branch × goals × relevance mode ×
-   dispatch × fork × trigger-events × lanes, deterministically, writes nothing to disk, and asserts
-   the invariants on each. Several thousand cases run in seconds.
+   dispatch × fork × trigger-events × lanes × `depends-on` graph shape (random acyclic graphs up to
+   the cap, plus deliberate cycles and over-cap chains), deterministically, writes nothing to disk,
+   and asserts the invariants on each. Several thousand cases run in seconds.
 4. **Random cases**: the same generator with a seeded random walk over field values, including
    malformed ones, asserting invariants and that the engine either produces a valid output document
    or a validation error, never a crash.

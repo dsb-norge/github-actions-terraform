@@ -40,7 +40,7 @@ trigger on everything and let the engine decide.
 | D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in.** A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in during their migration ([Road-to-v1.md](Road-to-v1.md)). |
 | D8 | A dispatched environment is always relevant and always runs regardless of `paths`; relevance mode is `all` on dispatch, as the relevance spec says. | A dispatch is a person asking. |
 | D9 | Tests do not run on `workflow_dispatch` (Terraform-tests.md D7). | A recovery must not start integration tests against the tenant being recovered. A later addition may add a `test-file` dispatch input. |
-| D10 | The run records who dispatched what, with which goal and reason, in the run summary and a notice: both `github.actor` and `github.triggering_actor`, since a re-run keeps the original actor. | A dispatch that bypasses ordering (a later spec) must be visible. |
+| D10 | The run records who dispatched what, with which goal and reason, in the run summary and a notice: both `github.actor` and `github.triggering_actor`, since a re-run keeps the original actor. | A dispatch that bypasses ordering ([Environment-ordering.md](Environment-ordering.md)) must be visible. |
 | D11 | Granted goals reach the workflow's operation gates through the engine's `goals-granted` row variable (Decision-engine.md D10); the gates keep their event and branch clauses as defence in depth. | Without it a `plan` cap could not stop an apply that `goals-yml` grants. |
 
 ## 3. Caller-facing API
@@ -214,7 +214,7 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | Decision engine | Rules 2, 3 and 5 of its procedure and invariants I1, I2, I3, I15, I16 and I17 are this spec; `goals-granted` is how they reach the workflow. |
 | Path relevance | Dispatch and schedule are relevance mode `all`; a dispatched environment is affected by definition. |
 | Tests | Not run on dispatch (D9). `tests-active` is false; the conclusion treats that as benign. |
-| Ordering between environments (later) | A dispatch naming one environment carries no dependencies and is that spec's bypass; D10's record is what makes the bypass visible. |
+| Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | A dispatch naming one environment carries no dependencies and is that spec's bypass and its recovery path for a held-back environment; D10's record is what makes the bypass visible. A dispatch capped to `goal: plan` grants no mutating goal, so ordering collapses to one stage. A scheduled run is staged like a push; a schedule that keeps one environment is stage 1 by construction, not by bypass. |
 | Notifications (later) | A failed dispatched apply is a push-like failure; the record names the actor and reason. |
 
 ## 8. Pitfalls
