@@ -32,7 +32,7 @@ Wording established by the captures, for the record:
 | `plan_interrupted.log` | captured (`interrupted`) | 1.16.2 | the ordinary plan of an apply later interrupted |
 | `plan_check_warnings.log` | captured (`check_warnings`) | 1.16.2 | `Warning: Check block assertion failed` after the `Plan:` line |
 | `plan_progress_ticks.log` | captured (`progress_ticks`) | 1.16.2 | the plan of a slow create |
-| `plan_with_actions.log` | hand-written | 1.14+ | `Plan: 1 to add, 0 to change, 0 to destroy. Actions: 2 to invoke.` — the actions sentence Terraform 1.14+ appends after the counts (#37689) does not disturb the per-segment regexes (P37); no built-in action type exists to capture from |
+| `plan_with_actions.log` | hand-written | 1.14+ | `Plan: 1 to add, 0 to change, 0 to destroy. Actions: 2 to invoke.` — the actions sentence Terraform 1.14+ appends after the counts (#37689) does not disturb the per-segment regexes (P38); no built-in action type exists to capture from |
 | `plan_0_changes.log` | sanitised | — | `No changes.` with many refreshed resources |
 | `plan_0_changes_with_data_read.log` | sanitised | — | a deferred data read with a zero `Plan:` line and the words `Changes to Outputs:` inside a heredoc value |
 | `plan_1_change.log` | sanitised | — | one in-place change in a large plan |

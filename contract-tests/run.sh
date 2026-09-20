@@ -113,7 +113,7 @@ function signature_of {
     -e 'will be created$' \
     -e 'will be updated in-place$' \
     -e 'will be destroyed$' \
-    -e ': Still (creating|destroying|modifying|reading)\.\.\. \[' \
+    -e ': Still (creating|destroying|modifying|reading|opening|renewing|closing)\.\.\. \[' \
     "${1}" 2>/dev/null \
     | sed -E 's/^[[:space:]]+//; s/\[(id=[^]]*, )?[0-9hms]+ elapsed\]/[<elapsed> elapsed]/' \
     | sort -u
@@ -327,7 +327,7 @@ function run_scenario {
     if [ "$(jq -r '.apply.ticks // false' "${expected}")" = 'true' ]; then
       local filtered; filtered=$(get_out "${apply_out}" filtered-console-file)
       grep -qE ': Still creating\.\.\. \[' "${apply_console}" || FAILURES+=("apply: expected a real 'Still creating...' tick line in the console; terraform printed none")
-      if [ -f "${filtered}" ] && grep -qE ': Still (creating|destroying|modifying|reading)\.\.\. \[' "${filtered}"; then
+      if [ -f "${filtered}" ] && grep -qE ': Still (creating|destroying|modifying|reading|opening|renewing|closing)\.\.\. \[' "${filtered}"; then
         FAILURES+=("apply: the tick filter left a progress line in the filtered console — the tick format has drifted (P5): $(grep -E ': Still ' "${filtered}" | head -n1)")
       fi
     fi

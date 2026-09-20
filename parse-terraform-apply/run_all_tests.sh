@@ -292,6 +292,48 @@ cleanup; rm -rf "${_pct_dir}"
 export input_apply_exitcode=""
 
 # --------------------------------------------------------------------------
+# B16–B17: Terraform 1.14 appends 'Actions: N invoked[, M failed].' to the
+# summary line, AFTER the resources' full stop (#37689). Splitting the whole
+# line once took '0 destroyed. Actions: 2 invoked' for one unknown segment
+# and raised the "not recognised" warning on every such apply; only the
+# resources group is split now (P38). No built-in action type exists to
+# capture from, so both fixtures are hand-written.
+#                                                        add change destroy completed kind  import exit
+# --------------------------------------------------------------------------
+run_count_test "B16: 'Actions: 2 invoked.' after the resource counts" \
+                                                        apply_complete_with_actions.log               1   0   0  true  apply "" 0
+export input_apply_console_file="${DATA_DIR}/apply_complete_with_actions.log"; export input_apply_exitcode="0"
+run_step
+assert "B16: … is not an unknown segment and raises no warning" \
+  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' /tmp/test_output_parse_apply.txt"
+assert "B16: … the ignored trailer is named in the log" \
+  grep -q "ignoring what follows the resource counts on the summary line: Actions: 2 invoked." /tmp/test_output_parse_apply.txt
+cleanup
+run_count_test "B17: 'Actions: 2 invoked, 1 failed.' — the failed count is not a resource count" \
+                                                        apply_complete_with_actions_failed.log        1   0   0  true  apply "" 1
+export input_apply_console_file="${DATA_DIR}/apply_complete_with_actions_failed.log"; export input_apply_exitcode="1"
+run_step
+assert "B17: … no warning, no unknown segment" \
+  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' /tmp/test_output_parse_apply.txt"
+cleanup
+export input_apply_exitcode=""
+
+# --------------------------------------------------------------------------
+# B18: ephemeral resources (1.10+) tick with their own verbs — opening,
+# renewing, closing — and must be filtered like a managed resource's ticks
+# (P39). No built-in ephemeral type exists to capture from: hand-written.
+# --------------------------------------------------------------------------
+run_count_test "B18: ephemeral-resource console counts"  apply_ephemeral_ticks.log                     1   0   0  true  apply
+export input_apply_console_file="${DATA_DIR}/apply_ephemeral_ticks.log"
+run_step
+FILTERED="$(get_output filtered-console-file)"
+assert "B18: 'Still opening/renewing/closing… [00m10s elapsed]' ticks are removed" \
+  bash -c "grep -q 'Still opening... \[00m10s elapsed\]' '${input_apply_console_file}' && ! grep -qE 'Still (opening|renewing|closing|creating)' '${FILTERED}'"
+assert "B18: exactly 4 tick lines were removed; the Opening/Renewal/Closing lines stay" \
+  bash -c "[ \$(( \$(wc -l < '${input_apply_console_file}') - \$(wc -l < '${FILTERED}') )) -eq 4 ] && [ \$(grep -c 'complete after' '${FILTERED}') -eq 4 ]"
+cleanup
+
+# --------------------------------------------------------------------------
 # B4 detail: a missing file path (not just empty) is also '?' and exit 0.
 # --------------------------------------------------------------------------
 export input_apply_console_file="${DATA_DIR}/does-not-exist.log"

@@ -1,0 +1,14 @@
+ephemeral.example_secret.token: Opening...
+ephemeral.example_secret.token: Still opening... [00m10s elapsed]
+ephemeral.example_secret.token: Opening complete after 11s
+terraform_data.example: Creating...
+terraform_data.example: Still creating... [00m10s elapsed]
+ephemeral.example_secret.token: Renewing...
+ephemeral.example_secret.token: Still renewing... [00m10s elapsed]
+ephemeral.example_secret.token: Renewal complete after 10s
+terraform_data.example: Creation complete after 15s [id=7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f]
+ephemeral.example_secret.token: Closing...
+ephemeral.example_secret.token: Still closing... [00m10s elapsed]
+ephemeral.example_secret.token: Closing complete after 10s
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.

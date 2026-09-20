@@ -31,6 +31,9 @@ Two kinds of provenance:
 | `apply_complete_with_outputs.log` | hand-written | — | parsing through a trailing `Outputs:` section |
 | `apply_complete_with_imports.log` | hand-written | — | `5 imported, 0 added, 1 changed, 0 destroyed` — the P32 incident's line |
 | `apply_complete_unknown_segment.log` | hand-written | — | a verb the parser does not know (`2 forgotten`) must be reported, not fail the parse — hypothetical for Terraform, but OpenTofu's real wording since 1.10 (`… N destroyed, M forgotten.`) (P36) |
+| `apply_complete_with_actions.log` | hand-written | 1.14+ | `… 0 destroyed. Actions: 2 invoked.` — the actions sentence Terraform 1.14+ appends after the resource counts (#37689) is ignored, not taken for an unknown segment (P38); no built-in action type exists to capture from |
+| `apply_complete_with_actions_failed.log` | hand-written | 1.14+ | `… 0 destroyed. Actions: 2 invoked, 1 failed.` — the same with a failed count, which is not a resource count either |
+| `apply_ephemeral_ticks.log` | hand-written | 1.10+ | `Still opening... [00m10s elapsed]`, `Still renewing…`, `Still closing…` — an ephemeral resource's ticks are filtered like a managed one's (P39); no built-in ephemeral type exists to capture from |
 | `apply_failed_partial.log` | hand-written | — | a provider error after two of three resources — no summary line |
 | `apply_failed_immediately.log` | hand-written | — | a provider authentication error before anything was applied |
 | `apply_large_counts.log` | hand-written | — | three-digit counts |

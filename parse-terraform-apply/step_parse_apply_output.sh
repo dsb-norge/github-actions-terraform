@@ -7,7 +7,7 @@
 # progress-tick lines removed.
 #
 # Two summary-line grammars, one per verb:
-#   Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.
+#   Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.[ Actions: <N> invoked[, <M> failed].]
 #   Destroy complete! Resources: <D> destroyed.
 #
 # The segment list is open-ended: terraform adds verbs as the language grows
@@ -15,6 +15,11 @@
 # verb is therefore matched on its own, the way parse-terraform-plan reads the
 # 'Plan:' line, and an unrecognised segment is logged rather than treated as a
 # parse failure — a finished apply must never be reported as a failed one.
+# Only the resources group — up to its full stop — is split into segments.
+# Terraform 1.14+ appends an 'Actions:' sentence on the same line (#37689);
+# it counts action invocations, not resources, and is ignored. Splitting the
+# whole line once took '0 destroyed. Actions: 2 invoked' for an unknown
+# segment and warned on every such apply (P38).
 # Both are anchored at line start AND only the console above the first
 # '^Outputs:$' line is scanned. Anchoring alone is not enough: an output
 # value rendered as a heredoc ('note = <<EOT' … 'EOT') prints its content
@@ -60,13 +65,16 @@ set +o nounset # allow unset variables (graceful handling of empty/missing input
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 # Progress ticks. Two bracket shapes, both real:
-#   <addr>: Still creating... [10s elapsed]                     (create, read)
+#   <addr>: Still creating... [10s elapsed]                     (create, read; and the
+#                                                                ephemeral open/renew/close)
 #   <addr>: Still modifying... [id=<id>, 10s elapsed]           (modify, destroy)
-# Durations are Go durations truncated to seconds: '10s', '1m0s', '1m10s',
-# '1h2m3s'. Drift in terraform's wording makes this filter stop matching
-# and the comment degrade to noise rather than break — pinned by a fixture
-# shaped like real output (P5).
-TICK_REGEX='^[^[:space:]].*: Still (creating|destroying|modifying|reading)\.\.\. \[(id=[^]]*, )?([0-9]+h)?([0-9]+m)?[0-9]+s elapsed\]$'
+# Durations are Go durations truncated to seconds — '10s', '1m0s', '1h2m3s'
+# up to 1.11; zero-padded minutes from 1.12 — '00m10s', '60m10s' (P35).
+# Ephemeral resources (1.10+) tick with 'opening', 'renewing' and 'closing'
+# (P39). Drift in terraform's wording makes this filter stop matching and
+# the comment degrade to noise rather than break — pinned by fixtures shaped
+# like real output (P5).
+TICK_REGEX='^[^[:space:]].*: Still (creating|destroying|modifying|reading|opening|renewing|closing)\.\.\. \[(id=[^]]*, )?([0-9]+h)?([0-9]+m)?[0-9]+s elapsed\]$'
 
 # ============================================================================
 # Main Logic
@@ -105,9 +113,12 @@ function main {
     summary_line=$(awk '/^Outputs:$/ {exit} {print}' "${input_apply_console_file}" \
       | grep -E '^(Apply|Destroy) complete! Resources: ' | head -n1)
 
-    if [[ "${summary_line}" =~ ^(Apply|Destroy)\ complete!\ Resources:\ (.+)\.$ ]]; then
+    # The resources group ends at its first full stop; whatever follows (the
+    # 1.14+ 'Actions:' sentence) is not a resource count.
+    if [[ "${summary_line}" =~ ^(Apply|Destroy)\ complete!\ Resources:\ ([^.]+)\.(.*)$ ]]; then
       # Capture before matching anything else — a nested [[ =~ ]] overwrites BASH_REMATCH.
-      local complete_verb="${BASH_REMATCH[1]}" segments="${BASH_REMATCH[2]}"
+      local complete_verb="${BASH_REMATCH[1]}" segments="${BASH_REMATCH[2]}" trailer="${BASH_REMATCH[3]}"
+      [ -n "${trailer}" ] && log-info "ignoring what follows the resource counts on the summary line:${trailer}"
       imports=0
       adds=0
       changes=0

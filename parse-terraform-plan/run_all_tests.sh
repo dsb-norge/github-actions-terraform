@@ -271,7 +271,7 @@ run_test "R15: a slow create's plan"                      "0" "1" "0" "0" "0" "0
 # (#37689). The per-segment regexes read 'N to add' / 'to change' / 'to
 # destroy' one at a time, so the extra sentence is invisible to them — pinned
 # so that stays true. The apply parser needed a fix for the same suffix on its
-# summary line (P37). Hand-written: no built-in action type exists to capture
+# summary line (P38). Hand-written: no built-in action type exists to capture
 # from.
 # --------------------------------------------------
 export input_plan_console_file="${_this_script_dir}/test-data/plan_with_actions.log"
