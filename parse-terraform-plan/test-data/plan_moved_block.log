@@ -1,0 +1,11 @@
+terraform_data.example_new_name: Refreshing state... [id=8c29a9be-5510-f3ec-c861-59b6923c05e7]
+
+Terraform will perform the following actions:
+
+  # terraform_data.example_old_name has moved to terraform_data.example_new_name
+    resource "terraform_data" "example_new_name" {
+        id     = "8c29a9be-5510-f3ec-c861-59b6923c05e7"
+        # (2 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 0 to change, 0 to destroy.

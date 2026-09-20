@@ -1,0 +1,7 @@
+terraform_data.example: Refreshing state... [id=67bd1e5a-2321-0049-7e19-a8b4bc085a5c]
+
+Changes to Outputs:
+  + example_greeting = "hello from the contract tests"
+
+You can apply this plan to save these new output values to the Terraform
+state, without changing any real infrastructure.

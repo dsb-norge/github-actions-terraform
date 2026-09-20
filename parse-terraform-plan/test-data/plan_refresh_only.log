@@ -1,0 +1,6 @@
+terraform_data.example: Refreshing state... [id=a3256ae7-4820-d3e3-c5c0-c6b9ed64c123]
+
+No changes. Your infrastructure still matches the configuration.
+
+Terraform has checked that the real remote objects still match the result of
+your most recent changes, and found no differences.

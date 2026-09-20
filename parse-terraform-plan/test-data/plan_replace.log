@@ -1,0 +1,17 @@
+terraform_data.example: Refreshing state... [id=49960770-1c83-c653-97dc-f215eb9f4ee4]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+-/+ destroy and then create replacement
+
+Terraform will perform the following actions:
+
+  # terraform_data.example must be replaced
+-/+ resource "terraform_data" "example" {
+      ~ id               = "49960770-1c83-c653-97dc-f215eb9f4ee4" -> (known after apply)
+      ~ triggers_replace = [
+          ~ "generation-1" -> "generation-2",
+        ]
+    }
+
+Plan: 1 to add, 0 to change, 1 to destroy.
