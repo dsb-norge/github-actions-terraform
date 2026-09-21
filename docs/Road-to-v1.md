@@ -27,9 +27,11 @@ move deliberately, one repository at a time, with this document.
 | [Environment-ordering.md](Environment-ordering.md) | `depends-on` per environment, compiled into stages that run in sequence, with a bypass and held-back reporting | 5 |
 | concurrency queueing | no spec: [PR #56](https://github.com/dsb-norge/github-actions-terraform/pull/56), `queue: max` on the environment job; a `v0` minor, see §6 | 6 |
 | apply reporting hardening | no spec: [PR #57](https://github.com/dsb-norge/github-actions-terraform/pull/57), stacked on PR #53: the outcome invariant, real-output fixtures for every summary shape, and contract tests against the newest six Terraform minors resolved at run time; a `v0` minor, see §6 | 7 |
-| notifications | *pending* | 8 |
 
 `depends-on` is opt-in and its absence means one stage, so ordering adds no row to §3.
+
+One of the ten needs, reaching a person when a run fails, is deferred and out of scope for v1;
+that is why the numbering above skips it.
 
 The required check keeps its name, `tf / Terraform conclusion`, in every spec. Nothing in v1
 touches branch protection.
@@ -70,7 +72,6 @@ column is what to do in a standard project repository.
 | Trigger events | Dispatch-and-triggers.md §3.2 | `trigger-events-yml`, `trigger-events` per environment | Leave the default. Opt exactly the environments that should reconcile nightly into `schedule`. |
 | Environment grouping in comments | Workflow-pr-comments.md | `pr-comment-group` | Group environments when a repository has more than three; unaffected environments then take one column, not one comment. |
 | Ordering between environments | Environment-ordering.md §3 | `depends-on` per environment | Declare it only where an apply genuinely must follow another, such as a test tenant before production. Every dependency costs wall-clock time on mutating runs and widens a failure's blast radius. An environment others depend on must not carry `allow-failing-terraform-operations`. |
-| notifications | *pending* | | |
 
 ## 5. Migration checklist per repository
 
@@ -101,8 +102,7 @@ early.
 | 3 | Terraform-tests.md §13: the test stage, lanes, environments, provider sets, summary | Depends on the conclusion table and the engine. |
 | 4 | Dispatch-and-triggers.md §11: trigger events, dispatch, the `goals-granted` gate switch | Depends on the engine; the smallest of the four. |
 | 5 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`envs-json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
-| 6 | Notifications (spec pending) | Depends on the metadata every stage produces, including held-back reasons. |
-| 7 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8). |
+| 6 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8). |
 
 ## 7. Release mechanics
 
@@ -139,7 +139,6 @@ early.
 | Environment-ordering.md | yes | no | mechanics verified on the test-bed | no |
 | concurrency queueing (PR #56) | yes | yes | yes, from the test-bed | no spec |
 | apply reporting hardening (PR #57) | yes | yes | in CI on six Terraform minors | no spec |
-| notifications | no | | | |
 
 ## 10. Open cross-cutting questions
 
