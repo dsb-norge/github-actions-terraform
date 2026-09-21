@@ -255,7 +255,7 @@ function render_head_summary {
     # plan-details vs plan-time rows, and the grouped head's Warnings row).
     # The bodies live in the plan-tag comment via render_plan_extract; the
     # head only carries the count.
-    if [[ "${input_warning_count:-0}" =~ ^[0-9]+$ ]] && [ "${input_warning_count}" -gt 0 ]; then
+    if [[ "${input_warning_count:-0}" =~ ^[0-9]+$ ]] && [ "${input_warning_count:-0}" -gt 0 ]; then
       head="${head}
 | $(_render_step_icon_cell "⚠️" "Warnings") | Warnings | <span title=\"Warnings from init+validate+plan\">⚠️ ${input_warning_count}</span> |"
     fi

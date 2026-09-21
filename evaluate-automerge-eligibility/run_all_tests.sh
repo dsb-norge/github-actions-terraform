@@ -1137,6 +1137,30 @@ else
 fi
 
 # ============================================================================
+# F8 — no integer test reads an input variable without a default. `[ "${x}" -gt
+# 0 ]` on an unset or empty value prints "integer expression expected" into the
+# job log and returns 2, which a && chain then swallows. Two of these shipped on
+# this branch (one found in review), both in the shape "defaulted in the regex
+# test, bare in the integer test three characters later".
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F8 - integer tests always default their input${NC}"
+echo -e "${BLUE}========================================${NC}"
+_undefaulted=$(cd "${_this_script_dir}/.." && grep -rnE '\[ *"\$\{input_[a-zA-Z0-9_]+\}" *-(ne|eq|gt|lt|ge|le) ' \
+  --include='step_*.sh' --include='helpers_additional.sh' --include='*.sh' . 2>/dev/null |
+  grep -v 'run_all_tests\|run_local_step' || true)
+if [[ -z "${_undefaulted}" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: every integer test on an input variable supplies a default"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: integer test(s) on an undefaulted input variable:"
+  echo "${_undefaulted}" | sed 's/^/    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

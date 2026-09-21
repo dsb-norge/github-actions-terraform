@@ -223,6 +223,27 @@ assert "No destroy anywhere → no destroyed counter in the headline" \
   grep -qxF '**1 environment · 1 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
 teardown
 
+# P34, rollup half: an apply that succeeded but whose output could not be
+# parsed still counts as applied. The cell shows '?' because the counts are
+# unknown; the headline must not also drop the environment, or the run page
+# disagrees with the comment, the tag and the annotation.
+setup
+write_meta "e" success "0:0:0" "0:30" "$(ops_apply success false '?' '?' '?' 0:20)"
+run_step
+assert "P34: unparsed-but-successful apply still counts in the headline" \
+  grep -qxF '**1 environment · 1 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "P34: ... and its cell still shows the counts as unknown" row_has e '`💫 ?/'
+teardown
+
+# A failed apply must not count, even under allow-failing-terraform-operations:
+# `outcome` is GitHub's pre-continue-on-error result, so it still reads failure.
+setup
+write_meta "e" success "0:0:0" "0:30" "$(ops_apply failure false '?' '?' '?' 0:20)"
+run_step
+assert "a failed apply is never counted as applied" \
+  bash -c "! grep -qE '1 applied' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
 setup
 write_meta "e" success "0:0:0"
 run_step
