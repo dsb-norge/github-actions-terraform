@@ -63,16 +63,20 @@ function render_summary {
     worst_pair=$(worst_outcome "${file}")
     worst_emoji="${worst_pair%%|*}"; worst="${worst_pair##*|}"
     worst_by_env["${env}"]="${worst}"
-    # "applied" means the apply step succeeded AND terraform printed its
-    # summary line — a step outcome alone is not enough under
-    # allow-failing-terraform-operations.
-    if [ "$(meta_step_outcome "${file}" apply)" = 'success' ] && [ "$(meta_step_output "${file}" parse-apply completed)" = 'true' ]; then
+    # "applied" means the apply step succeeded, full stop — the same signal the
+    # head row, the tag and the annotation use, so the four cannot disagree.
+    # `outcome` is GitHub's pre-continue-on-error result, so a failed apply
+    # under allow-failing-terraform-operations still reads 'failure' here; an
+    # earlier comment claimed otherwise and added parse-apply's `completed` as
+    # a second condition, which made a successful apply whose output could not
+    # be parsed vanish from the headline while its row showed '?/N' (P34).
+    if [ "$(meta_step_outcome "${file}" apply)" = 'success' ]; then
       applied_by_env["${env}"]="true"
     fi
     # Same test for the destroy invocation. An env can be both: apply-on-pr and
     # destroy-on-pr in one run is the point of the throwaway-environment setup,
     # and a headline that says only "1 applied" hides the teardown entirely.
-    if [ "$(meta_step_outcome "${file}" destroy)" = 'success' ] && [ "$(meta_step_output "${file}" parse-destroy-apply completed)" = 'true' ]; then
+    if [ "$(meta_step_outcome "${file}" destroy)" = 'success' ]; then
       destroyed_by_env["${env}"]="true"
     fi
 
