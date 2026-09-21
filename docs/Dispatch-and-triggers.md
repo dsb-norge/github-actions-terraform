@@ -215,7 +215,6 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | Path relevance | Dispatch and schedule are relevance mode `all`; a dispatched environment is affected by definition. |
 | Tests | Not run on dispatch (D9). `tests-active` is false; the conclusion treats that as benign. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | A dispatch naming one environment carries no dependencies and is that spec's bypass and its recovery path for a held-back environment; D10's record is what makes the bypass visible. A dispatch capped to `goal: plan` grants no mutating goal, so ordering collapses to one stage. A scheduled run is staged like a push; a schedule that keeps one environment is stage 1 by construction, not by bypass. |
-| Notifications (later) | A failed dispatched apply is a push-like failure; the record names the actor and reason. |
 
 ## 8. Pitfalls
 

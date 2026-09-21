@@ -919,8 +919,7 @@ its summary line. The renderer applies steps in that order until the body fits.
 ### 6.5 Run-level step summary
 
 The same body, with `[Workflow log]` omitted, appended to the summary job's `$GITHUB_STEP_SUMMARY`
-on every event. This is the only reporting surface on `push` runs and on fork pull requests, and it
-is what a notification spec (§8) will read from.
+on every event. This is the only reporting surface on `push` runs and on fork pull requests.
 
 ### 6.6 Headline annotation
 
@@ -956,7 +955,6 @@ are in the list.
 | Terraform module cache | The test job runs the same phases and gates as the environment job (§5.3); the classifier additionally receives run-block module sources from the test file. |
 | Single-file dispatch (separate spec) | Will add `workflow_dispatch` to the event rule together with a `tests-filter` input; the lane and slug vocabulary is what it filters on. |
 | Per-environment path relevance ([Path-relevance.md](Path-relevance.md)) | Tests are not filtered by relevance yet; the `root` field is the hook. The conclusion table there judges tests independently of environments, and the test jobs' `if:` drop the seed-result clause for the reason its P3 gives. |
-| Notifications (separate spec) | A failed test job on `push` is a trigger; the metadata artifacts and §6.5 are the data. |
 | Module CI | Unchanged (§9.7). |
 
 ## 9. Actions: new and changed

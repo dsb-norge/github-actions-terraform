@@ -502,7 +502,6 @@ environments-yml: |
 | Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test jobs' `if:` drop their `seed-pr-comments` result clause for the same reason as §5.3. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | Conditionality comes for free: a dependency on an environment that is not in the run is satisfied trivially, and is recorded. `envs-json` carries what the stage builder needs. The conclusion rule for a stage skipped while its row count is non-zero is shared with that spec. |
 | Single-environment dispatch (later) | `workflow_dispatch` is mode `all` until that spec adds a filter; a dispatched environment is always affected. |
-| Notifications (later) | The notice and the run summary are the data on push runs; `relevance.json` says why an environment did not run. |
 | Test-root lock files (later) | Unchanged. |
 
 ## 11. Actions: new and changed
