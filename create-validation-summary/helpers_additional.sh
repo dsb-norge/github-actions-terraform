@@ -52,12 +52,15 @@ function _render_time_cell {
 
 # Render one "applied / planned" badge for the Apply / Destroy details rows.
 #   $1 emoji, $2 applied count, $3 planned count, $4 past-tense verb,
-#   $5 whether the operation completed ('true' or anything else)
-# The numerator is '?' whenever the operation did not complete, whatever
+#   $5 whether terraform's summary line parsed ('true' or anything else —
+#      parse-terraform-apply's `completed`)
+# The numerator is '?' whenever the summary line did not parse, whatever
 # count arrived: terraform prints no summary line for a failed apply, and a
 # zero there would read as "nothing happened" for an infrastructure that
 # may be half applied (docs/Apply-and-destroy-reporting.md P2, §8.3).
-# Either side that is not numeric renders as '?'.
+# Either side that is not numeric renders as '?'. This decides how a COUNT
+# renders and nothing else — the status cell comes from the step outcome
+# (§14).
 function _render_ratio_badge {
   local emoji="${1}" applied="${2}" planned="${3}" verb="${4}" completed="${5}"
   local num='?' den='?'

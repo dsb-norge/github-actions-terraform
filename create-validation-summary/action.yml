@@ -192,10 +192,17 @@ inputs:
     default: "N/A"
   apply-completed:
     description: |
-      'true' when terraform printed an 'Apply complete!' line
+      'true' when terraform's summary line was parsed
       (parse-terraform-apply's `completed`). Anything else forces every
-      applied count in the Apply details row to '?', whatever count
-      arrived — a failed apply must never read as '0/N'.
+      applied count in the Apply details row and the apply tag to '?',
+      whatever count arrived — a failed apply must never read as '0/N'.
+
+      It decides how the counts render and nothing else. The Apply status
+      row follows `status-apply` — the step outcome — and so does the
+      apply tag's choice of failure shape, so a successful apply whose
+      summary line was not recognised renders as the amber 'counts could
+      not be read' block, never as failed
+      (docs/Apply-and-destroy-reporting.md §14, P34).
     required: false
     default: ""
   destroy-plan-count-add:

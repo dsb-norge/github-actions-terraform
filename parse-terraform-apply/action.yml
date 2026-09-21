@@ -13,6 +13,14 @@ description: |
   `completed` is 'false' — never zeros, which would read as "nothing
   happened" for what may be a partially applied infrastructure.
   See docs/Apply-and-destroy-reporting.md §7.2.
+
+  This action never decides whether the apply succeeded: that is the step's
+  exit code, and the renderers derive every status from it. The counts are
+  decoration, '?' when unavailable. Given `apply-exitcode`, the action emits
+  one '::warning title=Terraform output not recognised' when terraform
+  exited 0 without a recognised summary line, or when the line carries a
+  verb this parser does not know — asking for the console to be reported.
+  See docs/Apply-and-destroy-reporting.md §14.
 author: "Peder Schmedling"
 inputs:
   apply-console-file:
@@ -21,6 +29,14 @@ inputs:
       (terraform-apply's `console-output-file` output). Missing or empty is
       not an error: counts are '?' and `completed` is 'false'.
     required: true
+  apply-exitcode:
+    description: |
+      The raw exit code of 'terraform apply' (terraform-apply's `exitcode`).
+      Read only to detect the mismatch worth a human look — exit 0 with no
+      recognised summary line — and emit the run-page warning for it. Never
+      changes an output. Empty disables the check.
+    required: false
+    default: ""
 outputs:
   count-import:
     description: |
@@ -47,9 +63,12 @@ outputs:
     value: ${{ steps.parse-apply-output.outputs.total-count }}
   completed:
     description: |
-      'true' when a summary line was found — terraform prints one only on
-      full success — 'false' otherwise. The signal consumers use to render
-      '?' instead of a count.
+      'true' when a summary line was found and parsed, 'false' otherwise.
+      Says whether the COUNTS are available — consumers render '?' instead
+      of a count when it is 'false' — and nothing about whether the apply
+      succeeded: that is the step outcome, and a renderer must never turn
+      `completed=false` into a failure or `completed=true` into a success
+      (docs/Apply-and-destroy-reporting.md §14, P32).
     value: ${{ steps.parse-apply-output.outputs.completed }}
   apply-kind:
     description: |
@@ -70,6 +89,7 @@ runs:
       shell: bash
       env:
         input_apply_console_file: ${{ inputs.apply-console-file }}
+        input_apply_exitcode: ${{ inputs.apply-exitcode }}
       run: |
         # Extract resource change counts and a tick-free copy from the apply console output
         set -o allexport

@@ -1345,6 +1345,9 @@ jobs:
         uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v0
         with:
           apply-console-file: ${{ steps.apply.outputs.console-output-file }}
+          # The exit code is the outcome; the parser only reads it to warn
+          # when a successful apply's console was not recognised (§14).
+          apply-exitcode: ${{ steps.apply.outputs.exitcode }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       # Fourth warning count, kept separate from the init+validate+plan sum:
@@ -1438,6 +1441,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v0
         with:
           apply-console-file: ${{ steps.destroy.outputs.console-output-file }}
+          apply-exitcode: ${{ steps.destroy.outputs.exitcode }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "⚠️ Parse destroy warnings"
