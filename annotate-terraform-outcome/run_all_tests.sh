@@ -124,6 +124,20 @@ assert "P32: zero imports are not mentioned at all" \
   bash -c "! grep -q 'imported' '${OUT_FILE}'"
 teardown
 
+# An unset import count must not reach `[ -ne ]` bare: that prints
+# "integer expression expected" into the job log. Reported in review.
+setup
+export input_status_apply="success"
+export input_apply_count_add="1"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+export input_apply_time="0:12"
+unset input_apply_count_import
+run_step
+assert "unset import count produces no shell error in the log" \
+  bash -c "! grep -qi 'integer expression expected' '/tmp/test_output_annotate.txt' 2>/dev/null && ! grep -qi 'integer expression expected' '${OUT_FILE}'"
+assert "unset import count is simply not mentioned" \
+  bash -c "! grep -q 'imported' '${OUT_FILE}'"
+teardown
+
 # ----------------------------------------------------------------------
 # D2 — apply failed → exactly one ::error naming the partial-state risk
 # ----------------------------------------------------------------------

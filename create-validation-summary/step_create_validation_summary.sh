@@ -586,7 +586,8 @@ function render_destroy_plan_extract {
 #   2. completed=true,  total > 0     → '<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…'
 #                                      (applied/planned per kind, '?' for either side that is unknown — the
 #                                       same rule as the head's Apply details row, docs §8.3)
-#   3. completed=false, console given → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
+#   3. completed=false, status 'success'     → '<details><summary>⚠️ Apply finished, but its counts could not be read</summary>…'
+#   3b. completed=false, status not 'success' → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
 #   4. no console at all              → 'Apply not available 🤷‍♀️'
 # Destroy: 'Destroy: no changes ✅' / 'Destroy: D/P destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
 #
@@ -595,15 +596,17 @@ function render_destroy_plan_extract {
 #   $1 'apply' | 'destroy'
 function render_op_extract {
   local kind="${1}"
-  local verb console_file total completed warnings_file warning_count
+  local verb console_file total completed warnings_file warning_count op_status
   if [ "${kind}" = 'apply' ]; then
     verb="Apply"; console_file="${input_apply_console_file:-}"
     total="${input_apply_count_total:-}"; completed="${input_apply_completed:-}"
     warnings_file="${input_apply_warnings_markdown_file:-}"; warning_count="${input_apply_warning_count:-0}"
+    op_status="${input_status_apply:-}"
   else
     verb="Destroy"; console_file="${input_destroy_console_file:-}"
     total="${input_destroy_count_total:-}"; completed="${input_destroy_completed:-}"
     warnings_file="${input_destroy_warnings_markdown_file:-}"; warning_count="${input_destroy_warning_count:-0}"
+    op_status="${input_status_destroy:-}"
   fi
   local body="### Terraform ${kind} for environment: \`${input_environment_name}\`"
 
@@ -661,6 +664,20 @@ ${verb}: no changes ✅"
     body="${body}
 
 <details><summary>${verb}: ${summary_counts} ✅</summary>
+
+\`\`\`terraform
+${console_out}
+\`\`\`${omitted_note}
+</details>"
+  elif [ "${op_status}" = 'success' ]; then
+    # The step succeeded; only its summary line could not be read, so the counts
+    # are unknown and nothing is half-done. Claiming a failure here contradicts
+    # the head's own status row, and "may be partially applied" would simply be
+    # untrue — P34.
+    # don't touch the indenting here
+    body="${body}
+
+<details><summary>⚠️ ${verb} finished, but its counts could not be read</summary>
 
 \`\`\`terraform
 ${console_out}

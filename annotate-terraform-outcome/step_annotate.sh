@@ -103,7 +103,7 @@ function main {
   # unless import blocks are in play, and this notice is the run-page summary
   # of exactly what the apply did (P32).
   local apply_counts="${a_add} added, ${a_change} changed, ${a_destroy} destroyed"
-  if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import}" -ne 0 ]; then
+  if [[ "${input_apply_count_import:-0}" =~ ^[0-9]+$ ]] && [ "${input_apply_count_import:-0}" -ne 0 ]; then
     apply_counts="${apply_counts}, ${input_apply_count_import} imported"
   fi
   annotate_operation "Apply" "${input_status_apply:-}" \
