@@ -681,9 +681,16 @@ Headings mirror the plan tag exactly — these are one series and should read as
 | 1 | `completed=true`, total 0 | `Apply: no changes ✅` |
 | 2 | `completed=true`, total > 0 | `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>` + fenced console — applied/planned per kind, `?` for an unknown side (same rule as the head's details row, §8.3); plain text, since `<summary>` is raw HTML |
 | 3 | `completed=false`, **status `success`** | `<details><summary>⚠️ Apply finished, but its counts could not be read</summary>` + fenced console — closed, not red, and it claims nothing about partial state (P34) |
-| 3b | `completed=false`, status **not** `success`, console available | `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>` + fenced console |
+| 3b | status **not** `success`, console available | `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>` + fenced console |
 | 4 | no console at all | `Apply not available 🤷‍♀️` |
 | 5 | destroy variants of 1-3 | `Destroy: no changes ✅` / `Destroy: D/P destroyed ✅` (planned = destroy-plan count) / `❌ Destroy failed — …` |
+
+Shape 3b is decided **before** the counts, so shapes 1 and 2 are reachable only when the step did
+not fail. A parsed summary line means the counts are trustworthy, not that the step succeeded; if
+it were asked first, a step that failed after the apply itself finished would carry a green
+collapser beside a head row, an annotation and a headline that all read failure — P34 pointing the
+other way. An absent status is not a failure: shape 3b needs a status that is present and not
+`success`.
 
 > **Amended 2026-09-18.** The title follows what the run *did*, not only what the goals allow on a pull request. An environment with the plain `apply` goal applies on push and schedule, and its job summary read "Terraform validation summary" directly above an `Apply | success` row — the table contradicting its own heading. The rule is now: an operation that ran in this run (the same `_op_ran` gate the blocks use) **or** goals that mutate on PR (which is all the seeded placeholder can know). Consequence for §2: the plan-only **table** is still a strict prefix of every fuller one, but the **heading** is not part of that prefix — it is a signal in its own right. Test C1b compares from the table header down; that a plan-only environment keeps the original heading byte for byte is asserted by the head-title tests instead.
 >
@@ -995,7 +1002,7 @@ The rendered outcome of apply, destroy-plan and destroy — the status cell in t
 - exit 0 and no recognised summary line — a successful apply always prints one, so this is a wording change or a shape the parser has not met; the warning says the apply is still reported as succeeded, that the counts render `?`, and asks for the console to be reported;
 - a summary line carrying a verb the parser does not know — the line proves the apply finished whatever the exit code, the unknown resources go uncounted, and the warning names the verb.
 
-Exit non-zero with no summary line is the ordinary failed apply and warns about nothing. Exit non-zero *with* a complete summary line — something after the apply itself failed — keeps terraform's counts, and the head status row, the annotation and the run-page headline all read failure: the exit code's call. `render_op_extract` is the one surface that would still reach the success collapser there, because it tests `completed` before the status; terraform prints its summary line only once the apply itself has finished, so nothing has produced that combination yet, and if something ever does the status must win there too.
+Exit non-zero with no summary line is the ordinary failed apply and warns about nothing. Exit non-zero *with* a complete summary line — something after the apply itself failed — keeps terraform's counts, and every surface reads failure: the exit code's call. `render_op_extract` asks the status before the counts for exactly this reason (§8.6, shape 3b). It did not always: while a parsed line decided first, that one surface would have shown a green collapser beside a head row, an annotation and a headline all reading failure. Terraform prints the line only once the apply itself has finished, so nothing had produced the combination, which is why it survived review twice.
 
 The output is still called `completed`. Renaming it would touch every wire on the branch for no behaviour; its description now says what it means — *the counts are available* — and this section is what stops the next reader from taking it for an outcome.
 
@@ -1005,7 +1012,7 @@ Tested where the outcome is derived, so a regression in any one renderer fails o
 |---|---|---|---|---|
 | exit 0 + no summary line | counts `?`, `completed=false`, one warning naming the file (§14 tests) | P34: head row `success`, the amber `⚠️ … counts could not be read` block, never `❌` and never "partially applied" | `::notice` with `?` counts, no `::error` | P34: counted as applied, `?/N` cell |
 | exit 1 + no summary line | counts `?`, `completed=false`, no warning | P34: the red, open, partial-state block | D2: `::error`, no `::notice` | not counted as applied |
-| exit 1 + a complete summary line | terraform's counts, `completed=true`, no warning | — | D2 | §14: counted as failed, terraform's counts still render, ❌ |
+| exit 1 + a complete summary line | terraform's counts, `completed=true`, no warning | P34: the red, open, partial-state block, never the green collapser | D2 | §14: counted as failed, terraform's counts still render, ❌ |
 | exit 0 + unknown verb | known verbs counted, `completed=true`, one warning naming the verb | (renders as a recognised success) | — | — |
 | destroy variants | — | P34: the same rule for destroy | D9 | §14: counted as destroyed, `?/N` cell |
 

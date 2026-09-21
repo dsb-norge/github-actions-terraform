@@ -587,11 +587,18 @@ function render_destroy_plan_extract {
 #                                      (applied/planned per kind, '?' for either side that is unknown — the
 #                                       same rule as the head's Apply details row, docs §8.3)
 #   3. completed=false, status 'success'     → '<details><summary>⚠️ Apply finished, but its counts could not be read</summary>…'
-#   3b. completed=false, status not 'success' → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
+#   3b. status not 'success'          → '<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…'
 #   4. no console at all              → 'Apply not available 🤷‍♀️'
 # Destroy: 'Destroy: no changes ✅' / 'Destroy: D/P destroyed ✅' / '❌ Destroy failed — infrastructure may be partially destroyed'.
 #
-# Shape 3 is the only <details open> anywhere: a failed apply is the one
+# Shape 3b is tested BEFORE the counts. A parsed summary line says the counts
+# are trustworthy, not that the step succeeded, so letting it decide would put
+# a green collapser under a head row, an annotation and a headline that all
+# read failure — P34 pointing the other way. Terraform prints the line only
+# once the apply itself finished, so nothing produces that combination today,
+# which is precisely why it would go unnoticed if something started to.
+#
+# Shape 3b is the only <details open> anywhere: a failed apply is the one
 # case nobody should have to click, and the console tail is the whole story.
 #   $1 'apply' | 'destroy'
 function render_op_extract {
@@ -635,15 +642,21 @@ function render_op_extract {
   local failed_note
   if [ "${kind}" = 'apply' ]; then failed_note="applied"; else failed_note="destroyed"; fi
 
+  # The step's own status is asked before the counts (shape 3b above). An empty
+  # status is not a failure: it means the caller supplied none, and the last
+  # branch still renders the failed shape for an unreadable console.
+  local status_failed='false'
+  if [ -n "${op_status}" ] && [ "${op_status}" != 'success' ]; then status_failed='true'; fi
+
   if [ -z "${console_out}" ]; then
     body="${body}
 
 ${verb} not available 🤷‍♀️"
-  elif [ "${completed}" = 'true' ] && [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ]; then
+  elif [ "${status_failed}" = 'false' ] && [ "${completed}" = 'true' ] && [[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -eq 0 ]; then
     body="${body}
 
 ${verb}: no changes ✅"
-  elif [ "${completed}" = 'true' ]; then
+  elif [ "${status_failed}" = 'false' ] && [ "${completed}" = 'true' ]; then
     # The collapsed line is all most readers see: say applied/planned per
     # kind, the question a reviewer actually has, rather than a bare total
     # the head already shows. Denominators are the plan (apply) or the
