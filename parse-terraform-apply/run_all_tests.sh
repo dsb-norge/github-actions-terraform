@@ -72,6 +72,9 @@ run_count_test() {
   else
     export input_apply_console_file=""
   fi
+  # Optional 9th argument: the exit code handed to the parser. Empty — the
+  # default — keeps the mismatch warning out of the count tests.
+  export input_apply_exitcode="${9:-}"
   run_step
 
   local failures=""
@@ -220,6 +223,73 @@ FILTERED="$(get_output filtered-console-file)"
 assert "R17: the real '[00m10s elapsed]' tick is removed" \
   bash -c "grep -q 'Still creating... \[00m10s elapsed\]' '${input_apply_console_file}' && ! grep -q 'Still creating' '${FILTERED}'"
 cleanup
+
+# --------------------------------------------------------------------------
+# §14 — the outcome invariant (docs/Apply-and-destroy-reporting.md §14).
+# The parser never decides the outcome; given the exit code it names the
+# one mismatch worth a human look, as a ::warning on the run page.
+# --------------------------------------------------------------------------
+warning_count() { grep -c '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt 2>/dev/null || true; }
+
+# exit 0 + no summary line → success is the step's call; counts '?'; ONE warning
+run_count_test "§14: exit 0 + no summary line → counts '?' (the outcome is the step's)" \
+                                                        apply_failed_provisioner.log                  '?' '?' '?' false "" "" 0
+export input_apply_console_file="${DATA_DIR}/apply_failed_provisioner.log"; export input_apply_exitcode="0"
+run_step
+assert "§14: exit 0 + no summary line → exactly one 'Terraform output not recognised' warning" \
+  test "$(warning_count)" -eq 1
+assert "§14: … the warning asks for the console to be reported and names the file" \
+  bash -c "grep '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt | grep -q 'Please report the apply console output (${input_apply_console_file})'"
+assert "§14: … and says the apply is still reported as succeeded" \
+  bash -c "grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q 'reported as succeeded'"
+assert "§14: … the step still exits 0" test "${LAST_EXIT}" -eq 0
+cleanup
+
+# exit 1 + no summary line → the ordinary failed apply; nothing to warn about
+export input_apply_console_file="${DATA_DIR}/apply_failed_provisioner.log"; export input_apply_exitcode="1"
+run_step
+assert "§14: exit 1 + no summary line → no warning (a failed apply prints none)" test "$(warning_count)" -eq 0
+cleanup
+
+# no exit code given → the check is off
+export input_apply_console_file="${DATA_DIR}/apply_failed_provisioner.log"; export input_apply_exitcode=""
+run_step
+assert "§14: no exit code given → no warning" test "$(warning_count)" -eq 0
+cleanup
+
+# exit 1 + a complete summary line → terraform's counts, no warning; the
+# failure is the step's to report (create-validation-summary / annotate).
+run_count_test "§14: exit 1 + a complete summary line → counts are terraform's, completed=true" \
+                                                        apply_adds_only.log                           2   0   0  true  apply "" 1
+export input_apply_console_file="${DATA_DIR}/apply_adds_only.log"; export input_apply_exitcode="1"
+run_step
+assert "§14: exit 1 + a complete summary line → no warning; the log names the split" \
+  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && grep -q 'the counts are terraform.s, the outcome is the step.s' /tmp/test_output_parse_apply.txt"
+cleanup
+
+# exit 0 + unknown verb → completed, known verbs counted, ONE warning naming the verb
+run_count_test "§14: exit 0 + unknown verb → completed, known verbs counted" \
+                                                        apply_complete_unknown_segment.log            0   0   0  true  apply 3 0
+export input_apply_console_file="${DATA_DIR}/apply_complete_unknown_segment.log"; export input_apply_exitcode="0"
+run_step
+assert "§14: exit 0 + unknown verb → exactly one warning, naming '2 forgotten'" \
+  bash -c "[ \$(grep -c '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt) -eq 1 ] && grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q \"'2 forgotten'\""
+cleanup
+
+# the unknown-verb warning does not need the exit code: the line proves the apply finished
+export input_apply_console_file="${DATA_DIR}/apply_complete_unknown_segment.log"; export input_apply_exitcode=""
+run_step
+assert "§14: unknown verb warns even without an exit code" test "$(warning_count)" -eq 1
+cleanup
+
+# workflow-command escaping: a '%' in the path must not break the command
+_pct_dir=$(mktemp -d); _pct_file="${_pct_dir}/100%25done.log"; cp "${DATA_DIR}/apply_failed_provisioner.log" "${_pct_file}"
+export input_apply_console_file="${_pct_file}"; export input_apply_exitcode="0"
+run_step
+assert "§14: '%' in the console path is escaped as %25 in the warning" \
+  bash -c "grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q '100%2525done.log'"
+cleanup; rm -rf "${_pct_dir}"
+export input_apply_exitcode=""
 
 # --------------------------------------------------------------------------
 # B4 detail: a missing file path (not just empty) is also '?' and exit 0.

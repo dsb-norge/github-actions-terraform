@@ -27,12 +27,29 @@
 # a zero reads as "nothing happened", which is the opposite of the truth
 # for a partial apply (docs/Apply-and-destroy-reporting.md P2).
 #
+# What this parser does NOT decide is whether the apply succeeded. That is
+# the step's exit code, carried by the workflow as the step outcome; the
+# renderers derive every status cell, annotation and headline from it and
+# treat these counts as decoration, '?' when unavailable
+# (docs/Apply-and-destroy-reporting.md §14). Given the exit code, the parser
+# can name the one situation worth a human look: terraform exited 0 but its
+# console was not recognised — a new wording, most likely. That is a
+# ::warning on the run page asking for the console to be reported, never a
+# changed count and never a failed step.
+#
 # Required environment variables:
 #   input_apply_console_file  - Path to the apply console output file
 #
+# Optional environment variables:
+#   input_apply_exitcode      - terraform apply's raw exit code (terraform-apply's
+#                               `exitcode`). Only read for the mismatch warning;
+#                               empty disables it.
+#
 # Outputs:
-#   add-count, change-count, destroy-count, total-count  - integers or '?'
-#   completed              - 'true' | 'false'
+#   import-count, add-count, change-count, destroy-count, total-count  - integers or '?'
+#   completed              - 'true' when a summary line parsed, else 'false'.
+#                            Says whether the COUNTS are available — not
+#                            whether the apply succeeded.
 #   apply-kind             - 'apply' | 'destroy' | '' (when not completed)
 #   filtered-console-file  - path of the tick-free copy (always written)
 #
@@ -105,18 +122,34 @@ function main {
       # A verb we do not know is worth saying out loud — its resources are real
       # and go uncounted — but it must never turn a finished apply into a
       # reported failure, which is the whole reason this is segment-based.
+      # Out loud means the run page, not only this log (§14): the summary
+      # line proves the apply finished, whatever the exit code says.
       local unknown
       unknown=$(printf '%s' "${segments}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' \
         | grep -vE '^[0-9]+ (imported|added|changed|destroyed)$' || true)
       if [ -n "${unknown}" ]; then
-        log-warn "unrecognised segment(s) in the summary line, not counted: $(printf '%s' "${unknown}" | paste -sd';' -)"
+        local unknown_list
+        unknown_list=$(printf '%s' "${unknown}" | paste -sd';' -)
+        log-warn "unrecognised segment(s) in the summary line, not counted: ${unknown_list}"
+        warn-output-not-recognised "the '${complete_verb} complete!' line carries segment(s) this parser does not know — '${unknown_list}' — and they are not counted. Please report the apply console output (${input_apply_console_file}) so the parser can learn the new verb."
       fi
 
       log-info "${apply_kind} completed: ${imports} imported, ${adds} added, ${changes} changed, ${destroys} destroyed"
+      if [ -n "${input_apply_exitcode:-}" ] && [ "${input_apply_exitcode}" != '0' ]; then
+        log-info "terraform exited ${input_apply_exitcode} after printing its summary line; the counts are terraform's, the outcome is the step's"
+      fi
     elif [ -n "${summary_line}" ]; then
       log-error "found a summary line but could not parse it: '${summary_line}'"
     else
-      log-warn "no 'Apply complete!' / 'Destroy complete!' summary line — apply did not complete"
+      log-warn "no 'Apply complete!' / 'Destroy complete!' summary line — counts are '?' and completed=false"
+    fi
+
+    # Exit 0 without a recognised summary line is the mismatch worth a human
+    # look: a failed apply prints no summary line, but a successful one always
+    # does — unless terraform's wording changed. The outcome stays the step's
+    # (success); the counts render '?'; this is what gets the console reported.
+    if [ "${input_apply_exitcode:-}" = '0' ] && [ "${completed}" != 'true' ]; then
+      warn-output-not-recognised "terraform apply exited 0 but no 'Apply complete!' / 'Destroy complete!' summary line was recognised in its console, so the counts render as '?'. The apply is reported as succeeded — that is the exit code's call. Please report the apply console output (${input_apply_console_file}) so the parser can learn the new wording."
     fi
   fi
 

@@ -196,6 +196,29 @@ assert "P2: parser zeros + completed=false → still ?/5, never 0/5" row_has z '
 teardown
 
 # ----------------------------------------------------------------------
+# §14 — the outcome invariant, in the two directions the P34 rollup tests
+# further down do not reach: a step that failed after terraform printed a
+# complete summary line is still not "applied" (its counts render anyway,
+# because counts are decoration), and the destroy half of the same rule
+# (docs/Apply-and-destroy-reporting.md §14).
+# ----------------------------------------------------------------------
+setup
+write_meta "e" success "2:0:0" "0:10" "$(ops_apply failure true 2 0 0 0:20)"
+run_step
+assert "§14: exit 1 + a complete summary line → failed, not applied" \
+  grep -qxF '**1 environment · 0 applied · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "§14: … terraform's counts still render (they are decoration)" row_has e '`💫 2/2`'
+assert "§14: … with a ❌ worst outcome" row_has e '| <span title="a step failed or was cancelled">❌</span> |'
+teardown
+
+setup
+write_meta "e" success "0:0:0" "0:30" "$(ops_apply success true 0 0 0 0:20),$(ops_destroy success false '?' 3 0:40)"
+run_step
+assert "§14: destroy exit 0 + no summary line → counted as destroyed, '?' cell" \
+  bash -c "grep -qxF '**1 environment · 1 applied · 1 destroyed · 0 failed**' '${GITHUB_STEP_SUMMARY}' && grep -qF '| \`💥 ?/3\` |' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
+# ----------------------------------------------------------------------
 # Destroy cell and Time sum
 # ----------------------------------------------------------------------
 setup
