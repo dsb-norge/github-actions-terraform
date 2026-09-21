@@ -2882,6 +2882,70 @@ export input_status_destroy="success"; export input_destroy_completed="false"; e
 _c=$(mktemp); printf 'Destroy complete! (unreadable)\n' >"${_c}"; export input_destroy_console_file="${_c}"
 run_test "P34: the same rule for destroy" assert_unparsed_destroy_success
 
+# P34, the other direction: a parsed summary line must not outrank the step's
+# own status. Terraform prints the line only once the apply itself finished, so
+# a failed step that still has one means something after the apply failed — the
+# head row, the annotation and the run-page headline all read failure, and this
+# block used to be the one surface that rendered a green collapser beside them.
+assert_failed_apply_with_counts_is_still_red() {
+  local body; body="$(body_of apply-extract)"
+  local head; head="$(body_of head-summary)"
+  local fails=""
+  [[ "${body}" == *'<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>'* ]] ||
+    fails+="  tag: expected the failure shape; got $(printf '%s' "${body}" | sed -n 3p)\n"
+  [[ "${body}" != *'✅'* ]] || fails+="  tag must not be green when the step failed\n"
+  [[ "${head}" == *'| Apply | <kbd>failure</kbd> |'* ]] || fails+="  head should report the real status\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"; export input_apply_completed="true"; export input_apply_count_total="3"
+export input_apply_count_add="3"; export input_apply_count_change="0"; export input_apply_count_destroy="0"
+_c=$(mktemp); printf 'Apply complete! Resources: 3 added, 0 changed, 0 destroyed.\nError: the step failed afterwards\n' >"${_c}"
+export input_apply_console_file="${_c}"
+run_test "P34: a failed apply that printed a summary line is still red" assert_failed_apply_with_counts_is_still_red
+
+# The same, with a zero-count line, which would otherwise render 'no changes ✅'.
+assert_failed_apply_zero_counts_is_still_red() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" != *'Apply: no changes ✅'* ]] || { echo "  must not report 'no changes' when the step failed"; return 1; }
+  [[ "${body}" == *'❌ Apply failed'* ]] || { echo "  expected the failure shape; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"; export input_apply_completed="true"; export input_apply_count_total="0"
+_c=$(mktemp); printf 'Apply complete! Resources: 0 added, 0 changed, 0 destroyed.\nError: afterwards\n' >"${_c}"
+export input_apply_console_file="${_c}"
+run_test "P34: a failed apply with a zero-count summary line is still red" assert_failed_apply_zero_counts_is_still_red
+
+# Destroy travels the same road here too.
+assert_failed_destroy_with_counts_is_still_red() {
+  local body; body="$(body_of destroy-extract)"
+  [[ "${body}" == *'❌ Destroy failed — infrastructure may be partially destroyed'* ]] ||
+    { echo "  expected the failure shape; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  [[ "${body}" != *'✅'* ]] || { echo "  must not be green when the step failed"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy="failure"; export input_destroy_completed="true"; export input_destroy_count_total="2"
+export input_destroy_count_destroy="2"
+_c=$(mktemp); printf 'Destroy complete! Resources: 2 destroyed.\nError: afterwards\n' >"${_c}"
+export input_destroy_console_file="${_c}"
+run_test "P34: a failed destroy that printed a summary line is still red" assert_failed_destroy_with_counts_is_still_red
+
+# An absent status is not a failure: the caller supplied none, and an unreadable
+# console still renders the failed shape, exactly as it did before status won.
+assert_absent_status_unparsed_still_red() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *'❌ Apply failed — infrastructure may be partially applied'* ]] ||
+    { echo "  expected the failure shape; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply=""; export input_apply_completed="false"; export input_apply_count_total="?"
+_c=$(mktemp); printf 'Apply complete! (unreadable)\n' >"${_c}"; export input_apply_console_file="${_c}"
+run_test "P34: an absent status with an unreadable console keeps the failed shape" assert_absent_status_unparsed_still_red
+
 # C24: destroy-plan extract uses the plan's five shapes.
 assert_destroy_plan_extract_plan_shaped() {
   local body; body="$(body_of destroy-plan-extract)"
