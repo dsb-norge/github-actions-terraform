@@ -227,6 +227,10 @@ Outputs, deliberately named to match `parse-terraform-plan` so downstream wiring
 
 There is no `count-move` / `count-remove`: terraform's apply summary carries no such segment. It **does** carry `imported`, which this section originally denied — see P32. Rendering still must not assume the plan badge set wholesale — §8.3.
 
+> **P34 — the tag's shape must not contradict the head's status row.** The failure shape was chosen from `completed` alone. `completed` is false whenever the summary line could not be *parsed*, which is not the same thing as the apply having *failed*: a successful apply whose output the parser could not read posted **"❌ Apply failed — infrastructure may be partially applied"** next to a head row reading `success`. Self-contradictory, and the partial-state claim was untrue. This is not hypothetical — it is exactly what P32 produced in a calling repo before it was fixed, and the next unreadable line would do it again.
+>
+> The shape now consults the step's own status: `success` with unreadable output gets a closed, amber "counts could not be read" block; anything else keeps the red, open, partial-state block. The head, the tag, the annotation and the run summary all key on the same status, so they cannot disagree. Reported in review by a maintainer, 2026-09-21.
+>
 > **P32 — the apply summary line is a list, not a fixed triple.** It was first read with one pattern anchored at both ends to `added, changed, destroyed`. Terraform puts `N imported,` *before* `added` whenever import blocks are in play, so the match failed, `completed` stayed unset, and a **fully successful apply rendered as `❌ Apply failed — infrastructure may be partially applied` with `💫 ?/0 added`** — the exact inversion of the defect this feature exists to fix. Found on a calling repo that adopts existing objects with `import` blocks, which is the normal way to bring hand-made infrastructure under terraform.
 >
 > The fix is not an optional `imported` group; that would survive only until the next verb. Each segment is matched on its own — the way [parse-terraform-plan](../parse-terraform-plan/) has always read the `Plan:` line — and a segment whose verb is unknown is logged and left uncounted rather than failing the parse. **A finished apply must never be reported as a failed one**; under-reporting a count is the lesser error and the warning says so in the log.
@@ -676,7 +680,8 @@ Headings mirror the plan tag exactly — these are one series and should read as
 |---|---|---|
 | 1 | `completed=true`, total 0 | `Apply: no changes ✅` |
 | 2 | `completed=true`, total > 0 | `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>` + fenced console — applied/planned per kind, `?` for an unknown side (same rule as the head's details row, §8.3); plain text, since `<summary>` is raw HTML |
-| 3 | `completed=false`, console available | `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>` + fenced console |
+| 3 | `completed=false`, **status `success`** | `<details><summary>⚠️ Apply finished, but its counts could not be read</summary>` + fenced console — closed, not red, and it claims nothing about partial state (P34) |
+| 3b | `completed=false`, status **not** `success`, console available | `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>` + fenced console |
 | 4 | no console at all | `Apply not available 🤷‍♀️` |
 | 5 | destroy variants of 1-3 | `Destroy: no changes ✅` / `Destroy: D/P destroyed ✅` (planned = destroy-plan count) / `❌ Destroy failed — …` |
 

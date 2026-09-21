@@ -2835,6 +2835,53 @@ _c=$(mktemp); printf 'x\nApply complete! Resources: 1 added, 0 changed, 0 destro
 export input_apply_console_file="${_c}"
 run_test "P32: no import segment → no imported text and no 📥 badge" assert_apply_no_imports_no_badge
 
+# P34: the tag's shape must never contradict the head's status row. A parse
+# failure on a successful apply used to post "❌ Apply failed — infrastructure
+# may be partially applied" beside a head row reading `success`, which is both
+# self-contradictory and untrue. Reported in review.
+assert_unparsed_success_does_not_claim_failure() {
+  local body; body="$(body_of apply-extract)"
+  local head; head="$(body_of head-summary)"
+  local fails=""
+  [[ "${body}" == *'<details><summary>⚠️ Apply finished, but its counts could not be read</summary>'* ]] ||
+    fails+="  tag: got $(printf '%s' "${body}" | sed -n 3p)\n"
+  [[ "${body}" != *'partially applied'* ]] || fails+="  tag must not claim partial application when the step succeeded\n"
+  [[ "${body}" != *'❌'* ]] || fails+="  tag must not be red when the step succeeded\n"
+  [[ "${head}" == *'| Apply | `success` |'* ]] || fails+="  head should still report the real status\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_status_apply="success"; export input_apply_completed="false"; export input_apply_count_total="?"
+_c=$(mktemp); printf 'Apply complete! Resources: 1 added (in a grammar we cannot read)\n' >"${_c}"
+export input_apply_console_file="${_c}"
+run_test "P34: a successful apply whose output could not be parsed is not reported as failed" assert_unparsed_success_does_not_claim_failure
+
+# ... and a genuinely failed apply keeps the red, open, partial-state shape.
+assert_failed_apply_still_red() {
+  local body; body="$(body_of apply-extract)"
+  [[ "${body}" == *'<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>'* ]] ||
+    { echo "  expected the failure shape; got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_apply="failure"; export input_apply_completed="false"; export input_apply_count_total="?"
+_c=$(mktemp); printf 'Error: quota exceeded\n' >"${_c}"; export input_apply_console_file="${_c}"
+run_test "P34: a failed apply still gets the red, open, partial-state shape" assert_failed_apply_still_red
+
+# Destroy travels the same road.
+assert_unparsed_destroy_success() {
+  local body; body="$(body_of destroy-extract)"
+  [[ "${body}" == *'<details><summary>⚠️ Destroy finished, but its counts could not be read</summary>'* ]] ||
+    { echo "  got: $(printf '%s' "${body}" | sed -n 3p)"; return 1; }
+  [[ "${body}" != *'partially destroyed'* ]] || { echo "  must not claim partial destruction"; return 1; }
+  return 0
+}
+reset_defaults
+export input_status_destroy="success"; export input_destroy_completed="false"; export input_destroy_count_total="?"
+_c=$(mktemp); printf 'Destroy complete! (unreadable)\n' >"${_c}"; export input_destroy_console_file="${_c}"
+run_test "P34: the same rule for destroy" assert_unparsed_destroy_success
+
 # C24: destroy-plan extract uses the plan's five shapes.
 assert_destroy_plan_extract_plan_shaped() {
   local body; body="$(body_of destroy-plan-extract)"
