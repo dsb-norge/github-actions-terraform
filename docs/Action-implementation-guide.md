@@ -15,6 +15,8 @@ Guidelines for implementing new composite GitHub Actions and converting existing
 
 Each action lives in its own directory under the repository root. The file layout depends on how many steps the action has.
 
+An action reads nothing outside its own directory, with one exception: the decision engine in `engine/` ([Decision-engine.md](Decision-engine.md)), which `create-tf-vars-matrix` runs as `PYTHONPATH="${GITHUB_ACTION_PATH}/../engine" python3 -B -m dsb_tf_engine …`. That is safe because GitHub downloads the whole repository at the ref an action is referenced by, and a preview ref publishes the whole tree at one commit, so an action and the engine are never at different versions. `-B` keeps `__pycache__` out of the downloaded tree. Nothing else reaches across directories; helpers are copied, not shared.
+
 ### Single-step action
 
 ```

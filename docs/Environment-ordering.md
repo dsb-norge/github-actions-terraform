@@ -12,8 +12,7 @@ not document them. §14 is reserved for what implementation teaches the spec.
 
 Related: [Decision-engine.md](Decision-engine.md) assigns the stages;
 [Path-relevance.md](Path-relevance.md) decides which environments are in the run at all;
-[Dispatch-and-triggers.md](Dispatch-and-triggers.md) provides the bypass; [Road-to-v1.md](Road-to-v1.md)
-places this in the release.
+[Dispatch-and-triggers.md](Dispatch-and-triggers.md) provides the bypass.
 
 ## 1. Why
 

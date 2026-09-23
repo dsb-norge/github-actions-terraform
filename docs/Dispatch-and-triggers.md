@@ -37,7 +37,7 @@ trigger on everything and let the engine decide.
 | D4 | `goal` offers `default`, `plan`, `apply`, `destroy-plan`. The input can never add `destroy`. An environment whose own `goals-yml` holds `destroy` still destroys on a default-branch dispatch with `goal: default`, as it does today. | Destroying stays a `goals-yml` decision made in a reviewed commit; the dispatch button cannot introduce it. |
 | D5 | The `goal` input is a **cap**: it only removes goals from what the environment's own `goals` would grant on a push to the same ref. `plan` and `destroy-plan` cap; `apply` requires the environment to hold `apply` or `all`. Asking for more is an error, not a silent downgrade. | A validate-only repository must not become an apply target through a dropdown, and a `plan` request must never be silently widened into a plan the environment does not have. |
 | D6 | `apply` by dispatch runs on the default branch only, as apply always has. Asking for it elsewhere is an error, not a silent plan. | A person who asked for an apply and got a plan would not notice until the outage. |
-| D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in.** A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in during their migration ([Road-to-v1.md](Road-to-v1.md)). |
+| D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in.** A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in when they move to v1. |
 | D8 | A dispatched environment is always relevant and always runs regardless of `paths`; relevance mode is `all` on dispatch, as the relevance spec says. | A dispatch is a person asking. |
 | D9 | Tests do not run on `workflow_dispatch` (Terraform-tests.md D7). | A recovery must not start integration tests against the tenant being recovered. A later addition may add a `test-file` dispatch input. |
 | D10 | The run records who dispatched what, with which goal and reason, in the run summary and a notice: both `github.actor` and `github.triggering_actor`, since a re-run keeps the original actor. | A dispatch that bypasses ordering ([Environment-ordering.md](Environment-ordering.md)) must be visible. |
@@ -166,7 +166,7 @@ environment gets push-on-default-branch semantics with one existing asymmetry th
 `apply` is granted on `schedule`, `destroy` is not (the workflow's destroy gate has never accepted
 `schedule`); a scheduled environment holding `destroy` runs its destroy plan and stops there. The
 two calling repositories that schedule the workflow today add the one line of §3.2 to the
-environment their schedule was for as part of their move to v1 ([Road-to-v1.md](Road-to-v1.md)).
+environment their schedule was for as part of their move to v1.
 
 ## 5. What the run shows
 
@@ -223,8 +223,9 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | P1 | Dispatch inputs arrive as strings; an absent block leaves `github.event.inputs` empty. | `"default"` versus empty, missing keys. | The shim normalises; the engine treats empty and `default` alike and an absent block as "no inputs". |
 | P2 | A `choice` for `environment` would carry names per repository. | Drift when environments are added; a stale dropdown. | `string` by default (D3). |
 | P3 | Silent downgrade of an impossible dispatch goal. | The operator believes an apply happened. | Errors, never downgrades (D5, D6). |
-| P4 | `schedule` used to mean every environment. | The two scheduling callers' nightly runs would apply nothing after moving to v1 without the opt-in. | A v1 migration step ([Road-to-v1.md](Road-to-v1.md)); the empty-schedule notice says which key to set. Never shipped on a rolling major tag. |
+| P4 | `schedule` used to mean every environment. | The two scheduling callers' nightly runs would apply nothing after moving to v1 without the opt-in. | A step of the move to v1; the empty-schedule notice says which key to set. Never shipped on a rolling major tag. |
 | P8 | With no `inputs:` block the payload's `inputs` key is `null`; `github.event.inputs.environment` evaluates to the empty string. | A shim that expects an object fails, or reads `"null"`. | The shim normalises `null` to an empty object; the engine treats absent, empty and `default` alike. |
+| P9 | A string input dispatched empty is **absent** from the payload's `inputs`, not `""` (verified on the test bed: a dispatch leaving `environment` and `reason` empty delivered `{"goal": "default"}` only). | A shim that reads the object's keys sees fewer inputs than the block declares. | The shim passes all three keys, `""` for each that is absent. |
 | P9 | A cap that silently adds. | `goal: plan` on a validate-only environment planning something nobody reviewed. | The cap intersects, never unions (D5); invariant I3. |
 | P10 | A named dispatch that selects nothing. | A green run that did nothing while the operator believes the environment was reconciled. | An error (§4.3); invariant I17. |
 | P5 | A dispatch from the CLI on a non-default `--ref` with `goal: apply`. | Refused. | The error names the branch; run it on `main`. |
@@ -243,21 +244,20 @@ All in the decision engine's suite (Decision-engine.md §8):
 
 **What tests cannot cover**: that `github.event.inputs` is populated inside the reusable workflow
 for a dispatch of the caller, and that `gh workflow run` on a non-default ref reaches the engine
-with the right `ref_name`. Both verified on the test-bed and recorded in §12.
+with the right `ref_name`. Both verified on the test-bed and recorded in §12. The first is settled:
+inside a called workflow `github.event.inputs` is the caller's dispatch inputs, `null` when the
+caller declares no block (P8), with empty string inputs absent (P9); on `schedule`, `github.actor`
+and `github.triggering_actor` are the account that last pushed the workflow file carrying the cron
+line. A survey of the calling repositories found no dispatch input named `environment`, `goal` or
+`reason`, so the standard block collides with nothing in use.
 
 ## 10. Open questions
 
-1. **`github.event.inputs` inside a reusable workflow**: expected to be the caller's dispatch
-   inputs; confirm on the test-bed, including the absent-block case.
-2. **A later `test-file` dispatch input** for running one test file: not in this spec; the
+1. **A later `test-file` dispatch input** for running one test file: not in this spec; the
    dispatch block gains a fourth input then, with the same copy-paste property.
-3. **Whether the global `trigger-events-yml` should be able to include `schedule`**: allowed by
+2. **Whether the global `trigger-events-yml` should be able to include `schedule`**: allowed by
    this spec; a repository whose every environment reconciles nightly sets it once. Confirm this is
    wanted rather than forcing the opt-in per environment.
-4. **`github.actor` on `schedule`** is undocumented; the record line prints what the context
-   gives. Confirm on the test-bed.
-5. **Callers whose existing dispatch block already has an input named `environment` or `goal`**
-   for another purpose would start being filtered; the migration guide asks each caller to check.
 
 ## 11. Implementation order
 
