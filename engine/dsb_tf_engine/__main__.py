@@ -13,8 +13,21 @@ from . import decide, model
 EXIT_OK, EXIT_CRASH, EXIT_INVALID = 0, 1, 2
 
 
+class _Parser(argparse.ArgumentParser):
+    """An argument parser whose usage errors exit 1.
+
+    argparse exits 2 on a usage error, which is this command's code for an invalid caller
+    configuration; a shim that misuses the command would then read an output document that was
+    never written, and report its own fault as the caller's.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_CRASH, f"{self.prog}: error: {message}\n")
+
+
 def _parse(argv):
-    parser = argparse.ArgumentParser(prog="dsb_tf_engine")
+    parser = _Parser(prog="dsb_tf_engine")
     commands = parser.add_subparsers(dest="command", required=True)
     decide_parser = commands.add_parser("decide", help="decide the run from an input document")
     decide_parser.add_argument("--input", required=True, help="path of the input document")
@@ -23,7 +36,8 @@ def _parse(argv):
 
 
 def main(argv=None):
-    args = _parse(sys.argv[1:] if argv is None else argv)
+    """Run the command line; argv defaults to sys.argv[1:], as argparse reads it."""
+    args = _parse(argv)
     try:
         with open(args.input, encoding="utf-8") as handle:
             document = json.load(handle)
