@@ -29,6 +29,7 @@ function main {
   work="$(mktemp -d)"
 
   require-python || return 1
+  require-yq || return 1
 
   # Builtin printf: the inputs never reach an exec'd argv or envp.
   printf '%s' "${input_inputs_json}" >"${work}/inputs.json"
@@ -52,18 +53,22 @@ function main {
     2>"${work}/engine-stderr.txt" || engine_exit=$?
 
   if [[ ${engine_exit} -eq 2 ]]; then
-    jq -r '.errors[]' "${work}/output-document.json" | while IFS= read -r message; do
-      echo "::error title=create-tf-vars-matrix::${message}"
-    done
+    # One annotation per message, its data escaped as the workflow-command syntax requires, so a
+    # newline in a caller's value can neither split the message nor start a command.
+    jq -r '.errors[] | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "${work}/output-document.json" \
+      | while IFS= read -r message; do
+        echo "::error title=create-tf-vars-matrix::${message}"
+      done
     return 2
   elif [[ ${engine_exit} -ne 0 ]]; then
     log-error "the decision engine failed (exit code ${engine_exit}):"
-    cat "${work}/engine-stderr.txt"
+    print-verbatim "${work}/engine-stderr.txt"
     return 1
   fi
 
+  jq -r '.record[]' "${work}/output-document.json" >"${work}/record.txt"
   start-group "decision record"
-  jq -r '.record[]' "${work}/output-document.json"
+  print-verbatim "${work}/record.txt"
   end-group
 
   jq -c '.matrices["1"]' "${work}/output-document.json" >"${work}/matrix.json"
