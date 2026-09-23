@@ -48,6 +48,7 @@ fails the suite below 100 percent of lines and branches.
 | D9 | Row variables keep **today's types**: a forwarded workflow input is a string (`"true"`, `"5"`), a per-environment YAML value keeps the type YAML gave it, and only `allow-failing-terraform-operations` is a JSON boolean. Typed values live in `workflow_inputs` and in the engine's own decisions. | The workflow's gates compare strings (`== 'true'`), and GitHub's expression rules make `true == 'true'` false. The port pins the current types; retyping is a separate, deliberate change (P11). |
 | D10 | Granted goals reach the workflow through a new row variable **`goals-granted`** (the eight-goal vocabulary, no `all`, no `-on-pr`); `vars.goals` stays the raw list. | Three renderers read the raw list for `apply-on-pr`; the operation gates switch to `goals-granted` so a dispatch cap can remove `apply`, with their event and branch clauses kept as defence in depth. |
 | D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. |
+| D12 | **Every injected fault must fail a test.** A mutation gate beside the coverage gate: each small fault in the package (a comparison flipped, a condition forced, a statement deleted, a raise swallowed, a list element dropped, a copy aliased) is run against the suite, and one that survives fails it, unless it is listed as equivalent with the reason. | Coverage proves every branch ran, not that a test would notice it deciding wrongly. At 100 percent coverage the first mutation run left 44 faults nobody would have noticed, among them 40 of the 43 validation checks. |
 
 ## 3. Where it lives and how it is called
 
@@ -382,14 +383,25 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
 4. **Random cases**: a seeded random walk of 3,000 documents over the same shapes, adding malformed
    entries (non-mapping environments, missing names, failed parses), asserting the invariants and
    that the engine either produces an output document or a validation error, never a crash.
+5. **Negative tests, one check at a time** (`test_validation.py`): every required field removed on
+   its own, every not-empty field emptied on its own, each producing exactly its one message; the
+   required fields deliberately allowed empty pinned as such; what counts as empty; the reporting
+   order; the directory check failing closed for a path the shim did not report; every forwarded
+   input missing or empty end to end; and a structural test that every `matrix.vars.*` key the
+   workflow reads is guaranteed by the required list, except the two recorded in §9.
+6. **The checker checked** (`test_invariants.py`): each invariant fires on an output broken in
+   exactly one way, so a checker that let everything through would fail.
+
+Every table, port, generated and random case also asserts that `decide` leaves its input document
+unchanged: the engine is a pure function of it.
 
 **Suite entry and summary lines**: `engine/run_all_tests.sh` runs `tests/run_tests.py`, which runs
 `tests/unit_runner.py` under coverage (the `unittest` modules, discovered), applies the gate and
 prints exactly once, on stdout, the three lines of [Testing-in-ci.md](Testing-in-ci.md) §4
 (`Tests run`, `Tests passed`, `Tests failed`) computed from the `TestResult` (failures, errors and
-unexpected successes count as failed). The coverage gate counts as one more test, so a shortfall
-reads as one failed test in the pull request comment rather than an all-green suite with a red
-job. Every port case is also decided in a subprocess under `PYTHONHASHSEED=0` and `=1` and the two
+unexpected successes count as failed). The coverage gate and the mutation gate count as one more
+test each, so a shortfall reads as a failed test in the pull request comment rather than an
+all-green suite with a red job. Every port case is also decided in a subprocess under `PYTHONHASHSEED=0` and `=1` and the two
 output files must be byte-identical (I12). The discovery script's second pass enrols a top-level
 directory holding `run_all_tests.sh` without an `action.yml` (Testing-in-ci.md §2.1).
 
@@ -403,12 +415,30 @@ pin, `COVERAGE_PIN` in `run_tests.py`, is bumped like any other dependency. A mi
 install fails the gate, because the gate is part of the contract (P4). The package carries no
 `# pragma: no cover`; the module entry point is covered by running it through `runpy`.
 
+**Mutation** (D12): `tests/mutation.py` rewrites the package's syntax tree one fault at a time,
+never touching docstrings, and runs the suite against each mutant in its own copy of `engine/`, in
+parallel, fast modules first, stopping at the first failure. Operators: comparisons flipped
+(`==`/`!=`, `<`/`<=`/`>=`, `is`/`is not`, `in`/`not in`), `and`/`or` swapped, `not` dropped,
+booleans inverted, integers nudged, strings emptied, one element dropped from a constant tuple or
+list, `if`, conditional-expression, `while` and comprehension conditions forced both ways, a return
+value replaced by `None`, a statement deleted, a `raise` replaced by `pass`, an exception type
+dropped from an `except` tuple, a defensive copy (`dict`, `list`, `copy.deepcopy`) replaced by its
+argument. The unmutated copy must pass first, or no mutant is judged, since a copy that fails for
+its own reasons would count every mutant as killed. A surviving mutant that cannot change
+behaviour is listed in `tests/mutation_equivalents.json` with the reason; the gate fails on an
+unlisted survivor, on a listed key that no longer exists and on a listed mutant that is killed, so
+the list cannot go stale. The package has no equivalent mutants today: the first run's
+equivalents were redundant branches, and the code lost them instead. About twenty seconds on a
+developer machine, all cores.
+
 **The shim's suite**, `create-tf-vars-matrix/run_all_tests.sh`, runs every port case end to end
 through the real step (yq and the engine included) against its golden, and rebuilds every case's
 `input.json` and fails on any difference, so the engine is never tested against a document the
 shim would not build. It also covers the default-branch fallback and its failure, the Python
-floor, an engine crash, and plants sentinels to prove that neither the inputs nor secret-shaped
-variables reach the engine's environment or its documents (I10).
+floor, a missing or broken `yq` (reported as such, never as the caller's invalid YAML), an engine
+crash, a caller's value that tries to start a workflow command in the log or split an error
+annotation, and plants sentinels to prove that neither the inputs nor secret-shaped variables
+reach the engine's environment or its documents (I10).
 
 **What tests cannot cover**: the shims on a real runner. They are kept thin enough to be reviewed
 by eye and covered by their own suites, the workflow's structural tests and the preview-ref run on
@@ -501,6 +531,9 @@ enrols the suite; the shim, whose suite runs every golden end to end; the intern
 | P15 | `jq -r` prints null as `null`, but the builder read most fields through `select(. != null)`, which prints nothing. | Two renderings of null; mixing them changes the not-empty and directory checks. | `values.render` (the check's view) and `values.get_val` (the read's view), each used where the builder used it. |
 | P16 | Command substitution strips trailing newlines, and a `log-error` inside `$(…)` writes into the captured value, not the log. | Forwarded strings lose trailing newlines; a per-environment YAML error failed with no message at all. | The port strips the same newlines and prints the message; the goldens pin both. |
 | P17 | `pipx run` does not hand `PYTHONPATH` to the interpreter it starts. | The suite's modules cannot import the package on the hosted runners, though they do locally. | The unit runner puts the engine on `sys.path` itself; coverage takes the package by path; subprocesses run from `engine/`, where `-m` finds it. |
+| P18 | argparse exits 2 on a usage error. | 2 is the engine's code for an invalid caller configuration: a shim misusing the command would read an output document that was never written and blame the caller. | The parser's usage errors exit 1; a test pins every usage error to 1. |
+| P19 | The shim treats any `yq` failure as a failed parse. | A missing or broken `yq` reports every input as the caller's invalid YAML. | The shim probes `yq` on a known document before parsing and fails naming `yq` and its own message. |
+| P20 | A caller's value reaches the log: an environment name in the decision record, an error message, the engine's stderr. | A newline followed by `::warning::…` or `::add-mask::…` becomes a workflow command; a newline in an error message splits its annotation. | Logged values are printed between `::stop-commands::` markers; annotation data is escaped (`%25`, `%0D`, `%0A`). Only the caller's own configuration can do this, so it is hygiene, not a boundary, and the bash builder logged names raw as well. |
 
 ## 11. Open questions
 
@@ -549,6 +582,11 @@ AI-assistant configuration files are never in these commits.
   strings are still handled.
 - **The default branch is in every payload the workflow runs on**, `schedule` included, so the API
   call is a fallback that normally never runs (P13).
+- **100 percent coverage was not enough.** The first mutation run, at full line and branch
+  coverage, left 44 faults unnoticed: 40 of the 43 required and not-empty checks could be deleted
+  one by one, a path missing from `directories_exist` could be read as existing, and CLI usage
+  errors could exit with the configuration code. Each got a test, the gate (D12) keeps it so, and
+  the redundant branches that made equivalent mutants were removed from the code.
 - **On the test bed the port is invisible.** Through a preview ref, a seven-environment
   configuration covering apply on pull request, destroy, outputs, allow-failing and a failing
   apply produced the same matrix as `@v0` on `workflow_dispatch`, apart from the calling branch;
