@@ -10,8 +10,9 @@
 #   - a developer running the fallback procedure by hand (docs/Development-and-release.md).
 #
 # Only `.github/workflows/*.yml|yaml` minus EXCLUDED_WORKFLOWS are touched — README, docs
-# and action.yml examples are meant to keep saying @v0. Any current ref is rewritten, not
-# just @v0, so a branch still carrying an old-style manual swap publishes a correct preview.
+# and action.yml examples are meant to keep naming the released major tag. Any current ref is
+# rewritten, whatever it is, so a branch still carrying an old-style manual swap publishes a
+# correct preview.
 #
 # Usage:
 #   rewrite-internal-refs.sh <new-ref>       rewrite in place, print per-file counts

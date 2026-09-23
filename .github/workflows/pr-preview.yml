@@ -157,7 +157,7 @@ jobs:
           ~~~yaml
           jobs:
             ci-cd:
-              # TODO revert to '@v0'
+              # TODO revert to '@v1'
               uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@${PREVIEW_REF}
           ~~~
 

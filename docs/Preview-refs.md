@@ -97,7 +97,7 @@ sequenceDiagram
 
 Every `.github/workflows/*.yml` / `*.yaml` **except** an explicit exclusion list held in the script: `pr-preview.yml` (its own comment template contains `uses: dsb-norge/github-actions-terraform/…@<placeholder>` lines that are templates, not references — rewriting them corrupts the comment and fails the guard) and `action-tests.yml` (not consumable, no refs). A new consumable workflow is covered the day it is added; a new non-consumable one that happens to contain a self-ref shows up as a guard failure, which is the right default.
 
-`README.md`, `docs/**` and `action.yml` files are never touched: the examples there *should* say `@v0`.
+`README.md`, `docs/**` and `action.yml` files are never touched: the examples there *should* name the released major tag.
 
 The match is `uses:[[:space:]]+dsb-norge/github-actions-terraform(/[^@[:space:]]*)?@[^[:space:]]+` (the optional `/…` group keeps a hypothetical `github-actions-terraform-other` repo out) — any current ref, not just `@v0`. A branch that still carries an old-style manual swap (`@my-feature`, `@apply-destroy-reporting`) therefore still publishes a hermetic preview; the markers above those lines are left alone.
 
@@ -197,7 +197,7 @@ The same ref works for `terraform-module-ci.yaml`, `terraform-module-release.yam
 ~~~yaml
 jobs:
   ci-cd:
-    # TODO revert to '@v0'
+    # TODO revert to '@v1'
     uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-53
 ~~~
 
@@ -286,9 +286,9 @@ Suite: `.github/scripts/test-rewrite-internal-refs.sh`, offline, fixture-based (
 ## 10. Day-to-day procedure (goes into Development-and-release.md)
 
 1. Open a PR (draft is fine). Wait for the `🏷️ Publish preview ref` check.
-2. Copy the `uses:` line from the sticky comment into the calling repo's workflow, above it `# TODO revert to '@v0'`.
+2. Copy the `uses:` line from the sticky comment into the calling repo's workflow, above it `# TODO revert to '@v1'`.
 3. Push to the PR as often as you like; the moving ref follows. For a long calling run, pin `preview/pr-<N>-<sha7>`.
-4. Merge (or close). The refs and the comment disappear. Revert the calling repo's line to `@v0`.
+4. Merge (or close). The refs and the comment disappear. Revert the calling repo's line to the ref it used before.
 
 Fallback — fork PRs, or before the App exists — by hand from a clone with `workflow`-scoped credentials (developer tokens normally have it; the restriction of §5 is on installation tokens):
 
@@ -297,8 +297,8 @@ bash .github/scripts/rewrite-internal-refs.sh my-feature        # rewrite the wo
 git commit -am 'chore: swap internal refs to dev tag my-feature' # on the feature branch
 git tag -f my-feature && git push -f origin refs/tags/my-feature # re-run both after every push
 # … test from the calling repo with @my-feature (workflow and actions, one ref) …
-bash .github/scripts/rewrite-internal-refs.sh v0                 # revert before merge
-git commit -am 'chore: revert internal refs to @v0'
+bash .github/scripts/rewrite-internal-refs.sh v1                 # revert before merge
+git commit -am 'chore: revert internal refs to @v1'
 git push --delete origin my-feature
 ```
 
