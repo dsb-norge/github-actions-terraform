@@ -44,6 +44,8 @@ Emits two job outputs:
 - `tests-matrix` — JSON array of action names with tests, fed straight into the `test` matrix.
 - `no-tests-list` — JSON array of action names without tests, consumed by `summary`.
 
+A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. The decision engine in [`engine/`](../engine) is the one such suite today: it is not an action, but its suite gates the pull request like every action's ([Decision-engine.md](Decision-engine.md) §8).
+
 Dynamic discovery means newly-added test suites are picked up automatically; no workflow edit is needed when a legacy action gets modernized.
 
 ### 2.2 `test` (matrix)
@@ -94,7 +96,7 @@ Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. Dire
 
 The same `extract_step_source.py` approach gives `export-env-vars` a suite without converting it to the modern layout first — useful for any action whose logic is still inline bash in `action.yml`.
 
-`.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`.
+`.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`; the second pass skips `.github/` and `.git/` explicitly. `contract-tests/` holds no `run_all_tests.sh` and is therefore not discovered; it has its own workflow (§13).
 
 When an excluded directory gets a real `run_all_tests.sh` later, drop it from the exclusion list in the same PR.
 
@@ -246,6 +248,7 @@ Path filters: intentionally omitted. Suites are cheap (seconds each), and "did t
 | `.github/scripts/rewrite-internal-refs.sh` | Not part of this workflow — rewrites internal `uses:` refs for [`pr-preview.yml`](../.github/workflows/pr-preview.yml); spec [Preview-refs.md](Preview-refs.md). |
 | `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs as the first step of `pr-preview.yml`, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
+| `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1); it needs `pipx` for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). |
 
 The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
 
