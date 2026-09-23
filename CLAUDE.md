@@ -11,16 +11,21 @@ A collection of composite GitHub Actions and reusable workflows for terraform pr
 
 Calling repos pin against either the rolling major tag (`@v0`) or a specific minor (`@v0.21`). The major tag is force-moved on every minor release, so changes shipped on `@v0` are immediately picked up by all calling repos — be mindful when touching anything in here.
 
+**`main` is the v1 line.** Its workflows' internal refs say `@v1`, and `v1` is a moving annotated tag that has no consumers yet. `v0` is frozen at v0.33 and takes fixes only, on a `release/v0` branch cut from that commit when the first fix is needed (`docs/Development-and-release.md` → "Release lines"). The plan is `docs/Road-to-v1.md`; progress, per pull request, is `docs/V1-progress.md`.
+
+**Road-to-v1 work rules:** one pull request per road step; each ends with a doc-refresh pass that brings its specs to "as built" and updates `docs/V1-progress.md`, then validation on the test-bed repository, then hand-off. Tracking documents (`Road-to-v1.md`, `V1-progress.md`) may reference each other; **specs and code comments never reference them and carry no progress markers** (no pull request numbers, no road steps, no "done"/"pending").
+
 ## Architecture
 
-### The matrix builder is the center of gravity
+### The decision engine is the center of gravity
 
-`create-tf-vars-matrix/action.yml` is the spine of the default workflow. It takes the workflow's full `inputs` JSON plus the user's `environments-yml` and produces a job matrix where each row is one fully-resolved environment configuration.
+The spine of the default workflow is the **decision engine** in `engine/` (`docs/Decision-engine.md`): a Python 3.10+ standard-library package, one JSON document in and one out, 100 percent line and branch coverage enforced by its suite. `create-tf-vars-matrix` is a thin shim around it: it parses YAML with `yq`, gathers facts (default branch, which project dirs exist), builds the input document, runs `python3 -B -m dsb_tf_engine decide`, and publishes `matrix-json`. The engine never reads YAML, the network or the filesystem. Every future decision (relevance, tests, dispatch, ordering) is a rule in the engine, not bash in a shim.
 
 Two patterns to know:
 
-- **Generic input-forwarding loop** (around `create-tf-vars-matrix/action.yml:93-99`): every top-level workflow input is automatically propagated into each env's `matrix.vars`, with per-env override available for free if the user sets the same key inside `environments-yml`. **Adding a new boolean/string workflow input does NOT require matrix-builder changes** — just add it to the `REQ_FIELDS` and `NOT_EMPTY_FIELDS` validators near the end of the action and to the JSON test fixtures.
-- **YAML fields** (`extra-envs-yml`, `goals-yml`, `terraform-init-additional-dirs-yml`, `pr-auto-merge-*-yml`) get explicit handling — some default to global, others merge global with per-env.
+- **Generic input forwarding** (`build_row` in `engine/dsb_tf_engine/environments.py`): every top-level workflow input is propagated into each env's `matrix.vars` as a string, with per-env override available for free if the user sets the same key inside `environments-yml`. **Adding a new boolean/string workflow input needs no engine logic** — add it to `REQUIRED_FIELDS` / `NOT_EMPTY_FIELDS` in `environments.py`, add it to every port case's `inputs_json` (as GitHub delivers it), then regenerate: `UPDATE_ENGINE_INPUTS=1 bash create-tf-vars-matrix/run_all_tests.sh` and `UPDATE_PORT_GOLDENS=1 bash engine/run_all_tests.sh`, and review the diff.
+- **YAML fields** (`extra-envs-yml`, `goals-yml`, `terraform-init-additional-dirs-yml`, `pr-auto-merge-*-yml`) get explicit handling (`REPLACE_FIELDS`, `MERGE_FIELDS`) — some default to global, others merge global with per-env. The shim parses every `*-yml` input and per-env key and hands over `{"ok", "value"}` parse results.
+- **The port cases** (`engine/tests/port/cases/`) pin every row the bash builder produced, including real callers' anonymised shapes. They are the regression goldens; a change that alters any row alters a golden, and the diff is the review.
 
 Boolean inputs end up as strings in the matrix (e.g. `matrix.vars.add-pr-comment == 'true'`). The exception is `allow-failing-terraform-operations`, which is explicitly normalized to a JSON boolean so the workflow can `fromJSON()` it. Follow this pattern only if the value needs `fromJSON()`; otherwise plain string comparison is fine.
 
@@ -107,23 +112,35 @@ python3 -c "import yaml; yaml.safe_load(open('<path-to>.yml'))"
 python3 -c "import json; json.load(open('<path-to>.json'))"
 ```
 
-`create-tf-vars-matrix` has a modern `run_all_tests.sh` (helper unit tests + fixture-driven runs of the step source extracted from `action.yml` by `extract_step_source.py`) and is enrolled in CI like every other action. The older `test_action_source.sh` harness is a known-flaky direct-invocation harness that requires a real tty and may fail on pristine main — it is kept for manual debugging only and CI does not run it.
+`engine/run_all_tests.sh` runs the engine suite under coverage and fails below 100 percent of lines and branches (the gate counts as one test). It needs `coverage`: CI uses the preinstalled `pipx`; locally use a venv (`python3 -m venv <dir> && <dir>/bin/pip install coverage`, then put `<dir>/bin` first on `PATH`). Without either, the gate fails on purpose. Note a venv's Python lacks PyYAML, which some older structural tests import — run other suites with the system `python3`. `action-tests.yml` discovers `engine/` through a second pass for top-level suites without an `action.yml`.
 
 ## Development workflow (see `docs/Development-and-release.md` and `docs/Preview-refs.md`)
 
 To test changes from a calling repo, use the PR's **preview ref**. There is no dev-tag swap any more:
 
-1. Open a (draft) PR. `.github/workflows/pr-preview.yml` publishes two tags on every push — `preview/pr-<N>` (moving) and `preview/pr-<N>-<sha7>` (immutable) — pointing at a generated, detached commit whose internal `uses: dsb-norge/github-actions-terraform/...@v0` refs are rewritten to the immutable tag. A sticky `🧪 Preview refs for this PR` comment carries the copy-paste line.
-2. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>`, with `# TODO revert to '@v0'` above it. The same ref serves every composite action.
-3. **Never commit a ref rewrite to the PR branch** — it keeps saying `@v0`. A branch that still carries an old-style swap commit (`@<tag>` refs with `# TODO revert to @v0` markers) should drop that commit; the preview publishes correctly either way.
+1. Open a (draft) PR. `.github/workflows/pr-preview.yml` publishes two tags on every push — `preview/pr-<N>` (moving) and `preview/pr-<N>-<sha7>` (immutable) — pointing at a generated, detached commit whose internal `uses: dsb-norge/github-actions-terraform/...@v1` refs are rewritten to the immutable tag. A sticky `🧪 Preview refs for this PR` comment carries the copy-paste line.
+2. **Calling repo** uses `uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>`, with `# TODO revert to '@v1'` above it. The same ref serves every composite action.
+3. **Never commit a ref rewrite to the PR branch** — it keeps saying `@v1`. A branch that still carries an old-style swap commit (`@<tag>` refs with `# TODO revert to @v0` markers) should drop that commit; the preview publishes correctly either way.
 4. Closing or merging the PR deletes the tags and the comment.
 
-If the comment says *unavailable (bootstrap)*, the repository variable `PREVIEW_APP_ID` / secret `PREVIEW_APP_PRIVATE_KEY` are missing — `docs/Preview-refs.md` §5 has the one-time App setup. Fallback for fork PRs: `bash .github/scripts/rewrite-internal-refs.sh <ref>`, commit, tag and push by hand (Development-and-release.md → "Fallback: publishing by hand"), and revert with the same script and `v0` before merge.
+If the comment says *unavailable (bootstrap)*, the repository variable `PREVIEW_APP_ID` / secret `PREVIEW_APP_PRIVATE_KEY` are missing — `docs/Preview-refs.md` §5 has the one-time App setup. Fallback for fork PRs: `bash .github/scripts/rewrite-internal-refs.sh <ref>`, commit, tag and push by hand (Development-and-release.md → "Fallback: publishing by hand"), and revert with the same script and `v1` before merge.
 
 ## Release process (see `docs/Development-and-release.md`)
 
 Minor and major releases both use annotated tags. Critical points beyond the doc:
 
+- **While v1 has no consumers, only `v1` moves** — no `v1.X` minors. After the maintainer merges a v1 pull request, move `v1` to the merge's tip on `main`, appending one block per pull request to its annotation (append-only, same technique as below; the first creation starts the changelog fresh):
+  ```bash
+  git fetch origin --tags -f
+  old=$(git for-each-ref --format='%(contents)' refs/tags/v1)   # empty the first time
+  new_block="#<PR>: <PR title>
+    - <commit subject>
+    - <commit subject>"
+  combined="${old:+${old}
+  }${new_block}"
+  git tag -f -a v1 -m "${combined}" origin/main
+  git push -f origin refs/tags/v1
+  ```
 - **The `v0` major tag's annotation is an append-only changelog.** Every prior `v0.X:` block must be preserved when force-recreating `v0`. The doc shows interactive `git tag -f -a 'v0'` which prompts for fresh annotation — that overwrites. To **amend** properly:
   ```bash
   old=$(git for-each-ref --format='%(contents)' refs/tags/v0)
