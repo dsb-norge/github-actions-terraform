@@ -1,0 +1,93 @@
+{
+  "caller": {
+    "default_branch": "main",
+    "repository": "example-org/example-repo"
+  },
+  "directories_exist": {
+    "./envs/env-a": false
+  },
+  "event": {
+    "name": "push",
+    "ref_name": "main"
+  },
+  "schema_version": 1,
+  "workflow_inputs": {
+    "add-pr-comment": true,
+    "apply-extract-include-outputs": false,
+    "cache-terraform-modules": true,
+    "environments-yml": "- environment: \"env-a\"\n",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-yml": "{}",
+    "format-check-in-root-dir": false,
+    "goals-yml": "[all]",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-comment-group": "",
+    "runs-on": "ubuntu-latest",
+    "terraform-init-additional-dirs-yml": "",
+    "terraform-version": "latest",
+    "tflint-version": "latest",
+    "verify-lock-file": true
+  },
+  "yaml": {
+    "environments": [
+      {}
+    ],
+    "inputs": {
+      "environments-yml": {
+        "ok": true,
+        "value": [
+          {
+            "environment": "env-a"
+          }
+        ]
+      },
+      "extra-envs-from-secrets-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-from-secrets-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "goals-yml": {
+        "ok": true,
+        "value": [
+          "all"
+        ]
+      },
+      "pr-auto-merge-from-actors-yml": {
+        "ok": true,
+        "value": []
+      },
+      "pr-auto-merge-limits-yml": {
+        "ok": true,
+        "value": {
+          "plan-max-count-add": 0,
+          "plan-max-count-change": 0,
+          "plan-max-count-destroy": 0,
+          "plan-max-count-import": -1,
+          "plan-max-count-move": -1,
+          "plan-max-count-remove": 0
+        }
+      },
+      "terraform-init-additional-dirs-yml": {
+        "ok": true,
+        "value": null
+      }
+    }
+  }
+}

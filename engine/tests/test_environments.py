@@ -1,0 +1,53 @@
+"""Environment rows: behaviour the port cases do not reach on their own."""
+
+import unittest
+
+import support
+from dsb_tf_engine import decide, model
+
+
+def vars_of(output, index=0):
+    return output["matrices"]["1"]["include"][index]["vars"]
+
+
+class EnvironmentsTest(unittest.TestCase):
+    def test_a_per_environment_yml_field_the_shim_did_not_parse_is_a_document_error(self):
+        document = support.document(environments=[{"environment": "env-a", "goals-yml": ["plan"]}])
+        with self.assertRaises(model.DocumentError) as raised:
+            decide.decide(document)
+        self.assertIn("'yaml.environments[0]' lacks 'goals-yml'", str(raised.exception))
+
+    def test_parse_results_shorter_than_the_environments_are_a_document_error(self):
+        document = support.document(environments=[{"environment": "env-a", "goals-yml": ["plan"]}], env_yaml=[])
+        with self.assertRaises(model.DocumentError):
+            decide.decide(document)
+
+    def test_an_absent_yml_input_parses_as_null(self):
+        output = decide.decide(support.document())
+        self.assertEqual([], output["errors"])
+        self.assertEqual([], vars_of(output)["goals"])
+        self.assertIsNone(vars_of(output)["extra-envs"])
+
+    def test_a_row_carries_the_run_verdict_and_the_record(self):
+        output = decide.decide(support.document(environments=[{"environment": "env-a"}, {"environment": 7}],
+                                                directories={"./envs/env-a": True, "./envs/7": True}))
+        self.assertEqual([{"environment": "env-a", "verdict": "run", "reasons": ["port"]},
+                          {"environment": 7, "verdict": "run", "reasons": ["port"]}], output["environments"])
+        self.assertEqual(["env-a: run — port", "7: run — port"], output["record"])
+        self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
+
+    def test_errors_leave_no_matrix(self):
+        output = decide.decide(support.document(environments=[]))
+        self.assertEqual(["The specification is an empty array!"], output["errors"])
+        self.assertEqual({}, output["matrices"])
+        self.assertEqual([], output["environments"])
+
+    def test_names_are_compared_as_rendered_for_duplicates(self):
+        document = support.document(environments=[{"environment": 1}, {"environment": "1"}],
+                                    directories={"./envs/1": True})
+        self.assertEqual(["Duplicate environment '1' in environments-yml specification!"],
+                         decide.decide(document)["errors"])
+
+
+if __name__ == "__main__":
+    unittest.main()

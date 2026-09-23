@@ -1,0 +1,144 @@
+{
+  "caller": {
+    "default_branch": "main",
+    "repository": "example-org/example-repo"
+  },
+  "directories_exist": {
+    "./envs/env-a": true,
+    "./envs/env-b": true,
+    "./envs/env-c": true,
+    "./envs/env-d": true,
+    "./envs/env-e": true,
+    "./envs/env-f": true,
+    "./envs/env-g": true
+  },
+  "event": {
+    "name": "push",
+    "ref_name": "main"
+  },
+  "schema_version": 1,
+  "workflow_inputs": {
+    "add-pr-comment": true,
+    "apply-extract-include-outputs": false,
+    "cache-terraform-modules": true,
+    "environments-yml": "- environment: \"env-a\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/a\n- environment: \"env-b\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/b\n- environment: \"env-c\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/c\n- environment: \"env-d\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/d\n- environment: \"env-e\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/e\n- environment: \"env-f\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/f\n- environment: \"env-g\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/g\n",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-yml": "TF_CLI_ARGS_init: \"-backend=false\"\n",
+    "format-check-in-root-dir": false,
+    "goals-yml": "- init\n- format\n- validate\n- lint\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-comment-group": "",
+    "runs-on": "ubuntu-latest",
+    "terraform-init-additional-dirs-yml": "- \"./main\"\n",
+    "terraform-version": "1.15.x",
+    "tflint-version": "v0.62.1",
+    "verify-lock-file": true
+  },
+  "yaml": {
+    "environments": [
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {}
+    ],
+    "inputs": {
+      "environments-yml": {
+        "ok": true,
+        "value": [
+          {
+            "environment": "env-a",
+            "pr-comment-group": "group-a",
+            "url": "https://example.com/a"
+          },
+          {
+            "environment": "env-b",
+            "pr-comment-group": "group-a",
+            "url": "https://example.com/b"
+          },
+          {
+            "environment": "env-c",
+            "pr-comment-group": "group-a",
+            "url": "https://example.com/c"
+          },
+          {
+            "environment": "env-d",
+            "pr-comment-group": "group-a",
+            "url": "https://example.com/d"
+          },
+          {
+            "environment": "env-e",
+            "pr-comment-group": "group-b",
+            "url": "https://example.com/e"
+          },
+          {
+            "environment": "env-f",
+            "pr-comment-group": "group-b",
+            "url": "https://example.com/f"
+          },
+          {
+            "environment": "env-g",
+            "pr-comment-group": "group-b",
+            "url": "https://example.com/g"
+          }
+        ]
+      },
+      "extra-envs-from-secrets-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-from-secrets-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-yml": {
+        "ok": true,
+        "value": {
+          "TF_CLI_ARGS_init": "-backend=false"
+        }
+      },
+      "goals-yml": {
+        "ok": true,
+        "value": [
+          "init",
+          "format",
+          "validate",
+          "lint"
+        ]
+      },
+      "pr-auto-merge-from-actors-yml": {
+        "ok": true,
+        "value": []
+      },
+      "pr-auto-merge-limits-yml": {
+        "ok": true,
+        "value": {
+          "plan-max-count-add": 0,
+          "plan-max-count-change": 0,
+          "plan-max-count-destroy": 0,
+          "plan-max-count-import": -1,
+          "plan-max-count-move": -1,
+          "plan-max-count-remove": 0
+        }
+      },
+      "terraform-init-additional-dirs-yml": {
+        "ok": true,
+        "value": [
+          "./main"
+        ]
+      }
+    }
+  }
+}
