@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Suite entry for the decision engine: every test module under coverage, then the gate.
+"""Suite entry for the decision engine: every test module under coverage, then the two gates.
 
 Prints the three canonical summary lines of docs/Testing-in-ci.md §4 exactly once. The
-coverage gate counts as one more test, so a shortfall reads as one failed test rather than an
-all-green suite with a red job.
+coverage gate and the mutation gate count as one more test each, so a shortfall reads as a
+failed test rather than an all-green suite with a red job. Coverage proves every line and branch
+ran; mutation (tests/mutation.py) proves a test notices when one of them decides wrongly.
 
 coverage is not preinstalled on the hosted runners, and `pip install --user` is refused there
 (externally managed environment), so it runs through the preinstalled pipx at a pinned
@@ -80,15 +81,21 @@ def main():
             result = {"run": 0, "failed": 0}
             shortfalls.append("  the unit runner did not report a result")
 
+        mutation_failed = run([sys.executable, "-B", os.path.join(TESTS_DIR, "mutation.py")], env) != 0
+
     print("")
+    if mutation_failed:
+        print("MUTATION GATE FAILED: an injected fault went unnoticed by every test (listed above).")
+    else:
+        print("Mutation gate passed: every injected fault fails a test.")
     if shortfalls:
         print("COVERAGE GATE FAILED (100 percent of lines and branches is the contract):")
         print("\n".join(shortfalls))
     else:
         print("Coverage gate passed: 100 percent of lines and branches.")
 
-    tests_run = result["run"] + 1
-    tests_failed = result["failed"] + (1 if shortfalls else 0)
+    tests_run = result["run"] + 2
+    tests_failed = result["failed"] + (1 if shortfalls else 0) + (1 if mutation_failed else 0)
     print("")
     print(f"Tests run:    {tests_run}")
     print(f"Tests passed: {tests_run - tests_failed}")
