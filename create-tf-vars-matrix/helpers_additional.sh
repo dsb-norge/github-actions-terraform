@@ -19,6 +19,28 @@ function require-python {
   fi
 }
 
+# yq is how the YAML inputs are parsed; a missing or broken one would otherwise make every input
+# look like invalid YAML and blame the caller. Probe it with a known document first.
+function require-yq {
+  local probe
+  probe="$(mktemp)"
+  if ! printf 'probe: [1]\n' | yq e -o=json -I=0 - >"${probe}" 2>&1 \
+    || [[ "$(cat "${probe}")" != '{"probe":[1]}' ]]; then
+    log-error "yq on the runner cannot parse YAML to JSON, so no input can be read: $(head -c 500 "${probe}")"
+    return 1
+  fi
+}
+
+# Print a file verbatim: between stop-commands markers, a line of it that looks like a workflow
+# command (an environment name with a newline in it, say) is shown, not executed.
+function print-verbatim {
+  local file="${1}" token
+  token="verbatim-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+  echo "::stop-commands::${token}"
+  cat "${file}"
+  echo "::${token}::"
+}
+
 # Write the calling repository's default branch to $2. The event payload carries it for every
 # event this workflow runs on, schedule included; the API is the fallback.
 function resolve-default-branch {
@@ -30,7 +52,8 @@ function resolve-default-branch {
   response="$(mktemp)"
   if ! gh api "repos/${input_repository}" >"${response}" 2>&1 \
     || ! jq -j -e '.default_branch | strings' "${response}" >"${out_file}"; then
-    log-error "could not resolve the default branch of '${input_repository}': $(head -c 500 "${response}")"
+    log-error "could not resolve the default branch of '${input_repository}', the API answered:"
+    print-verbatim "${response}"
     return 1
   fi
 }

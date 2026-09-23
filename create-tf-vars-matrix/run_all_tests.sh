@@ -200,7 +200,8 @@ make_sandbox "${baseline}"
 printf '#!/bin/env bash\necho "HTTP 404: Not Found" >&2\nexit 1\n' >"${SANDBOX}/bin/gh"
 chmod +x "${SANDBOX}/bin/gh"
 CASE_DEFAULT_BRANCH="" run_step
-if [[ ${STEP_EXIT} -ne 0 ]] && grep -q "could not resolve the default branch.*HTTP 404" "${OUT_FILE}"; then
+if [[ ${STEP_EXIT} -ne 0 ]] && grep -q "could not resolve the default branch" "${OUT_FILE}" \
+  && grep -q "HTTP 404: Not Found" "${OUT_FILE}"; then
   pass
 else
   fail "exit ${STEP_EXIT}, or no error naming the failure"
@@ -215,6 +216,58 @@ if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "needs Python 3.10 or later on the runner
   pass
 else
   fail "exit ${STEP_EXIT}, or no message naming the floor"
+fi
+
+for broken_yq in 'echo "yq: command not found" >&2; exit 127' 'echo "Error: unknown command \"e\""; exit 1' 'echo "not json"'; do
+  begin "yq: a broken yq fails the step naming yq, never blaming the caller's YAML ($(cut -c1-30 <<<"${broken_yq}"))"
+  make_sandbox "${baseline}"
+  printf '#!/bin/env bash\n%s\n' "${broken_yq}" >"${SANDBOX}/bin/yq"
+  chmod +x "${SANDBOX}/bin/yq"
+  run_step
+  if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "yq on the runner cannot parse YAML to JSON" "${OUT_FILE}" \
+    && ! grep -q "not valid yaml" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
+    pass
+  else
+    fail "exit ${STEP_EXIT}, or the failure was not attributed to yq"
+  fi
+done
+
+begin "injection: a newline in an environment name cannot start a workflow command in the record"
+make_sandbox "${baseline}"
+jq '.["environments-yml"] = "- environment: \"env-a\\n::warning::injected\"\n  project-dir: .\n"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
+run_step
+# The line may appear only inside a stop-commands block, where the runner shows it verbatim.
+outside="$(awk '/^::stop-commands::/{t="::" substr($0, 18) "::"; next} t && $0==t {t=""; next} !t' "${OUT_FILE}")"
+if [[ ${STEP_EXIT} -eq 0 ]] && grep -q '^::warning::injected' "${OUT_FILE}" \
+  && ! grep -q '^::warning::' <<<"${outside}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a caller's value reached the log as a workflow command"
+fi
+
+begin "injection: an error naming a caller's value is one annotation with its newline escaped"
+make_sandbox "${baseline}"
+jq '.["environments-yml"] = "- environment: \"x\\n::warning::injected\"\n- environment: \"x\\n::warning::injected\"\n"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
+run_step
+if [[ ${STEP_EXIT} -eq 2 ]] && ! grep -q '^::warning::' "${OUT_FILE}" \
+  && [[ "$(grep -c '^::error title=create-tf-vars-matrix::' "${OUT_FILE}")" == "1" ]] \
+  && grep -q "^::error title=create-tf-vars-matrix::Duplicate environment 'x%0A::warning::injected'" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the error annotation was split or unescaped"
+fi
+
+begin "annotations: a percent sign in a message is escaped"
+make_sandbox "${baseline}"
+jq '.["environments-yml"] = "- environment: \"100%\"\n- environment: \"100%\"\n"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
+run_step
+if [[ ${STEP_EXIT} -eq 2 ]] && grep -q "Duplicate environment '100%25'" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the percent sign was not escaped"
 fi
 
 begin "engine crash: exit 1 with the engine's stderr in the log, no matrix"
