@@ -62,6 +62,13 @@ table only says where.
 ### Step 1, #59: the engine port
 
 - CI: every suite green, `engine` at 100 percent line and branch coverage under `pipx`.
+- Negative coverage, after review asked whether 100 percent coverage meant the rejections were
+  tested: a mutation run found 44 unnoticed faults at full coverage (40 of the 43 validation
+  checks, the directory check's fail-closed default, CLI usage errors exiting with the
+  configuration code). All now have tests; the engine suite gained a mutation gate that fails on
+  any surviving fault (524 mutants, all killed, none listed as equivalent). The shim no longer
+  blames the caller's YAML for a broken `yq`, and keeps caller values from starting workflow
+  commands in the log.
 - Test bed, through `preview/pr-59`, on the seven-environment configuration (apply on pull
   request, destroy plan and destroy, outputs, allow-failing, a deliberately failing apply):
   - `workflow_dispatch`: the matrix is identical to a `@v0` run of the same configuration, all
