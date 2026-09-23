@@ -23,18 +23,9 @@ def render(value):
     Used where the bash builder compared or stored text: the not-empty check, the directory
     check. A null renders as the four characters `null`, exactly as jq prints it.
     """
-    if value is None:
-        text = "null"
-    elif value is True:
-        text = "true"
-    elif value is False:
-        text = "false"
-    elif isinstance(value, str):
-        text = value
-    elif isinstance(value, (int, float)):
-        text = json.dumps(value)
-    else:
-        text = json.dumps(value, indent=2, ensure_ascii=False)
+    # json.dumps gives jq's spelling of null, the booleans and numbers; the indent only shapes
+    # containers, which jq prints indented by two.
+    text = value if isinstance(value, str) else json.dumps(value, indent=2, ensure_ascii=False)
     return text.rstrip("\n")
 
 
