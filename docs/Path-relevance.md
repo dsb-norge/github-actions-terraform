@@ -37,7 +37,7 @@ was nothing to verify.
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Relevance is decided per environment inside the workflow, from `paths` / `paths-ignore` keys in `environments-yml`, evaluated against the changed files of the run. | One workflow file, one configuration, one check that always reports. |
-| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a default change and therefore part of the **v1** major release ([Road-to-v1.md](Road-to-v1.md)). |
+| D2 | **Absent `paths` means `auto`**: the standard project layout (§3.2). `paths: ["**"]` restores always-run. | Every caller gets docs-only pull requests that run nothing and still merge, without configuration. This is a default change and therefore part of the **v1** major release. |
 | D3 | Relevance is evaluated on the **whole change**, never per commit: the pull request's full diff against its merge base, or everything a push carried. | An environment the pull request touches is affected on every run of that pull request; every commit of a rebase merge is in scope on push. |
 | D4 | Every uncertainty **fails open** to "everything is relevant". Running too much is the safe error. | A missed environment is silent drift; an extra plan costs minutes. |
 | D5 | Relevance applies on pull requests and on push. An environment whose apply failed on one push is not retried by an unrelated later push. | Symmetry with the need; the escape hatch is a dispatch, which is always mode `all`. |
@@ -241,9 +241,9 @@ terraform-ci-cd:
 ```
 
 Two changes. The count gate keeps an empty matrix away from GitHub, which rejects it ("Matrix
-vector … does not contain any values"); whether a false job-level `if:` short-circuits matrix
-evaluation is widely relied on and undocumented, and is verified on the test-bed before release
-(§14), with a one-row sentinel matrix as the fallback. And the clause on `seed-pr-comments`'s
+vector … does not contain any values"); a false job-level `if:` short-circuits matrix evaluation,
+which is widely relied on and undocumented and was verified on the test bed (P13), so no sentinel
+row is needed. And the clause on `seed-pr-comments`'s
 result is dropped: the seed's steps are already `continue-on-error`, `needs:` alone keeps the
 ordering, and the old clause meant a broken seed skipped the matrix silently while the conclusion
 stayed green (P3). The concurrency group is unchanged; an unaffected environment no longer takes
@@ -544,7 +544,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 | P10 | Neither the pull request files endpoint nor compare signals truncation. | A capped list looks complete. | `changed_files` from the pull request object; 300 files in a compare response is the cap (§4.2). |
 | P11 | The pull request files list is live while a re-run is pinned to its SHA. | Relevance computed for commits the run does not test. | `pr-head-moved` fail-open (§4.2). |
 | P12 | `github.event.before` all zeros on branch creation is folklore; `created` and `forced` are documented. | A fail-open keyed only on the zero SHA can miss. | Key on the documented fields, keep the zero SHA as backup (§4.2). |
-| P13 | An empty matrix fails the job; whether a false job-level `if:` avoids evaluating it is undocumented. | A docs-only pull request could redden on the matrix job. | Verify on the test-bed; sentinel-row fallback (§5.3, §14). |
+| P13 | An empty matrix fails the job; whether a false job-level `if:` avoids evaluating it is undocumented. | A docs-only pull request could redden on the matrix job. | Verified on the test bed: GitHub evaluates the job-level condition first, so an empty matrix behind a false one is no error and no sentinel row is needed ([Environment-ordering.md](Environment-ordering.md) P4). |
 | P14 | The `automerge` job's `if:` has no status function. | Implicit `success()` skips it when the matrix is skipped. | `!cancelled()` plus explicit results (§8). |
 | P15 | Auto-merge eligibility with no metadata skipped the enabled and actor checks. | Any actor's docs-only pull request would auto-merge in an actor-restricted repository. | Checks one to three from `relevance.json` (§8). |
 | P16 | A failed apply on push N is not retried by an unrelated push N+1. | Drift until the next relevant change. | The notice lists the environment; a dispatch is mode `all` (D5). |
@@ -587,20 +587,18 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 **What tests cannot cover**: the pull request files list equalling the Files tab, the empty-matrix
 short-circuit, which attempt's check run branch protection reads after a re-run, `github.event.created`
 inside a reusable workflow, and the docs-only pull request merging without an admin. All verified on
-the test-bed and recorded in §17.
+the test-bed and recorded in §17. Two are settled already: a false job-level condition keeps an empty
+matrix from failing the run (P13), and `github.event.created`, `forced` and `deleted` are populated
+inside a called workflow on push, a branch creation reading `created: true` with `before` all zeros
+and a force push reading `forced: true`.
 
 ## 14. Open questions
 
-1. **Empty matrix behind a false `if:`**: verify on the test-bed that the environment job is
-   skipped without evaluating the matrix. If not, the builder emits a one-row sentinel that the
-   job's first step exits on.
-2. **`changed_files` accuracy**: confirm the pull request object's count equals the number of
+1. **`changed_files` accuracy**: confirm the pull request object's count equals the number of
    files the files endpoint pages out, including renames.
-3. **`github.event.created` and `forced`** are visible inside the reusable workflow's `github`
-   context for a push (the workflow already reads other event fields, so expected).
-4. **Which attempt's check run** branch protection reads after "Re-run failed jobs" (observed:
+2. **Which attempt's check run** branch protection reads after "Re-run failed jobs" (observed:
    the latest).
-5. **The `created` improvement**: whether comparing `<default-branch>...<after>` on a new branch
+3. **The `created` improvement**: whether comparing `<default-branch>...<after>` on a new branch
    is worth the extra request, or fail-open is enough.
 
 ## 15. Implementation order

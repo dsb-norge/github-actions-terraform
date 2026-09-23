@@ -6,7 +6,8 @@ contains, what changes for a caller, what a caller can newly switch on and wheth
 repository moves, in which order the pieces are built, and how the release is cut. Every spec that
 joins v1 appends its rows here in the same change; the document is complete when v1 is tagged.
 
-Status: **living.** Rows marked *pending* belong to specs not yet written.
+Status: **living.** What has been delivered, in which pull request, and what is outstanding is
+tracked in [V1-progress.md](V1-progress.md).
 
 ## 1. Why a major version
 
@@ -47,8 +48,10 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Terraform tests | not run by this workflow | every committed `*.tftest.hcl` runs on pull requests and pushes, one job per file, and a failing one blocks the merge | nothing for a repository without test files; `terraform-test-enabled: false` to opt out; test roots need Terraform 1.12 or later |
 | Schedule | a `schedule` on the calling workflow applied every environment | `schedule` is opt-in per environment through `trigger-events` | the two repositories that schedule the workflow add `trigger-events: [pull_request, push, workflow_dispatch, schedule]` to the scheduled environment, then fold the nightly file into the main workflow |
 | Dispatch inputs | ignored | `environment`, `goal` and `reason` are read from the calling workflow's `workflow_dispatch.inputs` | add the standard block; a caller whose dispatch block already uses `environment` or `goal` for something else renames its own |
-| Runner for `create-matrix` | bash | Python 3.10 or later | nothing on GitHub-hosted runners; a self-hosted pool named in the workflow-level `runs-on` must carry it |
+| Runner for `create-matrix` | bash | Python 3.10 or later | nothing on GitHub-hosted runners (no caller names a workflow-level `runs-on` today); a self-hosted pool named there must carry it |
 | Validation | a duplicated environment name passed | it is an error | fix the duplicate |
+| Default branch lookup | a failed lookup gave the string `null` and the run went on | read from the event payload; a failed API fallback stops the run | nothing |
+| Configuration errors | log lines, one of them lost in a command substitution | `::error` annotations, the step exits 2 | nothing |
 | Unsupported run events | ran with whatever the gates allowed | `merge_group`, `pull_request_target`, `release` and other events are a validation error | trigger only on pull request, push, dispatch and schedule |
 
 ## 4. New optional features and recommendations
@@ -106,14 +109,18 @@ early.
 
 ## 7. Release mechanics
 
-- v1 is cut as [Development-and-release.md](Development-and-release.md) describes for a major
-  release: a new annotated tag, no force-move. Its annotation starts a fresh changelog. Every
-  v1 minor after that moves `v1` the way `v0` moves today.
+- `main` is the v1 line: its workflows' internal refs say `@v1` (Development-and-release.md,
+  "Release lines").
+- While v1 has no consumers, `v1` is an annotated tag that moves to `main` after each v1 pull
+  request merges, its annotation an append-only changelog with one block per pull request. No
+  `v1.<n>` minors or patches until callers move; from then on every v1 release follows
+  Development-and-release.md the way v0 releases did.
 - Preview refs work unchanged for pull requests on the v1 line; the test-bed calling repository
-  is switched to `@preview/pr-<n>` for each verification.
-- `v0` stays at its last minor. Policy to record when decided: the recommendation is fixes only
-  for a stated period after v1 is tagged, no features, and the two `v0` minors of §6 step 0 before
-  the freeze.
+  is switched to `@preview/pr-<n>` for each verification and runs on `@v1` in between.
+- **v0 policy (decided):** v0 is frozen at v0.33, which carries the two step-0 changes. It takes
+  fixes only, no features, made on a `release/v0` branch cut from v0.33's commit when the first
+  fix is needed and released as `v0.<n>` minors that move `v0`. Support ends when the last caller
+  has moved to v1.
 - The project template moves to `@v1` and gains the dispatch block; the module template is
   unaffected until the module CI workflow migrates.
 
@@ -130,17 +137,10 @@ early.
 
 ## 9. Status
 
-| Spec | Decided | Implemented | Verified on the test-bed | As built |
-|---|---|---|---|---|
-| Decision-engine.md | yes | no | no | no |
-| Path-relevance.md | yes | no | no | no |
-| Terraform-tests.md | yes | no | no | no |
-| Dispatch-and-triggers.md | yes | no | no | no |
-| Environment-ordering.md | yes | no | mechanics verified on the test-bed | no |
-| concurrency queueing (PR #56) | yes | yes | yes, from the test-bed | no spec |
-| apply reporting hardening (PR #57) | yes | yes | in CI on six Terraform minors | no spec |
+Tracked in [V1-progress.md](V1-progress.md): per spec, whether it is decided, implemented, verified
+on the test bed and written as built, and which pull request delivered what.
 
 ## 10. Open cross-cutting questions
 
-1. The `v0` support period after v1 (§7).
-2. Whether the module CI workflow moves to the engine and the test summary in v1 or after.
+1. Whether the module CI workflow moves to the engine and the test summary in v1 or after. Its
+   internal refs name `@v1` on `main` already, so a v1 tag serves it consistently either way.

@@ -8,10 +8,13 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **specification, not yet implemented.** The port of today's behaviour (§9) comes before any
-of the features that depend on the engine: [Terraform-tests.md](Terraform-tests.md),
-[Path-relevance.md](Path-relevance.md) and [Dispatch-and-triggers.md](Dispatch-and-triggers.md).
-§13 is reserved for what implementation teaches the spec.
+Status: **the port (§9) is built** and is what `create-tf-vars-matrix` runs: rules 1 and 7 of §6,
+the input and output documents of §4 and §5 in the shape the port needs, the tests of §8 and the
+coverage gate. Rules 2 to 6, the test matrix, the comment manifest and the `validate` and
+`render-summary` commands are specified here and are built with the features that need them:
+[Terraform-tests.md](Terraform-tests.md), [Path-relevance.md](Path-relevance.md),
+[Dispatch-and-triggers.md](Dispatch-and-triggers.md) and
+[Environment-ordering.md](Environment-ordering.md). §13 holds what implementation taught the spec.
 
 ## 1. Why
 
@@ -44,31 +47,36 @@ fails the suite below 100 percent of lines and branches.
 | D8 | The engine **never fails open silently and never fails closed silently**: every drop of an environment or file carries a reason, and validation errors stop the run with a message. | Reasons are the contract with the reader of the run summary. |
 | D9 | Row variables keep **today's types**: a forwarded workflow input is a string (`"true"`, `"5"`), a per-environment YAML value keeps the type YAML gave it, and only `allow-failing-terraform-operations` is a JSON boolean. Typed values live in `workflow_inputs` and in the engine's own decisions. | The workflow's gates compare strings (`== 'true'`), and GitHub's expression rules make `true == 'true'` false. The port pins the current types; retyping is a separate, deliberate change (P11). |
 | D10 | Granted goals reach the workflow through a new row variable **`goals-granted`** (the eight-goal vocabulary, no `all`, no `-on-pr`); `vars.goals` stays the raw list. | Three renderers read the raw list for `apply-on-pr`; the operation gates switch to `goals-granted` so a dispatch cap can remove `apply`, with their event and branch clauses kept as defence in depth. |
-| D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. [Road-to-v1.md](Road-to-v1.md). |
+| D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. |
 
 ## 3. Where it lives and how it is called
 
 ```
 engine/
 ├── dsb_tf_engine/            # the package; stdlib only
-│   ├── __init__.py
-│   ├── __main__.py           # python3 -m dsb_tf_engine <command> --input <file> --output <file>
-│   ├── model.py              # dataclasses for the input and output documents, validation
-│   ├── events.py             # event kind, branch facts, fork and dependabot rules
-│   ├── globs.py              # the one glob matcher (Terraform-tests.md §4.4 grammar)
-│   ├── relevance.py          # Path-relevance.md §4-§5
-│   ├── environments.py       # environment rows, goals, trigger events, dispatch
-│   ├── tests.py              # test roots, lanes, environments, provider sets
-│   ├── comments.py           # which heads and tags the seed job creates or purges
-│   └── record.py             # the decision record and its rendering for the run summary
+│   ├── __init__.py           # SCHEMA_VERSION
+│   ├── __main__.py           # python3 -m dsb_tf_engine decide --input <file> --output <file>
+│   ├── model.py              # the input document's shape, checked before anything is decided
+│   ├── decide.py             # the decide command: input document in, output document out
+│   ├── environments.py       # environment rows: rule 1 (the port's validation) and rule 7
+│   ├── values.py             # jq-compatible rendering, merge and per-goal normalisation
+│   └── record.py             # the decision record
 ├── run_all_tests.sh          # the canonical suite entry (§8), at the depth discovery expects
 └── tests/
-    ├── run_tests.py          # unittest discovery; prints the canonical summary lines on stdout
-    ├── test_*.py             # unittest modules
-    ├── cases/<name>/input.json, expected.json     # table cases
-    ├── generate_cases.py     # combinatorial generator, deterministic
+    ├── run_tests.py          # coverage, the gate, the canonical summary lines, printed once
+    ├── unit_runner.py        # unittest discovery, run under coverage
+    ├── test_*.py             # unittest modules: port, generated and random cases, units
+    ├── port/cases/<name>/    # case.json, expected.json (the bash builder's output), input.json
+    ├── support.py            # the port cases and a minimal valid document
     └── invariants.py         # the checks of §7, importable by every test
 ```
+
+The features add their modules beside these as their rules are built: `events.py` (event kind,
+branch facts, the fork and Dependabot rules), `globs.py` (the one glob matcher of
+Terraform-tests.md §4.4), `relevance.py` (Path-relevance.md §4-§5), `tests.py` (test roots,
+lanes, environments, provider sets) and `comments.py` (which heads and tags the seed job creates
+or purges); `environments.py` gains goals, trigger events, dispatch and stages, and `record.py`
+the rendering for the run summary.
 
 Composite actions call it with the repository checked out at the action's ref, which is always the
 case for an action referenced as `dsb-norge/github-actions-terraform/<action>@<ref>`: GitHub
@@ -90,7 +98,22 @@ gather event facts from the `github` context, check that each `project-dir` exis
 for the network (§3.1), write the input document to a temp file, run the engine, and turn the output
 document into `$GITHUB_OUTPUT` lines and artifacts. Large data, the changed-file list above all,
 travels as a file path inside the input document, never inline (P5 of the relevance spec). The
-shim never exports its input heredocs.
+shim never exports its input heredocs, and every value it handles goes through a file rather than
+a shell variable, because the step runs under `allexport`.
+
+The shim parses **every** `*-yml` workflow input and every `*-yml` key of every environment, and
+hands each over as a parse result `{"ok": <bool>, "value": <JSON>}`; the engine decides which of
+them it reads and reports a failed parse in its own words. It reads each value exactly as the bash
+builder did, because YAML parsing is sensitive to it: a workflow input through `jq -r` with null as
+the empty string, trailing newlines stripped and one added back (the builder's `echo`), an
+environment's field the same way but with none added back (the builder's `printf '%s'`), a non-string
+field as its JSON text. `project-dir` existence is reported for the directory each environment names
+or, when it names none, `./envs/<environment>`, spelled the way the engine renders it.
+
+The default branch comes from `github.event.repository.default_branch`, which the payload carries
+on every event this workflow runs on, `schedule` included; `gh api` through a temp file is the
+fallback, and a failed fallback stops the step with the API's answer instead of degrading to the
+string `null`.
 
 ### 3.1 Adapters
 
@@ -104,10 +127,7 @@ Two adapters fetch facts and report them raw; they decide nothing:
   provider sets and validates them. Its existing `all-tests` output stays for the module CI
   workflow until that migrates.
 
-The caller's default branch comes from `github.event.repository.default_branch` when the payload
-carries it, with `gh api` through a temp file as the fallback (the current `curl` degrades to
-`null` on error, P6 of the relevance spec). An adapter that fails reports the failure in its fields
-and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
+An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
 
 ### 3.2 Commands
@@ -119,10 +139,39 @@ and exits zero. The engine decides whether a failure is fail-open (relevance) or
 | `render-summary` | an output document | Markdown for the run summary | `create-matrix` and the conclusion |
 
 Exit codes: 0 success, 2 validation error (message on stderr, structured errors in the output
-document), 1 crash. The engine writes nothing to stdout except when asked to print; logs go to
-stderr.
+document), 1 a malformed input document, an unreadable file or a crash; no output document is
+written then. The engine writes nothing to stdout except when asked to print; logs go to stderr.
+The shim turns each validation error into a `::error` annotation and fails the step with the
+engine's exit code.
 
 ## 4. The input document
+
+The document the port reads:
+
+```json
+{
+  "schema_version": 1,
+  "caller": { "repository": "owner/repo", "default_branch": "main" },
+  "event": { "name": "pull_request", "ref_name": "feature/x" },
+  "workflow_inputs": { "environments-yml": "- environment: prod\n", "goals-yml": "[all]", "add-pr-comment": true, … },
+  "yaml": {
+    "inputs": { "environments-yml": { "ok": true, "value": [ { "environment": "prod" } ] }, "goals-yml": { "ok": true, "value": ["all"] }, … },
+    "environments": [ { "goals-yml": { "ok": true, "value": ["plan"] } } ]
+  },
+  "directories_exist": { "./envs/prod": true }
+}
+```
+
+- `workflow_inputs` is `toJSON(inputs)` exactly as GitHub delivers it: every declared input,
+  booleans as JSON booleans, the `*-yml` inputs as their YAML text.
+- `yaml.inputs` holds the parse result of every `*-yml` input, `yaml.environments` one map per
+  entry of the parsed `environments-yml`, aligned by index, holding the parse result of every
+  `*-yml` key of that entry (§3).
+- `model.py` rejects unknown and missing top-level keys, a `schema_version` other than 1, and any
+  section of the wrong shape, as a document error (exit 1): a malformed document is the shim's
+  fault, not the caller's configuration.
+
+The features extend it; the full document, as they specify it:
 
 ```json
 {
@@ -139,8 +188,9 @@ stderr.
     "pull_request": { "number": 87, "base_ref": "main", "head_sha": "…", "api_head_sha": "…", "is_fork": false, "changed_files_count": 3, "draft": false },
     "dispatch_inputs": { "environment": "", "goal": "", "reason": "" }
   },
-  "workflow_inputs": { "goals-yml": ["all"], "environments-yml": [ … ], "path-relevance-enabled": true, … },
-  "directories_exist": { "envs/prod": true, "envs/staging": true },
+  "workflow_inputs": { … },
+  "yaml": { … },
+  "directories_exist": { "./envs/prod": true, "./envs/staging": true },
   "changed_files": { "available": true, "truncated": false, "error": null, "files_path": "/tmp/changed-files.txt" },
   "tests": {
     "files": ["tests/unit-net.tftest.hcl", "modules/net/tests/unit-net.tftest.hcl"],
@@ -150,11 +200,10 @@ stderr.
 }
 ```
 
-- `workflow_inputs` carries every workflow input, with the `*-yml` fields already parsed and
-  booleans as booleans; the shim normalises the strings GitHub hands it. Row variables are typed
-  separately (D9).
-- `dispatch_inputs` are strings, as GitHub delivers them; when the caller declares no `inputs:`
-  block the payload key is `null` and the shim passes an empty object.
+- Row variables are typed separately from `workflow_inputs` (D9).
+- `dispatch_inputs` are strings, as GitHub delivers them. When the caller declares no `inputs:`
+  block the payload key is `null`, and a string input left empty is absent from the payload
+  rather than `""`; the shim passes all three keys, `""` for each that is missing.
 - Only the sections a command needs must be present; an absent `tests` section means "no test
   stage", an absent `changed_files` means "relevance not computed".
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
@@ -163,6 +212,23 @@ stderr.
 - `environment_locks` is keyed by `project-dir`, because two environments may share one.
 
 ## 5. The output document
+
+What the port emits:
+
+```json
+{
+  "schema_version": 1,
+  "errors": [],
+  "notices": [],
+  "environments": [ { "environment": "prod", "verdict": "run", "reasons": ["port"] } ],
+  "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },
+  "counts": { "affected": 1, "unaffected": 0 },
+  "record": [ "prod: run — port" ]
+}
+```
+
+An output with errors carries no environments and no matrices: a configuration error never leaves
+a matrix to run. The features extend it to the full document:
 
 ```json
 {
@@ -173,8 +239,8 @@ stderr.
   "environments": [
     { "environment": "prod", "verdict": "run", "reasons": ["trigger-events: pull_request", "relevance: envs/prod/**", "ordering: stage 2"],
       "stage": 2, "depends_on": ["shared"],
-      "goals": ["init","format","validate","lint","plan"], "vars": { … the matrix row vars … } },
-    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "goals": [], "vars": { … } }
+      "goals": ["init","format","validate","lint","plan"] },
+    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "goals": [] }
   ],
   "matrices": { "1": { "environment": ["shared"], "include": [ … ] }, "2": { "environment": ["prod"], "include": [ … ] }, "3": { "environment": [], "include": [] } },
   "counts": { "affected": 2, "unaffected": 1, "by_stage": { "1": 1, "2": 1, "3": 0 } },
@@ -195,9 +261,11 @@ stderr.
 }
 ```
 
-- Each per-stage matrix and every `vars` object is what the workflow consumes today, unchanged in
-  shape and in value types (D9); the port (§9) proves it. Before ordering ships there is one
-  matrix, named `"1"`.
+- Each per-stage matrix and every `vars` object is what the workflow consumed from the bash
+  builder, unchanged in shape and in value types (D9); the port (§9) proves it. Until ordering
+  assigns stages there is one matrix, named `"1"`. A row's `vars` travel in the matrix only;
+  `environments[]` carries the verdict, the reasons and, as the rules arrive, the goals and the
+  stage.
 - **Held back is not an engine concept.** The engine assigns stages; whether a stage ran is a fact
   of the run graph it never sees. A held-back environment is composed downstream from its `stage`,
   the stage's row count and the stage job's result ([Environment-ordering.md](Environment-ordering.md) §7). The one addition is `vars.goals-granted` (D10), equal
@@ -216,7 +284,7 @@ The other specs name the same data under their own output names. The mapping is 
 
 | Spec | Name there | Here |
 |---|---|---|
-| Path-relevance.md §5.2 | `envs-json` rows with `relevance`, `matched-rule`, `paths`, `paths-ignore` | `environments[]`: `verdict` `run` is `affected`, the first `relevance:` reason is `matched-rule`, resolved rules in `vars` |
+| Path-relevance.md §5.2 | `envs-json` rows with `relevance`, `matched-rule`, `paths`, `paths-ignore` | `environments[]`: `verdict` `run` is `affected`, the first `relevance:` reason is `matched-rule`, the resolved `paths` and `paths-ignore` on the entry |
 | Path-relevance.md §5.2 | `affected-count`, `unaffected-count` | `counts.affected`, `counts.unaffected` |
 | Path-relevance.md §4.3 | `relevance-mode`, `relevance-reason`, `changed-count` | `relevance.mode`, `relevance.reason`, `relevance.changed_count` |
 | Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-env-matrix-json`, `tests-count`, `tests-active`, `tests-env-active`, `tests-not-run-json` | `tests.matrix`, `tests.env_matrix`, `tests.count`, `tests.active`, `tests.env_active`, `tests.not_run`; a row is exactly the §4.5 row schema |
@@ -248,7 +316,10 @@ environments' verdicts and the event.
 ## 7. Invariants
 
 Checked by `invariants.py` on every case of every kind (§8). A violated invariant fails the suite
-even when the case's expected output matches.
+even when the case's expected output matches. An invariant is checked from the commit that builds
+the rule it constrains; the port checks I7, I8, I11 and I12, and two properties of its own: an
+output with errors carries no environments and no matrices, and the record has one line per
+environment.
 
 | # | Invariant |
 |---|---|
@@ -284,98 +355,130 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
 `Tests passed` / `Tests failed` lines of [Testing-in-ci.md](Testing-in-ci.md) §4 and enrols in
 `action-tests.yml` like every action.
 
-1. **Port goldens** (§9): the six existing `create-tf-vars-matrix` fixtures, one fixture equal to
-   the workflow's full default `toJSON(inputs)` (the six predate `runs-on` and the auto-merge app
-   inputs, so they do not exercise every forwarded key), and one input document per real caller
-   shape (collected from the calling repositories' workflow files, anonymised) must produce today's
-   `matrix-json`, compared as parsed JSON with row order; nothing downstream reads key order. The
-   sixty-nine helper and malformed-input cases of the current `create-tf-vars-matrix` suite migrate
-   into this suite; the three `*_secrets-json.json` fixtures are vestigial (the action has no such
-   input) and are removed.
-2. **Table cases**: `cases/<name>/input.json` and `expected.json`, one per scenario in the three
-   feature specs' example sections, plus every validation error with its message.
-3. **Generated cases**: `generate_cases.py` enumerates event × branch × goals × relevance mode ×
-   dispatch × fork × trigger-events × lanes × `depends-on` graph shape (random acyclic graphs up to
-   the cap, plus deliberate cycles and over-cap chains), deterministically, writes nothing to disk,
-   and asserts the invariants on each. Several thousand cases run in seconds.
-4. **Random cases**: the same generator with a seeded random walk over field values, including
-   malformed ones, asserting invariants and that the engine either produces a valid output document
-   or a validation error, never a crash.
+1. **Port cases** (§9), 73 of them under `tests/port/cases/<name>/`: the bash suite's three
+   fixtures, the workflow's full default `toJSON(inputs)` (every key present, booleans as JSON
+   booleans, which the old fixtures were not), seventeen anonymised shapes of the real callers, and
+   one case per edge of the bash builder's code. `case.json` holds the inputs, the ref, the default
+   branch and the directories that exist; `expected.json` is the bash builder's own output, pinned
+   while it still ran; `input.json` is the document the shim builds for the case. Each must decide
+   the `matrix-json` of `expected.json`, compared as parsed JSON with row order (nothing downstream
+   reads key order), or its errors in order. A case whose `engine_expected` records a deliberate
+   deviation, with its reason, is held to that instead. The bash suite's helper cases migrated to
+   `test_values.py` and its malformed-input cases to port cases; the vestigial `*_secrets-json.json`
+   fixtures are gone. With the bash builder gone the port cases are the engine's regression goldens:
+   a change that alters rows on purpose regenerates the input documents with
+   `UPDATE_ENGINE_INPUTS=1 bash create-tf-vars-matrix/run_all_tests.sh` and the goldens with
+   `UPDATE_PORT_GOLDENS=1 bash engine/run_all_tests.sh`, and the diff is what gets reviewed: every
+   changed golden is a changed matrix for some caller.
+2. **Table cases**: one per scenario in the feature specs' example sections, plus every validation
+   error with its message, added with each rule.
+3. **Generated cases**, deterministic and written nowhere: every value shape the rules branch on
+   (absent, null, booleans, numbers, strings, lists, objects, a null leaf), per environment against
+   global, for every `*-yml` field, on and off the default branch, plus parse failures on either
+   side; every one is also decided with every object's keys reversed and must give the same output
+   (I12). The features extend the dimensions: event × goals × relevance mode × dispatch × fork ×
+   trigger-events × lanes × `depends-on` graph shape (random acyclic graphs up to the cap, plus
+   deliberate cycles and over-cap chains).
+4. **Random cases**: a seeded random walk of 3,000 documents over the same shapes, adding malformed
+   entries (non-mapping environments, missing names, failed parses), asserting the invariants and
+   that the engine either produces an output document or a validation error, never a crash.
 
-**Suite entry and summary lines**: `engine/run_all_tests.sh` runs `tests/run_tests.py`, which
-discovers the `unittest` modules and prints exactly once, on stdout, the three lines of
-[Testing-in-ci.md](Testing-in-ci.md) §4 (`Tests run`, `Tests passed`, `Tests failed`) computed
-from the `TestResult` (failures, errors and unexpected successes count as failed). The coverage gate
-counts as one more test, so a shortfall reads as one failed test in the pull request comment rather
-than an all-green suite with a red job. Every case runs twice, with `PYTHONHASHSEED=0` and `=1`
-(I12). The discovery script gains a second pass that enrols a top-level directory holding
-`run_all_tests.sh` without an `action.yml`; Testing-in-ci.md §2.1, §3 and §8 say so.
+**Suite entry and summary lines**: `engine/run_all_tests.sh` runs `tests/run_tests.py`, which runs
+`tests/unit_runner.py` under coverage (the `unittest` modules, discovered), applies the gate and
+prints exactly once, on stdout, the three lines of [Testing-in-ci.md](Testing-in-ci.md) §4
+(`Tests run`, `Tests passed`, `Tests failed`) computed from the `TestResult` (failures, errors and
+unexpected successes count as failed). The coverage gate counts as one more test, so a shortfall
+reads as one failed test in the pull request comment rather than an all-green suite with a red
+job. Every port case is also decided in a subprocess under `PYTHONHASHSEED=0` and `=1` and the two
+output files must be byte-identical (I12). The discovery script's second pass enrols a top-level
+directory holding `run_all_tests.sh` without an `action.yml` (Testing-in-ci.md §2.1).
 
 **Coverage**: the suite runs under `coverage` with branch measurement and fails when any file of
 `dsb_tf_engine/` has a missing line or branch, read from `coverage json` rather than a rounded
-percentage. `coverage` is not preinstalled on the hosted images and `pip install --user` is
-refused there by the externally-managed-environment rule, so the suite invokes it through the
-preinstalled `pipx run coverage==<pinned>`, falling back to `python3 -m coverage` where it is
-importable (developer machines). The pin is bumped like any other dependency. A missing or failing
-install fails the suite, because the gate is part of the contract (P4).
+percentage, naming the file, the lines and the branches. `coverage` is not preinstalled on the
+hosted images and `pip install --user` is refused there by the externally-managed-environment
+rule, so the suite invokes it through the preinstalled pipx, `pipx run --spec coverage==7.16.1
+coverage`, and uses `python3 -m coverage` instead where it is importable (a developer's venv). The
+pin, `COVERAGE_PIN` in `run_tests.py`, is bumped like any other dependency. A missing or failing
+install fails the gate, because the gate is part of the contract (P4). The package carries no
+`# pragma: no cover`; the module entry point is covered by running it through `runpy`.
 
-**What tests cannot cover**: the shims. They are kept thin enough to be reviewed by eye and
-covered by the workflow's structural tests and the preview-ref run on the test-bed repository.
+**The shim's suite**, `create-tf-vars-matrix/run_all_tests.sh`, runs every port case end to end
+through the real step (yq and the engine included) against its golden, and rebuilds every case's
+`input.json` and fails on any difference, so the engine is never tested against a document the
+shim would not build. It also covers the default-branch fallback and its failure, the Python
+floor, an engine crash, and plants sentinels to prove that neither the inputs nor secret-shaped
+variables reach the engine's environment or its documents (I10).
+
+**What tests cannot cover**: the shims on a real runner. They are kept thin enough to be reviewed
+by eye and covered by their own suites, the workflow's structural tests and the preview-ref run on
+the test-bed repository.
 
 ## 9. The port
 
-The first implementation commit changes no behaviour:
+The engine decides exactly what the bash `create-tf-vars-matrix` decided, every semantic of it,
+as read from that action and its helpers:
 
-1. `engine/` with `decide` implementing today's `create-tf-vars-matrix` semantics, every one of
-   them, as read from the action and its helpers:
-   - every `*-yml` input parses as YAML, an empty string parses to `null`, an invalid one is the
-     error `The specification for input '<name>' is not valid yaml!`;
-   - every environment has `environment`, else "Missing property 'environment' in
-     environments-yml specification!";
-   - `project-dir` defaults to `./envs/<environment>`, with the `./` prefix;
-   - generic forwarding: every non-`-yml` input key, in sorted order, is copied as a **string**
-     into a row that lacks it (`"true"`, `"5"`, `""` for null); per-environment values keep their
-     YAML types; arbitrary per-environment keys that are not inputs pass through untouched;
-   - `github-environment` defaults to `environment`; `url` defaults to `""`;
-   - `allow-failing-terraform-operations`: absent is JSON `false`, present is `true` only when the
-     string is exactly `true`;
-   - replace fields (`goals-yml`, `terraform-init-additional-dirs-yml`): per-environment value, as
-     YAML text or a native list, else the global, else `[]` when the global is null; invalid is
-     `the environment's '<field>' is not valid yaml!`; stored under the name without `-yml`;
-   - merge fields (`extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`,
-     `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-from-actors-yml`,
-     `pr-auto-merge-limits-yml`): absent means the global value as is (a global `""` becomes
-     `null`, not `{}`); present means a merge where null on either side yields the other, arrays
-     concatenate with duplicates kept, objects deep-merge with the environment winning and null
-     leaves preserved, and a shape mismatch is "unable to merge …";
-   - per-goal maps: every key of `init, format, validate, lint, plan, apply, destroy-plan, destroy`
-     defaulted to `{}`; empty or null input yields the full key set; unknown keys pass through; a
-     non-object passes through unchanged;
-   - every `-yml` key removed from the row; `pr-auto-merge-enabled` is not a `-yml` input and is
-     forwarded generically; a per-environment key named like a stripped field is overwritten;
-   - `caller-repo-default-branch`, `caller-repo-calling-branch` (`ref_name`) and
-     `caller-repo-is-on-default-branch` as the strings `"true"` / `"false"`;
-   - row order is `environments-yml` order;
-   - validation: the result is a non-empty array; the twenty-four required fields exist (the
-     current list lacks `runs-on` and `format-check-in-root-dir` although the workflow reads them;
-     the port keeps the list and the gap is a recorded finding, not a silent fix); the not-empty
-     fields are not the empty string (`[]`, `{}` and `null` pass); every `project-dir` exists,
-     all checked before failing; errors are grouped per field and prefixed as today;
-   - the shape `{"environment": [names], "include": [{"environment", "vars"}]}` with `vars` the
-     whole row; the only output is `matrix-json`; the only input is `inputs-json`.
-   Verdict `run` for every environment; reasons `port`. Two deliberate deviations, recorded:
-   validation exits 2 instead of 1, and a duplicated environment name becomes an error (I7);
-   today it is not checked.
-2. The suite with the goldens of §8 and the invariants that already apply (I7, I8, I12).
-3. `create-tf-vars-matrix/action.yml` rewritten as a shim around the engine; its own
-   `run_all_tests.sh` becomes a thin check that the shim forwards inputs and outputs correctly and
-   never exports its input heredocs. `extract_step_source.py` and the extracted-source harness are
-   removed. The action-tests discovery script gains the second pass of §8.
-4. A preview-ref run on the test-bed repository, and a comparison of the `matrix-json` job output
-   between the last `v0` and the preview on every real caller shape, recorded in §13.
+- every `*-yml` input parses as YAML, an empty string parses to `null`, an invalid one is the
+  error `The specification for input '<name>' is not valid yaml!`, reported for the first such
+  input in sorted order;
+- every environment has `environment`, else "Missing property 'environment' in
+  environments-yml specification!";
+- `project-dir` defaults to `./envs/<environment>`, with the `./` prefix;
+- generic forwarding: every workflow input that is not one of the nine `*-yml` inputs, in sorted
+  order, is copied as a **string** into a row that lacks it (`"true"`, `"5"`, `""` for null, with
+  trailing newlines stripped as the builder's command substitution stripped them); per-environment
+  values keep their YAML types; arbitrary per-environment keys that are not inputs pass through
+  untouched, a key ending in `-yml` included;
+- `github-environment` defaults to `environment`; `url` defaults to `""`;
+- `allow-failing-terraform-operations`: absent is JSON `false`, present is `true` only when its
+  text is exactly `true` (a YAML `true` and the string `"true"` both are; `True` and `yes` are not);
+- replace fields (`goals-yml`, `terraform-init-additional-dirs-yml`): per-environment value, as
+  YAML text or a native value, else the global, else `[]` when the global is null; invalid is
+  `the environment's '<field>' is not valid yaml!`; stored under the name without `-yml`;
+- merge fields (`extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`,
+  `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-from-actors-yml`,
+  `pr-auto-merge-limits-yml`): absent means the global value as is (a global `""` becomes
+  `null`, not `{}`); present means a merge where null on either side yields the other, arrays
+  concatenate with duplicates kept, objects deep-merge with the environment winning and null
+  leaves preserved, and any other pairing is "unable to merge …";
+- per-goal maps: every key of `init, format, validate, lint, plan, apply, destroy-plan, destroy`
+  defaulted to `{}`; null or `false` yields the full key set; unknown keys pass through; a
+  non-object other than a string passes through unchanged;
+- the nine `*-yml` keys are removed from the row; `pr-auto-merge-enabled` is not a `-yml` input
+  and is forwarded generically; a per-environment key named like a stripped field (`goals`,
+  `extra-envs`, …) is overwritten;
+- `caller-repo-default-branch`, `caller-repo-calling-branch` (`ref_name`) and
+  `caller-repo-is-on-default-branch` as the strings `"true"` / `"false"`, overwriting any
+  per-environment value;
+- row order is `environments-yml` order;
+- validation: the result is a non-empty array; the twenty-four required fields exist (the list
+  lacks `runs-on` and `format-check-in-root-dir` although the workflow reads them; the port keeps
+  the list, and the gap is a recorded finding, not a silent fix); the not-empty fields are not the
+  empty string (`[]`, `{}` and `null` pass), every failure of every environment reported before
+  stopping; then every `project-dir` exists, likewise all reported;
+- the shape `{"environment": [names], "include": [{"environment", "vars"}]}` with `vars` the
+  whole row; the action's only output is `matrix-json`, its only input `inputs-json`.
 
-Only after that do relevance, tests and dispatch land, each as rules and cases in the engine and a
-few lines in the shims and the workflow.
+Verdict `run` for every environment; reasons `port`. The deliberate deviations, each pinned by a
+port case with its reason:
+
+| Case | Bash builder | Engine |
+|---|---|---|
+| any configuration error | exit 1, messages as log lines or group titles | exit 2, each message a `::error` annotation |
+| a duplicated environment name | accepted | an error (I7) |
+| an empty `environments-yml` | a jq crash, no message | "The specification for input 'environments-yml' must be a list of environments!" |
+| `environments-yml` a mapping | its values iterated as environments | the same error |
+| an environment entry that is not a mapping | a jq crash, no message | "Missing property 'environment' …" |
+| a per-goal map that is a string | a jq crash, no message | "the environment's '<field>' must be a mapping of goal names, not a string!" |
+| malformed YAML in a per-environment field | exit 1 with no message: `log-error` ran inside a command substitution and its text became the captured value | "the environment's '<field>' is not valid yaml!" |
+| two numbers in a merge field | multiplied by jq's `*` | "unable to merge …" |
+| a failed default-branch lookup | the string `null` as the default branch | the step fails with the API's answer |
+
+The port was built in this order, each step reviewable on its own: the goldens pinned while the
+bash still ran and verified against it in CI; the engine and its suite; the discovery pass that
+enrols the suite; the shim, whose suite runs every golden end to end; the internal refs moved to
+`@v1`. A preview-ref run on the test-bed repository closes it (§13).
 
 ## 10. Pitfalls
 
@@ -386,43 +489,68 @@ few lines in the shims and the workflow.
 | P3 | Dictionary and set iteration order leaks into output. | Non-deterministic outputs, flaky goldens, flapping comments. | Sorted where the input has no order; I12 checks it. |
 | P4 | `coverage` is not preinstalled, and `pip install --user` is refused on the hosted images (externally managed environment). | The suite cannot install its gate the obvious way. | `pipx run coverage==<pin>` (preinstalled pipx), `python3 -m coverage` as the fallback; the network access is accepted for CI; the gate is not optional. |
 | P5 | The changed-file list can be a quarter of a megabyte. | ARG_MAX through the steps context if it ever became an output. | Files by path in the input document; outputs carry counts. |
-| P6 | GitHub hands every input as a string, including booleans and dispatch inputs. | `"false"` is truthy. | The shim normalises to JSON types; the model validates types and rejects the rest. |
+| P6 | A step's `env:` and a dispatch payload hand every value over as a string. | `"false"` is truthy. | `workflow_inputs` is `toJSON(inputs)`, which keeps the declared types; the shim normalises dispatch inputs to strings with `""` for an absent key; the model validates types and rejects the rest. |
 | P7 | A crash in the engine is a `create-matrix` failure, which the conclusion reports red for every caller on the release. | A fleet-wide red on a bad minor of `v1`. | The random-case tests assert "never a crash"; the port's goldens; the preview-ref run before release. |
 | P8 | The engine prints to stdout by habit. | Corrupts a command that expects the output document on stdout. | Output documents go to `--output` files; logging to stderr; a test asserts stdout is empty. |
 | P9 | `capture-matrix-job-meta` strips keys that look like secrets. | A row field a summary must read back from metadata disappears (`fork-safe` was named for this). Today's rows already carry `pr-auto-merge-app-private-key-secret` and the `extra-envs-from-secrets*` maps, which are stripped and must stay so. | Only fields a downstream summary reads from metadata are validated against the filter; the port does not rename existing keys. |
 | P10 | The decision record can grow long on a repository with many environments and files. | A run summary nobody reads. | One line per environment, one per test root, collapsed detail per file. |
 | P11 | A per-environment YAML boolean stays a JSON boolean in `vars`, and the workflow's gates compare with `== 'true'`; GitHub casts a boolean to a number and a string to NaN, so `true == 'true'` is false. | A per-environment `format-check-in-root-dir: false` does not do what the author expects today. | Pre-existing; the port pins it in the goldens and records it. Retyping per-environment booleans to strings is a separate commit with its own release note. |
 | P12 | The shim gathers adapter facts before the engine can validate the configuration. | A misconfigured caller pays for API calls before hearing about the typo. | `validate` on the partial document first (§3.2). |
-| P13 | `github.event.repository.default_branch` is documented for push, pull request and dispatch payloads, not for `schedule`. | An unknown default branch on a scheduled run. | Fallback to the API through a temp file; verified on the test-bed. |
+| P13 | `github.event.repository.default_branch` is documented for push, pull request and dispatch payloads, not for `schedule`. | An unknown default branch on a scheduled run. | Verified on the test bed: the `schedule` payload carries it too, inside a called workflow as well. The API fallback stays, and fails the step loudly. |
+| P14 | The runner sources a step script in `bash -e`. | `cmd; code=$?` never reaches the assignment when `cmd` fails: the step ends at the failing line. | Capture with `code=0; cmd \|\| code=$?`. The shim reads the engine's exit code that way. |
+| P15 | `jq -r` prints null as `null`, but the builder read most fields through `select(. != null)`, which prints nothing. | Two renderings of null; mixing them changes the not-empty and directory checks. | `values.render` (the check's view) and `values.get_val` (the read's view), each used where the builder used it. |
+| P16 | Command substitution strips trailing newlines, and a `log-error` inside `$(…)` writes into the captured value, not the log. | Forwarded strings lose trailing newlines; a per-environment YAML error failed with no message at all. | The port strips the same newlines and prints the message; the goldens pin both. |
+| P17 | `pipx run` does not hand `PYTHONPATH` to the interpreter it starts. | The suite's modules cannot import the package on the hosted runners, though they do locally. | The unit runner puts the engine on `sys.path` itself; coverage takes the package by path; subprocesses run from `engine/`, where `-m` finds it. |
 
 ## 11. Open questions
 
-1. **Python on the self-hosted runner pools** that callers might name in the workflow-level
-   `runs-on`: confirm the version on each pool used for `create-matrix`; the floor is 3.10. The
-   hosted images carry 3.10 (ubuntu-22.04, being retired) and 3.12 (ubuntu-24.04).
-2. **`pipx run coverage`** on `ubuntu-24.04` under the runner's Python: confirm the pinned
-   version runs and that `coverage json` reports branches.
-3. **Default branch on `schedule`**: whether `github.event.repository.default_branch` is populated;
-   the fallback covers it either way.
-4. **`github.actor` on `schedule`**: undocumented; community reports the user who last edited the
-   cron line. Record what the test-bed shows; the dispatch spec's record line uses whatever the
-   context gives.
+None for the port. What the first draft left open was answered by a survey of the calling
+repositories and by the test bed, and the answers are in the text: no caller names a
+workflow-level `runs-on`, so `create-matrix` runs on `ubuntu-latest` (ubuntu-24.04, Python 3.12;
+ubuntu-26.04 ships 3.14, and the engine uses nothing beyond the standard library); `pipx run
+coverage` runs on the hosted image under its Python and reports branches (§8, P17); the default
+branch is in the `schedule` payload (P13); on `schedule`, `github.actor` and
+`github.triggering_actor` are the account that last pushed the workflow file carrying the cron
+line, which the dispatch spec's record line prints as it comes.
 
-## 12. Implementation order
+## 12. How the engine grows
 
-1. `docs:` this spec.
-2. `feat(engine):` the package, the port of today's semantics, the suite with goldens and
-   invariants, the coverage gate, enrolment in `action-tests.yml`.
-3. `refactor(create-tf-vars-matrix):` the shim; remove the extracted-source harness.
-4. `feat(ci):` the discovery script's second pass; Testing-in-ci.md; a paragraph in the
-   implementation guide and CLAUDE.md on the shared engine.
-5. Preview-ref comparison on the test-bed; findings into §13.
-6. Then, in the order the maintainer chooses: relevance rules and cases; test rules and cases with
-   the `create-tftest-matrix` adapter; dispatch and trigger-events rules and cases, with the
-   `goals-granted` switch of the operation gates and its structural test.
+Each feature lands as rules and table cases in the engine, a few lines in the shim and the
+workflow, and the invariants of §7 that constrain its rules, in the order the maintainer chooses:
+relevance rules and cases; test rules and cases with the `create-tftest-matrix` adapter; dispatch
+and trigger-events rules and cases, with the `goals-granted` switch of the operation gates and its
+structural test; stage assignment. The port cases stay: a feature's default must leave every one
+of them deciding as before, or say in its spec why not.
 
 AI-assistant configuration files are never in these commits.
 
 ## 13. What implementation taught the spec
 
-Reserved.
+- **The parse boundary.** The first draft had the shim hand over the `*-yml` fields already
+  parsed and let the engine parse per-environment YAML text. The engine cannot parse YAML (D2), so
+  the shim parses every `*-yml` input and every environment's `*-yml` keys and passes parse results
+  (§3, §4); the engine picks what it reads and reports a failed parse in the builder's words. How
+  each value is read before parsing is part of the contract, because YAML is sensitive to it:
+  `echo` added a newline where `printf '%s'` did not.
+- **`directories_exist` is spelled like the engine renders the path.** The shim reports the
+  directory each environment names, or `./envs/<environment>`, in `jq -r` rendering; a null
+  `project-dir` is the path `null`, which does not exist, as it never did.
+- **Rows travel once.** The draft had every row's `vars` in `environments[]` as well as in the
+  matrix. The port keeps them in the matrix only (§5); the decision record is what a reader needs
+  from `environments[]`.
+- **The bash builder's edges were real and are pinned.** Trailing newlines stripped from forwarded
+  strings, null read two ways (P15), `false` treated as absent by jq's `//`, a per-environment key
+  named like a stripped field overwritten, `caller-repo-*` overwriting per-environment values, the
+  validation groups reported whole before stopping. The deviations are few and each is a case
+  (§9).
+- **Real callers' fixtures differ from the old ones.** GitHub delivers every declared input, with
+  booleans as JSON booleans; the old fixtures had strings and left keys out. The default fixture
+  and the seventeen caller shapes carry the real form; the old fixtures stay as they were, since
+  strings are still handled.
+- **The default branch is in every payload the workflow runs on**, `schedule` included, so the API
+  call is a fallback that normally never runs (P13).
+- **On the test bed the port is invisible.** Through a preview ref, a seven-environment
+  configuration covering apply on pull request, destroy, outputs, allow-failing and a failing
+  apply produced the same matrix as `@v0` on `workflow_dispatch`, apart from the calling branch;
+  the `pull_request` and `push` runs built the matrix the same way and ran their whole graph as
+  `@v0` does. No run needed the API for the default branch.
