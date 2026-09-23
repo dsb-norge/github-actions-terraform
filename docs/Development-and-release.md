@@ -14,13 +14,13 @@ Every same-repo pull request gets a **preview ref** — a tag a calling repo can
    ```yaml
    jobs:
      ci-cd:
-       # TODO revert to '@v0'
+       # TODO revert to '@v1'
        uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-<N>
    ```
 
    The same ref serves `terraform-module-ci.yaml`, `terraform-module-release.yaml` and every composite action. For a calling run longer than one job, pin `preview/pr-<N>-<sha7>` instead — a rebuild landing mid-run cannot change it under you.
-3. Push to the PR as often as you like. Nothing to re-tag and nothing to revert: the PR branch keeps saying `@v0`; the rewrite exists only in a generated commit the tags point at.
-4. Merge or close. The tags and the comment disappear. Revert the calling repo's line to `@v0`.
+3. Push to the PR as often as you like. Nothing to re-tag and nothing to revert: the PR branch keeps saying `@v1`; the rewrite exists only in a generated commit the tags point at.
+4. Merge or close. The tags and the comment disappear. Revert the calling repo's line to the ref it used before.
 
 If the comment says **unavailable (bootstrap)**, the GitHub App that pushes the tags is not configured — [Preview-refs.md §5](Preview-refs.md#5-the-token--why-a-github-app-is-required).
 
@@ -35,8 +35,8 @@ bash .github/scripts/rewrite-internal-refs.sh my-feature          # rewrite ever
 git commit -am 'chore: swap internal refs to dev tag my-feature'   # on the feature branch
 git tag -f my-feature && git push -f origin refs/tags/my-feature   # repeat both after every push
 # … test from the calling repo with @my-feature — one ref serves the workflow and the actions …
-bash .github/scripts/rewrite-internal-refs.sh v0                   # revert before merge
-git commit -am 'chore: revert internal refs to @v0'
+bash .github/scripts/rewrite-internal-refs.sh v1                   # revert before merge
+git commit -am 'chore: revert internal refs to @v1'
 git push --delete origin my-feature
 ```
 
@@ -64,6 +64,16 @@ Two things cost a round trip each if you learn them from CI instead of here:
 
 After merge to main use tags to release.
 
+### Release lines
+
+`main` is the **v1** line: every internal `uses: dsb-norge/github-actions-terraform/…` ref in
+its workflows says `@v1`, and a release moves the `v1` tag. The **v0** line is frozen at its
+last minor and takes fixes only. A v0 fix is made on the `release/v0` branch, cut from the
+last v0 minor's commit (`git switch -c release/v0 v0.33`) when the first fix is needed, where
+every internal ref still says `@v0`. It is released as a `v0.<n>` minor that moves `v0`, in
+the same way as below. The branch is not named `v0`: a branch and a tag of the same name make
+every `v0` reference ambiguous to git.
+
 ### Minor release
 
 Ex. for smaller backwards compatible changes. Add a new minor version tag ex `v1.0` with a description of the changes and amend the description to the major version tag.
@@ -77,11 +87,11 @@ git pull origin main
 git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
 # output changes since last release
 git log v0..HEAD --pretty=format:"%s"
-git tag -a 'v0.32'
+git tag -a 'v0.33'
 # you are prompted for the tag annotation (change description)
-git tag -f -a 'v0'
+git tag -f -a 'v0.33'
 # you are prompted for the tag annotation
-git push -f origin 'refs/tags/v0.32'
+git push origin 'refs/tags/v0.33'
 git push -f origin 'refs/tags/v0'
 ```
 
