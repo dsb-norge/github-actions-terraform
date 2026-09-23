@@ -1,0 +1,156 @@
+{
+  "caller": {
+    "default_branch": "main",
+    "repository": "example-org/example-repo"
+  },
+  "directories_exist": {
+    "./envs/env-a": true,
+    "./envs/env-b": true,
+    "./envs/env-c": true
+  },
+  "event": {
+    "name": "push",
+    "ref_name": "main"
+  },
+  "schema_version": 1,
+  "workflow_inputs": {
+    "add-pr-comment": true,
+    "apply-extract-include-outputs": false,
+    "cache-terraform-modules": true,
+    "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/a\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000002\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000003\" # comment\n- environment: \"env-b\"\n  runs-on: \"runner-b\"\n  pr-comment-group: \"group-a\"\n  allow-failing-terraform-operations: true # comment\n  url: https://example.com/b\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000004\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000005\" # comment\n- environment: \"env-c\"\n  runs-on: \"runner-c\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/c\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000006\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000007\" # comment\n",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true # comment\nARM_TENANT_ID: \"00000000-0000-0000-0000-000000000001\"\n",
+    "format-check-in-root-dir": false,
+    "goals-yml": "- init\n- format\n- validate\n- lint\n- plan\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-comment-group": "",
+    "runs-on": "ubuntu-latest",
+    "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./modules/mod-a\"\n- \"./modules/mod-b\"\n- \"./modules/mod-c\"\n- \"./modules/mod-d\"\n- \"./modules/mod-e\"\n- \"./modules/mod-f\"\n",
+    "terraform-version": "1.14.x",
+    "tflint-version": "v0.61.0",
+    "verify-lock-file": true
+  },
+  "yaml": {
+    "environments": [
+      {
+        "extra-envs-yml": {
+          "ok": true,
+          "value": {
+            "ARM_CLIENT_ID": "00000000-0000-0000-0000-000000000003",
+            "ARM_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000002"
+          }
+        }
+      },
+      {
+        "extra-envs-yml": {
+          "ok": true,
+          "value": {
+            "ARM_CLIENT_ID": "00000000-0000-0000-0000-000000000005",
+            "ARM_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000004"
+          }
+        }
+      },
+      {
+        "extra-envs-yml": {
+          "ok": true,
+          "value": {
+            "ARM_CLIENT_ID": "00000000-0000-0000-0000-000000000007",
+            "ARM_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000006"
+          }
+        }
+      }
+    ],
+    "inputs": {
+      "environments-yml": {
+        "ok": true,
+        "value": [
+          {
+            "environment": "env-a",
+            "extra-envs-yml": "ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000002\" # comment\nARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000003\" # comment\n",
+            "pr-comment-group": "group-a",
+            "runs-on": "runner-a",
+            "url": "https://example.com/a"
+          },
+          {
+            "allow-failing-terraform-operations": true,
+            "environment": "env-b",
+            "extra-envs-yml": "ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000004\" # comment\nARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000005\" # comment\n",
+            "pr-comment-group": "group-a",
+            "runs-on": "runner-b",
+            "url": "https://example.com/b"
+          },
+          {
+            "environment": "env-c",
+            "extra-envs-yml": "ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000006\" # comment\nARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000007\" # comment\n",
+            "pr-comment-group": "group-a",
+            "runs-on": "runner-c",
+            "url": "https://example.com/c"
+          }
+        ]
+      },
+      "extra-envs-from-secrets-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-from-secrets-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-per-goal-yml": {
+        "ok": true,
+        "value": {}
+      },
+      "extra-envs-yml": {
+        "ok": true,
+        "value": {
+          "ARM_TENANT_ID": "00000000-0000-0000-0000-000000000001",
+          "ARM_USE_AZUREAD": true,
+          "ARM_USE_OIDC": true
+        }
+      },
+      "goals-yml": {
+        "ok": true,
+        "value": [
+          "init",
+          "format",
+          "validate",
+          "lint",
+          "plan"
+        ]
+      },
+      "pr-auto-merge-from-actors-yml": {
+        "ok": true,
+        "value": []
+      },
+      "pr-auto-merge-limits-yml": {
+        "ok": true,
+        "value": {
+          "plan-max-count-add": 0,
+          "plan-max-count-change": 0,
+          "plan-max-count-destroy": 0,
+          "plan-max-count-import": -1,
+          "plan-max-count-move": -1,
+          "plan-max-count-remove": 0
+        }
+      },
+      "terraform-init-additional-dirs-yml": {
+        "ok": true,
+        "value": [
+          "./main",
+          "./modules/mod-a",
+          "./modules/mod-b",
+          "./modules/mod-c",
+          "./modules/mod-d",
+          "./modules/mod-e",
+          "./modules/mod-f"
+        ]
+      }
+    }
+  }
+}
