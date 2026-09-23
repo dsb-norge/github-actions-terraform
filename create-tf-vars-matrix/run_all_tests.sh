@@ -1,22 +1,21 @@
 #!/bin/env bash
 #
-# Tests for create-tf-vars-matrix.
+# Tests for create-tf-vars-matrix, the shim around the decision engine.
 #
-# Two layers:
+# The engine's own decisions are tested in engine/; this suite tests what only the shim does:
 #
-#  1. Unit tests of the merge/normalize helpers in helpers_additional.sh.
-#  2. Fixture-driven runs of the action's real inline bash. The 'create-vars'
-#     and 'validate' steps are extracted from action.yml by
-#     extract_step_source.py (literal expression substitution, no shell
-#     escaping) and executed against the JSON fixtures in test_data/, with a
-#     stub 'curl' standing in for the GitHub API call that resolves the calling
-#     repo's default branch.
-#
-# This is deterministic and needs no tty, unlike the older
-# test_action_source.sh harness, which remains for manual debugging.
+#  1. Every port case (engine/tests/port/cases) end to end through the real step script, yq
+#     and engine included: the matrix-json output, or the exit code and the ::error lines,
+#     equal the case's golden (engine_expected when the case records a deliberate deviation).
+#  2. The input document the shim builds for every case equals the case's committed
+#     input.json, which is what the engine suite decides from. UPDATE_ENGINE_INPUTS=1
+#     rewrites them.
+#  3. The default-branch fallback, the Python floor, an engine crash, and that neither the
+#     inputs nor secret-shaped variables reach the engine's environment or its documents.
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+_cases_dir="$(cd -- "${_this_script_dir}/../engine/tests/port/cases" &>/dev/null && pwd)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,147 +27,97 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_RUN=0
 
-OUT_FILE=/tmp/test_output_create_tf_vars_matrix.txt
-
-export GITHUB_ACTION_PATH="${_this_script_dir}"
+OUT_FILE="$(mktemp)"
 
 # --------------------------------------------------------------------------
 # Test helpers
 # --------------------------------------------------------------------------
 
-# Call a function from helpers_additional.sh in a subshell, so the helpers'
-# load-time logging never mixes into the value under test.
-call_helper() {
-  (
-    source "${_this_script_dir}/helpers.sh" >/dev/null 2>&1
-    "$@"
-  )
+pass() {
+  echo -e "${GREEN}✓ PASSED${NC}"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
-# Run the action's 'create-vars' step against an inputs-json fixture, or
-# against FIXTURE_OVERRIDE when set (see run_create_vars_json).
-# Populates LAST_EXIT and MATRIX_JSON.
-run_create_vars() {
-  local fixture="${FIXTURE_OVERRIDE:-${_this_script_dir}/test_data/${1}_inputs-json.json}"
-  local branch="${2:-main}"
+fail() {
+  echo -e "${RED}✗ FAILED${NC}: ${1}"
+  echo "--- step output (tail) ---"
+  tail -n 30 "${OUT_FILE}" 2>/dev/null || true
+  echo "--- /step output ---"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+}
 
-  WORK_DIR="$(mktemp -d)"
-  export GITHUB_OUTPUT="${WORK_DIR}/output.txt"
-  : >"${GITHUB_OUTPUT}"
-  export GITHUB_WORKSPACE="${WORK_DIR}/ws"
-  # Directories the fixtures point 'project-dir' at.
-  mkdir -p "${GITHUB_WORKSPACE}/envs/my-tf-env"
+begin() {
+  TESTS_RUN=$((TESTS_RUN + 1))
+  echo ""
+  echo -e "${BLUE}TEST ${TESTS_RUN}: ${1}${NC}"
+}
 
-  mkdir -p "${WORK_DIR}/stub-bin"
-  cat >"${WORK_DIR}/stub-bin/curl" <<'STUB'
+# Prepare a sandbox for the case in $1: a workspace holding the case's directories, and the
+# case's inputs JSON in ${SANDBOX}/inputs.json.
+make_sandbox() {
+  local case_file="${1}" directory
+  SANDBOX="$(mktemp -d)"
+  mkdir -p "${SANDBOX}/ws" "${SANDBOX}/bin"
+  while IFS= read -r directory; do
+    mkdir -p "${SANDBOX}/ws/${directory}"
+  done < <(jq -r '.directories[]?' "${case_file}")
+  jq '.inputs_json' "${case_file}" >"${SANDBOX}/inputs.json"
+}
+
+# Run the step script against the sandbox, as the action.yml shim does. Extra environment
+# assignments may be given as arguments. Sets STEP_EXIT; the output is in ${SANDBOX}/output.txt.
+run_step() {
+  : >"${SANDBOX}/output.txt"
+  (
+    cd "${SANDBOX}/ws" || exit 1
+    export GITHUB_ACTION_PATH="${_this_script_dir}"
+    export GITHUB_OUTPUT="${SANDBOX}/output.txt"
+    export input_repository="example-org/example-repo"
+    export input_event_name="push"
+    export input_ref_name="${CASE_REF_NAME:-main}"
+    export input_default_branch="${CASE_DEFAULT_BRANCH-main}"
+    export PATH="${SANDBOX}/bin:${PATH}"
+    for assignment in "$@"; do export "${assignment?}"; done
+    # The runner's shell flags, then the shim's own shape: the inputs captured before
+    # allexport, so never exported.
+    set -eo pipefail
+    input_inputs_json="$(cat "${SANDBOX}/inputs.json")"
+    set -o allexport
+    # shellcheck disable=SC1091
+    source "${_this_script_dir}/step_create_matrix.sh"
+  ) >"${OUT_FILE}" 2>&1
+  STEP_EXIT=$?
+}
+
+# The matrix-json value from the sandbox's output file.
+matrix_output() {
+  awk '/^matrix-json<<EOF_/{d=substr($0, index($0,"<<")+2); f=1; next} f && $0==d {f=0} f' "${SANDBOX}/output.txt"
+}
+
+# Build the engine's input document for the sandbox, as the step does, into $1.
+build_document() {
+  local out_file="${1}"
+  (
+    cd "${SANDBOX}/ws" || exit 1
+    export GITHUB_ACTION_PATH="${_this_script_dir}"
+    export input_repository="example-org/example-repo" input_event_name="push"
+    export input_ref_name="${CASE_REF_NAME:-main}"
+    source "${_this_script_dir}/helpers.sh" >/dev/null
+    printf '%s' "${CASE_DEFAULT_BRANCH-main}" >"${SANDBOX}/default-branch"
+    build-input-document "${SANDBOX}/inputs.json" "${out_file}" "${SANDBOX}/default-branch"
+  ) >"${OUT_FILE}" 2>&1
+}
+
+# A python3 in front of the real one: records its environment, then runs the real one.
+stub_python_recording_env() {
+  local real_python
+  real_python="$(command -v python3)"
+  cat >"${SANDBOX}/bin/python3" <<EOF
 #!/bin/env bash
-echo '{"default_branch":"main"}'
-STUB
-  chmod +x "${WORK_DIR}/stub-bin/curl"
-
-  python3 "${_this_script_dir}/extract_step_source.py" \
-    "${_this_script_dir}/action.yml" create-vars "${WORK_DIR}/step_create_vars.sh" \
-    "inputs.inputs-json=@${fixture}" \
-    "github.repository=dsb-norge/test-repo" \
-    "github.token=fake-token" \
-    "github.ref_name=${branch}" \
-    "github.action_path=${_this_script_dir}"
-
-  (
-    cd "${GITHUB_WORKSPACE}" || exit 1
-    # Same shell flags the runner uses ('bash --noprofile --norc -eo pipefail'),
-    # so a failure the runner's errexit would catch is caught here too.
-    PATH="${WORK_DIR}/stub-bin:${PATH}" \
-      bash --noprofile --norc -eo pipefail "${WORK_DIR}/step_create_vars.sh"
-  ) >"${OUT_FILE}" 2>&1
-  LAST_EXIT=$?
-
-  MATRIX_JSON="$(read_multiline_output json)"
-}
-
-# Run the action's 'validate' step against the JSON produced by the most
-# recent run_create_vars. Populates LAST_EXIT.
-run_validate() {
-  printf '%s\n' "${MATRIX_JSON}" >"${WORK_DIR}/create-vars.json"
-
-  python3 "${_this_script_dir}/extract_step_source.py" \
-    "${_this_script_dir}/action.yml" validate "${WORK_DIR}/step_validate.sh" \
-    "steps.create-vars.outputs.json=@${WORK_DIR}/create-vars.json" \
-    "github.action_path=${_this_script_dir}"
-
-  (
-    cd "${GITHUB_WORKSPACE}" || exit 1
-    bash --noprofile --norc -eo pipefail "${WORK_DIR}/step_validate.sh"
-  ) >"${OUT_FILE}" 2>&1
-  LAST_EXIT=$?
-}
-
-# Run 'create-vars' against inline inputs-json rather than a fixture file, for
-# the one-off malformed cases the three shared fixtures should not carry.
-run_create_vars_json() {
-  local json="${1}"
-  local tmp
-  tmp="$(mktemp -d)"
-  printf '%s' "${json}" >"${tmp}/inputs.json"
-  FIXTURE_OVERRIDE="${tmp}/inputs.json"
-  run_create_vars '' ''
-  FIXTURE_OVERRIDE=""
-}
-
-# Read a multiline output (name<<"DELIM" ... "DELIM") from $GITHUB_OUTPUT.
-read_multiline_output() {
-  python3 - "${GITHUB_OUTPUT}" "${1}" <<'PY'
-import re
-import sys
-
-path, name = sys.argv[1], sys.argv[2]
-with open(path, encoding="utf-8") as handle:
-    text = handle.read()
-match = re.search(
-    r'^%s<<"([^"]+)"\n(.*?)\n"\1"\s*$' % re.escape(name), text, re.S | re.M
-)
-print(match.group(2) if match else "", end="")
-PY
-}
-
-# jq query against MATRIX_JSON for a single environment.
-env_query() {
-  local environment="${1}" filter="${2}"
-  printf '%s' "${MATRIX_JSON}" \
-    | jq -c --arg env "${environment}" '.[] | select(.environment == $env) | '"${filter}"
-}
-
-assert() {
-  local name="${1}"
-  shift
-  TESTS_RUN=$((TESTS_RUN + 1))
-  echo ""
-  echo -e "${BLUE}TEST ${TESTS_RUN}: ${name}${NC}"
-  if "$@"; then
-    echo -e "${GREEN}✓ PASSED${NC}"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-  else
-    echo -e "${RED}✗ FAILED${NC}"
-    echo "--- step output (tail) ---"
-    tail -n 40 "${OUT_FILE}" 2>/dev/null || true
-    echo "--- /step output ---"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-  fi
-}
-
-# assert_eq <name> <expected> <actual>
-assert_eq() {
-  local name="${1}" expected="${2}" actual="${3}"
-  TESTS_RUN=$((TESTS_RUN + 1))
-  echo ""
-  echo -e "${BLUE}TEST ${TESTS_RUN}: ${name}${NC}"
-  if [[ "${expected}" == "${actual}" ]]; then
-    echo -e "${GREEN}✓ PASSED${NC}"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-  else
-    echo -e "${RED}✗ FAILED${NC}: expected '${expected}', got '${actual}'"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-  fi
+env >>"${SANDBOX}/python-env.txt"
+exec "${real_python}" "\$@"
+EOF
+  chmod +x "${SANDBOX}/bin/python3"
 }
 
 echo ""
@@ -177,353 +126,153 @@ echo -e "${YELLOW}       CREATE-TF-VARS-MATRIX TESTS          ${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
 # ======================================================================
-# merge-yml-field-json — the type dispatch
-# See docs/Per-goal-environment-variables.md §9.5.
+# 1 + 2: every port case, end to end and as an input document
 # ======================================================================
 
-assert_eq "merge: arrays concatenate (the case '*' cannot do)" \
-  '["a","b"]' \
-  "$(call_helper merge-yml-field-json '["a"]' '["b"]' | jq -c .)"
-
-assert_eq "merge: null global yields the environment value" \
-  '["b"]' \
-  "$(call_helper merge-yml-field-json 'null' '["b"]' | jq -c .)"
-
-assert_eq "merge: null environment yields the global value" \
-  '{"A":1}' \
-  "$(call_helper merge-yml-field-json '{"A":1}' 'null' | jq -c .)"
-
-assert_eq "merge: flat objects override per key (unchanged from 'add')" \
-  '{"A":1,"B":3}' \
-  "$(call_helper merge-yml-field-json '{"A":1,"B":2}' '{"B":3}' | jq -Sc .)"
-
-assert_eq "merge: nested objects deep merge, sibling keys survive" \
-  '{"plan":{"GOGC":25,"GOMEMLIMIT":"24GiB"}}' \
-  "$(call_helper merge-yml-field-json '{"plan":{"GOGC":25,"GOMEMLIMIT":"12GiB"}}' '{"plan":{"GOMEMLIMIT":"24GiB"}}' | jq -Sc .)"
-
-assert_eq "merge: nested objects keep untouched sibling goals" \
-  '{"lint":{"GOGC":400},"plan":{"GOGC":25}}' \
-  "$(call_helper merge-yml-field-json '{"plan":{"GOGC":25},"lint":{"GOGC":400}}' '{"plan":{"GOGC":25}}' | jq -Sc .)"
-
-assert_eq "merge: a null leaf survives the merge (unset semantics)" \
-  '{"plan":{"GOMEMLIMIT":null}}' \
-  "$(call_helper merge-yml-field-json '{"plan":{"GOMEMLIMIT":"6GiB"}}' '{"plan":{"GOMEMLIMIT":null}}' | jq -Sc .)"
-
-assert_eq "merge: environment scalar replaces global scalar" \
-  '{"A":"env"}' \
-  "$(call_helper merge-yml-field-json '{"A":"global"}' '{"A":"env"}' | jq -Sc .)"
-
-# ======================================================================
-# normalize-goal-keys-json
-# ======================================================================
-
-ALL_GOAL_KEYS='["apply","destroy","destroy-plan","format","init","lint","plan","validate"]'
-
-assert_eq "normalize: empty object gains all eight goal keys" \
-  "${ALL_GOAL_KEYS}" \
-  "$(call_helper normalize-goal-keys-json '{}' | jq -c '[keys[]] | sort')"
-
-assert_eq "normalize: every added key defaults to an empty object" \
-  'true' \
-  "$(call_helper normalize-goal-keys-json '{}' | jq -c '[.[] | . == {}] | all')"
-
-assert_eq "normalize: JSON null input becomes the full key set" \
-  "${ALL_GOAL_KEYS}" \
-  "$(call_helper normalize-goal-keys-json 'null' | jq -c '[keys[]] | sort')"
-
-assert_eq "normalize: empty string input becomes the full key set" \
-  "${ALL_GOAL_KEYS}" \
-  "$(call_helper normalize-goal-keys-json '' | jq -c '[keys[]] | sort')"
-
-assert_eq "normalize: existing goal values are preserved" \
-  '{"GOGC":25}' \
-  "$(call_helper normalize-goal-keys-json '{"plan":{"GOGC":25}}' | jq -c '.plan')"
-
-assert_eq "normalize: goals not mentioned still become empty objects" \
-  '{}' \
-  "$(call_helper normalize-goal-keys-json '{"plan":{"GOGC":25}}' | jq -c '.apply')"
-
-assert_eq "normalize: a null leaf inside a goal is preserved" \
-  'null' \
-  "$(call_helper normalize-goal-keys-json '{"apply":{"GOMEMLIMIT":null}}' | jq -c '.apply.GOMEMLIMIT')"
-
-# Unknown keys pass through untouched — rejecting them is resolve-goal-envs'
-# job, so a caller writing 'all:' gets one error from one place.
-assert_eq "normalize: an unknown goal key passes through untouched" \
-  '{"NOPE":1}' \
-  "$(call_helper normalize-goal-keys-json '{"all":{"NOPE":1}}' | jq -c '.all')"
-
-assert_eq "normalize: unknown keys do not stop the eight from being added" \
-  '9' \
-  "$(call_helper normalize-goal-keys-json '{"all":{}}' | jq -c '[keys[]] | length')"
-
-# ======================================================================
-# Fixture: minimal — everything defaulted
-# ======================================================================
-
-run_create_vars 'test_input_minimal'
-
-assert "minimal: create-vars step exits 0" test "${LAST_EXIT}" -eq 0
-assert "minimal: output is a non-empty JSON array" \
-  bash -c "[[ \$(printf '%s' '${MATRIX_JSON}' | jq -r 'type') == 'array' ]] && [[ \$(printf '%s' '${MATRIX_JSON}' | jq -r 'length') -ge 1 ]]"
-
-assert_eq "minimal: 'extra-envs-per-goal' has all eight goal keys" \
-  "${ALL_GOAL_KEYS}" \
-  "$(env_query my-tf-env '[.["extra-envs-per-goal"] | keys[]] | sort')"
-
-assert_eq "minimal: 'extra-envs-from-secrets-per-goal' has all eight goal keys" \
-  "${ALL_GOAL_KEYS}" \
-  "$(env_query my-tf-env '[.["extra-envs-from-secrets-per-goal"] | keys[]] | sort')"
-
-assert_eq "minimal: every per-goal entry defaults to an empty object" \
-  'true' \
-  "$(env_query my-tf-env '[.["extra-envs-per-goal"][] | . == {}] | all')"
-
-assert_eq "minimal: no '*-yml' fields survive into the matrix output" \
-  '[]' \
-  "$(env_query my-tf-env '[keys[] | select(endswith("-yml"))]')"
-
-run_validate
-assert "minimal: validate step exits 0" test "${LAST_EXIT}" -eq 0
-
-# ======================================================================
-# Fixture: happy day — global + per-environment values of everything
-# ======================================================================
-
-run_create_vars 'test_input_happy_day'
-
-assert "happy day: create-vars step exits 0" test "${LAST_EXIT}" -eq 0
-assert_eq "happy day: three environments produced" \
-  '3' \
-  "$(printf '%s' "${MATRIX_JSON}" | jq -c 'length')"
-
-# --- deep merge: the load-bearing case -------------------------------------
-# 'my-second-env' overrides only plan.GOMEMLIMIT. A shallow merge would
-# replace the whole 'plan' object and drop GOGC back to the global default.
-assert_eq "deep merge: per-env override keeps the goal's other keys" \
-  '{"GOGC":25,"GOMEMLIMIT":"24GiB"}' \
-  "$(env_query my-second-env '.["extra-envs-per-goal"].plan | to_entries | sort_by(.key) | from_entries')"
-
-assert_eq "deep merge: other environments keep the global value" \
-  '{"GOGC":25,"GOMEMLIMIT":"12GiB"}' \
-  "$(env_query my-first-env '.["extra-envs-per-goal"].plan | to_entries | sort_by(.key) | from_entries')"
-
-assert_eq "deep merge: goals the environment did not mention are untouched" \
-  '{"GOGC":400}' \
-  "$(env_query my-second-env '.["extra-envs-per-goal"].lint')"
-
-# --- null leaves ----------------------------------------------------------
-assert_eq "null leaf: survives into the matrix as JSON null, not a dropped key" \
-  'true' \
-  "$(env_query my-second-env '.["extra-envs-per-goal"].apply | has("GOMEMLIMIT")')"
-
-assert_eq "null leaf: value is JSON null" \
-  'null' \
-  "$(env_query my-second-env '.["extra-envs-per-goal"].apply.GOMEMLIMIT')"
-
-# --- per-goal secrets ----------------------------------------------------
-assert_eq "per-goal secrets: global and per-env entries are merged" \
-  '{"ARM_CLIENT_ID":"ARM_CLIENT_ID_secret","TF_VAR_my_custom":"more"}' \
-  "$(env_query my-second-env '.["extra-envs-from-secrets-per-goal"].apply | to_entries | sort_by(.key) | from_entries')"
-
-assert_eq "per-goal secrets: environments without an override get the global" \
-  '{"ARM_CLIENT_ID":"ARM_CLIENT_ID_secret"}' \
-  "$(env_query my-first-env '.["extra-envs-from-secrets-per-goal"].apply')"
-
-assert_eq "per-goal: all eight keys normalized for every environment" \
-  'true' \
-  "$(printf '%s' "${MATRIX_JSON}" | jq -c '[.[] | ([.["extra-envs-per-goal"] | keys[]] | length) == 8] | all')"
-
-# --- the array field the type dispatch exists for -------------------------
-# 'pr-auto-merge-from-actors-yml' is a YAML array. A blanket switch to jq's
-# '*' would make this a hard error instead of a concatenation.
-assert_eq "array field: global and per-env arrays concatenate" \
-  '["global-actor","env-actor"]' \
-  "$(env_query my-second-env '.["pr-auto-merge-from-actors"]')"
-
-assert_eq "array field: environments without an override get the global" \
-  '["global-actor"]' \
-  "$(env_query my-first-env '.["pr-auto-merge-from-actors"]')"
-
-# --- flat objects: unchanged behaviour -----------------------------------
-assert_eq "flat object: per-env limit overrides one key only" \
-  '5' \
-  "$(env_query my-second-env '.["pr-auto-merge-limits"]["plan-max-count-add"]')"
-
-assert_eq "flat object: other limit keys keep the global value" \
-  '-1' \
-  "$(env_query my-second-env '.["pr-auto-merge-limits"]["plan-max-count-import"]')"
-
-assert_eq "flat object: 'extra-envs' is unaffected by the merge change" \
-  '{"ANOTHER_ENV":"1 2 3","ARM_USE_AZUREAD":true,"ARM_USE_OIDC":true}' \
-  "$(env_query my-first-env '.["extra-envs"] | to_entries | sort_by(.key) | from_entries')"
-
-assert_eq "flat object: 'extra-envs-from-secrets' is unaffected too" \
-  '4' \
-  "$(env_query my-first-env '.["extra-envs-from-secrets"] | length')"
-
-assert_eq "happy day: no '*-yml' fields survive into the matrix output" \
-  'true' \
-  "$(printf '%s' "${MATRIX_JSON}" | jq -c '[.[] | [keys[] | select(endswith("-yml"))] | length == 0] | all')"
-
-run_validate
-assert "happy day: validate step exits 0" test "${LAST_EXIT}" -eq 0
-
-# ======================================================================
-# Fixture: invalid yaml — must fail loudly
-# ======================================================================
-
-run_create_vars 'test_input_fail_yml_spec'
-assert "invalid yaml: create-vars step exits non-zero" test "${LAST_EXIT}" -ne 0
-assert "invalid yaml: error names the offending input" \
-  grep -q "input 'extra-envs-from-secrets-yml' is not valid yaml" "${OUT_FILE}"
-
-# ======================================================================
-# Summary
-# ======================================================================
-# ======================================================================
-# Negative cases
-# ======================================================================
-
-# Minimal valid inputs-json, as a base for the malformed variants below.
-BASE_INPUTS='{
-  "environments-yml": "- environment: \"my-tf-env\"\n",
-  "goals-yml": "[all]",
-  "extra-envs-from-secrets-yml": "{}",
-  "extra-envs-yml": "{}",
-  "extra-envs-per-goal-yml": "{}",
-  "extra-envs-from-secrets-per-goal-yml": "{}",
-  "terraform-version": "latest",
-  "tflint-version": "latest",
-  "add-pr-comment": "true",
-  "verify-lock-file": "true",
-  "apply-extract-include-outputs": "false",
-  "pr-comment-group": "",
-  "pr-auto-merge-enabled": "false",
-  "pr-auto-merge-from-actors-yml": "[]",
-  "pr-auto-merge-limits-yml": "plan-max-count-add: 0\n"
-}'
-
-# ----------------------------------------------------------------------
-# An environment entry without the one required field
-# ----------------------------------------------------------------------
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- project-dir: \".\"\n"')"
-assert "negative: an environment without 'environment' fails" test "${LAST_EXIT}" -ne 0
-assert "negative: the error names the missing property" \
-  grep -q "Missing property 'environment' in environments-yml" "${OUT_FILE}"
-
-# ----------------------------------------------------------------------
-# An empty environments-yml — nothing to build a matrix from
-# ----------------------------------------------------------------------
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "[]"')"
-assert "negative: an empty environments list still produces output" \
-  test "${LAST_EXIT}" -eq 0
-assert_eq "negative: ... and that output is an empty array" \
-  '0' "$(printf '%s' "${MATRIX_JSON}" | jq -c 'length')"
-run_validate
-assert "negative: the validate step rejects an empty matrix" test "${LAST_EXIT}" -ne 0
-assert "negative: the error says the specification is empty" \
-  grep -q 'The specification is an empty array' "${OUT_FILE}"
-
-# ----------------------------------------------------------------------
-# Per-environment overrides of the '*-yml' fields that fall back to a global
-# default. The stored value is the YAML the caller wrote, so it has to be
-# parsed before it can reach 'jq --argjson' — the merged fields have always
-# done that, these had not.
-# ----------------------------------------------------------------------
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n    - format\n"')"
-assert "a per-environment 'goals-yml' override is accepted" test "${LAST_EXIT}" -eq 0
-assert_eq "... and is parsed into a list, not left as a yaml string" \
-  '["init","format"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0].goals')"
-
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  terraform-init-additional-dirs-yml: |\n    - \"./main\"\n"')"
-assert "a per-environment 'terraform-init-additional-dirs-yml' override is accepted" \
-  test "${LAST_EXIT}" -eq 0
-assert_eq "... and is parsed into a list" \
-  '["./main"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0]["terraform-init-additional-dirs"]')"
-
-# The per-environment value wins outright; these fields replace rather than
-# merge, unlike the extra-envs family below.
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["goals-yml"] = "- init\n- format\n- validate\n- lint\n" | .["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n"')"
-assert_eq "a per-environment override replaces the global value" \
-  '["init"]' "$(printf '%s' "${MATRIX_JSON}" | jq -c '.[0].goals')"
-
-# Malformed yaml in a per-environment override must say so, not surface as a
-# bare jq parse error from somewhere further down.
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" | jq -c '.["environments-yml"] = "- environment: \"my-tf-env\"\n  goals-yml: |\n    - init\n     bad: [indent\n"')"
-assert "negative: malformed yaml in a per-environment override fails" test "${LAST_EXIT}" -ne 0
-assert "negative: ... and the error names the field" \
-  grep -q "goals-yml" "${OUT_FILE}"
-
-# ----------------------------------------------------------------------
-# Type mismatch between the global and per-environment value of a merged
-# field. Better a loud jq failure than a silently mangled matrix.
-# ----------------------------------------------------------------------
-run_create_vars_json "$(printf '%s' "${BASE_INPUTS}" \
-  | jq -c '.["extra-envs-per-goal-yml"] = "plan:\n  GOGC: 25\n"
-         | .["environments-yml"] = "- environment: \"my-tf-env\"\n  extra-envs-per-goal-yml: \"a plain string\"\n"')"
-assert "negative: an object-versus-string merge fails the step" test "${LAST_EXIT}" -ne 0
-assert "negative: the error explains the shape mismatch rather than dumping jq" \
-  grep -q 'the two are probably of different shapes' "${OUT_FILE}"
-
-# ----------------------------------------------------------------------
-# The validate step's own guards, driven directly
-# ----------------------------------------------------------------------
-run_create_vars 'test_input_minimal'
-assert "validate: the baseline matrix is valid" test "${LAST_EXIT}" -eq 0
-
-# A required field removed from an otherwise valid matrix.
-MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(del(.["extra-envs-per-goal"]))')"
-run_validate
-assert "negative: a missing required field fails validation" test "${LAST_EXIT}" -ne 0
-assert "negative: the error names the field" \
-  grep -q "Missing property 'extra-envs-per-goal'" "${OUT_FILE}"
-
-# project-dir must point at a directory that exists.
-run_create_vars 'test_input_minimal'
-MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["project-dir"] = "./envs/does-not-exist")')"
-run_validate
-assert "negative: a non-existent project-dir fails validation" test "${LAST_EXIT}" -ne 0
-assert "negative: the error names the directory" \
-  grep -q 'does not exist, make sure' "${OUT_FILE}"
-
-# An empty value in a NOT_EMPTY field. The two new per-goal fields are
-# deliberately absent from that list, since '{}' is a legitimate value.
-run_create_vars 'test_input_minimal'
-MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["terraform-version"] = "")')"
-run_validate
-assert "negative: an empty required-non-empty field fails validation" \
-  test "${LAST_EXIT}" -ne 0
-assert "negative: the error says the property is empty" \
-  grep -q "Property 'terraform-version' is empty" "${OUT_FILE}"
-
-run_create_vars 'test_input_minimal'
-MATRIX_JSON="$(printf '%s' "${MATRIX_JSON}" | jq -c 'map(.["extra-envs-per-goal"] = {})')"
-run_validate
-assert "positive: an empty per-goal map is accepted, not treated as empty" \
-  test "${LAST_EXIT}" -eq 0
-
-# ----------------------------------------------------------------------
-# normalize-goal-keys-json leaves a non-object alone rather than guessing.
-# resolve-goal-envs is what rejects it, so the caller gets one error from one
-# place.
-# ----------------------------------------------------------------------
-assert_eq "normalize: an array input is passed through untouched" \
-  '[1,2]' "$(call_helper normalize-goal-keys-json '[1,2]' | jq -c .)"
-assert_eq "normalize: a string input is passed through untouched" \
-  '"nope"' "$(call_helper normalize-goal-keys-json '"nope"' | jq -c .)"
-
-# ======================================================================
-# Port goldens: the builder's own output for every case the decision engine
-# is ported against (docs/Decision-engine.md §9). run_legacy_goldens.py runs
-# all three steps of action.yml per case; a golden that no longer matches
-# this bash is a golden the engine would be wrongly held to.
-# ======================================================================
-
-for case_dir in "${_this_script_dir}"/../engine/tests/port/cases/*/; do
-  assert "port golden: $(basename "${case_dir}")" \
-    python3 "${_this_script_dir}/run_legacy_goldens.py" check "${case_dir%/}"
+for case_dir in "${_cases_dir}"/*/; do
+  case_dir="${case_dir%/}"
+  name="$(basename "${case_dir}")"
+  case_file="${case_dir}/case.json"
+  CASE_REF_NAME="$(jq -r '.ref_name' "${case_file}")"
+  CASE_DEFAULT_BRANCH="$(jq -r '.default_branch' "${case_file}")"
+  make_sandbox "${case_file}"
+
+  begin "input document: ${name}"
+  build_document "${SANDBOX}/document.json"
+  if [[ "${UPDATE_ENGINE_INPUTS:-}" == "1" ]]; then
+    jq -S . "${SANDBOX}/document.json" >"${case_dir}/input.json"
+  fi
+  if diff <(jq -S . "${case_dir}/input.json") <(jq -S . "${SANDBOX}/document.json") >/dev/null 2>&1; then
+    pass
+  else
+    fail "the shim builds a different document than ${case_dir}/input.json"
+  fi
+
+  begin "end to end: ${name}"
+  expected="$(jq -c '.engine_expected // empty' "${case_file}")"
+  [[ -z "${expected}" ]] && expected="$(jq -c '.' "${case_dir}/expected.json")"
+  run_step
+  expected_exit="$(jq -r '.exit_code' <<<"${expected}")"
+  if [[ "${expected_exit}" == "0" ]]; then
+    if [[ ${STEP_EXIT} -ne 0 ]]; then
+      fail "exit code ${STEP_EXIT}, expected 0"
+    elif [[ "$(matrix_output | jq -S -c .)" == "$(jq -S -c '.matrix' <<<"${expected}")" ]]; then
+      pass
+    else
+      fail "matrix-json differs from the golden"
+    fi
+  else
+    actual_errors="$(sed -n 's/^::error title=create-tf-vars-matrix:://p' "${OUT_FILE}" | jq -R . | jq -s -c .)"
+    if [[ ${STEP_EXIT} -ne 2 ]]; then
+      fail "exit code ${STEP_EXIT}, expected 2"
+    elif [[ "${actual_errors}" == "$(jq -c '.errors' <<<"${expected}")" ]]; then
+      pass
+    else
+      fail "errors ${actual_errors}, expected $(jq -c '.errors' <<<"${expected}")"
+    fi
+  fi
 done
+unset CASE_REF_NAME CASE_DEFAULT_BRANCH
+
+# ======================================================================
+# 3: what only the shim does
+# ======================================================================
+
+baseline="${_cases_dir}/defaults/case.json"
+
+begin "default branch: an empty event value falls back to the API"
+make_sandbox "${baseline}"
+cat >"${SANDBOX}/bin/gh" <<'EOF'
+#!/bin/env bash
+[[ "$1 $2" == "api repos/example-org/example-repo" ]] && echo '{"default_branch":"trunk"}'
+EOF
+chmod +x "${SANDBOX}/bin/gh"
+CASE_DEFAULT_BRANCH="" run_step
+if [[ ${STEP_EXIT} -eq 0 ]] \
+  && [[ "$(matrix_output | jq -r '.include[0].vars["caller-repo-default-branch"]')" == "trunk" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the default branch did not come from the API"
+fi
+
+begin "default branch: a failing API call fails the step and says why"
+make_sandbox "${baseline}"
+printf '#!/bin/env bash\necho "HTTP 404: Not Found" >&2\nexit 1\n' >"${SANDBOX}/bin/gh"
+chmod +x "${SANDBOX}/bin/gh"
+CASE_DEFAULT_BRANCH="" run_step
+if [[ ${STEP_EXIT} -ne 0 ]] && grep -q "could not resolve the default branch.*HTTP 404" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or no error naming the failure"
+fi
+
+begin "python floor: a runner below 3.10 fails with a message naming the floor"
+make_sandbox "${baseline}"
+printf '#!/bin/env bash\n[[ "$1" == "--version" ]] && echo "Python 3.8.10"\nexit 1\n' >"${SANDBOX}/bin/python3"
+chmod +x "${SANDBOX}/bin/python3"
+run_step
+if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "needs Python 3.10 or later on the runner, found: Python 3.8.10" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or no message naming the floor"
+fi
+
+begin "engine crash: exit 1 with the engine's stderr in the log, no matrix"
+make_sandbox "${baseline}"
+real_python="$(command -v python3)"
+cat >"${SANDBOX}/bin/python3" <<EOF
+#!/bin/env bash
+if [[ "\$*" == *dsb_tf_engine* ]]; then echo "Traceback: boom" >&2; exit 1; fi
+exec "${real_python}" "\$@"
+EOF
+chmod +x "${SANDBOX}/bin/python3"
+run_step
+if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "decision engine failed (exit code 1)" "${OUT_FILE}" \
+  && grep -q "Traceback: boom" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the crash was not reported"
+fi
+
+begin "no leak: the inputs never reach the engine's environment"
+make_sandbox "${baseline}"
+jq '.["environments-yml"] = "- environment: \"env-a\"\n  url: \"https://example.com/SENTINEL-INPUTS-7f3a\"\n"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
+stub_python_recording_env
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ -s "${SANDBOX}/python-env.txt" ]] \
+  && ! grep -q "SENTINEL-INPUTS-7f3a" "${SANDBOX}/python-env.txt" \
+  && matrix_output | grep -q "SENTINEL-INPUTS-7f3a"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the inputs appeared in the engine's environment"
+fi
+
+begin "no leak: secret-shaped variables stay out of the input document and the matrix"
+make_sandbox "${baseline}"
+build_document_with_secrets() {
+  ARM_CLIENT_SECRET="SENTINEL-SECRET-91c2" GH_TOKEN="SENTINEL-SECRET-91c2" \
+    TF_VAR_password="SENTINEL-SECRET-91c2" build_document "${SANDBOX}/document.json"
+}
+build_document_with_secrets
+run_step ARM_CLIENT_SECRET=SENTINEL-SECRET-91c2 GH_TOKEN=SENTINEL-SECRET-91c2 TF_VAR_password=SENTINEL-SECRET-91c2
+if [[ ${STEP_EXIT} -eq 0 ]] && ! grep -q "SENTINEL-SECRET-91c2" "${SANDBOX}/document.json" \
+  && ! matrix_output | grep -q "SENTINEL-SECRET-91c2"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a secret-shaped variable leaked"
+fi
+
+begin "action.yml: the run block opens with a description comment and captures before allexport"
+run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
+if [[ "$(head -n 1 <<<"${run_block}")" == "# "* ]] \
+  && [[ "$(grep -n 'input_inputs_json=\$(cat' <<<"${run_block}" | cut -d: -f1)" -lt \
+    "$(grep -n 'set -o allexport' <<<"${run_block}" | cut -d: -f1)" ]] \
+  && ! grep -q 'export input_inputs_json' <<<"${run_block}"; then
+  pass
+else
+  fail "the run block's first line is not a comment, or the heredoc is captured after allexport or exported"
+fi
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"
