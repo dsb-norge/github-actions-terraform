@@ -1,0 +1,7 @@
+{
+  "errors": [
+    "Property 'tflint-version' is empty in environment specification!",
+    "Property 'tflint-version' is empty in environment specification!"
+  ],
+  "exit_code": 1
+}

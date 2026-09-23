@@ -513,6 +513,18 @@ assert_eq "normalize: an array input is passed through untouched" \
 assert_eq "normalize: a string input is passed through untouched" \
   '"nope"' "$(call_helper normalize-goal-keys-json '"nope"' | jq -c .)"
 
+# ======================================================================
+# Port goldens: the builder's own output for every case the decision engine
+# is ported against (docs/Decision-engine.md §9). run_legacy_goldens.py runs
+# all three steps of action.yml per case; a golden that no longer matches
+# this bash is a golden the engine would be wrongly held to.
+# ======================================================================
+
+for case_dir in "${_this_script_dir}"/../engine/tests/port/cases/*/; do
+  assert "port golden: $(basename "${case_dir}")" \
+    python3 "${_this_script_dir}/run_legacy_goldens.py" check "${case_dir%/}"
+done
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}      CREATE-TF-VARS-MATRIX SUMMARY         ${NC}"

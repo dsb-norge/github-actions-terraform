@@ -1,0 +1,6 @@
+{
+  "errors": [
+    "The directory 'null' does not exist, make sure 'project-dir' points to an existing directory!"
+  ],
+  "exit_code": 1
+}

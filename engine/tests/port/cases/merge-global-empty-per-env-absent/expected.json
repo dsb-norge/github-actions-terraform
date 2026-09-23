@@ -1,0 +1,63 @@
+{
+  "exit_code": 0,
+  "matrix": {
+    "environment": [
+      "env-a"
+    ],
+    "include": [
+      {
+        "environment": "env-a",
+        "vars": {
+          "add-pr-comment": "true",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-a",
+          "extra-envs": null,
+          "extra-envs-from-secrets": {},
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-a",
+          "goals": [
+            "all"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": null,
+          "pr-comment-group": "",
+          "project-dir": "./envs/env-a",
+          "runs-on": "ubuntu-latest",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "latest",
+          "tflint-version": "latest",
+          "url": "",
+          "verify-lock-file": "true"
+        }
+      }
+    ]
+  }
+}

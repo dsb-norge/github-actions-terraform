@@ -1,0 +1,7 @@
+{
+  "errors": [
+    "unable to merge the environment's 'extra-envs-per-goal-yml' with the global value!",
+    "the two are probably of different shapes, e.g. a mapping globally and a plain value per environment."
+  ],
+  "exit_code": 1
+}

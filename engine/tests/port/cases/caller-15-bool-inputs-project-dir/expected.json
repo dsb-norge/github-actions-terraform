@@ -1,0 +1,73 @@
+{
+  "exit_code": 0,
+  "matrix": {
+    "environment": [
+      "env-a"
+    ],
+    "include": [
+      {
+        "environment": "env-a",
+        "vars": {
+          "add-pr-comment": "false",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-a",
+          "extra-envs": {},
+          "extra-envs-from-secrets": {},
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-a",
+          "goals": [
+            "init",
+            "format",
+            "validate",
+            "lint"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": {
+            "plan-max-count-add": 0,
+            "plan-max-count-change": 0,
+            "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1,
+            "plan-max-count-move": -1,
+            "plan-max-count-remove": 0
+          },
+          "pr-comment-group": "",
+          "project-dir": "./examples",
+          "runs-on": "ubuntu-latest",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "latest",
+          "tflint-version": "latest",
+          "url": "https://example.com/a",
+          "verify-lock-file": "false"
+        }
+      }
+    ]
+  }
+}

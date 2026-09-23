@@ -1,0 +1,6 @@
+{
+  "errors": [
+    "Property 'terraform-version' is empty in environment specification!"
+  ],
+  "exit_code": 1
+}

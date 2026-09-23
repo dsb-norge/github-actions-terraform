@@ -1,0 +1,289 @@
+{
+  "exit_code": 0,
+  "matrix": {
+    "environment": [
+      "env-a",
+      "env-b",
+      "env-c",
+      "env-d"
+    ],
+    "include": [
+      {
+        "environment": "env-a",
+        "vars": {
+          "add-pr-comment": "true",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-a",
+          "extra-envs": {
+            "ARM_USE_AZUREAD": true,
+            "ARM_USE_OIDC": true
+          },
+          "extra-envs-from-secrets": {
+            "ARM_CLIENT_ID": "SECRET_C",
+            "ARM_SUBSCRIPTION_ID": "SECRET_B",
+            "ARM_TENANT_ID": "SECRET_A",
+            "TF_VAR_var_a": "SECRET_D"
+          },
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-a",
+          "goals": [
+            "all",
+            "destroy-plan",
+            "destroy",
+            "apply-on-pr",
+            "destroy-on-pr"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": {
+            "plan-max-count-add": 0,
+            "plan-max-count-change": 0,
+            "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1,
+            "plan-max-count-move": -1,
+            "plan-max-count-remove": 0
+          },
+          "pr-comment-group": "",
+          "project-dir": "./envs/env-a",
+          "runs-on": "runner-a",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "1.14.x",
+          "tflint-version": "v0.61.0",
+          "url": "https://example.com/a",
+          "verify-lock-file": "true"
+        }
+      },
+      {
+        "environment": "env-b",
+        "vars": {
+          "add-pr-comment": "true",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-b",
+          "extra-envs": {
+            "ARM_USE_AZUREAD": true,
+            "ARM_USE_OIDC": true
+          },
+          "extra-envs-from-secrets": {
+            "ARM_CLIENT_ID": "SECRET_C",
+            "ARM_SUBSCRIPTION_ID": "SECRET_B",
+            "ARM_TENANT_ID": "SECRET_A",
+            "TF_VAR_var_a": "SECRET_D"
+          },
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-b",
+          "goals": [
+            "all"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": {
+            "plan-max-count-add": 0,
+            "plan-max-count-change": 0,
+            "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1,
+            "plan-max-count-move": -1,
+            "plan-max-count-remove": 0
+          },
+          "pr-comment-group": "group-a",
+          "project-dir": "./envs/env-b",
+          "runs-on": "runner-a",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "1.14.x",
+          "tflint-version": "v0.61.0",
+          "url": "https://example.com/b",
+          "verify-lock-file": "true"
+        }
+      },
+      {
+        "environment": "env-c",
+        "vars": {
+          "add-pr-comment": "true",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-c",
+          "extra-envs": {
+            "ARM_USE_AZUREAD": true,
+            "ARM_USE_OIDC": true
+          },
+          "extra-envs-from-secrets": {
+            "ARM_CLIENT_ID": "SECRET_C",
+            "ARM_SUBSCRIPTION_ID": "SECRET_B",
+            "ARM_TENANT_ID": "SECRET_A",
+            "TF_VAR_var_a": "SECRET_D"
+          },
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-c",
+          "goals": [
+            "all"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": {
+            "plan-max-count-add": 0,
+            "plan-max-count-change": 0,
+            "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1,
+            "plan-max-count-move": -1,
+            "plan-max-count-remove": 0
+          },
+          "pr-comment-group": "group-a",
+          "project-dir": "./envs/env-c",
+          "runs-on": "runner-a",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "1.14.x",
+          "tflint-version": "v0.61.0",
+          "url": "https://example.com/c",
+          "verify-lock-file": "true"
+        }
+      },
+      {
+        "environment": "env-d",
+        "vars": {
+          "add-pr-comment": "true",
+          "allow-failing-terraform-operations": false,
+          "apply-extract-include-outputs": "false",
+          "cache-terraform-modules": "true",
+          "caller-repo-calling-branch": "main",
+          "caller-repo-default-branch": "main",
+          "caller-repo-is-on-default-branch": "true",
+          "environment": "env-d",
+          "extra-envs": {
+            "ARM_USE_AZUREAD": true,
+            "ARM_USE_OIDC": true
+          },
+          "extra-envs-from-secrets": {
+            "ARM_CLIENT_ID": "SECRET_C",
+            "ARM_SUBSCRIPTION_ID": "SECRET_B",
+            "ARM_TENANT_ID": "SECRET_A",
+            "TF_VAR_var_a": "SECRET_D"
+          },
+          "extra-envs-from-secrets-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "extra-envs-per-goal": {
+            "apply": {},
+            "destroy": {},
+            "destroy-plan": {},
+            "format": {},
+            "init": {},
+            "lint": {},
+            "plan": {},
+            "validate": {}
+          },
+          "format-check-in-root-dir": "false",
+          "github-environment": "env-d",
+          "goals": [
+            "all"
+          ],
+          "pr-auto-merge-app-id": "",
+          "pr-auto-merge-app-private-key-secret": "",
+          "pr-auto-merge-enabled": "false",
+          "pr-auto-merge-from-actors": [],
+          "pr-auto-merge-limits": {
+            "plan-max-count-add": 0,
+            "plan-max-count-change": 0,
+            "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1,
+            "plan-max-count-move": -1,
+            "plan-max-count-remove": 0
+          },
+          "pr-comment-group": "group-b",
+          "project-dir": "./envs/env-d",
+          "runs-on": "runner-a",
+          "terraform-init-additional-dirs": [],
+          "terraform-version": "1.14.x",
+          "tflint-version": "v0.61.0",
+          "url": "https://example.com/d",
+          "verify-lock-file": "true"
+        }
+      }
+    ]
+  }
+}
