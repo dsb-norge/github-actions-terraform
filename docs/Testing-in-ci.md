@@ -92,9 +92,7 @@ Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. Dire
 |---|---|
 | *(none)* | — |
 
-`create-tf-vars-matrix` used to be excluded here: its only harness was `test_action_source.sh`, which needs a real tty and may fail on pristine main. It now has a deterministic `run_all_tests.sh` (helper unit tests plus fixture-driven runs of the step source extracted from `action.yml`) and is discovered like any other action. `test_action_source.sh` is left in place as a manual debugging aid and is not invoked by CI.
-
-The same `extract_step_source.py` approach gives `export-env-vars` a suite without converting it to the modern layout first — useful for any action whose logic is still inline bash in `action.yml`.
+`export-env-vars` gets a suite without being converted to the modern layout first: its `extract_step_source.py` extracts the step source from `action.yml` and runs it against fixtures — useful for any action whose logic is still inline bash.
 
 `.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`; the second pass skips `.github/` and `.git/` explicitly. `contract-tests/` holds no `run_all_tests.sh` and is therefore not discovered; it has its own workflow (§13).
 

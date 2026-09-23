@@ -539,7 +539,7 @@ assert "negative: no files are written when validation fails" \
 # check lives here even though it reaches outside the action directory.
 # ======================================================================
 _repo_root="$(cd -- "${_this_script_dir}/.." &>/dev/null && pwd)"
-_matrix_helpers="${_repo_root}/create-tf-vars-matrix/helpers_additional.sh"
+_engine_dir="${_repo_root}/engine"
 _workflow="${_repo_root}/.github/workflows/terraform-ci-cd-default.yml"
 
 # The GOAL_KEYS array as declared in a given helpers file, sorted.
@@ -553,9 +553,15 @@ declared_goal_keys() {
 
 assert "contract: this action declares GOAL_KEYS" \
   test -n "$(declared_goal_keys "${_this_script_dir}/helpers_additional.sh")"
-assert_eq "contract: create-tf-vars-matrix declares the same goals" \
+# The decision engine's GOAL_KEYS, sorted, in the same format.
+engine_goal_keys() {
+  PYTHONPATH="${_engine_dir}" python3 -B -c \
+    'from dsb_tf_engine.values import GOAL_KEYS; print(",".join(sorted(GOAL_KEYS)))'
+}
+
+assert_eq "contract: the decision engine declares the same goals" \
   "$(declared_goal_keys "${_this_script_dir}/helpers_additional.sh")" \
-  "$(declared_goal_keys "${_matrix_helpers}")"
+  "$(engine_goal_keys)"
 
 # The goal file names the workflow asks for, sorted and de-suffixed.
 workflow_goal_files() {

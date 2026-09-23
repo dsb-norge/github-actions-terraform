@@ -22,8 +22,8 @@
 #
 # 'destroy-plan' / 'destroy' are separate from 'plan' / 'apply' even though
 # they reuse the same two actions — that is what lets a destroy plan be tuned
-# independently. Kept in sync with create-tf-vars-matrix and
-# docs/Per-goal-environment-variables.md §2.2.
+# independently. Kept in sync with the decision engine (engine/dsb_tf_engine/values.py)
+# and docs/Per-goal-environment-variables.md §2.2.
 GOAL_KEYS=(
   init
   format
