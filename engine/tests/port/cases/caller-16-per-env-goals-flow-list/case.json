@@ -1,0 +1,34 @@
+{
+  "description": "anonymised shape of real callers: per env goals flow list",
+  "inputs_json": {
+    "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/a\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-on-pr]\n- environment: \"env-b\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/b\"\n  pr-comment-group: \"group-a\"\n- environment: \"env-c\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/c\"\n  pr-comment-group: \"group-a\"\n- environment: \"env-d\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/d\"\n  pr-comment-group: \"group-b\"\n",
+    "goals-yml": "[all]",
+    "terraform-init-additional-dirs-yml": "",
+    "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true # comment\n",
+    "extra-envs-from-secrets-yml": "ARM_TENANT_ID: SECRET_A\nARM_SUBSCRIPTION_ID: SECRET_B\nARM_CLIENT_ID: SECRET_C\nTF_VAR_var_a: SECRET_D\n",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "terraform-version": "1.14.x",
+    "tflint-version": "v0.61.0",
+    "format-check-in-root-dir": false,
+    "add-pr-comment": true,
+    "verify-lock-file": true,
+    "cache-terraform-modules": true,
+    "apply-extract-include-outputs": false,
+    "pr-comment-group": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "runs-on": "ubuntu-latest"
+  },
+  "ref_name": "main",
+  "default_branch": "main",
+  "directories": [
+    "envs/env-a",
+    "envs/env-b",
+    "envs/env-c",
+    "envs/env-d"
+  ]
+}

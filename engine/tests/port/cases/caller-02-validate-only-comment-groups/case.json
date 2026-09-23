@@ -1,0 +1,37 @@
+{
+  "description": "anonymised shape of real callers: validate only comment groups",
+  "inputs_json": {
+    "environments-yml": "- environment: \"env-a\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/a\n- environment: \"env-b\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/b\n- environment: \"env-c\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/c\n- environment: \"env-d\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/d\n- environment: \"env-e\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/e\n- environment: \"env-f\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/f\n- environment: \"env-g\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/g\n",
+    "goals-yml": "- init\n- format\n- validate\n- lint\n",
+    "terraform-init-additional-dirs-yml": "- \"./main\"\n",
+    "extra-envs-yml": "TF_CLI_ARGS_init: \"-backend=false\"\n",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "terraform-version": "1.15.x",
+    "tflint-version": "v0.62.1",
+    "format-check-in-root-dir": false,
+    "add-pr-comment": true,
+    "verify-lock-file": true,
+    "cache-terraform-modules": true,
+    "apply-extract-include-outputs": false,
+    "pr-comment-group": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "runs-on": "ubuntu-latest"
+  },
+  "ref_name": "main",
+  "default_branch": "main",
+  "directories": [
+    "envs/env-a",
+    "envs/env-b",
+    "envs/env-c",
+    "envs/env-d",
+    "envs/env-e",
+    "envs/env-f",
+    "envs/env-g"
+  ]
+}

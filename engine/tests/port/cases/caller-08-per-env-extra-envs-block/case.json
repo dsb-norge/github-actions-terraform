@@ -1,0 +1,31 @@
+{
+  "description": "anonymised shape of real callers: per env extra envs block",
+  "inputs_json": {
+    "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/a\"\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000002\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000003\" # comment\n",
+    "goals-yml": "[all]",
+    "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./modules/mod-a\"\n",
+    "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true # comment\nARM_TENANT_ID: \"00000000-0000-0000-0000-000000000001\"\n",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "terraform-version": "1.14.x",
+    "tflint-version": "v0.61.0",
+    "format-check-in-root-dir": false,
+    "add-pr-comment": true,
+    "verify-lock-file": true,
+    "cache-terraform-modules": true,
+    "apply-extract-include-outputs": false,
+    "pr-comment-group": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "runs-on": "ubuntu-latest"
+  },
+  "ref_name": "main",
+  "default_branch": "main",
+  "directories": [
+    "envs/env-a"
+  ]
+}

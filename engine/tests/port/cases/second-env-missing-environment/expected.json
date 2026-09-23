@@ -1,0 +1,6 @@
+{
+  "errors": [
+    "Missing property 'environment' in environments-yml specification!"
+  ],
+  "exit_code": 1
+}

@@ -1,0 +1,6 @@
+{
+  "errors": [
+    "The specification for input 'pr-auto-merge-limits-yml' is not valid yaml!"
+  ],
+  "exit_code": 1
+}
