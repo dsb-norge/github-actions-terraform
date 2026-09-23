@@ -46,7 +46,9 @@ def permuted(value):
 
 class GeneratedTest(unittest.TestCase):
     def assertSound(self, document):
+        original = copy.deepcopy(document)
         output = decide.decide(document)
+        self.assertEqual(original, document, "decide modified its input document")
         self.assertEqual([], invariants.check(document, output))
         self.assertEqual(output, decide.decide(permuted(copy.deepcopy(document))), "I12: key order changed the output")
         return output

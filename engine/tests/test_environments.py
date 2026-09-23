@@ -3,7 +3,7 @@
 import unittest
 
 import support
-from dsb_tf_engine import decide, model
+from dsb_tf_engine import decide, environments, model, record
 
 
 def vars_of(output, index=0):
@@ -36,11 +36,28 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertEqual(["env-a: run — port", "7: run — port"], output["record"])
         self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
 
+    def test_the_record_joins_every_reason_in_order(self):
+        self.assertEqual(["prod: skip — relevance: none; ordering: stage 2", "7: run — port"],
+                         record.lines([{"environment": "prod", "verdict": "skip", "reasons": ["relevance: none", "ordering: stage 2"]},
+                                       {"environment": 7, "verdict": "run", "reasons": ["port"]}]))
+
     def test_errors_leave_no_matrix(self):
         output = decide.decide(support.document(environments=[]))
         self.assertEqual(["The specification is an empty array!"], output["errors"])
         self.assertEqual({}, output["matrices"])
         self.assertEqual([], output["environments"])
+
+    def test_the_output_document_has_exactly_its_keys(self):
+        for document in (support.document(), support.document(environments=[])):
+            with self.subTest(errors=not document["yaml"]["inputs"]["environments-yml"]["value"]):
+                output = decide.decide(document)
+                self.assertEqual({"schema_version", "errors", "notices", "environments", "matrices", "counts", "record"},
+                                 set(output))
+                self.assertEqual(1, output["schema_version"])
+                self.assertEqual([], output["notices"])
+
+    def test_a_configuration_error_reads_as_its_messages_joined(self):
+        self.assertEqual("first; second", str(environments.ConfigError(["first", "second"])))
 
     def test_names_are_compared_as_rendered_for_duplicates(self):
         document = support.document(environments=[{"environment": 1}, {"environment": "1"}],

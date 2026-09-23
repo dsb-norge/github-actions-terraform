@@ -39,7 +39,9 @@ class PortTest(unittest.TestCase):
         self.assertGreater(len(cases), 50)
         for name, document, expected in cases:
             with self.subTest(case=name):
+                original = json.loads(json.dumps(document))
                 output = decide.decide(document)
+                self.assertEqual(original, document, "decide modified its input document")
                 self.assertEqual([], invariants.check(document, output))
                 if expected["exit_code"] == 0:
                     self.assertEqual([], output["errors"])
