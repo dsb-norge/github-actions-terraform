@@ -7,6 +7,10 @@
 #   - tests-matrix:  JSON array of action names that have run_all_tests.sh
 #   - no-tests-list: JSON array of action names that do not (or are excluded)
 #
+# A second pass enrols top-level directories that hold run_all_tests.sh but no
+# action.yml — the decision engine in engine/ is one — so a suite that is not
+# an action is still run and still gates the pull request.
+#
 # Outputs are written to $GITHUB_OUTPUT when set (workflow use), otherwise
 # printed to stdout (standalone smoke testing).
 #
@@ -58,6 +62,16 @@ function main {
   done < <(find "${repo_root}" -mindepth 2 -maxdepth 2 \
     \( -name action.yml -o -name action.yaml \) -not -path '*/.github/*' \
     | sort)
+
+  local suite
+  while IFS= read -r suite; do
+    dir="$(dirname "${suite}")"
+    name="$(basename "${dir}")"
+    [[ -f "${dir}/action.yml" || -f "${dir}/action.yaml" ]] && continue
+    is_excluded "${name}" && continue
+    with_tests+="${name}"$'\n'
+  done < <(find "${repo_root}" -mindepth 2 -maxdepth 2 -name run_all_tests.sh \
+    -not -path '*/.github/*' -not -path '*/.git/*' | sort)
 
   local tests_matrix no_tests_list
   tests_matrix="$(printf '%s' "${with_tests}" | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
