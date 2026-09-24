@@ -109,7 +109,11 @@ table only says where.
   body), and whose size argument was wrong (128 KiB is bytes, the body cap 65536 characters).
   Reworked: free text is captured as `toJSON` of the input, which closes the injection and keeps
   it out of envp; a 150 KB body (50000 three-byte characters) now posts intact, and fails the test
-  when the step leaves it exported.
+  when the step leaves it exported. Re-run on the test bed: GitHub rendered `toJSON` of the
+  multi-line `heads-yml` as one line with every newline escaped; the seed job decoded and parsed
+  the seven heads and patched each in place, none duplicated; fifteen operation comments posted
+  through `pr-comment`, which decoded the empty inline body (`toJSON("")`) as no body; the only
+  failure is the environment whose apply fails by design.
 
 - CI: every suite green, the new structural test F9 included (16 captures, 17 call sites); F9
   shown to fail on a bare `EOF` delimiter and on a call site passing a plain string.
