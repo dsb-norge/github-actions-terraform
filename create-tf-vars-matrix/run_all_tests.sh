@@ -1,17 +1,23 @@
 #!/bin/env bash
 #
-# Tests for create-tf-vars-matrix, the shim around the decision engine.
+# Tests for create-tf-vars-matrix: the action's own run block, end to end.
 #
-# The engine's own decisions are tested in engine/; this suite tests what only the shim does:
+# The adapter and the engine are unit tested in engine/ under the coverage and mutation gates.
+# This suite runs what only a runner runs: the run block of action.yml, extracted with yq, with
+# its two expressions substituted as GitHub substitutes them (pasted into the script text), real
+# yq underneath and a stub gh where the API is needed.
 #
-#  1. Every port case (engine/tests/port/cases) end to end through the real step script, yq
-#     and engine included: the matrix-json output, or the exit code and the ::error lines,
-#     equal the case's golden (engine_expected when the case records a deliberate deviation).
-#  2. The input document the shim builds for every case equals the case's committed
-#     input.json, which is what the engine suite decides from. UPDATE_ENGINE_INPUTS=1
-#     rewrites them.
-#  3. The default-branch fallback, the Python floor, an engine crash, and that neither the
-#     inputs nor secret-shaped variables reach the engine's environment or its documents.
+#  1. Every port case (engine/tests/port/cases): matrix-json, or the exit code and the ::error
+#     annotations, equal the case's golden (engine_expected when the case records a deviation).
+#  2. The input document the adapter logs for every case equals the case's committed input.json,
+#     which is what the engine suite decides from. UPDATE_ENGINE_INPUTS=1 rewrites them.
+#  3. The run block's shape, the default-branch fallback and its failure, a broken yq, a
+#     non-JSON input, caller values in the log, secrets and inputs staying out of the adapter's
+#     environment, and the caller's checkout staying off Python's import path.
+#
+# To run the adapter by hand against a file holding toJSON(inputs), in the project's checkout:
+#   GITHUB_REPOSITORY=o/r GITHUB_EVENT_NAME=push GITHUB_REF_NAME=main GITHUB_OUTPUT=/tmp/out \
+#     python3 -I -B engine/run.py create-matrix --inputs-file <file holding toJSON(inputs)>
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -52,8 +58,8 @@ begin() {
   echo -e "${BLUE}TEST ${TESTS_RUN}: ${1}${NC}"
 }
 
-# Prepare a sandbox for the case in $1: a workspace holding the case's directories, and the
-# case's inputs JSON in ${SANDBOX}/inputs.json.
+# A sandbox for the case in $1: a workspace holding the case's directories, the inputs as
+# toJSON would render them, and an event payload carrying the case's default branch.
 make_sandbox() {
   local case_file="${1}" directory
   SANDBOX="$(mktemp -d)"
@@ -62,29 +68,38 @@ make_sandbox() {
     mkdir -p "${SANDBOX}/ws/${directory}"
   done < <(jq -r '.directories[]?' "${case_file}")
   jq '.inputs_json' "${case_file}" >"${SANDBOX}/inputs.json"
+  jq -n --arg branch "$(jq -r '.default_branch' "${case_file}")" '{repository: {default_branch: $branch}}' \
+    >"${SANDBOX}/event.json"
+  CASE_REF_NAME="$(jq -r '.ref_name' "${case_file}")"
 }
 
-# Run the step script against the sandbox, as the action.yml shim does. Extra environment
-# assignments may be given as arguments. Sets STEP_EXIT; the output is in ${SANDBOX}/output.txt.
+# The run block of action.yml with its expressions substituted, as the runner pastes them.
+render_run_block() {
+  python3 - "${_this_script_dir}" "${SANDBOX}/inputs.json" <<'PY'
+import subprocess, sys
+action_dir, inputs_file = sys.argv[1], sys.argv[2]
+block = subprocess.run(["yq", ".runs.steps[0].run", f"{action_dir}/action.yml"],
+                       capture_output=True, text=True, check=True).stdout
+with open(inputs_file, encoding="utf-8") as handle:
+    inputs = handle.read().rstrip("\n")
+print(block.replace("${{ inputs.inputs-json }}", inputs).replace("${{ github.action_path }}", action_dir), end="")
+PY
+}
+
+# Run the action's run block in the sandbox. Extra environment assignments may be given as
+# arguments. Sets STEP_EXIT; the step's output file is ${SANDBOX}/output.txt.
 run_step() {
   : >"${SANDBOX}/output.txt"
+  render_run_block >"${SANDBOX}/step.sh"
   (
     cd "${SANDBOX}/ws" || exit 1
-    export GITHUB_ACTION_PATH="${_this_script_dir}"
-    export GITHUB_OUTPUT="${SANDBOX}/output.txt"
-    export input_repository="example-org/example-repo"
-    export input_event_name="push"
-    export input_ref_name="${CASE_REF_NAME:-main}"
-    export input_default_branch="${CASE_DEFAULT_BRANCH-main}"
+    export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="push"
+    export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
+    export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token"
     export PATH="${SANDBOX}/bin:${PATH}"
     for assignment in "$@"; do export "${assignment?}"; done
-    # The runner's shell flags, then the shim's own shape: the inputs captured before
-    # allexport, so never exported.
-    set -eo pipefail
-    input_inputs_json="$(cat "${SANDBOX}/inputs.json")"
-    set -o allexport
-    # shellcheck disable=SC1091
-    source "${_this_script_dir}/step_create_matrix.sh"
+    # The runner's shell for a composite step.
+    bash --noprofile --norc -eo pipefail "${SANDBOX}/step.sh"
   ) >"${OUT_FILE}" 2>&1
   STEP_EXIT=$?
 }
@@ -94,30 +109,23 @@ matrix_output() {
   awk '/^matrix-json<<EOF_/{d=substr($0, index($0,"<<")+2); f=1; next} f && $0==d {f=0} f' "${SANDBOX}/output.txt"
 }
 
-# Build the engine's input document for the sandbox, as the step does, into $1.
-build_document() {
-  local out_file="${1}"
-  (
-    cd "${SANDBOX}/ws" || exit 1
-    export GITHUB_ACTION_PATH="${_this_script_dir}"
-    export input_repository="example-org/example-repo" input_event_name="push"
-    export input_ref_name="${CASE_REF_NAME:-main}"
-    source "${_this_script_dir}/helpers.sh" >/dev/null
-    printf '%s' "${CASE_DEFAULT_BRANCH-main}" >"${SANDBOX}/default-branch"
-    build-input-document "${SANDBOX}/inputs.json" "${out_file}" "${SANDBOX}/default-branch"
-  ) >"${OUT_FILE}" 2>&1
+# The input document the adapter logged, from its verbatim log group.
+logged_document() {
+  awk '/^::group::create-tf-vars-matrix: decision engine input document$/{g=1; next}
+       g && /^::stop-commands::/{t="::" substr($0, 18) "::"; next}
+       g && t && $0==t {exit}
+       g && t' "${OUT_FILE}"
 }
 
-# A python3 in front of the real one: records its environment, then runs the real one.
-stub_python_recording_env() {
-  local real_python
-  real_python="$(command -v python3)"
-  cat >"${SANDBOX}/bin/python3" <<EOF
-#!/bin/env bash
-env >>"${SANDBOX}/python-env.txt"
-exec "${real_python}" "\$@"
-EOF
-  chmod +x "${SANDBOX}/bin/python3"
+# Error annotation messages, unescaped as the runner shows them.
+error_messages() {
+  sed -n 's/^::error title=create-tf-vars-matrix:://p' "${OUT_FILE}" \
+    | python3 -c 'import sys, json; print(json.dumps([l.rstrip("\n").replace("%0A","\n").replace("%0D","\r").replace("%25","%") for l in sys.stdin], separators=(",", ":")))'
+}
+
+# Lines of the step's log that are outside every stop-commands block.
+outside_verbatim() {
+  awk '/^::stop-commands::/{t="::" substr($0, 18) "::"; next} t && $0==t {t=""; next} !t' "${OUT_FILE}"
 }
 
 echo ""
@@ -133,27 +141,13 @@ for case_dir in "${_cases_dir}"/*/; do
   case_dir="${case_dir%/}"
   name="$(basename "${case_dir}")"
   case_file="${case_dir}/case.json"
-  CASE_REF_NAME="$(jq -r '.ref_name' "${case_file}")"
-  CASE_DEFAULT_BRANCH="$(jq -r '.default_branch' "${case_file}")"
   make_sandbox "${case_file}"
-
-  begin "input document: ${name}"
-  build_document "${SANDBOX}/document.json"
-  if [[ "${UPDATE_ENGINE_INPUTS:-}" == "1" ]]; then
-    jq -S . "${SANDBOX}/document.json" >"${case_dir}/input.json"
-  fi
-  if diff <(jq -S . "${case_dir}/input.json") <(jq -S . "${SANDBOX}/document.json") >/dev/null 2>&1; then
-    pass
-  else
-    fail "the shim builds a different document than ${case_dir}/input.json"
-  fi
+  run_step
 
   begin "end to end: ${name}"
   expected="$(jq -c '.engine_expected // empty' "${case_file}")"
   [[ -z "${expected}" ]] && expected="$(jq -c '.' "${case_dir}/expected.json")"
-  run_step
-  expected_exit="$(jq -r '.exit_code' <<<"${expected}")"
-  if [[ "${expected_exit}" == "0" ]]; then
+  if [[ "$(jq -r '.exit_code' <<<"${expected}")" == "0" ]]; then
     if [[ ${STEP_EXIT} -ne 0 ]]; then
       fail "exit code ${STEP_EXIT}, expected 0"
     elif [[ "$(matrix_output | jq -S -c .)" == "$(jq -S -c '.matrix' <<<"${expected}")" ]]; then
@@ -161,61 +155,68 @@ for case_dir in "${_cases_dir}"/*/; do
     else
       fail "matrix-json differs from the golden"
     fi
+  elif [[ ${STEP_EXIT} -ne 2 ]]; then
+    fail "exit code ${STEP_EXIT}, expected 2"
+  elif [[ "$(error_messages)" == "$(jq -c '.errors' <<<"${expected}")" ]]; then
+    pass
   else
-    actual_errors="$(sed -n 's/^::error title=create-tf-vars-matrix:://p' "${OUT_FILE}" | jq -R . | jq -s -c .)"
-    if [[ ${STEP_EXIT} -ne 2 ]]; then
-      fail "exit code ${STEP_EXIT}, expected 2"
-    elif [[ "${actual_errors}" == "$(jq -c '.errors' <<<"${expected}")" ]]; then
-      pass
-    else
-      fail "errors ${actual_errors}, expected $(jq -c '.errors' <<<"${expected}")"
-    fi
+    fail "errors $(error_messages), expected $(jq -c '.errors' <<<"${expected}")"
+  fi
+
+  begin "input document: ${name}"
+  if [[ "${UPDATE_ENGINE_INPUTS:-}" == "1" ]]; then
+    logged_document | jq -S . >"${case_dir}/input.json"
+  fi
+  if diff <(jq -S . "${case_dir}/input.json") <(logged_document | jq -S .) >/dev/null 2>&1; then
+    pass
+  else
+    fail "the adapter builds a different document than ${case_dir}/input.json"
   fi
 done
-unset CASE_REF_NAME CASE_DEFAULT_BRANCH
 
 # ======================================================================
-# 3: what only the shim does
+# 3: what only the action's run block and a runner do
 # ======================================================================
 
 baseline="${_cases_dir}/defaults/case.json"
 
-begin "default branch: an empty event value falls back to the API"
+begin "run block: a description comment first, inputs to a file through a quoted, unique heredoc, python3 -I"
+run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
+if [[ "$(head -n 1 <<<"${run_block}")" == "# "* ]] \
+  && grep -qx "cat >\"\${inputs_file}\" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'" <<<"${run_block}" \
+  && grep -qx 'CREATE_TF_VARS_MATRIX_INPUTS_JSON' <<<"${run_block}" \
+  && grep -q '^python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"$' <<<"${run_block}" \
+  && [[ "$(grep -c '\${{' <<<"${run_block}")" == "2" ]] \
+  && ! grep -qE '^(export|input_)' <<<"${run_block}"; then
+  pass
+else
+  fail "the run block no longer has its hardened shape"
+fi
+
+begin "default branch: a payload without it falls back to the API"
 make_sandbox "${baseline}"
-cat >"${SANDBOX}/bin/gh" <<'EOF'
-#!/bin/env bash
-[[ "$1 $2" == "api repos/example-org/example-repo" ]] && echo '{"default_branch":"trunk"}'
-EOF
+echo '{}' >"${SANDBOX}/event.json"
+printf '#!/bin/env bash\n[[ "$1 $2" == "api repos/example-org/example-repo" ]] && echo %s\n' \
+  "'{\"default_branch\":\"trunk\"}'" >"${SANDBOX}/bin/gh"
 chmod +x "${SANDBOX}/bin/gh"
-CASE_DEFAULT_BRANCH="" run_step
-if [[ ${STEP_EXIT} -eq 0 ]] \
-  && [[ "$(matrix_output | jq -r '.include[0].vars["caller-repo-default-branch"]')" == "trunk" ]]; then
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -r '.include[0].vars["caller-repo-default-branch"]')" == "trunk" ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the default branch did not come from the API"
 fi
 
-begin "default branch: a failing API call fails the step and says why"
+begin "default branch: a failing API call fails the step and shows the answer verbatim"
 make_sandbox "${baseline}"
+echo '{}' >"${SANDBOX}/event.json"
 printf '#!/bin/env bash\necho "HTTP 404: Not Found" >&2\nexit 1\n' >"${SANDBOX}/bin/gh"
 chmod +x "${SANDBOX}/bin/gh"
-CASE_DEFAULT_BRANCH="" run_step
-if [[ ${STEP_EXIT} -ne 0 ]] && grep -q "could not resolve the default branch" "${OUT_FILE}" \
-  && grep -q "HTTP 404: Not Found" "${OUT_FILE}"; then
-  pass
-else
-  fail "exit ${STEP_EXIT}, or no error naming the failure"
-fi
-
-begin "python floor: a runner below 3.10 fails with a message naming the floor"
-make_sandbox "${baseline}"
-printf '#!/bin/env bash\n[[ "$1" == "--version" ]] && echo "Python 3.8.10"\nexit 1\n' >"${SANDBOX}/bin/python3"
-chmod +x "${SANDBOX}/bin/python3"
 run_step
-if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "needs Python 3.10 or later on the runner, found: Python 3.8.10" "${OUT_FILE}"; then
+if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "could not resolve the default branch" "${OUT_FILE}" \
+  && grep -qx "HTTP 404: Not Found" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
   pass
 else
-  fail "exit ${STEP_EXIT}, or no message naming the floor"
+  fail "exit ${STEP_EXIT}, or the failure was not reported"
 fi
 
 for broken_yq in 'echo "yq: command not found" >&2; exit 127' 'echo "Error: unknown command \"e\""; exit 1' 'echo "not json"'; do
@@ -223,6 +224,7 @@ for broken_yq in 'echo "yq: command not found" >&2; exit 127' 'echo "Error: unkn
   make_sandbox "${baseline}"
   printf '#!/bin/env bash\n%s\n' "${broken_yq}" >"${SANDBOX}/bin/yq"
   chmod +x "${SANDBOX}/bin/yq"
+  # run_step renders the run block with the real yq before the stub goes on the PATH.
   run_step
   if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "yq on the runner cannot parse YAML to JSON" "${OUT_FILE}" \
     && ! grep -q "not valid yaml" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
@@ -232,99 +234,93 @@ for broken_yq in 'echo "yq: command not found" >&2; exit 127' 'echo "Error: unkn
   fi
 done
 
-begin "injection: a newline in an environment name cannot start a workflow command in the record"
+begin "inputs: a value that is not a JSON object is refused before anything is decided"
+make_sandbox "${baseline}"
+printf 'environments-yml: not json\n' >"${SANDBOX}/inputs.json"
+run_step
+if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "'inputs-json' cannot be read as JSON" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a non-JSON input was not refused"
+fi
+
+begin "inputs: a JSON value that is not an object is refused"
+make_sandbox "${baseline}"
+echo '["a"]' >"${SANDBOX}/inputs.json"
+run_step
+if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "is not a JSON object; it expects toJSON(inputs)" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a JSON array was not refused"
+fi
+
+begin "inputs: a value holding the delimiter line and shell syntax stays data"
+make_sandbox "${baseline}"
+jq '.["pr-comment-group"] = "x\nCREATE_TF_VARS_MATRIX_INPUTS_JSON\ntouch INJECTED $(touch INJECTED2) `touch INJECTED3`"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && ! compgen -G "${SANDBOX}/ws/INJECTED*" >/dev/null \
+  && [[ "$(matrix_output | jq -r '.include[0].vars["pr-comment-group"]')" == *'touch INJECTED $(touch INJECTED2)'* ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a JSON value escaped the heredoc"
+fi
+
+begin "log: a newline in an environment name cannot start a workflow command"
 make_sandbox "${baseline}"
 jq '.["environments-yml"] = "- environment: \"env-a\\n::warning::injected\"\n  project-dir: .\n"' \
   "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
 run_step
-# The line may appear only inside a stop-commands block, where the runner shows it verbatim.
-outside="$(awk '/^::stop-commands::/{t="::" substr($0, 18) "::"; next} t && $0==t {t=""; next} !t' "${OUT_FILE}")"
 if [[ ${STEP_EXIT} -eq 0 ]] && grep -q '^::warning::injected' "${OUT_FILE}" \
-  && ! grep -q '^::warning::' <<<"${outside}"; then
+  && ! outside_verbatim | grep -q '^::warning::'; then
   pass
 else
   fail "exit ${STEP_EXIT}, or a caller's value reached the log as a workflow command"
 fi
 
-begin "injection: an error naming a caller's value is one annotation with its newline escaped"
+begin "log: an error naming a caller's value is one annotation, its newline and percent escaped"
 make_sandbox "${baseline}"
-jq '.["environments-yml"] = "- environment: \"x\\n::warning::injected\"\n- environment: \"x\\n::warning::injected\"\n"' \
+jq '.["environments-yml"] = "- environment: \"x%\\n::warning::injected\"\n- environment: \"x%\\n::warning::injected\"\n"' \
   "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
 run_step
 if [[ ${STEP_EXIT} -eq 2 ]] && ! grep -q '^::warning::' "${OUT_FILE}" \
   && [[ "$(grep -c '^::error title=create-tf-vars-matrix::' "${OUT_FILE}")" == "1" ]] \
-  && grep -q "^::error title=create-tf-vars-matrix::Duplicate environment 'x%0A::warning::injected'" "${OUT_FILE}"; then
+  && grep -q "^::error title=create-tf-vars-matrix::Duplicate environment 'x%25%0A::warning::injected'" "${OUT_FILE}"; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the error annotation was split or unescaped"
 fi
 
-begin "annotations: a percent sign in a message is escaped"
-make_sandbox "${baseline}"
-jq '.["environments-yml"] = "- environment: \"100%\"\n- environment: \"100%\"\n"' \
-  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
-run_step
-if [[ ${STEP_EXIT} -eq 2 ]] && grep -q "Duplicate environment '100%25'" "${OUT_FILE}"; then
-  pass
-else
-  fail "exit ${STEP_EXIT}, or the percent sign was not escaped"
-fi
-
-begin "engine crash: exit 1 with the engine's stderr in the log, no matrix"
-make_sandbox "${baseline}"
-real_python="$(command -v python3)"
-cat >"${SANDBOX}/bin/python3" <<EOF
-#!/bin/env bash
-if [[ "\$*" == *dsb_tf_engine* ]]; then echo "Traceback: boom" >&2; exit 1; fi
-exec "${real_python}" "\$@"
-EOF
-chmod +x "${SANDBOX}/bin/python3"
-run_step
-if [[ ${STEP_EXIT} -eq 1 ]] && grep -q "decision engine failed (exit code 1)" "${OUT_FILE}" \
-  && grep -q "Traceback: boom" "${OUT_FILE}" && [[ -z "$(matrix_output)" ]]; then
-  pass
-else
-  fail "exit ${STEP_EXIT}, or the crash was not reported"
-fi
-
-begin "no leak: the inputs never reach the engine's environment"
+begin "no leak: neither the inputs nor secret-shaped variables reach the adapter's environment or documents"
 make_sandbox "${baseline}"
 jq '.["environments-yml"] = "- environment: \"env-a\"\n  url: \"https://example.com/SENTINEL-INPUTS-7f3a\"\n"' \
   "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
-stub_python_recording_env
-run_step
+real_python="$(command -v python3)"
+cat >"${SANDBOX}/bin/python3" <<EOF
+#!/bin/env bash
+env >>"${SANDBOX}/python-env.txt"
+exec "${real_python}" "\$@"
+EOF
+chmod +x "${SANDBOX}/bin/python3"
+run_step ARM_CLIENT_SECRET=SENTINEL-SECRET-91c2 TF_VAR_password=SENTINEL-SECRET-91c2
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ -s "${SANDBOX}/python-env.txt" ]] \
   && ! grep -q "SENTINEL-INPUTS-7f3a" "${SANDBOX}/python-env.txt" \
-  && matrix_output | grep -q "SENTINEL-INPUTS-7f3a"; then
+  && matrix_output | grep -q "SENTINEL-INPUTS-7f3a" \
+  && ! logged_document | grep -q "SENTINEL-SECRET-91c2" && ! matrix_output | grep -q "SENTINEL-SECRET-91c2"; then
   pass
 else
-  fail "exit ${STEP_EXIT}, or the inputs appeared in the engine's environment"
+  fail "exit ${STEP_EXIT}, or the inputs or a secret leaked"
 fi
 
-begin "no leak: secret-shaped variables stay out of the input document and the matrix"
+begin "isolation: the caller's checkout and PYTHON* variables cannot replace the standard library"
 make_sandbox "${baseline}"
-build_document_with_secrets() {
-  ARM_CLIENT_SECRET="SENTINEL-SECRET-91c2" GH_TOKEN="SENTINEL-SECRET-91c2" \
-    TF_VAR_password="SENTINEL-SECRET-91c2" build_document "${SANDBOX}/document.json"
-}
-build_document_with_secrets
-run_step ARM_CLIENT_SECRET=SENTINEL-SECRET-91c2 GH_TOKEN=SENTINEL-SECRET-91c2 TF_VAR_password=SENTINEL-SECRET-91c2
-if [[ ${STEP_EXIT} -eq 0 ]] && ! grep -q "SENTINEL-SECRET-91c2" "${SANDBOX}/document.json" \
-  && ! matrix_output | grep -q "SENTINEL-SECRET-91c2"; then
+echo 'raise SystemExit("caller json.py imported")' >"${SANDBOX}/ws/json.py"
+mkdir -p "${SANDBOX}/pypath" && echo 'raise SystemExit("PYTHONPATH argparse imported")' >"${SANDBOX}/pypath/argparse.py"
+run_step PYTHONPATH="${SANDBOX}/pypath" PYTHONSTARTUP="${SANDBOX}/ws/json.py"
+if [[ ${STEP_EXIT} -eq 0 ]] && ! grep -q "imported" "${OUT_FILE}" && [[ -n "$(matrix_output)" ]]; then
   pass
 else
-  fail "exit ${STEP_EXIT}, or a secret-shaped variable leaked"
-fi
-
-begin "action.yml: the run block opens with a description comment and captures before allexport"
-run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
-if [[ "$(head -n 1 <<<"${run_block}")" == "# "* ]] \
-  && [[ "$(grep -n 'input_inputs_json=\$(cat' <<<"${run_block}" | cut -d: -f1)" -lt \
-    "$(grep -n 'set -o allexport' <<<"${run_block}" | cut -d: -f1)" ]] \
-  && ! grep -q 'export input_inputs_json' <<<"${run_block}"; then
-  pass
-else
-  fail "the run block's first line is not a comment, or the heredoc is captured after allexport or exported"
+  fail "exit ${STEP_EXIT}, or a module from the checkout or PYTHONPATH was imported"
 fi
 
 echo ""

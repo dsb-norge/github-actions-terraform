@@ -3,12 +3,12 @@ description: |
   Given the required input this action returns common DSB terraform environment variables with values.
   Common DSB terraform environment variables are the values needed to successfully init, plan and apply terraform projects in DSB's infrastructure.
 
-  The decisions are made by the decision engine in the repository's 'engine/' directory
-  (docs/Decision-engine.md), which needs Python 3.10 or later on the runner.
+  The step is the decision engine's create-matrix adapter, in the repository's 'engine/' directory
+  (docs/Decision-engine.md). It needs Python 3.12 or later and yq on the runner.
 author: "Peder Schmedling"
 inputs:
   inputs-json:
-    description: "All inputs given to the ci/cd workflow"
+    description: "All inputs given to the ci/cd workflow, as toJSON(inputs); anything that is not a JSON object is rejected"
     required: true
 outputs:
   matrix-json:
@@ -20,20 +20,17 @@ runs:
     - id: create-matrix
       shell: bash
       env:
-        input_repository: ${{ github.repository }}
-        input_event_name: ${{ github.event_name }}
-        input_ref_name: ${{ github.ref_name }}
-        input_default_branch: ${{ github.event.repository.default_branch }}
         GH_TOKEN: ${{ github.token }}
       run: |
         # Resolve the terraform ci/cd variables of every environment into the job matrix
         #
-        # Heredoc capture (special chars survive verbatim). Intentionally NOT
-        # exported — step_create_matrix.sh reads it as a shell-local via `source`.
-        input_inputs_json=$(cat <<'EOF'
+        # The inputs reach the adapter through a file, never a variable or argv. GitHub pastes
+        # the expression into this script before bash parses it; the quoted heredoc keeps bash
+        # from expanding anything in it, and toJSON output cannot contain the delimiter line
+        # because JSON escapes a string's newlines. The adapter rejects anything that is not a
+        # JSON object. Isolated mode (-I): docs/Decision-engine.md P21.
+        inputs_file="$(mktemp)"
+        cat >"${inputs_file}" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'
         ${{ inputs.inputs-json }}
-        EOF
-        )
-
-        set -o allexport
-        source "${{ github.action_path }}/step_create_matrix.sh"
+        CREATE_TF_VARS_MATRIX_INPUTS_JSON
+        python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"
