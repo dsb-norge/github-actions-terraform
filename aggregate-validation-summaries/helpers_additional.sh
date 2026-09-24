@@ -326,6 +326,23 @@ function _render_mode_cell {
   fi
 }
 
+# Every cell of an environment path relevance left out of the run: no job ran
+# for it, so there is no outcome, count or link to show. The tooltip says why,
+# where a bare '—' would read as "not applicable" (docs/Path-relevance.md §6.2).
+declare -gr NOT_AFFECTED_CELL='<span title="not affected by this pull request">—</span>'
+
+# The footer line naming a group's unaffected members, backticked and joined
+# with ', ' in the order given; nothing when there are none.
+#   $@ environment names
+function _render_not_affected_line {
+  [ ${#} -eq 0 ] && return 0
+  local out="" name
+  for name in "${@}"; do
+    out+="${out:+, }\`${name}\`"
+  done
+  echo "➖ Not affected by this pull request: ${out}"
+}
+
 # A step whose if: was false has the outcome STRING 'skipped', not ''. Both
 # mean "did not run" here. Gating on non-empty alone rendered three skipped
 # blocks on every plan-only environment in the first real run — breaking the

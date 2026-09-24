@@ -18,6 +18,11 @@
 #   GITHUB_EVENT_NAME             - The event that triggered the run
 #   GH_TOKEN  (or GITHUB_TOKEN)   - Token used by the `gh` CLI for api calls
 #
+# Optional environment variables:
+#   input_relevance_file          - Path of the matrix builder's relevance.json;
+#                                   empty, or a path that does not exist, renders
+#                                   from metadata alone (docs/Path-relevance.md §6.4)
+#
 
 # Allow unset variables so we can do graceful fallback for optional inputs.
 set +o nounset
@@ -57,6 +62,27 @@ declare -gA PER_ENV_TAG_ANCHOR=()
 # entries mean the env's matrix job couldn't be matched by name; the Links
 # cell drops the `job log` line in that case rather than emit a wrong link.
 declare -gA PER_ENV_JOB_URL=()
+
+# Filled from the relevance file (input_relevance_file), when one is given
+# and readable; all empty otherwise, which is the pre-relevance behaviour
+# byte for byte. docs/Path-relevance.md §6.2, §6.4.
+#
+# relevance_file: the path, once validated; empty when absent or unusable.
+RELEVANCE_FILE=""
+# declared_groups[group]=1 for every group relevance.json names for an
+# environment with add-pr-comment "true", affected or not. Part of the desired
+# set even when no metadata mentions the group: without it an all-unaffected
+# group's head was deleted as an orphan, or left at the seed placeholder (P4).
+declare -gA DECLARED_GROUPS=()
+# unaffected["<group>/<env>"]=1 for a member relevance left out of the run.
+# It is listed in DESIRED_GROUPS like any member but has no DESIRED_META.
+declare -gA UNAFFECTED=()
+# unaffected_goals["<group>/<env>"]="apply-on-pr destroy-on-pr" — the
+# member's mutates-on-pr from relevance.json, standing in for the goals an
+# affected member's metadata carries.
+declare -gA UNAFFECTED_GOALS=()
+# group_columns[group]="env1\nenv2\n..." — column order when the file is given.
+declare -gA GROUP_COLUMNS=()
 
 # Tracks degraded mode (gh api list failed). When true, the upsert pass
 # skips its delete branch and posts fresh bodies instead — the grouped
@@ -130,6 +156,126 @@ function build_desired_set {
   fi
 
   end-group
+}
+
+# ============================================================================
+# Step 1b: Merge the relevance file into the desired set
+# ============================================================================
+
+# With relevance.json (docs/Path-relevance.md §6.4):
+#   - the desired set gains every group the file names for an environment
+#     with add-pr-comment "true", affected or not;
+#   - each unaffected environment (verdict "skip") of a desired group becomes
+#     a member, rendered as a column of dashes (§6.2);
+#   - columns follow environments-yml order, the file's order, for affected
+#     and unaffected members alike, so a column never moves when an
+#     environment flips between the two, and the footer's names read in the
+#     same order as the columns. A metadata member the file does not list
+#     follows, alphabetically.
+#
+# Environments are matched on github-environment: that is the name
+# capture-matrix-job-meta writes to .metadata.environment, which keys
+# DESIRED_META and heads each column. An environment with metadata renders
+# from it even when the file calls it unaffected — results that exist are
+# shown, not hidden behind dashes.
+#
+# A missing file is no file: the download of the relevance artifact may fail
+# and carries continue-on-error (P8). A file that is not a relevance.json is
+# ignored with a warning, like a malformed metadata file.
+function merge_relevance_file {
+  [ -z "${input_relevance_file:-}" ] && return 0
+  start-group "Step 1b: Merge the relevance file"
+
+  if [ ! -f "${input_relevance_file}" ]; then
+    log-info "The relevance file '${input_relevance_file}' was not found — rendering from metadata alone."
+    end-group
+    return 0
+  fi
+  if ! jq -e '.environments | type == "array"' "${input_relevance_file}" >/dev/null 2>&1; then
+    log-warn "Ignoring the relevance file '${input_relevance_file}': not JSON with an environments list — rendering from metadata alone."
+    end-group
+    return 0
+  fi
+  RELEVANCE_FILE="${input_relevance_file}"
+
+  # One line per environment, fields separated by the ASCII unit separator:
+  # a tab is IFS whitespace to 'read', which would collapse an empty group.
+  local -a rel_rows=()
+  local line
+  while IFS= read -r line; do
+    rel_rows+=("${line}")
+  done < <(jq -r '
+      .environments[]
+      | [ (.["github-environment"] // .environment // ""),
+          (.["pr-comment-group"] // ""),
+          (.verdict // ""),
+          (.["add-pr-comment"] | tostring),
+          (if (.["mutates-on-pr"] | type) == "array" then .["mutates-on-pr"] | map(tostring) | join(" ") else "" end)
+        ]
+      | map(tostring) | join("\u001f")
+    ' "${RELEVANCE_FILE}")
+
+  local env group verdict comment mutates
+  for line in "${rel_rows[@]}"; do
+    IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+    if [ -n "${group}" ] && [ "${comment}" = 'true' ]; then
+      DECLARED_GROUPS[${group}]=1
+    fi
+  done
+
+  for line in "${rel_rows[@]}"; do
+    IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+    [ -z "${env}" ] || [ -z "${group}" ] || [ "${verdict}" != 'skip' ] && continue
+    # Only desired groups get columns: an unaffected member does not by
+    # itself make a group appear when nothing declares it.
+    [ -z "${DECLARED_GROUPS[${group}]:-}" ] && [ -z "${DESIRED_GROUPS[${group}]:-}" ] && continue
+    [ -n "${DESIRED_META[${group}/${env}]:-}" ] && continue
+    [ -n "${UNAFFECTED[${group}/${env}]:-}" ] && continue
+    log-info "Env '${env}' in group '${group}' is not affected by this pull request"
+    UNAFFECTED["${group}/${env}"]=1
+    UNAFFECTED_GOALS["${group}/${env}"]="${mutates}"
+    if [ -n "${DESIRED_GROUPS[${group}]:-}" ]; then
+      DESIRED_GROUPS[${group}]+=$'\n'"${env}"
+    else
+      DESIRED_GROUPS[${group}]="${env}"
+    fi
+  done
+
+  local g member order
+  local -A placed=()
+  for g in "${!DESIRED_GROUPS[@]}"; do
+    placed=()
+    order=""
+    for line in "${rel_rows[@]}"; do
+      IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+      [ "${group}" = "${g}" ] || continue
+      [ -n "${placed[${env}]:-}" ] && continue
+      grep -qxF -- "${env}" <<<"${DESIRED_GROUPS[${g}]}" || continue
+      placed[${env}]=1
+      order+="${order:+$'\n'}${env}"
+    done
+    while IFS= read -r member; do
+      [ -z "${member}" ] || [ -n "${placed[${member}]:-}" ] && continue
+      order+="${order:+$'\n'}${member}"
+    done < <(echo "${DESIRED_GROUPS[${g}]}" | sort)
+    GROUP_COLUMNS[${g}]="${order}"
+  done
+
+  # A declared group with no member to render: every member affected and none
+  # left metadata (a cancelled run). Kept out of the orphan pass, not rendered,
+  # so its head stays as the seed or an earlier run left it.
+  for g in "${!DECLARED_GROUPS[@]}"; do
+    [ -n "${DESIRED_GROUPS[${g}]:-}" ] && continue
+    log-info "Group '${g}' is declared but has no member to render — its comment is left as it is"
+  done
+
+  log-info "Desired set with relevance: ${#DESIRED_GROUPS[@]} group(s) to render, ${#UNAFFECTED[@]} unaffected member(s)"
+  end-group
+}
+
+# True when the member is an unaffected environment of the group.
+function _is_unaffected {
+  [ -n "${UNAFFECTED[${1}/${2}]:-}" ]
 }
 
 # ============================================================================
@@ -291,6 +437,9 @@ function list_pr_state {
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
+      # No job ran for an unaffected member, so it has no tag of this run and
+      # its Links cell stays empty whatever a lookup would find.
+      _is_unaffected "${group}" "${env}" && continue
       # One lookup per tag kind. The marker is '<!-- tf:tag:<kind>:<env>:run-id-<id>:'
       # — every segment terminated by ':' so 'destroy' cannot match a
       # 'destroy-plan' tag and 'prod' cannot match 'prod-dr'
@@ -386,7 +535,14 @@ function render_group_body {
   for env in "${envs[@]}"; do
     apply_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "apply-on-pr")
     destroy_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "destroy-on-pr")
-    mode_cells+=("$(_render_mode_cell "${apply_on_pr}" "${destroy_on_pr}")")
+    # An unaffected member's flags still count toward the title and the
+    # col-1 icon, as the seed placeholder's title counts every member; only
+    # its own cell is the not-affected dash.
+    if _is_unaffected "${group_name}" "${env}"; then
+      mode_cells+=("${NOT_AFFECTED_CELL}")
+    else
+      mode_cells+=("$(_render_mode_cell "${apply_on_pr}" "${destroy_on_pr}")")
+    fi
     [ "${apply_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *🐙* ]] && mode_icons+="🐙"
     [ "${destroy_on_pr}" = 'true' ] && any_mode=true && [[ "${mode_icons}" != *☠* ]] && mode_icons+="☠"
   done
@@ -410,6 +566,10 @@ function render_group_body {
 
     local row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
     for env in "${envs[@]}"; do
+      if _is_unaffected "${group_name}" "${env}"; then
+        row+=" ${NOT_AFFECTED_CELL} |"
+        continue
+      fi
       local outcome
       outcome=$(_extract_step_outcome "${group_name}" "${env}" "${step_id}")
       row+=" $(_render_status_cell "${outcome}") |"
@@ -429,6 +589,12 @@ function render_group_body {
   local warnings_row="| $(_render_step_icon_cell "⚠️" "Warnings") | Warnings |"
   local group_warning_total=0
   for env in "${envs[@]}"; do
+    # Unaffected members are left out of every group-wide gate below: a
+    # column of dashes must not open a row, nor keep one open.
+    if _is_unaffected "${group_name}" "${env}"; then
+      warnings_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
     local wc
     wc=$(_extract_warning_count "${meta_file}")
@@ -445,6 +611,10 @@ function render_group_body {
   local plan_details_row="| $(_render_step_icon_cell "📊" "Plan details") | Plan details |"
   local group_has_plan_data=false
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group_name}" "${env}"; then
+      plan_details_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
     local c_add c_change c_destroy c_import c_move c_remove
     c_add=$(_extract_plan_count "${meta_file}" "count-add")
@@ -464,6 +634,10 @@ function render_group_body {
   # not as a step-status row alongside init/fmt/validate/lint/plan.
   local plan_time_row="| $(_render_step_icon_cell "⏱" "Plan time") | Plan time |"
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group_name}" "${env}"; then
+      plan_time_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
     local pt
     pt=$(_extract_plan_time "${meta_file}")
@@ -489,6 +663,12 @@ function render_group_body {
   # ---- Links row ----
   local links_row="| $(_render_step_icon_cell "🔗" "Links") | Links |"
   for env in "${envs[@]}"; do
+    # An unaffected member has no job and no tag: an empty cell, as for an
+    # affected env whose links could not be resolved.
+    if _is_unaffected "${group_name}" "${env}"; then
+      links_row+=" $(_render_links_cell "" "") |"
+      continue
+    fi
     # Resolved per-env job URL (Jobs API, step 2). Empty when not resolvable;
     # _render_links_cell drops the line in that case (we don't emit wrong URLs).
     local job_log_url="${PER_ENV_JOB_URL[${env}]:-}"
@@ -504,6 +684,15 @@ function render_group_body {
   first_env_meta_file=$(_first_meta_file_for_group "${group_name}")
   local footer
   footer=$(_render_footer "${first_env_meta_file}")
+  # The unaffected members' names, in column order, on their own line above
+  # the workflow-log line (docs/Path-relevance.md §6.2).
+  local -a unaffected_envs=()
+  for env in "${envs[@]}"; do
+    _is_unaffected "${group_name}" "${env}" && unaffected_envs+=("${env}")
+  done
+  if [ ${#unaffected_envs[@]} -gt 0 ]; then
+    footer="$(_render_not_affected_line "${unaffected_envs[@]}")"$'\n\n'"${footer}"
+  fi
 
   # ---- Assembly ----
   # Returns the user-visible portion (H3 + table + footer). The HTML
@@ -559,7 +748,13 @@ function _render_op_block {
 
   local env outcome any_outcome=false
   local status_row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
+  # Unaffected members neither open the block nor count toward its warnings
+  # gate; every row carries their not-affected dash.
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group}" "${env}"; then
+      status_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     outcome=$(_extract_step_outcome "${group}" "${env}" "${step}")
     _op_ran "${outcome}" && any_outcome=true
     status_row+=" $(_render_status_cell "${outcome}") |"
@@ -571,6 +766,10 @@ function _render_op_block {
   local warnings_row="| $(_render_step_icon_cell "⚠️" "${warn_label}") | ${warn_label} |"
   local warn_total=0 wc meta_file
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group}" "${env}"; then
+      warnings_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
     wc=$(_extract_step_output "${meta_file}" "${warn_step}" "warning-count")
     warnings_row+=" $(_render_warning_count_cell "${wc}" "${warn_title}") |"
@@ -580,6 +779,10 @@ function _render_op_block {
   local details_label="${label} details"
   local details_row="| $(_render_step_icon_cell "📊" "${details_label}") | ${details_label} |"
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group}" "${env}"; then
+      details_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
     case "${step}" in
       apply)
@@ -613,6 +816,10 @@ function _render_op_block {
   local time_label="${label} time"
   local time_row="| $(_render_step_icon_cell "⏱" "${time_label}") | ${time_label} |"
   for env in "${envs[@]}"; do
+    if _is_unaffected "${group}" "${env}"; then
+      time_row+=" ${NOT_AFFECTED_CELL} |"
+      continue
+    fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
     time_row+=" $(_render_plan_time_cell "$(_extract_step_output "${meta_file}" "${step}" "${time_key}")") |"
   done
@@ -636,9 +843,14 @@ function _extract_step_output {
 
 # 'true' when the env's goals (matrix_context.vars.goals, a JSON array)
 # contain the given goal; '' otherwise, including when goals are missing or
-# not an array (older artifacts).
+# not an array (older artifacts). For an unaffected member, whose metadata
+# does not exist, relevance.json's mutates-on-pr answers instead.
 function _extract_goal_flag {
   local group="${1}" env="${2}" goal="${3}"
+  if _is_unaffected "${group}" "${env}"; then
+    [[ " ${UNAFFECTED_GOALS[${group}/${env}]:-} " == *" ${goal} "* ]] && echo "true" || echo ""
+    return
+  fi
   local file="${DESIRED_META[${group}/${env}]:-}"
   [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
   if jq -e --arg g "${goal}" '(.matrix_context.vars.goals // []) | (type == "array") and (index($g) != null)' "${file}" >/dev/null 2>&1; then
@@ -700,12 +912,18 @@ function _extract_plan_time {
 }
 
 # Pick any one metadata file from a group (for sourcing actor/event/workflow
-# in the footer — they're the same across the run).
+# in the footer — they're the same across the run). The first member that has
+# one: an unaffected member has none, and a group of only unaffected members
+# yields '' (the footer then falls back to GITHUB_RUN_ID, the same run).
 function _first_meta_file_for_group {
-  local group="${1}"
-  local first_env
-  first_env=$(echo "${DESIRED_GROUPS[${group}]}" | head -n1)
-  echo "${DESIRED_META[${group}/${first_env}]:-}"
+  local group="${1}" env
+  while IFS= read -r env; do
+    if [ -n "${DESIRED_META[${group}/${env}]:-}" ]; then
+      echo "${DESIRED_META[${group}/${env}]}"
+      return
+    fi
+  done <<<"${DESIRED_GROUPS[${group}]}"
+  echo ""
 }
 
 # Render the footer line for the per-group head: a single [Workflow log](url)
@@ -757,7 +975,7 @@ function orphan_delete_pass {
   # group, on pull requests that were open across that change — a new pull
   # request never gets one, since nothing posts it. Small, and bounded, against
   # deleting a comment that another workflow is actively maintaining.
-  if [ ${#DESIRED_GROUPS[@]} -eq 0 ]; then
+  if [ ${#DESIRED_GROUPS[@]} -eq 0 ] && [ ${#DECLARED_GROUPS[@]} -eq 0 ]; then
     log-info "Desired set is empty — this run declares no groups, so the ${#EXISTING_GROUP_COMMENTS[@]} existing group comment(s) are not ours to delete."
     end-group
     return 0
@@ -766,8 +984,9 @@ function orphan_delete_pass {
   local existing_group entry created cid
   for existing_group in "${!EXISTING_GROUP_COMMENTS[@]}"; do
     # Only orphan if the group is NOT in the desired set. Desired groups
-    # are kept (one survivor) by the upsert pass.
-    if [ -n "${DESIRED_GROUPS[${existing_group}]:-}" ]; then
+    # are kept (one survivor) by the upsert pass. A group relevance.json
+    # declares is desired even with no member to render.
+    if [ -n "${DESIRED_GROUPS[${existing_group}]:-}" ] || [ -n "${DECLARED_GROUPS[${existing_group}]:-}" ]; then
       continue
     fi
     # Delete every comment for this orphan group — markers from prior
@@ -814,8 +1033,13 @@ function upsert_pass {
   for group in "${sorted_groups[@]}"; do
     start-group "Step 5: Upsert group '${group}'"
 
-    # Sort envs alphabetically within the group (docs/Workflow-pr-comments.md §4.2)
-    envs_sorted=$(echo "${DESIRED_GROUPS[${group}]}" | sort)
+    # Sort envs alphabetically within the group (docs/Workflow-pr-comments.md §4.2),
+    # or in environments-yml order when the relevance file gave one (Step 1b).
+    if [ -n "${GROUP_COLUMNS[${group}]:-}" ]; then
+      envs_sorted="${GROUP_COLUMNS[${group}]}"
+    else
+      envs_sorted=$(echo "${DESIRED_GROUPS[${group}]}" | sort)
+    fi
     log-info "Rendering (envs: $(echo "${envs_sorted}" | tr '\n' ',' | sed 's/,$//'))"
 
     marker=$(_group_marker "${group}")
@@ -948,7 +1172,16 @@ function _record_processed {
 # reaches the orphan pass, finds group heads it does not recognise, and deletes
 # the ones the real run seeded at the top of the thread — which then get
 # re-posted at the bottom, where nobody looks.
+#
+# relevance.json lists every environment, affected or not, so one that
+# comments there wants comments even when its job did not run: a run whose
+# only commenting environments are unaffected still reconciles their groups.
 function any_env_wants_comments {
+  if [ -n "${RELEVANCE_FILE}" ] &&
+    jq -e 'any(.environments[]; .["add-pr-comment"] == "true" or .["add-pr-comment"] == true)' "${RELEVANCE_FILE}" >/dev/null 2>&1; then
+    return 0
+  fi
+
   shopt -s nullglob
   local files=(${input_metadata_files_pattern})
   shopt -u nullglob
@@ -970,6 +1203,7 @@ function main {
   log-info "Starting aggregate-validation-summaries..."
   log-info "Pattern:    ${input_metadata_files_pattern:-<unset>}"
   log-info "PR number:  ${input_pr_number:-<unset>}"
+  log-info "Relevance:  ${input_relevance_file:-<unset>}"
   log-info "Repository: ${GITHUB_REPOSITORY:-<unset>}"
 
   if [ -z "${input_pr_number:-}" ]; then
@@ -982,6 +1216,7 @@ function main {
   fi
 
   build_desired_set
+  merge_relevance_file
 
   if ! any_env_wants_comments; then
     log-info "No environment in this run has add-pr-comment enabled — this workflow does not manage the pull request's comments; nothing to reconcile."
