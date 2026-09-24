@@ -161,6 +161,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # The decision engine on its supported Pythons. The discovered engine suite above runs on the
+  # image's python3, which moves with ubuntu-latest; this pins the floor (docs/Decision-engine.md
+  # D1) and follows the newest release, both gates included.
+  engine-python:
+    name: "🐍 Engine on Python ${{ matrix.python }}"
+    needs: discover
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.x"]
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v6
+
+      - name: "🐍 Set up Python ${{ matrix.python }}"
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: "🧪 Run the engine suite"
+        run: |
+          # Install the pinned coverage into this Python, then run the suite with it
+          python3 --version
+          pin="$(sed -n 's/^COVERAGE_PIN = "\(.*\)"$/\1/p' engine/tests/run_tests.py)"
+          python3 -m pip install --quiet "coverage==${pin}"
+          bash engine/run_all_tests.sh
+
   summary:
     name: "📝 Aggregate summary"
     needs: [discover, test]
@@ -195,7 +225,7 @@ jobs:
   # status — independent of how the matrix grows. See docs/Testing-in-ci.md §2.4.
   tests-conclusion:
     name: "tests-conclusion"
-    needs: [discover, test]
+    needs: [discover, test, engine-python]
     if: |
       always() &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
@@ -205,9 +235,16 @@ jobs:
         env:
           DISCOVER_RESULT: ${{ needs.discover.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          ENGINE_PYTHON_RESULT: ${{ needs.engine-python.result }}
         run: |
-          echo "discover result: ${DISCOVER_RESULT}"
-          echo "test result:     ${TEST_RESULT}"
+          echo "discover result:      ${DISCOVER_RESULT}"
+          echo "test result:          ${TEST_RESULT}"
+          echo "engine-python result: ${ENGINE_PYTHON_RESULT}"
+
+          if [[ "${ENGINE_PYTHON_RESULT}" != "success" ]]; then
+            echo "::error title=Engine Python matrix failed::engine-python job result was '${ENGINE_PYTHON_RESULT}'"
+            exit 1
+          fi
 
           if [[ "${DISCOVER_RESULT}" != "success" ]]; then
             echo "::error title=Discover failed::discover job result was '${DISCOVER_RESULT}'"
