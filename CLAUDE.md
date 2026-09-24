@@ -140,7 +140,8 @@ Minor and major releases both use annotated tags. Critical points beyond the doc
     - <commit subject>"
   combined="${old:+${old}
   }${new_block}"
-  git tag -f -a v1 -m "${combined}" origin/main
+  # --cleanup=verbatim: the default cleanup drops every line that starts with '#', the block header too
+  git tag -f -a --cleanup=verbatim v1 -m "${combined}" origin/main
   git push -f origin refs/tags/v1
   ```
 - **The `v0` major tag's annotation is an append-only changelog.** Every prior `v0.X:` block must be preserved when force-recreating `v0`. The doc shows interactive `git tag -f -a 'v0'` which prompts for fresh annotation — that overwrites. To **amend** properly:
