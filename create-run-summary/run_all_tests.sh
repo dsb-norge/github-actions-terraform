@@ -307,6 +307,176 @@ assert "existing GITHUB_STEP_SUMMARY content is preserved" \
 teardown
 
 # ----------------------------------------------------------------------
+# R — relevance-file (docs/Path-relevance.md §6.5)
+# ----------------------------------------------------------------------
+# write_relevance <mode> <reason> <changed-count> <environment:github-environment:verdict>...
+write_relevance() {
+  local mode="${1}" reason="${2}" changed="${3}"; shift 3
+  local entries='[]' spec e ge v
+  for spec in "$@"; do
+    IFS=':' read -r e ge v <<<"${spec}"
+    entries=$(jq -c --arg e "${e}" --arg ge "${ge}" --arg v "${v}" \
+      '. + [{"environment": $e, "github-environment": $ge, "verdict": $v,
+             "reasons": ["relevance: test"], "add-pr-comment": "true", "pr-comment-group": ""}]' <<<"${entries}")
+  done
+  jq -n --arg m "${mode}" --arg r "${reason}" --argjson c "${changed}" --argjson envs "${entries}" \
+    '{schema_version: 1, relevance: {mode: $m, reason: $r, changed_count: $c},
+      counts: {affected: ([$envs[] | select(.verdict == "run")] | length),
+               unaffected: ([$envs[] | select(.verdict == "skip")] | length)},
+      environments: $envs, comments: {}, notices: [], record: []}' >"${RUNNER_TEMP}/relevance.json"
+}
+RUN_URL='https://github.com/dsb-norge/test-repo/actions/runs/999'
+NA='<span title="not affected">—</span>'
+DASH_ROW_TAIL="| ${NA} | ${NA} | ${NA} | ${NA} | ${NA} | ${NA} |"
+MISSING_ROW_TAIL="| <span title=\"affected, but its job left no metadata: cancelled, crashed or not uploaded\">❔</span> | — | — | — | — | [run](${RUN_URL}) |"
+env_order() { grep -oE '^\| `[a-z0-9-]+`' "${GITHUB_STEP_SUMMARY}" | tr -d '|` ' | tr '\n' ' '; }
+
+# R1 — mixed: one affected, two not; rows keep environments-yml order
+setup
+write_relevance diff diff 1 prod:prod:skip staging:staging:run sandbox:sandbox:skip
+write_meta "staging" success "1:0:0" "0:04" "$(ops_apply success true 1 0 0 1:07)"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "R1: headline counts environments, affected, not affected, applied, failed" \
+  grep -qxF '**3 environments · 1 affected · 2 not affected · 1 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "R1: relevance line names the mode and the changed-file count (singular)" \
+  grep -qxF 'Relevance: `diff`, 1 changed file' "${GITHUB_STEP_SUMMARY}"
+assert "R1: rows in environments-yml order, affected and not affected interleaved" \
+  test "$(env_order)" = "prod staging sandbox "
+assert "R1: an unaffected env is a row of dashes with a 'not affected' tooltip" \
+  test "$(row prod)" = "| \`prod\` ${DASH_ROW_TAIL}"
+assert "R1: the affected env's row is today's row, byte for byte" \
+  test "$(row staging)" = "| \`staging\` | <span title=\"every step that ran succeeded\">✅</span> | \`💫 1\` \`🛠️ 0\` \`💥 0\` | \`💫 1/1\` \`🛠️ 0/0\` \`💥 0/0\` | — | \`1:11\` | [run](${RUN_URL}) |"
+assert "R1: a footer line explains the dashed rows" \
+  grep -qxF '_Rows of `—`: not affected by this change, so not planned._' "${GITHUB_STEP_SUMMARY}"
+assert "R1: no nothing-to-verify line when something is affected" \
+  bash -c "! grep -q 'Nothing needed verifying' '${GITHUB_STEP_SUMMARY}'"
+assert "R1: environment-count counts every environment, failed-count the failures" \
+  bash -c "[ \"\$(grep '^environment-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 3 ] && [ \"\$(grep '^failed-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 0 ]"
+unset input_relevance_file
+teardown
+
+# R2 — zero affected (a docs-only change): says nothing needed verifying,
+# never "No environments", and still lists every environment
+setup
+write_relevance diff diff 2 prod:prod:skip staging:staging:skip sandbox:sandbox:skip
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R2: exits 0" test "${LAST_EXIT}" -eq 0
+assert "R2: headline" \
+  grep -qxF '**3 environments · 0 affected · 3 not affected · 0 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "R2: says nothing needed verifying" \
+  grep -qxF '_Nothing needed verifying: no environment is affected by this change._' "${GITHUB_STEP_SUMMARY}"
+assert "R2: not the no-environments block" bash -c "! grep -q '_No environments' '${GITHUB_STEP_SUMMARY}'"
+assert "R2: relevance line (plural)" grep -qxF 'Relevance: `diff`, 2 changed files' "${GITHUB_STEP_SUMMARY}"
+assert "R2: three dashed rows in environments-yml order" \
+  bash -c "[ \"\$(grep -cF '${DASH_ROW_TAIL}' '${GITHUB_STEP_SUMMARY}')\" = 3 ]" 
+assert "R2: … in environments-yml order" test "$(env_order)" = "prod staging sandbox "
+assert "R2: environment-count is 3" test "$(get_output environment-count)" = "3"
+unset input_relevance_file
+teardown
+
+# R3 — mode all: the reason is shown, not the changed-file count
+setup
+write_relevance all workflow-changed 2 prod:prod:run staging:staging:run
+write_meta "prod" failure "0:0:0" "0:10"
+write_meta "staging" success "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R3: relevance line names the mode and the fail-open reason" \
+  grep -qxF 'Relevance: `all` (workflow-changed)' "${GITHUB_STEP_SUMMARY}"
+assert "R3: headline" \
+  grep -qxF '**2 environments · 2 affected · 0 not affected · 0 applied · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "R3: no dashed-row footer when every environment is affected" \
+  bash -c "! grep -q 'Rows of' '${GITHUB_STEP_SUMMARY}'"
+unset input_relevance_file
+teardown
+
+# R4 — a relevance-file that is not on disk (a failed artifact download) or
+# is not a relevance document renders exactly as no file at all
+render_g1_fixture() {
+  write_meta "charlie" success "1:0:0" "0:04" "$(ops_apply success true 1 0 0 1:07)"
+  write_meta "alpha"   failure "0:0:0" "9:49"
+  write_meta "bravo"   success "2:1:0" "0:30"
+}
+R4_DIR=$(mktemp -d)
+setup
+render_g1_fixture
+run_step
+cp "${GITHUB_STEP_SUMMARY}" "${R4_DIR}/nofile.md"; cp "${GITHUB_OUTPUT}" "${R4_DIR}/nofile.out"
+teardown
+setup
+render_g1_fixture
+export input_relevance_file="${RUNNER_TEMP}/does-not-exist/relevance.json"
+run_step
+assert "R4: missing file → exits 0" test "${LAST_EXIT}" -eq 0
+assert "R4: missing file → summary byte-identical to no file" cmp -s "${R4_DIR}/nofile.md" "${GITHUB_STEP_SUMMARY}"
+assert "R4: missing file → outputs identical to no file" cmp -s "${R4_DIR}/nofile.out" "${GITHUB_OUTPUT}"
+assert "R4: missing file → warned about" grep -q 'relevance file not found' "${OUT_FILE}"
+unset input_relevance_file
+teardown
+setup
+render_g1_fixture
+echo '{not json' >"${RUNNER_TEMP}/relevance.json"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R4: malformed file → summary byte-identical to no file" cmp -s "${R4_DIR}/nofile.md" "${GITHUB_STEP_SUMMARY}"
+assert "R4: malformed file → warned about" grep -q 'not a relevance document' "${OUT_FILE}"
+unset input_relevance_file
+teardown
+setup
+export input_relevance_file="${RUNNER_TEMP}/does-not-exist.json"
+run_step
+assert "R4: missing file and no metadata → today's no-environments block" grep -q '_No environments' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+rm -rf "${R4_DIR}"
+
+# R5 — an affected env whose job left no metadata (cancelled or crashed)
+# still gets a row, and the headline says so
+setup
+write_relevance diff diff 3 prod:prod:run staging:staging:run sandbox:sandbox:skip
+write_meta "staging" success "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R5: the env without metadata still has a row" test "$(row prod)" = "| \`prod\` ${MISSING_ROW_TAIL}"
+assert "R5: headline counts it as affected and as not reported, not as failed" \
+  grep -qxF '**3 environments · 2 affected · 1 not affected · 0 applied · 0 failed · 1 not reported**' "${GITHUB_STEP_SUMMARY}"
+assert "R5: failed-count does not count it" test "$(get_output failed-count)" = "0"
+unset input_relevance_file
+teardown
+
+# R6 — metadata is keyed by github-environment; the destroyed counter keeps
+# its place in the extended headline
+setup
+write_relevance diff diff 1 prod-app:production:run dev:dev:skip
+write_meta "production" success "0:0:0" "0:30" "$(ops_apply success true 0 0 0 0:20),$(ops_destroy success true 3 3 0:40)"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R6: matched on github-environment and labelled by it, as today's rows" row_has production '| `💥 3/3` |'
+assert "R6: no row for the environment name" test -z "$(row prod-app)"
+assert "R6: headline with the destroyed counter" \
+  grep -qxF '**2 environments · 1 affected · 1 not affected · 1 applied · 1 destroyed · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+# R7 — metadata for an env the file does not list is rendered after the
+# listed ones and warned about, never dropped
+setup
+write_relevance diff diff 1 prod:prod:run
+write_meta "prod" success "0:0:0" "0:10"
+write_meta "stray" failure "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R7: the stray env renders after the listed ones" test "$(env_order)" = "prod stray "
+assert "R7: warned about" grep -q "stray.*not in the relevance file" "${OUT_FILE}"
+assert "R7: headline N/A/U from the file; its failure still counts" \
+  grep -qxF '**1 environment · 1 affected · 0 not affected · 0 applied · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

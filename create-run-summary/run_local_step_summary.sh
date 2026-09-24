@@ -27,6 +27,18 @@ cat > matrix-job-meta-prod.json <<'EOF'
  "steps":{"init":{"outcome":"success","outputs":{}},"plan":{"outcome":"failure","outputs":{"plan-time":"9:49"}}}}
 EOF
 export input_metadata_files_pattern="matrix-job-meta-*.json"
+# Relevance: 'staging' was not affected by the change. Unset to see the
+# rendering without relevance.
+cat > relevance.json <<'EOF'
+{"schema_version":1,"relevance":{"mode":"diff","reason":"diff","changed_count":2},
+ "counts":{"affected":2,"unaffected":1},
+ "environments":[
+   {"environment":"dev","github-environment":"dev","verdict":"run","reasons":["relevance: envs/dev/**"]},
+   {"environment":"staging","github-environment":"staging","verdict":"skip","reasons":["relevance: no changed file matches"]},
+   {"environment":"prod","github-environment":"prod","verdict":"run","reasons":["relevance: modules/**"]}],
+ "comments":{},"notices":[],"record":[]}
+EOF
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
 
 (
   set -o allexport

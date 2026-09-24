@@ -4,6 +4,10 @@
 # Auto-loaded by helpers.sh.
 #
 
+# One cell of an unaffected environment's row. Every cell carries the tooltip,
+# not just the first: a reader hovers the cell they are looking at.
+NOT_AFFECTED_CELL='<span title="not affected">—</span>'
+
 # One step output from a metadata file; empty when absent or JSON null.
 function meta_step_output {
   local file="${1}" step="${2}" key="${3}"
