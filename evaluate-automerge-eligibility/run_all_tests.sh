@@ -1165,9 +1165,10 @@ fi
 # quoted delimiter unique in the repository. GitHub pastes the expression's value
 # into the script before bash parses it, so a value holding the delimiter line
 # ends the capture and the rest runs as shell. toJSON output cannot hold such a
-# line (JSON escapes a string's newlines); free text can, and goes through env:.
-# So: every captured action input is passed, at every call site in the
-# workflows, as toJSON(...) or a JSON literal; a workflow captures only
+# line (JSON escapes a string's newlines); free text can. So an action captures
+# either toJSON(inputs.<input>) itself, or a JSON-contract input (its name ends
+# in -json, or it is one of the listed older ones) that every call site in the
+# workflows passes as toJSON(...) or a JSON literal; a workflow captures only
 # toJSON(...); and no delimiter is a bare or shared name.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -1188,6 +1189,10 @@ def run_blocks(doc):
         steps += job.get('steps') or []
     return [step['run'] for step in steps if isinstance(step.get('run'), str)]
 
+# JSON-contract inputs named before the -json suffix was the rule; each documents a JSON object.
+JSON_CONTRACT = {('export-env-vars', 'extra-envs'), ('export-env-vars', 'extra-envs-from-secrets'),
+                 ('resolve-goal-envs', 'extra-envs'), ('resolve-goal-envs', 'extra-envs-from-secrets'),
+                 ('resolve-goal-envs', 'extra-envs-per-goal'), ('resolve-goal-envs', 'extra-envs-from-secrets-per-goal')}
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?:\n|$)", re.S)
 EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 problems, captures, delimiters = [], {}, {}
@@ -1208,10 +1213,15 @@ for path in files:
                 if path.startswith('.github/'):
                     if not re.fullmatch(r"toJSON\(.+\)", expression):
                         problems.append(f"{where}: captures '{expression}', not toJSON(...)")
+                elif re.fullmatch(r"toJSON\(inputs\.[a-z0-9-]+\)", expression):
+                    pass  # JSON by construction, whatever the caller passes
                 elif re.fullmatch(r"inputs\.[a-z0-9-]+", expression):
-                    captures.setdefault(path.split('/')[0], set()).add(expression.split('.', 1)[1])
+                    name, action = expression.split('.', 1)[1], path.split('/')[0]
+                    if not name.endswith('-json') and (action, name) not in JSON_CONTRACT:
+                        problems.append(f"{where}: captures input '{name}', which is not a JSON-contract input; capture toJSON(inputs.{name}) instead")
+                    captures.setdefault(action, set()).add(name)
                 else:
-                    problems.append(f"{where}: captures '{expression}', not an input")
+                    problems.append(f"{where}: captures '{expression}', neither an input nor toJSON of one")
 for delimiter, paths in delimiters.items():
     if len(paths) > 1:
         problems.append(f"delimiter {delimiter} is used {len(paths)} times: {', '.join(paths)}")
