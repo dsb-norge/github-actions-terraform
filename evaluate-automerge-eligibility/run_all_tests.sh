@@ -170,9 +170,13 @@ EOF
 }
 
 # Function to run a single test
+# Usage: run_test <name> <expected is-eligible> [<text the output must contain>...]
+# TEST_RELEVANCE_FILE, when set, is handed to the step as its relevance-file input.
 run_test() {
   local test_name="${1}"
   local expected_eligible="${2}"
+  shift 2
+  local expected_texts=("$@")
 
   TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -187,6 +191,7 @@ run_test() {
   # Required system variables
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   export input_metadata_files_pattern="matrix-job-meta-*.json"
+  export input_relevance_file="${TEST_RELEVANCE_FILE:-}"
 
   # Run the step_evaluate.sh script in a subshell
   (
@@ -198,11 +203,20 @@ run_test() {
   local actual_eligible
   actual_eligible=$(grep "^is-eligible=" "${GITHUB_OUTPUT}" | cut -d= -f2)
 
-  if [[ "${actual_eligible}" == "${expected_eligible}" ]]; then
+  local missing_texts=()
+  local text
+  for text in "${expected_texts[@]}"; do
+    grep -qF -- "${text}" /tmp/test_output.txt || missing_texts+=("${text}")
+  done
+
+  if [[ "${actual_eligible}" == "${expected_eligible}" && ${#missing_texts[@]} -eq 0 ]]; then
     echo -e "${GREEN}✓ PASSED${NC}: Expected is-eligible=${expected_eligible}, got ${actual_eligible}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else
     echo -e "${RED}✗ FAILED${NC}: Expected is-eligible=${expected_eligible}, got ${actual_eligible}"
+    for text in "${missing_texts[@]}"; do
+      echo "  output lacks: ${text}"
+    done
     echo ""
     echo "Test output:"
     cat /tmp/test_output.txt
@@ -229,6 +243,7 @@ run_error_test() {
   export GITHUB_OUTPUT=$(mktemp)
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   export input_metadata_files_pattern="matrix-job-meta-*.json"
+  export input_relevance_file="${TEST_RELEVANCE_FILE:-}"
 
   # Run the step_evaluate.sh script in a subshell
   (
@@ -884,6 +899,328 @@ create_metadata_file "matrix-job-meta-strict.json" "strict" \
   --plan-counts='{"count-add": "0", "count-change": "0", "count-destroy": "0", "count-import": "0", "count-move": "0", "count-remove": "1"}' \
   --limits='{"plan-max-count-add": -1, "plan-max-count-change": -1, "plan-max-count-destroy": -1, "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": 0}'
 run_test "Environment with remove count exceeds zero limit" "false"
+cleanup_test_dir
+
+# ============================================================================
+# Relevance file (docs/Path-relevance.md §8)
+#
+# With a relevance file, every environment of environments-yml is judged:
+# an affected one on its metadata (which must exist, exactly once), an
+# unaffected one on configuration, enabled flag and actor allowlist from the
+# file. A docs-only pull request has zero metadata files and must still pass
+# the enabled and actor checks, never merge blindly.
+# ============================================================================
+
+_all_unlimited='{"plan-max-count-add": -1, "plan-max-count-change": -1, "plan-max-count-destroy": -1, "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": -1}'
+
+# Build one environments[] entry of relevance.json, shaped as the matrix builder writes it
+# Usage: relevance_entry <github-environment> <run|skip> [--enabled=<true|false>] [--actors=<json>] [--limits=<json>]
+relevance_entry() {
+  local github_env="${1}"
+  local verdict="${2}"
+  shift 2
+  local enabled="true"
+  local actors='[]'
+  local limits="${_all_unlimited}"
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+      --enabled=*) enabled="${1#*=}" ;;
+      --actors=*) actors="${1#*=}" ;;
+      --limits=*) limits="${1#*=}" ;;
+    esac
+    shift
+  done
+  jq -nc --arg ge "${github_env}" --arg verdict "${verdict}" --arg enabled "${enabled}" \
+    --argjson actors "${actors}" --argjson limits "${limits}" '{
+      "environment": $ge, "github-environment": $ge, "verdict": $verdict,
+      "reasons": [(if $verdict == "run" then "relevance: **" else "relevance: no changed file matches" end)],
+      "add-pr-comment": "true", "pr-comment-group": "", "mutates-on-pr": [],
+      "pr-auto-merge-enabled": $enabled, "pr-auto-merge-from-actors": $actors, "pr-auto-merge-limits": $limits,
+      "paths": ["**"], "paths-ignore": []
+    }'
+}
+
+# Write relevance.json from environments[] entries
+# Usage: create_relevance_file <file> [<entry json>...]
+create_relevance_file() {
+  local file="${1}"
+  shift
+  { [[ $# -gt 0 ]] && printf '%s\n' "$@"; } | jq -s '{
+    "schema_version": 1,
+    "relevance": {"mode": "diff", "reason": "diff", "changed_count": 1},
+    "counts": {"affected": (map(select(.verdict == "run")) | length), "unaffected": (map(select(.verdict == "skip")) | length)},
+    "environments": .,
+    "comments": {"heads": [], "gc": [], "purge_tags_for": []},
+    "notices": [],
+    "record": {}
+  }' > "${file}"
+}
+
+# ============================================================================
+# Test R1: Zero affected, actor in every allowlist - eligible
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+export GITHUB_ACTOR="renovate[bot]"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --actors='["renovate[bot]"]')" \
+  "$(relevance_entry staging skip --actors='["dependabot[bot]", "renovate[bot]"]')"
+run_test "Relevance: zero affected, allowed actor" "true" \
+  "Plan creation: NOT AFFECTED" \
+  "✅ prod (not affected)" \
+  "✅ staging (not affected)"
+export GITHUB_ACTOR="dependabot[bot]"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R2: Zero affected, actor outside one allowlist - not eligible
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+export GITHUB_ACTOR="some-human"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --actors='["renovate[bot]"]')" \
+  "$(relevance_entry staging skip)"
+run_test "Relevance: zero affected, disallowed actor" "false" \
+  "Actor 'some-human' is not authorized for PR automerge" \
+  "❌ prod (not affected)" \
+  "✅ staging (not affected)"
+export GITHUB_ACTOR="dependabot[bot]"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R3: Zero affected, auto-merge disabled on one environment - not eligible
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --enabled=false)" \
+  "$(relevance_entry staging skip)"
+run_test "Relevance: zero affected, auto-merge disabled on one environment" "false" \
+  "PR automerge is disabled for this environment" \
+  "❌ prod (not affected)"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R4: Zero affected, empty and null allowlists allow every actor
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+export GITHUB_ACTOR="any-random-actor"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --actors='[]')" \
+  "$(relevance_entry staging skip --actors=null)"
+run_test "Relevance: zero affected, empty and null allowlists" "true"
+export GITHUB_ACTOR="dependabot[bot]"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R5: An affected environment without metadata - not eligible, named
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod run)" \
+  "$(relevance_entry staging run)"
+create_metadata_file "matrix-job-meta-staging.json" "staging"
+run_test "Relevance: affected environment without metadata" "false" \
+  "No metadata file for affected environment 'prod'" \
+  "❌ prod (affected, no metadata)" \
+  "✅ staging"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R6: Mixed - affected with passing metadata, unaffected passing
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --actors='["dependabot[bot]"]')" \
+  "$(relevance_entry staging run)" \
+  "$(relevance_entry sandbox skip)"
+create_metadata_file "matrix-job-meta-staging.json" "staging"
+run_test "Relevance: mixed affected and unaffected, all pass" "true" \
+  "✅ prod (not affected)" \
+  "✅ staging" \
+  "✅ sandbox (not affected)"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R7: Mixed - affected passes, unaffected disallows the actor
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --actors='["renovate[bot]"]')" \
+  "$(relevance_entry staging run)"
+create_metadata_file "matrix-job-meta-staging.json" "staging"
+run_test "Relevance: mixed, unaffected environment disallows the actor" "false" \
+  "❌ prod (not affected)" \
+  "✅ staging"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R8: Mixed - affected exceeds a limit, unaffected passes
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip)" \
+  "$(relevance_entry staging run)"
+create_metadata_file "matrix-job-meta-staging.json" "staging" \
+  --plan-counts='{"count-add": "2", "count-change": "0", "count-destroy": "0", "count-import": "0", "count-move": "0", "count-remove": "0"}' \
+  --limits='{"plan-max-count-add": 1, "plan-max-count-change": -1, "plan-max-count-destroy": -1, "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": -1}'
+run_test "Relevance: mixed, affected environment exceeds a limit" "false" \
+  "Add count (2) exceeds limit (1) in environment" \
+  "❌ staging"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R9: Relevance file given but absent on disk - today's behaviour (eligible)
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/no-such-dir/relevance.json"
+create_metadata_file "matrix-job-meta-sandbox.json" "sandbox"
+run_test "Relevance: file absent on disk behaves as no file (eligible)" "true" \
+  "does not exist, evaluating the metadata files alone"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R10: Relevance file given but absent, no metadata - today's behaviour
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/no-such-dir/relevance.json"
+run_test "Relevance: file absent on disk and no metadata files" "false" \
+  "No metadata files found matching pattern"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R11: Metadata for an environment the relevance file does not list
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod run)"
+create_metadata_file "matrix-job-meta-prod.json" "prod"
+create_metadata_file "matrix-job-meta-ghost.json" "ghost"
+run_test "Relevance: metadata for an environment not in the relevance file" "false" \
+  "Metadata file 'matrix-job-meta-ghost.json' is for environment 'ghost', which the relevance file does not list" \
+  "❓ ghost (not in the relevance file)" \
+  "✅ prod"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R12: Two metadata files for one environment
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod run)"
+create_metadata_file "matrix-job-meta-prod.json" "prod"
+create_metadata_file "matrix-job-meta-prod-copy.json" "prod"
+run_test "Relevance: two metadata files for one environment" "false" \
+  "2 metadata files for environment 'prod', expected exactly one" \
+  "❌ prod (2 metadata files)"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R13: Relevance file lists no environments
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}"
+run_test "Relevance: file lists no environments" "false" \
+  "lists no environments, nothing establishes that auto-merge is permitted"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R14: Relevance file is not valid JSON
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+echo "not json" > "${TEST_RELEVANCE_FILE}"
+create_metadata_file "matrix-job-meta-sandbox.json" "sandbox"
+run_test "Relevance: file is not valid JSON" "false" \
+  "is not valid JSON"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R15: Relevance entry with an unknown verdict
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod maybe)"
+run_test "Relevance: entry with an unknown verdict" "false" \
+  "each needs a non-empty 'github-environment' and a 'verdict' of 'run' or 'skip'"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R16: Unaffected environment with invalid limits - configuration error
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --limits='{"plan-max-count-add": "abc", "plan-max-count-change": -1, "plan-max-count-destroy": -1, "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": -1}')"
+run_error_test "Relevance: unaffected environment with invalid limits exits with error"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R17: Unaffected environment with null limits - configuration error
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip --limits=null)"
+run_error_test "Relevance: unaffected environment with null limits exits with error"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R18: Metadata for an environment the file marks unaffected - its plan
+# is still judged, so a run that did happen is never ignored
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod skip)"
+create_metadata_file "matrix-job-meta-prod.json" "prod" \
+  --plan-counts='{"count-add": "0", "count-change": "0", "count-destroy": "1", "count-import": "0", "count-move": "0", "count-remove": "0"}' \
+  --limits='{"plan-max-count-add": -1, "plan-max-count-change": -1, "plan-max-count-destroy": 0, "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": -1}'
+run_test "Relevance: metadata for an unaffected environment is still judged" "false" \
+  "has a metadata file although the relevance file marks it unaffected" \
+  "Destroy count (1) exceeds limit (0) in environment"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Test R19: Relevance values are not read for an affected environment - its
+# metadata decides, as without the file
+# ============================================================================
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" \
+  "$(relevance_entry prod run --enabled=false)"
+create_metadata_file "matrix-job-meta-prod.json" "prod"
+run_test "Relevance: affected environment is judged on its metadata" "true" \
+  "✅ prod"
+unset TEST_RELEVANCE_FILE
 cleanup_test_dir
 
 # ============================================================================

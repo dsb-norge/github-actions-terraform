@@ -23,6 +23,25 @@ description: |
   This action processes multiple matrix-job-meta-*.json files and evaluates each environment
   independently. The final `is-eligible` output is `true` only if ALL environments are eligible.
 
+  ## With a relevance file
+
+  Given `relevance-file` (the matrix builder's `relevance.json`, docs/Path-relevance.md §8), the
+  environments judged are the ones the file lists, matched to metadata on `github-environment`:
+  - Affected environment (`verdict: run`) with exactly one metadata file: checks 1-10 above,
+    from the metadata, unchanged.
+  - Affected environment without a metadata file: not eligible. Its job was cancelled or failed
+    before capturing metadata.
+  - Unaffected environment (`verdict: skip`) without a metadata file: checks 1-3 from the resolved
+    `pr-auto-merge-enabled`, `pr-auto-merge-from-actors` and `pr-auto-merge-limits` in the file;
+    checks 4-9 are recorded as NOT AFFECTED.
+  - Unaffected environment with a metadata file: judged on the metadata like an affected one,
+    because a job that ran produced a plan.
+  - More than one metadata file for an environment, a metadata file for an environment the file
+    does not list, an invalid metadata file, a relevance file that is not valid JSON or lists no
+    environments or has a malformed entry: not eligible.
+  A pull request that affected no environment has no metadata at all and is eligible exactly
+  when every environment's enabled flag and actor allowlist permit it.
+
   ## Behavior Notes
 
   - Configuration errors (invalid limits JSON) will fail the action step with exit code 1
@@ -32,7 +51,9 @@ description: |
   - Destroy plan limits are ignored when performing-destroy-on-pr is true
   - When both plan and destroy plan limits are evaluated, counts are aggregated (summed)
   - Empty plan counts are acceptable only when the corresponding limits are ignored
-  - If no metadata files are found matching the pattern, is-eligible=false
+  - Without a relevance file (input empty, or the path does not exist): if no metadata files are
+    found matching the pattern, is-eligible=false
+  - With a relevance file, zero metadata files is a valid run; the environments come from the file
 author: "Peder Schmedling"
 inputs:
   metadata-files-pattern:
@@ -42,13 +63,24 @@ inputs:
       Each matching file should be a JSON file with the structure produced by capture-matrix-job-meta.
       Example: "matrix-job-meta-*.json"
     required: true
+  relevance-file:
+    description: |
+      Path of the `relevance.json` the matrix builder writes, listing every environment of the run
+      with its verdict (`run` or `skip`) and resolved `pr-auto-merge-*` values. With it, every
+      affected environment must have exactly one metadata file and every unaffected environment is
+      checked for configuration, enabled flag and actor authorization (see "With a relevance file").
+      Empty, or a path that does not exist (a relevance artifact that was never downloaded), gives
+      the behaviour without it: only the metadata files are evaluated.
+    required: false
+    default: ""
 outputs:
   is-eligible:
     description: |
       Boolean string ("true" or "false") indicating whether all environments are eligible for
       PR automerge. Returns "true" only if all environments pass all checks: actor authorization,
       plan creation validation, operation success (if applicable), and all limit evaluations.
-      Returns "false" if any environment fails or if no metadata files are found.
+      Returns "false" if any environment fails, if no metadata files are found and no relevance
+      file is given, or, with a relevance file, if an affected environment has no metadata.
     value: ${{ steps.evaluate.outputs.is-eligible }}
 runs:
   using: "composite"
@@ -57,6 +89,7 @@ runs:
       shell: bash
       env:
         input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+        input_relevance_file: ${{ inputs.relevance-file }}
       run: |
         # Evaluate whether every environment is eligible for auto-merge
         set -o allexport
