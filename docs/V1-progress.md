@@ -27,7 +27,8 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | What | Pull request | State | In `v1` |
 |---|---|---|---|
-| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | draft | no |
+| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | merged 2026-09-24 | yes |
+| The engine reviewed for what should change after the port: per-environment values of workflow inputs take the inputs' types (per-environment booleans were silently ignored by the gates), environment names follow one rule, one environment per github-environment | [#61](https://github.com/dsb-norge/github-actions-terraform/pull/61) | draft | no |
 
 ## 2. Status per spec
 
@@ -124,12 +125,23 @@ table only says where.
   The module cache's `cache-paths` steps did not run (no environment there resolves cacheable
   modules), so that move rests on its suite.
 
+### #61: field types, the name rule, one environment per github-environment
+
+- Test first: `test_fields.py` failed against the unchanged engine on every new rule (47 failing
+  subtests and 1 error across 18 test methods) before any rule existed; each rule then landed in
+  its own commit, green on its own with the mutation gate (881, 900, 911 mutants, all killed).
+- Five port cases record the old behaviour as deviations; three `-v1` cases hold the valid paths;
+  `fixture-happy-day-v1` equals the bash builder's golden apart from the renamed environment and
+  the one normalised boolean. Every calling repository's names fit the rule; none sets
+  github-environment.
+- Test bed: pending.
+
 ## 5. Findings to carry
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
 
 - Run blocks that paste values straight into shell, with no heredoc: `matrix.vars.github-environment`
-  (caller-configured) in several steps of the default workflow, `matrix.test-file` in module CI and
+  (caller-configured, now held to the name rule by #61) in several steps of the default workflow, `matrix.test-file` in module CI and
   `inputs.test-file` in `terraform-test` (file names from the repository under test), and path
   inputs in `terraform-apply` and `terraform-init`. The same risk family #60 fixes for heredocs;
   GitHub's advice is `env:` for every one. For the maintainer to decide whether it joins the v1
