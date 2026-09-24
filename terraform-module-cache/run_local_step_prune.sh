@@ -32,7 +32,7 @@ echo 'gitdir: ../../.git/modules/vendored' >"${_modules}/naming/vendored/.git"
 mkdir -p "${GITHUB_WORKSPACE}/.git"
 echo 'the repository itself' >"${GITHUB_WORKSPACE}/.git/HEAD"
 
-export input_cache_paths="envs/sandbox/.terraform/modules"
+export input_cache_paths_json="$(printf '%s' "envs/sandbox/.terraform/modules" | jq -Rs .)"
 
 echo "=== before ==="
 find "${GITHUB_WORKSPACE}" -name .git | sed "s|${GITHUB_WORKSPACE}|.|"

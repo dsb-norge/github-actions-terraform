@@ -21,7 +21,7 @@ cat >"${GITHUB_WORKSPACE}/envs/sandbox/.terraform/modules/modules.json" <<'JSON'
 ]}
 JSON
 
-export input_cache_paths="envs/sandbox/.terraform/modules"
+export input_cache_paths_json="$(printf '%s' "envs/sandbox/.terraform/modules" | jq -Rs .)"
 export input_cache_hit="true"
 
 echo "=== Running step_snapshot.sh ==="

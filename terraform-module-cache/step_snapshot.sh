@@ -13,7 +13,7 @@
 #   snapshot-dir - directory holding the before-images.
 #
 # Required environment variables:
-#   input_cache_paths - newline-separated cache paths from the resolve step.
+#   input_cache_paths_json - toJSON of the newline-separated cache paths from the resolve step.
 #
 # Optional environment variables:
 #   input_cache_hit - 'true' when the restore was an exact hit.
@@ -24,6 +24,9 @@ set +o nounset
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
+  # cache-paths arrives as JSON (the shim captures toJSON(inputs.cache-paths)); decoded here,
+  # trailing newlines stripped by the command substitution as the old raw capture did.
+  input_cache_paths="$(jq -r '. // ""' <<<"${input_cache_paths_json:-\"\"}")"
   local snapshot_dir path manifest taken=0
 
   snapshot_dir="${RUNNER_TEMP:-/tmp}/module-cache-manifests"

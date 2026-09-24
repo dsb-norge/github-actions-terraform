@@ -25,7 +25,7 @@
 #   freed-kib    - how much smaller the cache paths got, in KiB.
 #
 # Required environment variables:
-#   input_cache_paths - newline-separated cache paths from the resolve step.
+#   input_cache_paths_json - toJSON of the newline-separated cache paths from the resolve step.
 #
 
 set +o nounset
@@ -65,6 +65,9 @@ function _path_is_sane {
 }
 
 function main {
+  # cache-paths arrives as JSON (the shim captures toJSON(inputs.cache-paths)); decoded here,
+  # trailing newlines stripped by the command substitution as the old raw capture did.
+  input_cache_paths="$(jq -r '. // ""' <<<"${input_cache_paths_json:-\"\"}")"
   local path abs before after count total_count=0 total_freed=0
 
   if [ -z "${input_cache_paths}" ]; then
