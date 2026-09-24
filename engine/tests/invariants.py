@@ -55,4 +55,18 @@ def check(document, output):
 
     if output["counts"]["affected"] != len(run_names):
         violations.append("counts: affected does not equal the run set")
+    if output["counts"]["affected"] + output["counts"]["unaffected"] != len(environments):
+        violations.append("counts: affected and unaffected do not sum to the environments decided")
+
+    # I6 and I13: mode all runs every environment, and says why in every one.
+    relevance = output.get("relevance")
+    if relevance is not None and relevance["mode"] == "all":
+        reason = f"relevance: all:{relevance['reason']}"
+        if any(entry["verdict"] != "run" or reason not in entry["reasons"] for entry in environments):
+            violations.append("I6: mode all but an environment does not run for it")
+    if relevance is not None and document["workflow_inputs"].get("path-relevance-enabled") is False \
+            and relevance["reason"] != "disabled":
+        violations.append("I13: relevance switched off but the reason is not 'disabled'")
+    if output["errors"] and relevance is not None:
+        violations.append("errors present but a relevance block is emitted")
     return violations

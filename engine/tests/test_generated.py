@@ -13,7 +13,7 @@ import unittest
 
 import invariants
 import support
-from dsb_tf_engine import decide, environments
+from dsb_tf_engine import decide, environments, values
 
 ABSENT = object()
 
@@ -105,6 +105,43 @@ class GeneratedTest(unittest.TestCase):
                 document["directories_exist"][path] = rng.random() > 0.2
             with self.subTest(document=document):
                 self.assertSound(document)
+
+    def test_random_relevance_never_crashes(self):
+        rng = random.Random(20260924)
+        pool = ["README.md", "envs/env-a/main.tf", "envs/env-b/x.md", "modules/m/main.tf", ".tflint.hcl",
+                ".github/workflows/ci.yml", "main/a.tf", "shared/x.tf", "docs/a.md"]
+        rule_shapes = SHAPES[1:] + (["auto"], ["**"], ["auto", "shared/**"], ["envs/*/main.tf"], ["[x]"], ["auto", 5],
+                                    ["**/*.md"], ["auto", "auto"], ["./main/**", "main/**"])
+        verdicts = set()
+        for _ in range(3000):
+            environments_ = []
+            for name in rng.sample(["env-a", "env-b", "env-c"], rng.randint(1, 3)):
+                environment = {"environment": name}
+                for key in rng.sample(["paths", "paths-ignore", "project-dir"], rng.randint(0, 3)):
+                    environment[key] = rng.choice(rule_shapes if key != "project-dir" else
+                                                  (".", "./", "envs/env-a/", "../x", "/abs", 5, "a//b"))
+                environments_.append(environment)
+            document = support.document(environments=environments_,
+                                        inputs={"path-relevance-enabled": rng.choice([True, False, "true", "no"])})
+            for environment in environments_:
+                document["directories_exist"][values.render(environment.get("project-dir",
+                                                                            f"./envs/{environment['environment']}"))] = True
+            event = rng.choice(["pull_request", "push", "schedule", "workflow_dispatch"])
+            document["event"]["name"] = event
+            if event == "pull_request":
+                document["event"]["pull_request"] = {"number": 1, "head_sha": "abc"}
+            if event == "push":
+                document["event"]["push"] = {key: rng.random() < 0.2 for key in ("created", "forced", "deleted")}
+            if rng.random() > 0.1:
+                files = rng.sample(pool, rng.randint(0, 4))
+                document["changed_files"] = {
+                    "available": rng.random() > 0.1, "truncated": rng.random() < 0.1, "error": None,
+                    "api_head_sha": rng.choice(["abc", "abc", "abc", "other", None]), "count": len(files),
+                    "files": files}
+            with self.subTest(document=document):
+                output = self.assertSound(document)
+                verdicts.update(entry["verdict"] for entry in output["environments"])
+        self.assertEqual({"run", "skip"}, verdicts)
 
 
 if __name__ == "__main__":

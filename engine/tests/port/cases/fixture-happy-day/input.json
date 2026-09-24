@@ -22,6 +22,7 @@
     "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true\nANOTHER_ENV: \"1 2 3\"",
     "format-check-in-root-dir": "true",
     "goals-yml": "[all, dummy, apple]",
+    "path-relevance-enabled": true,
     "pr-auto-merge-enabled": "true",
     "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",

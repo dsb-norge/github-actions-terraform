@@ -23,6 +23,7 @@
     "extra-envs-yml": "TF_CLI_ARGS_init: \"-backend=false\"\n",
     "format-check-in-root-dir": false,
     "goals-yml": "- init\n- format\n- validate\n- lint\n",
+    "path-relevance-enabled": true,
     "pr-auto-merge-app-id": "",
     "pr-auto-merge-app-private-key-secret": "",
     "pr-auto-merge-enabled": false,

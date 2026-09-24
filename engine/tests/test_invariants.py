@@ -90,7 +90,8 @@ class InvariantCheckerTest(unittest.TestCase):
         output["environments"][1]["reasons"] = []
         output["matrices"]["1"]["include"].pop()
         output["matrices"]["1"]["environment"].pop()
-        output["counts"]["affected"] = 1
+        output["counts"] = {"affected": 1, "unaffected": 1}
+        output["relevance"] = {"mode": "diff", "reason": "diff", "changed_count": 0}
         self.assertEqual(["I11: a skip without a reason"], invariants.check(document, output))
 
     def test_a_record_that_is_not_one_line_per_environment(self):
@@ -102,6 +103,37 @@ class InvariantCheckerTest(unittest.TestCase):
         document, output = decided()
         output["counts"]["affected"] = 3
         self.assertViolation(document, output, "counts: affected")
+
+    def test_counts_that_do_not_sum_to_the_environments(self):
+        document, output = decided()
+        output["counts"]["unaffected"] = 1
+        self.assertEqual(["counts: affected and unaffected do not sum to the environments decided"],
+                         invariants.check(document, output))
+
+    def test_mode_all_with_an_environment_skipped(self):
+        document, output = decided()
+        output["environments"][1]["verdict"] = "skip"
+        output["matrices"]["1"]["include"].pop()
+        output["matrices"]["1"]["environment"].pop()
+        output["counts"] = {"affected": 1, "unaffected": 1}
+        self.assertEqual(["I6: mode all but an environment does not run for it"], invariants.check(document, output))
+
+    def test_mode_all_with_an_environment_running_for_another_reason(self):
+        document, output = decided()
+        output["environments"][0]["reasons"] = ["relevance: main/**"]
+        self.assertEqual(["I6: mode all but an environment does not run for it"], invariants.check(document, output))
+
+    def test_relevance_switched_off_without_the_reason(self):
+        document, output = decided()
+        document["workflow_inputs"]["path-relevance-enabled"] = False
+        self.assertEqual(["I13: relevance switched off but the reason is not 'disabled'"],
+                         invariants.check(document, output))
+
+    def test_an_error_output_with_a_relevance_block(self):
+        document, output = decided()
+        output.update(errors=["something"], environments=[], matrices={}, record=[],
+                      counts={"affected": 0, "unaffected": 0})
+        self.assertEqual(["errors present but a relevance block is emitted"], invariants.check(document, output))
 
 
 if __name__ == "__main__":

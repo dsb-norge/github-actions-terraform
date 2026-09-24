@@ -75,5 +75,61 @@ class ModelTest(unittest.TestCase):
                 self.assertDocumentError(document, "'directories_exist' is not a map of booleans")
 
 
+MESSAGE = ("input document: 'changed_files' needs exactly 'available', 'truncated', 'error', 'api_head_sha', 'count' "
+           "and 'files', typed as the adapter reports them")
+CHANGED = {"available": True, "truncated": False, "error": None, "api_head_sha": "abc", "count": 1, "files": ["a"]}
+
+
+class RelevanceFactsTest(unittest.TestCase):
+    """The optional sections the changed-file fetching adds: absent is fine, present must be whole."""
+
+    assertDocumentError = ModelTest.assertDocumentError
+
+    def test_the_sections_are_optional_and_pass_when_whole(self):
+        document = support.document()
+        document["event"]["push"] = {"created": True, "forced": False, "deleted": False}
+        document["event"]["pull_request"] = {"number": 87, "head_sha": "abc"}
+        document["changed_files"] = dict(CHANGED)
+        model.check(document)
+        model.check(support.document())
+
+    def test_changed_files_needs_every_fact_with_its_type(self):
+        for key, bad in (("available", "yes"), ("truncated", None), ("error", 5), ("api_head_sha", 1),
+                         ("count", "3"), ("count", True), ("count", -1), ("files", "a"), ("files", [1])):
+            with self.subTest(key=key, bad=bad):
+                document = support.document()
+                document["changed_files"] = {**CHANGED, key: bad}
+                self.assertDocumentError(document, MESSAGE)
+        for missing in CHANGED:
+            with self.subTest(missing=missing):
+                document = support.document()
+                document["changed_files"] = {k: v for k, v in CHANGED.items() if k != missing}
+                self.assertDocumentError(document, MESSAGE)
+        document = support.document()
+        document["changed_files"] = []
+        self.assertDocumentError(document, MESSAGE)
+
+    def test_the_facts_may_be_unknown(self):
+        document = support.document()
+        document["changed_files"] = {**CHANGED, "error": "HTTP 502", "api_head_sha": None, "count": 0}
+        model.check(document)
+
+    def test_the_push_facts_are_booleans(self):
+        for bad in ({"created": "true", "forced": False, "deleted": False}, {"created": False, "forced": False},
+                    {"created": False, "forced": None, "deleted": False}, []):
+            with self.subTest(bad=bad):
+                document = support.document()
+                document["event"]["push"] = bad
+                self.assertDocumentError(document, "'event.push' needs the booleans 'created', 'forced' and 'deleted'")
+
+    def test_the_pull_request_needs_its_number_and_head(self):
+        for bad in ({"number": "87", "head_sha": "abc"}, {"number": 87}, {"number": True, "head_sha": "a"},
+                    {"number": 87, "head_sha": None}, None):
+            with self.subTest(bad=bad):
+                document = support.document()
+                document["event"]["pull_request"] = bad
+                self.assertDocumentError(document, "'event.pull_request' needs")
+
+
 if __name__ == "__main__":
     unittest.main()

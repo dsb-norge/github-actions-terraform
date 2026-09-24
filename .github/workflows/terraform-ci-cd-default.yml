@@ -287,6 +287,18 @@ on:
           Set this to 'false' to disable lock file verification. For per environment control specify this directly in the environment specification.
         required: false
         default: true
+      path-relevance-enabled:
+        type: boolean
+        description: |
+          Whether to run only the environments a change is relevant to. On pull requests and pushes an environment runs
+          when a changed file matches its 'paths' (default 'auto': its project directory, 'main/', 'modules/', its
+          additional init directories and the root '.tflint.hcl') and none of its 'paths-ignore' (default '**/*.md'
+          with 'auto'). Any uncertainty runs every environment. See docs/Path-relevance.md.
+
+          Set this to 'false' to run every environment on every run. This setting applies to all environments; to run one
+          environment on every change, set its 'paths' to ['**'].
+        required: false
+        default: true
       cache-terraform-modules:
         type: boolean
         description: |

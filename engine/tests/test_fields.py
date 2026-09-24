@@ -19,7 +19,9 @@ WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(support.TESTS_DIR)),
                         ".github", "workflows", "terraform-ci-cd-default.yml")
 
 BOOLEAN_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
-                  "format-check-in-root-dir", "pr-auto-merge-enabled", "verify-lock-file")
+                  "format-check-in-root-dir", "path-relevance-enabled", "pr-auto-merge-enabled", "verify-lock-file")
+# Global only: an environment that sets it is an error of its own (test_relevance).
+PER_ENVIRONMENT_BOOLEANS = tuple(name for name in BOOLEAN_INPUTS if name != "path-relevance-enabled")
 
 NAME_RULE = "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit"
 
@@ -48,7 +50,7 @@ class BooleanInputsTest(unittest.TestCase):
         self.assertEqual(set(BOOLEAN_INPUTS), set(environments.BOOLEAN_INPUTS))
 
     def test_a_per_environment_boolean_takes_the_forwarded_type(self):
-        for field in BOOLEAN_INPUTS:
+        for field in PER_ENVIRONMENT_BOOLEANS:
             for value, expected in ((True, "true"), (False, "false"), ("true", "true"), ("false", "false")):
                 with self.subTest(field=field, value=value):
                     output = decide_with({"environment": "env-a", field: value})

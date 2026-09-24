@@ -54,8 +54,11 @@ MERGE_FIELDS = (
 # a JSON boolean would compare false against 'true' and the setting would be silently dropped.
 BOOLEAN_INPUTS = (
     "add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
-    "format-check-in-root-dir", "pr-auto-merge-enabled", "verify-lock-file",
+    "format-check-in-root-dir", "path-relevance-enabled", "pr-auto-merge-enabled", "verify-lock-file",
 )
+
+# Relevance rules: resolved by relevance.py, never row variables.
+RULE_FIELDS = ("paths", "paths-ignore")
 
 # An environment name, and a github-environment, reach comment markers (':'-separated, ended by
 # '-->'), artifact names, concurrency groups and shell; this is what is safe in all of them.
@@ -72,7 +75,7 @@ REQUIRED_FIELDS = (
     "cache-terraform-modules", "caller-repo-calling-branch", "caller-repo-default-branch",
     "caller-repo-is-on-default-branch", "environment", "extra-envs", "extra-envs-from-secrets",
     "extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "github-environment", "goals",
-    "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits", "pr-comment-group",
+    "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits", "pr-comment-group",
     "project-dir", "terraform-init-additional-dirs", "terraform-version", "tflint-version", "url",
     "verify-lock-file",
 )
@@ -82,7 +85,7 @@ NOT_EMPTY_FIELDS = (
     "add-pr-comment", "allow-failing-terraform-operations", "apply-extract-include-outputs",
     "cache-terraform-modules", "caller-repo-calling-branch", "caller-repo-default-branch",
     "caller-repo-is-on-default-branch", "environment", "extra-envs", "extra-envs-from-secrets",
-    "github-environment", "goals", "pr-auto-merge-enabled", "pr-auto-merge-from-actors",
+    "github-environment", "goals", "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors",
     "pr-auto-merge-limits", "project-dir", "terraform-version", "tflint-version", "verify-lock-file",
 )
 
@@ -91,7 +94,7 @@ def _unsuffixed(field):
     return field[: -len("-yml")]
 
 
-def _shown(value):
+def shown(value):
     """A caller's value as a message shows it: a string quoted with its escapes, else JSON."""
     return repr(value) if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
@@ -106,7 +109,7 @@ def _boolean(name, field, value):
         return True
     if value is False or value == "false":
         return False
-    raise ConfigError([f"The environment '{name}' sets '{field}' to {_shown(value)}; it must be true or false!"])
+    raise ConfigError([f"The environment '{name}' sets '{field}' to {shown(value)}; it must be true or false!"])
 
 
 def _typed_overrides(document, name, environment):
@@ -116,7 +119,7 @@ def _typed_overrides(document, name, environment):
         if field in BOOLEAN_INPUTS:
             typed[field] = "true" if _boolean(name, field, value) else "false"
         elif field in document["workflow_inputs"] and field not in YML_INPUTS and not isinstance(value, str):
-            raise ConfigError([f"The environment '{name}' sets '{field}' to {_shown(value)}, which is not a string; "
+            raise ConfigError([f"The environment '{name}' sets '{field}' to {shown(value)}, which is not a string; "
                                "quote it!"])
     return typed
 
@@ -152,11 +155,11 @@ def build_row(document, globals_, index, environment):
         raise ConfigError(["Missing property 'environment' in environments-yml specification!"])
     name = environment["environment"]
     if not _is_name(name):
-        raise ConfigError([f"The environment name {_shown(name)} must be {NAME_RULE}!"])
+        raise ConfigError([f"The environment name {shown(name)} must be {NAME_RULE}!"])
     if "github-environment" in environment and not _is_name(environment["github-environment"]):
-        raise ConfigError([f"The github-environment {_shown(environment['github-environment'])} of environment "
+        raise ConfigError([f"The github-environment {shown(environment['github-environment'])} of environment "
                            f"'{name}' must be {NAME_RULE}!"])
-    row = dict(environment)
+    row = {key: value for key, value in environment.items() if key not in RULE_FIELDS}
     row.update(_typed_overrides(document, name, environment))
 
     row.setdefault("project-dir", f"./envs/{name}")

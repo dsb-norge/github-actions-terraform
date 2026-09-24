@@ -13,6 +13,7 @@
     "format-check-in-root-dir": false,
     "add-pr-comment": true,
     "verify-lock-file": true,
+    "path-relevance-enabled": true,
     "cache-terraform-modules": true,
     "apply-extract-include-outputs": false,
     "pr-comment-group": "",
@@ -101,7 +102,8 @@
             },
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
-            "caller-repo-is-on-default-branch": "true"
+            "caller-repo-is-on-default-branch": "true",
+            "path-relevance-enabled": "true"
           }
         },
         {
@@ -161,7 +163,8 @@
             },
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
-            "caller-repo-is-on-default-branch": "true"
+            "caller-repo-is-on-default-branch": "true",
+            "path-relevance-enabled": "true"
           }
         },
         {
@@ -221,7 +224,8 @@
             },
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
-            "caller-repo-is-on-default-branch": "true"
+            "caller-repo-is-on-default-branch": "true",
+            "path-relevance-enabled": "true"
           }
         },
         {
@@ -281,7 +285,8 @@
             },
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
-            "caller-repo-is-on-default-branch": "true"
+            "caller-repo-is-on-default-branch": "true",
+            "path-relevance-enabled": "true"
           }
         },
         {
@@ -341,7 +346,8 @@
             },
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
-            "caller-repo-is-on-default-branch": "true"
+            "caller-repo-is-on-default-branch": "true",
+            "path-relevance-enabled": "true"
           }
         }
       ]

@@ -52,7 +52,7 @@ DEFAULT_INPUTS = {
     "environments-yml": '[{"environment": "env-a"}]',
     "add-pr-comment": True, "apply-extract-include-outputs": False, "cache-terraform-modules": True,
     "pr-auto-merge-enabled": False, "pr-comment-group": "", "terraform-version": "latest",
-    "tflint-version": "latest", "verify-lock-file": True,
+    "tflint-version": "latest", "verify-lock-file": True, "path-relevance-enabled": True,
 }
 
 
@@ -318,7 +318,7 @@ class RunTest(unittest.TestCase):
         log = runner.log.getvalue()
         for group in ("input 'inputs-json'", "decision engine input document", "decision record", "matrix-json"):
             self.assertIn(f"::group::create-tf-vars-matrix: {group}\n::stop-commands::", log)
-        self.assertIn("env-a: run — port", log)
+        self.assertIn("env-a: run — relevance: all:not-computed", log)
         self.assertNotIn("::error", log)
 
     def test_the_exit_codes(self):
@@ -333,7 +333,7 @@ class RunTest(unittest.TestCase):
         document = json.loads(groups["decision engine input document"])
         self.assertEqual(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False), groups["decision engine input document"])
         self.assertIn("example.com/å", groups["decision engine input document"])
-        self.assertEqual("env-a: run — port\nb: run — port", groups["decision record"])
+        self.assertEqual("env-a: run — relevance: all:not-computed\nb: run — relevance: all:not-computed", groups["decision record"])
         matrix = runner.matrix()
         self.assertEqual(json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False), groups["matrix-json"])
         self.assertIn('"https://example.com/å"', runner.output())
@@ -342,7 +342,7 @@ class RunTest(unittest.TestCase):
         runner = Runner(self)
         runner.run()
         line = runner.output().splitlines()[1]
-        self.assertNotIn(" ", line.replace("run — port", ""))
+        self.assertNotIn(" ", line)
         self.assertEqual(json.dumps(json.loads(line), sort_keys=True, separators=(",", ":")), line)
 
     def test_facts_come_from_the_runner(self):

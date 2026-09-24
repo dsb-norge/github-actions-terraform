@@ -44,6 +44,7 @@
             "init",
             "plan"
           ],
+          "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
           "pr-auto-merge-enabled": "false",

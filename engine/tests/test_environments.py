@@ -31,9 +31,10 @@ class EnvironmentsTest(unittest.TestCase):
     def test_a_row_carries_the_run_verdict_and_the_record(self):
         output = decide.decide(support.document(environments=[{"environment": "env-a"}, {"environment": "env-7"}],
                                                 directories={"./envs/env-a": True, "./envs/env-7": True}))
-        self.assertEqual([{"environment": "env-a", "verdict": "run", "reasons": ["port"]},
-                          {"environment": "env-7", "verdict": "run", "reasons": ["port"]}], output["environments"])
-        self.assertEqual(["env-a: run — port", "env-7: run — port"], output["record"])
+        self.assertEqual([("env-a", "run", ["relevance: all:not-computed"]), ("env-7", "run", ["relevance: all:not-computed"])],
+                         [(e["environment"], e["verdict"], e["reasons"]) for e in output["environments"]])
+        self.assertEqual(["env-a: run — relevance: all:not-computed", "env-7: run — relevance: all:not-computed"],
+                         output["record"])
         self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
 
     def test_the_record_joins_every_reason_in_order(self):
@@ -48,13 +49,16 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertEqual([], output["environments"])
 
     def test_the_output_document_has_exactly_its_keys(self):
-        for document in (support.document(), support.document(environments=[])):
-            with self.subTest(errors=not document["yaml"]["inputs"]["environments-yml"]["value"]):
-                output = decide.decide(document)
-                self.assertEqual({"schema_version", "errors", "notices", "environments", "matrices", "counts", "record"},
-                                 set(output))
-                self.assertEqual(1, output["schema_version"])
-                self.assertEqual([], output["notices"])
+        keys = {"schema_version", "errors", "notices", "environments", "matrices", "counts", "record"}
+        output = decide.decide(support.document())
+        self.assertEqual(keys | {"relevance"}, set(output))
+        self.assertEqual(1, output["schema_version"])
+        self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])
+        output = decide.decide(support.document(environments=[]))
+        self.assertEqual(keys, set(output))
+        self.assertEqual((1, [], [], {}, {"affected": 0, "unaffected": 0}, []),
+                         (output["schema_version"], output["notices"], output["environments"], output["matrices"],
+                          output["counts"], output["record"]))
 
     def test_a_configuration_error_reads_as_its_messages_joined(self):
         self.assertEqual("first; second", str(environments.ConfigError(["first", "second"])))

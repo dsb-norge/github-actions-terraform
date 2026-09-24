@@ -1,23 +1,35 @@
 """The `decide` command: the input document in, the output document out."""
 
-from . import SCHEMA_VERSION, environments, model, record
+from . import SCHEMA_VERSION, environments, model, record, relevance
 
 
-def _output(errors=(), decided=()):
-    rows = [row for row, _ in decided]
-    entries = [entry for _, entry in decided]
+def _failed(errors):
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "errors": errors,
+        "notices": [],
+        "environments": [],
+        "matrices": {},
+        "counts": {"affected": 0, "unaffected": 0},
+        "record": [],
+    }
+
+
+def _decided(block, rows, entries):
+    affected = [row for row, entry in zip(rows, entries) if entry["verdict"] == "run"]
     matrix = {
-        "environment": [row["environment"] for row in rows],
-        "include": [{"environment": row["environment"], "vars": row} for row in rows],
+        "environment": [row["environment"] for row in affected],
+        "include": [{"environment": row["environment"], "vars": row} for row in affected],
     }
     return {
         "schema_version": SCHEMA_VERSION,
-        "errors": list(errors),
-        "notices": [],
+        "errors": [],
+        "notices": [relevance.notice(block, entries)],
+        "relevance": block,
         "environments": entries,
         # One stage until environment ordering assigns more.
-        "matrices": {"1": matrix} if rows else {},
-        "counts": {"affected": len(rows), "unaffected": 0},
+        "matrices": {"1": matrix},
+        "counts": {"affected": len(affected), "unaffected": len(rows) - len(affected)},
         "record": record.lines(entries),
     }
 
@@ -30,8 +42,8 @@ def decide(document):
     model.check(document)
     try:
         rows = environments.build_rows(document)
+        declared = environments.parsed_inputs(document)["environments-yml"]
+        block, entries = relevance.decide_relevance(document, declared, rows)
     except environments.ConfigError as error:
-        return _output(errors=error.messages)
-    return _output(decided=[
-        (row, {"environment": row["environment"], "verdict": "run", "reasons": ["port"]}) for row in rows
-    ])
+        return _failed(error.messages)
+    return _decided(block, rows, entries)
