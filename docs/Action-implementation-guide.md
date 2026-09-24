@@ -290,17 +290,30 @@ For inputs that are simple strings, pass them as environment variables. Use `set
 
 ### Step shim pattern — JSON inputs
 
-GitHub pastes an expression's value into the `run:` script **before bash parses it**. A value that
-goes through `env:` is never parsed as shell; a value pasted into the script is shell source.
-Choose the channel by what the value is:
+GitHub pastes an expression's value into the `run:` script **before bash parses it**. Two failures
+follow, and each has cost this repository a production incident or a near miss:
 
-| The value | Channel | Why |
-|---|---|---|
-| Free text, or anything not produced by `toJSON(...)`: markdown, YAML, paths, names | `env:` | A heredoc capture ends at the first line equal to its delimiter, and the rest of the value runs as shell. No delimiter is safe for text the caller controls, least of all in a public repository where the delimiter can be read. One value may hold at most 128 KiB in the environment; anything larger comes in through a file input (`body-file`). |
-| `toJSON(...)` output that can be large or holds secrets: contexts, event payloads, `toJSON(inputs)`, `toJSON(secrets)` | a quoted heredoc capture, **not exported** | JSON escapes every newline inside a string, so no line of it can equal the delimiter, and the quoted delimiter keeps bash from expanding anything in it. Kept shell-local, it stays out of every child process's environment (ARG_MAX, and secrets). |
-| Small values, JSON or not | `env:` | The simplest channel with no parsing at all. |
+- **Injection.** A heredoc capture ends at the first line equal to its delimiter, and the rest of
+  the value runs as shell. No delimiter is safe for text the caller controls, least of all in a
+  public repository where the delimiter can be read.
+- **ARG_MAX.** A value that reaches envp (through `env:`, `export` or `allexport`) travels into
+  every process the step starts, and one value may hold at most 128 KiB, in bytes. Past it, the
+  next fork fails with "Argument list too long" (the capture-matrix-job-meta and pr-comment fixes;
+  see the anti-pattern section below). A comment body may hold 65536 multibyte characters, more
+  bytes than that.
 
-The heredoc capture, when it applies:
+So the channel follows the value:
+
+| The value | Channel |
+|---|---|
+| A small scalar: a name, a flag, a number, a short path | `env:` |
+| JSON the caller produced with `toJSON(...)`: contexts, event payloads, `toJSON(inputs)`, `toJSON(secrets)`, a JSON-contract input | a quoted heredoc capture of `${{ inputs.<name> }}`, before `allexport`, never exported |
+| Free text, or anything that may be large: markdown bodies, YAML, lists | a quoted heredoc capture of `${{ toJSON(inputs.<name>) }}`, before `allexport`, never exported; the step decodes it |
+
+`toJSON` turns any value into JSON, and a JSON string is one line, every newline in it escaped: no
+line of the capture can equal the delimiter, and the quoted delimiter keeps bash from expanding
+anything in it. Kept shell-local, the value never reaches envp, and the only size limit is the
+script's own. Free text therefore gets the same guarantee as JSON the caller produced:
 
 ```yaml
 - id: my-step
@@ -310,25 +323,33 @@ The heredoc capture, when it applies:
   run: |
     # <What this step does>
     #
-    # toJSON output through a quoted heredoc: no line of it can be the delimiter. Intentionally
-    # NOT exported — step_my_step.sh reads it as a shell-local via `source`.
-    input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
-    ${{ inputs.json-data }}
-    MY_ACTION_JSON_DATA_JSON
+    # toJSON of the input through a quoted heredoc: one line, so no line of it can be the
+    # delimiter. Intentionally NOT exported — step_my_step.sh decodes it as a shell-local.
+    input_body_json=$(cat <<'MY_ACTION_BODY_JSON'
+    ${{ toJSON(inputs.body) }}
+    MY_ACTION_BODY_JSON
     )
 
     set -o allexport
     source "${{ github.action_path }}/step_my_step.sh"
 ```
 
-- The delimiter is quoted and names what it captures, `<ACTION>_<INPUT>` in capitals ending in
-  `_JSON`, never a bare `EOF`, and is unique in the repository.
-- The captured input is documented as JSON, every caller passes it as `${{ toJSON(...) }}` or a
-  JSON literal, and the step parses it as JSON, so a caller that passes anything else fails loudly.
-- A structural test holds all of this for every action and workflow in the repository
-  (`evaluate-automerge-eligibility/run_all_tests.sh`, F9).
+```bash
+# In step_my_step.sh: decode, and take the value out of envp at once (allexport exported it).
+# The command substitution strips trailing newlines, as a raw capture used to.
+input_body="$(jq -r '. // ""' <<<"${input_body_json:-\"\"}")"
+export -n input_body
+```
 
-> Note the order: the heredoc capture happens **before** `set -o allexport`. That keeps `input_json_data` from being auto-exported. Variables set later by the step script (under allexport) still get the export attribute, which is what allexport is there for.
+- The delimiter is quoted and names what it captures, `<ACTION>_<INPUT>_JSON` in capitals, never
+  a bare `EOF`, and is unique in the repository.
+- A raw `${{ inputs.<name> }}` is captured only for a JSON-contract input: its name ends in
+  `-json` (or it is one of the few older ones listed in the test), and every caller passes
+  `${{ toJSON(...) }}` or a JSON literal. Anything else is captured as `toJSON` of the input.
+- The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` holds all of this
+  for every action and workflow in the repository.
+
+> Note the order: the heredoc capture happens **before** `set -o allexport`. That keeps the captured variable from being auto-exported. Variables set later by the step script (under allexport) still get the export attribute, which is what allexport is there for — and why the step unexports a large decoded value at once.
 
 ### Naming convention for step IDs
 
@@ -573,7 +594,7 @@ Most existing actions embed their logic directly in `action.yml` YAML strings. H
    - Move `${{ inputs.* }}` references into `env:` as `input_*` variables
    - Replace the `run:` block with the `set -o allexport` + `source` shim (no exit code capture needed)
    - Open the `run:` block with the one-line description comment (see [Every `run:` block opens with a description comment](#every-run-block-opens-with-a-description-comment))
-   - Pass free text and small values through `env:`; capture large `toJSON` output through a quoted heredoc with a unique delimiter ("Step shim pattern — JSON inputs")
+   - Pass small scalars through `env:`; capture JSON inputs, and `toJSON` of every free-text input, through a quoted heredoc with a unique delimiter ("Step shim pattern — JSON inputs")
 
 5. **Create `run_local_step_<name>.sh`**:
    - Copy from a reference action (e.g., `capture-matrix-job-meta/run_local_step_capture.sh`)
@@ -770,7 +791,7 @@ Use this checklist when creating or converting an action:
 - [ ] Each `step_<name>.sh` sources `helpers.sh`, uses a `main` function, and ends with `exit`
 - [ ] `action.yml` steps use the `set -o allexport` + `source` shim (no exit code capture)
 - [ ] Every `run:` block starts with a one-line `#` comment describing what the step does
-- [ ] Free text reaches the step through `env:`, never a heredoc; a heredoc captures only `toJSON` output, under a quoted `<ACTION>_<INPUT>_JSON` delimiter, and is not exported
+- [ ] Only small scalars go through `env:`; free text and large values are captured as `toJSON(inputs.<name>)`, JSON-contract inputs as they are, through a quoted `<ACTION>_<INPUT>_JSON` heredoc, before `allexport`, never exported
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
 - [ ] Multi-step actions have `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
 - [ ] `run_all_tests.sh` covers happy path, edge cases, and error conditions
