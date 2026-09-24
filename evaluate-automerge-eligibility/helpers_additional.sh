@@ -24,12 +24,19 @@ function get_environment_name {
   extract_from_metadata "${file}" ".metadata.environment"
 }
 
-# Extract pr-auto-merge-enabled from metadata file
-# Args: $1 = metadata file path
+# The pr-auto-merge-* getters read the same resolved values from two places: a
+# metadata file's matrix row, and an environment's entry in relevance.json,
+# which carries the values that row would have had. One reader for both keeps
+# an unaffected environment judged exactly as an affected one would be.
+_METADATA_VARS='.matrix_context.vars'
+
+# Extract pr-auto-merge-enabled from a metadata or relevance file
+# Args: $1 = JSON file path, $2 = jq path of the object holding the value (default: the matrix row)
 function get_pr_auto_merge_enabled {
   local file="${1}"
+  local base="${2:-${_METADATA_VARS}}"
   local val
-  val=$(extract_from_metadata "${file}" '.matrix_context.vars."pr-auto-merge-enabled"')
+  val=$(extract_from_metadata "${file}" "${base}.\"pr-auto-merge-enabled\"")
   # Convert to "true" or "false" string
   if [[ "${val}" == "true" ]]; then
     echo "true"
@@ -38,18 +45,20 @@ function get_pr_auto_merge_enabled {
   fi
 }
 
-# Extract pr-auto-merge-limits as JSON string from metadata file
-# Args: $1 = metadata file path
+# Extract pr-auto-merge-limits as JSON string from a metadata or relevance file
+# Args: $1 = JSON file path, $2 = jq path of the object holding the value (default: the matrix row)
 function get_pr_auto_merge_limits_json {
   local file="${1}"
-  jq -c '.matrix_context.vars."pr-auto-merge-limits" // {}' "${file}" 2>/dev/null || echo "{}"
+  local base="${2:-${_METADATA_VARS}}"
+  jq -c "${base}.\"pr-auto-merge-limits\" // {}" "${file}" 2>/dev/null || echo "{}"
 }
 
-# Extract pr-auto-merge-from-actors as JSON array string from metadata file
-# Args: $1 = metadata file path
+# Extract pr-auto-merge-from-actors as JSON array string from a metadata or relevance file
+# Args: $1 = JSON file path, $2 = jq path of the object holding the value (default: the matrix row)
 function get_pr_auto_merge_from_actors_json {
   local file="${1}"
-  jq -c '.matrix_context.vars."pr-auto-merge-from-actors" // []' "${file}" 2>/dev/null || echo "[]"
+  local base="${2:-${_METADATA_VARS}}"
+  jq -c "${base}.\"pr-auto-merge-from-actors\" // []" "${file}" 2>/dev/null || echo "[]"
 }
 
 # Check if goals array contains a specific goal
@@ -182,6 +191,21 @@ function extract_environment_data {
   input_destroy_plan_count_remove=$(get_step_output "${file}" "parse-destroy-plan" "count-remove")
 }
 
+# Set the input_* variables of the configuration, enabled and actor checks from
+# one environment's entry in relevance.json. An unaffected environment has no
+# job and so no metadata; its plan inputs are never read.
+# Args: $1 = relevance file path, $2 = index into .environments
+function extract_relevance_entry_data {
+  local file="${1}"
+  local index="${2}"
+  local base=".environments[${index}]"
+
+  input_environment_name=$(extract_from_metadata "${file}" "${base}.\"github-environment\"")
+  input_pr_auto_merge_enabled=$(get_pr_auto_merge_enabled "${file}" "${base}")
+  input_pr_auto_merge_limits_json=$(get_pr_auto_merge_limits_json "${file}" "${base}")
+  input_pr_auto_merge_from_actors_json=$(get_pr_auto_merge_from_actors_json "${file}" "${base}")
+}
+
 # ============================================================================
 # File Discovery Functions
 # ============================================================================
@@ -238,6 +262,50 @@ function validate_metadata_file {
   has_vars=$(jq -r '.matrix_context.vars | if . then "yes" else "no" end' "${file}" 2>/dev/null || echo "no")
   if [[ "${has_vars}" != "yes" ]]; then
     log-warn "Metadata file '${file}' is missing .matrix_context.vars field"
+    return 1
+  fi
+
+  return 0
+}
+
+# Validate that a relevance file can be trusted to name every environment
+# Args: $1 = relevance file path
+# Returns: 0 if valid, 1 if invalid
+function validate_relevance_file {
+  local file="${1}"
+
+  if [[ ! -r "${file}" ]]; then
+    log-warn "Relevance file '${file}' is not readable"
+    return 1
+  fi
+
+  if ! jq empty "${file}" 2>/dev/null; then
+    log-warn "Relevance file '${file}' is not valid JSON"
+    return 1
+  fi
+
+  if [[ "$(jq -r '.environments | type' "${file}")" != "array" ]]; then
+    log-warn "Relevance file '${file}' has no 'environments' list"
+    return 1
+  fi
+
+  # Metadata is matched on github-environment, so each entry must name one, and only once
+  local bad_entries
+  bad_entries=$(jq '[.environments[] | select(
+      type != "object"
+      or ((."github-environment" | type) != "string")
+      or ."github-environment" == ""
+      or ((.verdict == "run" or .verdict == "skip") | not)
+    )] | length' "${file}")
+  if [[ "${bad_entries}" -gt 0 ]]; then
+    log-warn "Relevance file '${file}' has ${bad_entries} malformed environment entr(y/ies): each needs a non-empty 'github-environment' and a 'verdict' of 'run' or 'skip'"
+    return 1
+  fi
+
+  local duplicates
+  duplicates=$(jq -r '[.environments[]."github-environment"] | group_by(.) | map(select(length > 1) | .[0]) | join(", ")' "${file}")
+  if [[ -n "${duplicates}" ]]; then
+    log-warn "Relevance file '${file}' lists these github-environments more than once: ${duplicates}"
     return 1
   fi
 

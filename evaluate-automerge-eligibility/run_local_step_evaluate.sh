@@ -21,6 +21,8 @@ GITHUB_ACTOR="a-random-user"
 
 # New input model - just the pattern for metadata files
 input_metadata_files_pattern="matrix-job-meta-*.json"
+# Path of a relevance.json from the matrix builder; empty evaluates the metadata files alone
+input_relevance_file=""
 
 # Create test metadata file(s)
 # This simulates what capture-matrix-job-meta would produce

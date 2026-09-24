@@ -7,6 +7,8 @@
 #
 # This script processes multiple metadata files from capture-matrix-job-meta
 # and produces an aggregated eligibility decision across all environments.
+# With a relevance file from the matrix builder it judges every environment of
+# the run, including those no job ran for (docs/Path-relevance.md §8).
 #
 
 # do not allow unset variables
@@ -392,41 +394,27 @@ function evaluate_limits {
   fi
 }
 
-# ============================================================================
-# Single Environment Evaluation Logic
-# ============================================================================
+# 4-9 for an environment the change did not affect: no job ran, so there is
+# no plan to validate and nothing to count. Recorded rather than skipped
+# silently, so the log shows these checks were considered.
+function record_plan_checks_not_affected {
+  log-info "Environment is not affected by this change and no job ran for it"
+  RESULT_PLAN_CREATION="NOT AFFECTED"
+  RESULT_DESTROY_PLAN_CREATION="NOT AFFECTED"
+  RESULT_APPLY_SUCCESS="NOT AFFECTED"
+  RESULT_DESTROY_SUCCESS="NOT AFFECTED"
+  RESULT_PLAN_LIMITS_APPLICABILITY="NOT AFFECTED"
+  RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="NOT AFFECTED"
+  log-info "  Plan creation: ${RESULT_PLAN_CREATION}"
+  log-info "  Destroy plan creation: ${RESULT_DESTROY_PLAN_CREATION}"
+  log-info "  Apply on PR: ${RESULT_APPLY_SUCCESS}"
+  log-info "  Destroy on PR: ${RESULT_DESTROY_SUCCESS}"
+  log-info "  Plan limits: ${RESULT_PLAN_LIMITS_APPLICABILITY}"
+  log-info "  Destroy plan limits: ${RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY}"
+}
 
-# Evaluate a single environment's eligibility
-# All input_* variables must be set before calling this function
-# Returns: 0 if evaluation completed (check ENV_IS_ELIGIBLE for result), 1 on fatal error
-function evaluate_single_environment {
-  log-info "Starting automerge eligibility evaluation for environment '${input_environment_name}'..."
-
-  # Initialize per-environment state
-  declare -g -a ENV_FAILURE_REASONS=()
-  declare -g -A TOTAL_COUNTS=()
-  declare -g -A LIMIT_RESULTS=()
-  declare -g INCLUDE_PLAN_LIMITS=false
-  declare -g INCLUDE_DESTROY_PLAN_LIMITS=false
-  declare -g ALL_LIMITS_IGNORED=true
-  declare -g RESULT_CONFIG_VALIDATION="SKIPPED"
-  declare -g RESULT_PR_AUTOMERGE_ENABLED="SKIPPED"
-  declare -g RESULT_ACTOR_AUTH="SKIPPED"
-  declare -g RESULT_PLAN_CREATION="SKIPPED"
-  declare -g RESULT_DESTROY_PLAN_CREATION="SKIPPED"
-  declare -g RESULT_APPLY_SUCCESS="SKIPPED"
-  declare -g RESULT_DESTROY_SUCCESS="SKIPPED"
-  declare -g RESULT_PLAN_LIMITS_APPLICABILITY="SKIPPED"
-  declare -g RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="SKIPPED"
-
-  ENV_IS_ELIGIBLE="true"
-
-  # Log all inputs for debugging
-  start-group "Inputs for ${input_environment_name}"
-  log-info "Environment: ${input_environment_name}"
-  log-info "Actor: ${GITHUB_ACTOR}"
-  log-info "PR automerge enabled: ${input_pr_auto_merge_enabled}"
-  log-info ""
+# Log the plan inputs read from an affected environment's metadata
+function log_plan_inputs {
   log-info "Plan inputs:"
   log-info "  plan-shouldve-been-created: ${input_plan_shouldve_been_created}"
   log-info "  plan-was-created: ${input_plan_was_created}"
@@ -450,38 +438,11 @@ function evaluate_single_environment {
   log-info "  destroy-plan-count-import: ${input_destroy_plan_count_import:-<empty>}"
   log-info "  destroy-plan-count-move: ${input_destroy_plan_count_move:-<empty>}"
   log-info "  destroy-plan-count-remove: ${input_destroy_plan_count_remove:-<empty>}"
-  log-info ""
-  log-info "Limits configuration:"
-  log-info "  ${input_pr_auto_merge_limits_json}"
-  log-info ""
-  log-info "Allowed actors:"
-  log-info "  ${input_pr_auto_merge_from_actors_json}"
-  end-group
+}
 
-  # 1. Configuration Validation
-  start-group "Step 1: Configuration Validation (${input_environment_name})"
-  if ! validate_configuration; then
-    # Configuration errors are fatal - exit with error
-    end-group
-    log-error "Configuration validation failed - cannot continue evaluation"
-    return 1
-  fi
-  end-group
-
-  # 2. PR Auto-merge Enabled Check
-  start-group "Step 2: PR Auto-merge Enabled Check (${input_environment_name})"
-  if ! check_pr_automerge_enabled; then
-    ENV_IS_ELIGIBLE="false"
-  fi
-  end-group
-
-  # 3. Actor Authorization Check
-  start-group "Step 3: Actor Authorization Check (${input_environment_name})"
-  if ! check_actor_authorization; then
-    ENV_IS_ELIGIBLE="false"
-  fi
-  end-group
-
+# 4-9 for an affected environment, from its metadata
+# Clears ENV_IS_ELIGIBLE on any failure
+function run_plan_checks {
   # 4. Plan Creation Validation
   start-group "Step 4: Plan Creation Validation (${input_environment_name})"
   if ! validate_plan_creation; then
@@ -530,6 +491,89 @@ function evaluate_single_environment {
   else
     log-info "Skipping count validation and limit evaluation (all limits ignored)"
   fi
+}
+
+# ============================================================================
+# Single Environment Evaluation Logic
+# ============================================================================
+
+# Evaluate a single environment's eligibility
+# Args: $1 = "affected" (default): every check, all input_* variables must be set
+#       "unaffected": checks 1-3 only, from the pr-auto-merge input_* variables
+# Returns: 0 if evaluation completed (check ENV_IS_ELIGIBLE for result), 1 on fatal error
+function evaluate_single_environment {
+  local scope="${1:-affected}"
+  log-info "Starting automerge eligibility evaluation for environment '${input_environment_name}'..."
+
+  # Initialize per-environment state
+  declare -g -a ENV_FAILURE_REASONS=()
+  declare -g -A TOTAL_COUNTS=()
+  declare -g -A LIMIT_RESULTS=()
+  declare -g INCLUDE_PLAN_LIMITS=false
+  declare -g INCLUDE_DESTROY_PLAN_LIMITS=false
+  declare -g ALL_LIMITS_IGNORED=true
+  declare -g RESULT_CONFIG_VALIDATION="SKIPPED"
+  declare -g RESULT_PR_AUTOMERGE_ENABLED="SKIPPED"
+  declare -g RESULT_ACTOR_AUTH="SKIPPED"
+  declare -g RESULT_PLAN_CREATION="SKIPPED"
+  declare -g RESULT_DESTROY_PLAN_CREATION="SKIPPED"
+  declare -g RESULT_APPLY_SUCCESS="SKIPPED"
+  declare -g RESULT_DESTROY_SUCCESS="SKIPPED"
+  declare -g RESULT_PLAN_LIMITS_APPLICABILITY="SKIPPED"
+  declare -g RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="SKIPPED"
+
+  ENV_IS_ELIGIBLE="true"
+
+  # Log all inputs for debugging
+  start-group "Inputs for ${input_environment_name}"
+  log-info "Environment: ${input_environment_name}"
+  log-info "Actor: ${GITHUB_ACTOR}"
+  log-info "PR automerge enabled: ${input_pr_auto_merge_enabled}"
+  log-info ""
+  if [[ "${scope}" == "unaffected" ]]; then
+    log-info "Not affected by this change: values from the relevance file, no plan inputs"
+  else
+    log_plan_inputs
+  fi
+  log-info ""
+  log-info "Limits configuration:"
+  log-info "  ${input_pr_auto_merge_limits_json}"
+  log-info ""
+  log-info "Allowed actors:"
+  log-info "  ${input_pr_auto_merge_from_actors_json}"
+  end-group
+
+  # 1. Configuration Validation
+  start-group "Step 1: Configuration Validation (${input_environment_name})"
+  if ! validate_configuration; then
+    # Configuration errors are fatal - exit with error
+    end-group
+    log-error "Configuration validation failed - cannot continue evaluation"
+    return 1
+  fi
+  end-group
+
+  # 2. PR Auto-merge Enabled Check
+  start-group "Step 2: PR Auto-merge Enabled Check (${input_environment_name})"
+  if ! check_pr_automerge_enabled; then
+    ENV_IS_ELIGIBLE="false"
+  fi
+  end-group
+
+  # 3. Actor Authorization Check
+  start-group "Step 3: Actor Authorization Check (${input_environment_name})"
+  if ! check_actor_authorization; then
+    ENV_IS_ELIGIBLE="false"
+  fi
+  end-group
+
+  if [[ "${scope}" == "unaffected" ]]; then
+    start-group "Steps 4-9: Plan-based checks (${input_environment_name})"
+    record_plan_checks_not_affected
+    end-group
+  else
+    run_plan_checks
+  fi
 
   # 10. Final Eligibility Determination for this environment
   start-group "Step 10: Final Eligibility Determination (${input_environment_name})"
@@ -544,40 +588,13 @@ function evaluate_single_environment {
   return 0
 }
 
-# ============================================================================
-# Main Multi-File Processing Logic
-# ============================================================================
-
-function main {
-  log-info "Starting automerge eligibility evaluation..."
-  log-info "Metadata files pattern: ${input_metadata_files_pattern}"
-
-  # Track overall results
-  local overall_eligible="true"
-  local environments_processed=0
-  local environments_eligible=0
-  local environments_ineligible=0
-  declare -a ENVIRONMENT_RESULTS=()
-
-  # Find all metadata files matching the pattern
-  start-group "File Discovery"
-  shopt -s nullglob
-  local files=(${input_metadata_files_pattern})
-  shopt -u nullglob
-
-  if [[ ${#files[@]} -eq 0 ]]; then
-    log-warn "No metadata files found matching pattern: ${input_metadata_files_pattern}"
-    log-info "Setting is-eligible=false (no files to process)"
-    set-output "is-eligible" "false"
-    end-group
-    return 0
-  fi
-
-  log-info "Found ${#files[@]} metadata file(s):"
-  for file in "${files[@]}"; do
-    log-info "  - ${file}"
-  done
-  end-group
+# Judge each metadata file on its own: the behaviour without a relevance file.
+# Updates main's counters, like record_environment_result.
+# Args: $@ = metadata files found
+# Returns: 0 when evaluation completed, 1 on a fatal configuration error
+function evaluate_metadata_files {
+  local files=("$@")
+  local file
 
   # Process each metadata file
   for file in "${files[@]}"; do
@@ -622,6 +639,194 @@ function main {
     fi
   done
 
+  return 0
+}
+
+# ============================================================================
+# Relevance File Processing Logic
+# ============================================================================
+
+# Record one environment's outcome in main's counters and result list, which
+# this function reaches through bash's dynamic scoping
+# Args: $1 = "true" if eligible, $2 = environment, $3 = note for the per-environment summary (optional)
+function record_environment_result {
+  local eligible="${1}"
+  local name="${2}"
+  local label="${2}${3:+ ${3}}"
+  environments_processed=$((environments_processed + 1))
+  if [[ "${eligible}" == "true" ]]; then
+    environments_eligible=$((environments_eligible + 1))
+    ENVIRONMENT_RESULTS+=("ELIGIBLE:${label}")
+    log-info "✅ Environment '${name}' is eligible for automerge"
+  else
+    environments_ineligible=$((environments_ineligible + 1))
+    ENVIRONMENT_RESULTS+=("INELIGIBLE:${label}")
+    overall_eligible="false"
+    log-info "❌ Environment '${name}' is NOT eligible for automerge"
+  fi
+}
+
+# Judge every environment the relevance file lists. Without it an environment
+# whose job never captured metadata is invisible, and a run with no metadata
+# at all (every environment unaffected) could only be refused or merged
+# blindly; with it, an affected environment needs its metadata and an
+# unaffected one must still pass configuration, enabled and actor checks.
+# Updates main's counters, like record_environment_result.
+# Args: $1 = relevance file path, $2... = metadata files found
+# Returns: 0 when evaluation completed, 1 on a fatal configuration error
+function evaluate_with_relevance {
+  local relevance_file="${1}"
+  shift
+  local files=("$@")
+
+  start-group "Relevance File"
+  if ! validate_relevance_file "${relevance_file}"; then
+    log-warn "Relevance file '${relevance_file}' is unusable, the environments of this run are unknown, not eligible for PR auto merge"
+    overall_eligible="false"
+    end-group
+    return 0
+  fi
+
+  local env_count
+  env_count=$(jq '.environments | length' "${relevance_file}")
+  RELEVANCE_ENV_COUNT="${env_count}"
+  RELEVANCE_AFFECTED_COUNT=$(jq '[.environments[] | select(.verdict == "run")] | length' "${relevance_file}")
+  if [[ "${env_count}" -eq 0 ]]; then
+    # The matrix builder rejects an empty environments list, so this is a broken
+    # input, and an empty set must not pass vacuously.
+    log-warn "Relevance file '${relevance_file}' lists no environments, nothing establishes that auto-merge is permitted, not eligible for PR auto merge"
+    overall_eligible="false"
+    end-group
+    return 0
+  fi
+  log-info "Relevance file lists ${env_count} environment(s), ${RELEVANCE_AFFECTED_COUNT} affected"
+  end-group
+
+  # Index the metadata by github-environment, the key both files share
+  start-group "Metadata Matching"
+  declare -A metadata_file_for=()
+  declare -A metadata_count_for=()
+  local file github_env
+  for file in "${files[@]}"; do
+    if ! validate_metadata_file "${file}"; then
+      log-error "Skipping invalid metadata file: ${file}"
+      overall_eligible="false"
+      ENVIRONMENT_RESULTS+=("INVALID:${file}")
+      continue
+    fi
+    github_env=$(get_environment_name "${file}")
+    # A job for an environment the builder never listed means the two inputs
+    # describe different runs; nothing about either can then be trusted.
+    if ! jq -e --arg ge "${github_env}" 'any(.environments[]; ."github-environment" == $ge)' "${relevance_file}" >/dev/null; then
+      log-warn "Metadata file '${file}' is for environment '${github_env}', which the relevance file does not list, not eligible for PR auto merge"
+      overall_eligible="false"
+      ENVIRONMENT_RESULTS+=("UNKNOWN:${github_env}")
+      continue
+    fi
+    metadata_count_for["${github_env}"]=$((${metadata_count_for["${github_env}"]:-0} + 1))
+    metadata_file_for["${github_env}"]="${file}"
+    log-info "  ${file} -> ${github_env}"
+  done
+  end-group
+
+  local index verdict count
+  for ((index = 0; index < env_count; index++)); do
+    github_env=$(jq -r ".environments[${index}].\"github-environment\"" "${relevance_file}")
+    verdict=$(jq -r ".environments[${index}].verdict" "${relevance_file}")
+    count="${metadata_count_for["${github_env}"]:-0}"
+
+    if [[ "${count}" -gt 1 ]]; then
+      start-group "Completeness: ${github_env}"
+      log-warn "${count} metadata files for environment '${github_env}', expected exactly one, environment is ineligible for PR auto merge"
+      end-group
+      record_environment_result "false" "${github_env}" "(${count} metadata files)"
+
+    elif [[ "${count}" -eq 1 ]]; then
+      if [[ "${verdict}" == "skip" ]]; then
+        # A job that did run produced a plan; ignoring it would be the unsafe error
+        log-warn "Environment '${github_env}' has a metadata file although the relevance file marks it unaffected, judging it on its metadata"
+      fi
+      extract_environment_data "${metadata_file_for["${github_env}"]}"
+      if ! evaluate_single_environment "affected"; then
+        log-error "Exiting due to fatal error in environment evaluation of '${github_env}'"
+        return 1
+      fi
+      record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}"
+
+    elif [[ "${verdict}" == "run" ]]; then
+      start-group "Completeness: ${github_env}"
+      log-warn "No metadata file for affected environment '${github_env}': its job was cancelled or failed before capturing metadata, environment is ineligible for PR auto merge"
+      end-group
+      record_environment_result "false" "${github_env}" "(affected, no metadata)"
+
+    else
+      extract_relevance_entry_data "${relevance_file}" "${index}"
+      if ! evaluate_single_environment "unaffected"; then
+        log-error "Exiting due to fatal error in environment evaluation of '${github_env}'"
+        return 1
+      fi
+      record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}" "(not affected)"
+    fi
+  done
+
+  return 0
+}
+
+# ============================================================================
+# Main Multi-File Processing Logic
+# ============================================================================
+
+function main {
+  log-info "Starting automerge eligibility evaluation..."
+  log-info "Metadata files pattern: ${input_metadata_files_pattern}"
+  log-info "Relevance file: ${input_relevance_file:-<none>}"
+
+  local relevance_file="${input_relevance_file:-}"
+  if [[ -n "${relevance_file}" && ! -e "${relevance_file}" ]]; then
+    # The workflow downloads the relevance artifact with continue-on-error, as a
+    # download by name of a missing artifact throws; no file then means no file.
+    log-warn "Relevance file '${relevance_file}' does not exist, evaluating the metadata files alone"
+    relevance_file=""
+  fi
+
+  # Track overall results
+  local overall_eligible="true"
+  local environments_processed=0
+  local environments_eligible=0
+  local environments_ineligible=0
+  declare -a ENVIRONMENT_RESULTS=()
+  RELEVANCE_ENV_COUNT=""
+  RELEVANCE_AFFECTED_COUNT=""
+
+  # Find all metadata files matching the pattern
+  start-group "File Discovery"
+  shopt -s nullglob
+  local files=(${input_metadata_files_pattern})
+  shopt -u nullglob
+
+  # With a relevance file zero metadata files is a legitimate run: nothing was affected
+  if [[ ${#files[@]} -eq 0 && -z "${relevance_file}" ]]; then
+    log-warn "No metadata files found matching pattern: ${input_metadata_files_pattern}"
+    log-info "Setting is-eligible=false (no files to process)"
+    set-output "is-eligible" "false"
+    end-group
+    return 0
+  fi
+
+  log-info "Found ${#files[@]} metadata file(s):"
+  for file in "${files[@]}"; do
+    log-info "  - ${file}"
+  done
+  end-group
+
+  if [[ -n "${relevance_file}" ]]; then
+    if ! evaluate_with_relevance "${relevance_file}" "${files[@]}"; then
+      return 1
+    fi
+  elif ! evaluate_metadata_files "${files[@]}"; then
+    return 1
+  fi
+
   # Final summary
   start-group "Final Summary"
   log-info ""
@@ -629,6 +834,9 @@ function main {
   log-info "Automerge Eligibility Summary"
   log-info "=========================================="
   log-info "Files found: ${#files[@]}"
+  if [[ -n "${RELEVANCE_ENV_COUNT}" ]]; then
+    log-info "Environments in relevance file: ${RELEVANCE_ENV_COUNT} (${RELEVANCE_AFFECTED_COUNT} affected)"
+  fi
   log-info "Environments processed: ${environments_processed}"
   log-info "Environments eligible: ${environments_eligible}"
   log-info "Environments ineligible: ${environments_ineligible}"
@@ -646,6 +854,9 @@ function main {
         ;;
       INVALID)
         log-info "  ⚠️  ${name} (invalid file)"
+        ;;
+      UNKNOWN)
+        log-info "  ❓ ${name} (not in the relevance file)"
         ;;
       ERROR)
         log-info "  💥 ${name} (error during evaluation)"
