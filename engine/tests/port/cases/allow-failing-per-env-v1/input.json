@@ -11,7 +11,7 @@
     "./envs/env-e": true
   },
   "event": {
-    "name": "push",
+    "name": "workflow_dispatch",
     "ref_name": "main"
   },
   "schema_version": 1,
