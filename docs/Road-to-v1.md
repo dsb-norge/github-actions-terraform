@@ -50,6 +50,9 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Dispatch inputs | ignored | `environment`, `goal` and `reason` are read from the calling workflow's `workflow_dispatch.inputs` | add the standard block; a caller whose dispatch block already uses `environment` or `goal` for something else renames its own |
 | Runner for `create-matrix` | bash, jq, yq | Python 3.12 or later, and yq | nothing on GitHub-hosted runners (no caller names a workflow-level `runs-on` today); a self-hosted pool named there must carry both |
 | Validation | a duplicated environment name passed | it is an error | fix the duplicate |
+| Per-environment booleans | a YAML `true` for `add-pr-comment`, `verify-lock-file`, `cache-terraform-modules` (and the other boolean inputs) was silently ignored by the workflow's gates | honoured; a value that is neither true nor false (`yes`, `null`) is an error, for `allow-failing-terraform-operations` too | check that each per-environment boolean says what you mean: it now takes effect |
+| Per-environment strings | an unquoted number overriding a string input passed, `terraform-version: 1.10` as `1.1` | it is an error | quote it |
+| Environment names | any value | 1 to 255 of `A-Z a-z 0-9 . _ -`, starting with a letter or a digit, for `environment` and `github-environment`; no two environments share a github-environment, compared without case | nothing for any current caller; rename otherwise |
 | Default branch lookup | a failed lookup gave the string `null` and the run went on | read from the event payload; a failed API fallback stops the run | nothing |
 | Configuration errors | log lines, one of them lost in a command substitution | `::error` annotations, the step exits 2 | nothing |
 | Unsupported run events | ran with whatever the gates allowed | `merge_group`, `pull_request_target`, `release` and other events are a validation error | trigger only on pull request, push, dispatch and schedule |

@@ -33,14 +33,18 @@ on:
           Required fields are:
             - environment
                 string, name of environment to run terraform for.
+                1 to 255 of the characters A-Z a-z 0-9 . _ -, starting with a letter or a digit; names are unique.
 
           Optional fields are:
+            (a bool field takes true or false, quoted or not, and anything else is an error; a string field that
+            overrides a workflow input must be a string, so quote a value YAML reads as a number, ex. terraform-version: "1.10")
             - project-dir
                 string, path to a directory to run terraform commands within, the path should be relative to the calling repos root, ex. './envs/dev'.
                 note: if this is omitted the workflow will default to use the directory '[repo root]/envs/[workflow input 'environment']'.
             - github-environment
                 string, name of the deployment environment in github to run the workflow in context of.
                 note: if this is omitted the workflow will default to using deployment environment with name  specified by workflow input 'environment'.
+                note: the same characters as 'environment', and no two environments may share one (compared without case).
             - url
                 string, a url to display in github's deployment environment UI.
             - add-pr-comment
