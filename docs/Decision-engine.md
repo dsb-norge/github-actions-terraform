@@ -46,7 +46,8 @@ fails the suite below 100 percent of lines and branches.
 | D6 | The engine emits a **decision record**: per environment and test file, the verdict, the goals granted and the ordered rules that produced them. The run summary prints it. | A wrong decision is visible on the run page before it is visible in Azure. |
 | D7 | The test matrix (lanes, environments, provider sets) and the relevance and dispatch decisions live in the same core as the environment matrix. | They share the event model, the fork rule, the glob matcher and the invariants; splitting them would split the guarantees. |
 | D8 | The engine **never fails open silently and never fails closed silently**: every drop of an environment or file carries a reason, and validation errors stop the run with a message. | Reasons are the contract with the reader of the run summary. |
-| D9 | Row variables keep **today's types**: a forwarded workflow input is a string (`"true"`, `"5"`), a per-environment YAML value keeps the type YAML gave it, and only `allow-failing-terraform-operations` is a JSON boolean. Typed values live in `workflow_inputs` and in the engine's own decisions. | The workflow's gates compare strings (`== 'true'`), and GitHub's expression rules make `true == 'true'` false. The port pins the current types; retyping is a separate, deliberate change (P11). |
+| D9 | Row variables have **the types the workflow's gates compare**: a workflow input is a string whether forwarded or set per environment (`"true"`/`"false"` for a boolean input), a per-environment key that is not an input keeps its YAML type, and only `allow-failing-terraform-operations` is a JSON boolean. Typed values live in `workflow_inputs` and in the engine's own decisions. | The workflow's gates compare strings (`== 'true'`), and GitHub's expression rules make `true == 'true'` false, so a per-environment YAML boolean left as a JSON boolean was silently dropped (P11). |
+| D14 | **Names follow one rule and a github-environment belongs to one environment.** `environment` and `github-environment` are strings of 1 to 255 of `A-Z a-z 0-9 . _ -`, starting with a letter or a digit, and no two environments share a github-environment, compared without case. | A name reaches comment markers (`:`-separated, ended by `-->`), artifact names, concurrency groups and shell; the github-environment keys the markers, the metadata artifact and the concurrency group, so two environments sharing one overwrote each other's comments and lost one's metadata. Every calling repository's names already fit. |
 | D10 | Granted goals reach the workflow through a new row variable **`goals-granted`** (the eight-goal vocabulary, no `all`, no `-on-pr`); `vars.goals` stays the raw list. | Three renderers read the raw list for `apply-on-pr`; the operation gates switch to `goals-granted` so a dispatch cap can remove `apply`, with their event and branch clauses kept as defence in depth. |
 | D11 | The engine ships as the core of the **v1** major release; `v0` keeps the bash builder. | The features on top of it change defaults (relevance, tests, schedule); a rolling major tag cannot carry them. |
 | D12 | **Every injected fault must fail a test.** A mutation gate beside the coverage gate: each small fault in the package (a comparison flipped, a condition forced, a statement deleted, a raise swallowed, a list element dropped, a copy aliased) is run against the suite, and one that survives fails it, unless it is listed as equivalent with the reason. | Coverage proves every branch ran, not that a test would notice it deciding wrongly. At 100 percent coverage the first mutation run left 44 faults nobody would have noticed, among them 40 of the 43 validation checks. |
@@ -493,12 +494,17 @@ as read from that action and its helpers:
 - `project-dir` defaults to `./envs/<environment>`, with the `./` prefix;
 - generic forwarding: every workflow input that is not one of the nine `*-yml` inputs, in sorted
   order, is copied as a **string** into a row that lacks it (`"true"`, `"5"`, `""` for null, with
-  trailing newlines stripped as the builder's command substitution stripped them); per-environment
-  values keep their YAML types; arbitrary per-environment keys that are not inputs pass through
-  untouched, a key ending in `-yml` included;
-- `github-environment` defaults to `environment`; `url` defaults to `""`;
-- `allow-failing-terraform-operations`: absent is JSON `false`, present is `true` only when its
-  text is exactly `true` (a YAML `true` and the string `"true"` both are; `True` and `yes` are not);
+  trailing newlines stripped as the builder's command substitution stripped them); a
+  per-environment value of a boolean input is normalised to `"true"`/`"false"` and must be true or
+  false, as a boolean or a string; a per-environment value of any other input must be a string,
+  kept verbatim (an unquoted `1.10` is a number YAML reads as `1.1`, so it is refused with "quote
+  it"); arbitrary per-environment keys that are not inputs pass through untouched, a key ending in
+  `-yml` included;
+- `environment`, and `github-environment` when given, follow the name rule of D14;
+  `github-environment` defaults to `environment`; `url` defaults to `""`;
+- `allow-failing-terraform-operations`: absent is JSON `false`; present, it must be true or false,
+  as a boolean or a string, and anything else (`yes`, `null`, a quoted `True`) is an error, never
+  a silent false;
 - replace fields (`goals-yml`, `terraform-init-additional-dirs-yml`): per-environment value, as
   YAML text or a native value, else the global, else `[]` when the global is null; invalid is
   `the environment's '<field>' is not valid yaml!`; stored under the name without `-yml`;
@@ -533,6 +539,11 @@ port case with its reason:
 |---|---|---|
 | any configuration error | exit 1, messages as log lines or group titles | exit 2, each message a `::error` annotation |
 | a duplicated environment name | accepted | an error (I7) |
+| a per-environment boolean input, as a YAML boolean | kept a JSON boolean, which the gates' `== 'true'` silently dropped | normalised to the gates' `"true"`/`"false"` (D9) |
+| a per-environment boolean input or allow-failing that is neither true nor false (`yes`, `null`) | silently false, or passed through | an error naming the environment, the field and the value |
+| a per-environment value of a string input that is not a string | passed through, an unquoted `1.10` as `1.1` | an error asking to quote it |
+| an environment name outside the name rule (a space, `:`, `/`, a number) | accepted | an error (D14) |
+| two environments sharing a github-environment | accepted; comments overwritten, one metadata upload failed | an error (D14) |
 | an empty `environments-yml` | a jq crash, no message | "The specification for input 'environments-yml' must be a list of environments!" |
 | `environments-yml` a mapping | its values iterated as environments | the same error |
 | an environment entry that is not a mapping | a jq crash, no message | "Missing property 'environment' …" |
@@ -561,7 +572,7 @@ preview-ref run on the test-bed repository closes it (§13).
 | P8 | The engine prints to stdout by habit. | Corrupts a command that expects the output document on stdout. | Output documents go to `--output` files; logging to stderr; a test asserts stdout is empty. |
 | P9 | `capture-matrix-job-meta` strips keys that look like secrets. | A row field a summary must read back from metadata disappears (`fork-safe` was named for this). Today's rows already carry `pr-auto-merge-app-private-key-secret` and the `extra-envs-from-secrets*` maps, which are stripped and must stay so. | Only fields a downstream summary reads from metadata are validated against the filter; the port does not rename existing keys. |
 | P10 | The decision record can grow long on a repository with many environments and files. | A run summary nobody reads. | One line per environment, one per test root, collapsed detail per file. |
-| P11 | A per-environment YAML boolean stays a JSON boolean in `vars`, and the workflow's gates compare with `== 'true'`; GitHub casts a boolean to a number and a string to NaN, so `true == 'true'` is false. | A per-environment `format-check-in-root-dir: false` does not do what the author expects today. | Pre-existing; the port pins it in the goldens and records it. Retyping per-environment booleans to strings is a separate commit with its own release note. |
+| P11 | A per-environment YAML boolean stayed a JSON boolean in `vars`, and the workflow's gates compare with `== 'true'`; GitHub casts a boolean to a number and a string to NaN, so `true == 'true'` is false. | A per-environment `verify-lock-file: true` skipped the lock check; `add-pr-comment: true` left the seed job's placeholder head never updated. | A per-environment value of a boolean input is normalised to the gates' string (D9); `BOOLEAN_INPUTS` is held to the workflow's declared boolean inputs by a test. |
 | P12 | The adapter gathers facts before the engine can validate the configuration. | A misconfigured caller pays for API calls before hearing about the typo. | `validate` on the partial document first (§3.2). |
 | P13 | `github.event.repository.default_branch` is documented for push, pull request and dispatch payloads, not for `schedule`. | An unknown default branch on a scheduled run. | Verified on the test bed: the `schedule` payload carries it too, inside a called workflow as well. The API fallback stays, and fails the step loudly. |
 | P14 | Retired: the runner's `bash -e` swallowing a step's exit code applied to the bash shim, which the adapter replaced. | | |
@@ -634,6 +645,12 @@ AI-assistant configuration files are never in these commits.
   byte. Its first mutation run, at full coverage, left 33 faults: most because the tests compared
   against the module's own constants (the `yq` arguments, the exit codes, the required variables),
   so a wrong constant passed. The tests now compare against literals.
+- **Byte-identical preserved the builder's defects too.** Reviewed after the port for what should
+  change, the engine still carried three: per-environment booleans the gates silently dropped (P11),
+  environment names without a rule although they reach markers, artifact names and shell, and a
+  github-environment two environments could share. Each was fixed test first: the tests were
+  written and shown failing before the rule existed. Five port cases now record the old behaviour
+  as a deviation, and three `-v1` cases hold the paths the old ones covered.
 - **On the test bed the port is invisible.** Through a preview ref, a seven-environment
   configuration covering apply on pull request, destroy, outputs, allow-failing and a failing
   apply produced the same matrix as `@v0` on `workflow_dispatch`, apart from the calling branch;
