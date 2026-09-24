@@ -1161,6 +1161,102 @@ else
 fi
 
 # ============================================================================
+# F9 — an expression captured into a script through a heredoc is JSON, under a
+# quoted delimiter unique in the repository. GitHub pastes the expression's value
+# into the script before bash parses it, so a value holding the delimiter line
+# ends the capture and the rest runs as shell. toJSON output cannot hold such a
+# line (JSON escapes a string's newlines); free text can, and goes through env:.
+# So: every captured action input is passed, at every call site in the
+# workflows, as toJSON(...) or a JSON literal; a workflow captures only
+# toJSON(...); and no delimiter is a bare or shared name.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F9 - heredoc captures hold JSON under unique quoted delimiters${NC}"
+echo -e "${BLUE}========================================${NC}"
+_capture_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, json, re, sys, yaml
+
+def load(path):
+    with open(path, encoding='utf-8') as fh:
+        return yaml.safe_load(fh) or {}
+
+def run_blocks(doc):
+    steps = list(((doc.get('runs') or {}).get('steps')) or [])
+    for job in (doc.get('jobs') or {}).values():
+        steps += job.get('steps') or []
+    return [step['run'] for step in steps if isinstance(step.get('run'), str)]
+
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?:\n|$)", re.S)
+EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+problems, captures, delimiters = [], {}, {}
+files = sorted(glob.glob('*/action.yml') + glob.glob('*/action.yaml') + glob.glob('.github/workflows/*.y*ml'))
+for path in files:
+    for block in run_blocks(load(path)):
+        for quote, delimiter, body in HEREDOC.findall(block):
+            expressions = EXPR.findall(body)
+            if not expressions:
+                continue
+            where = f"{path} :: heredoc {delimiter}"
+            if not quote:
+                problems.append(f"{where}: the delimiter is not quoted, so bash expands the captured value")
+            if delimiter == 'EOF' or not delimiter.endswith('_JSON'):
+                problems.append(f"{where}: the delimiter must name what it captures and end in _JSON")
+            delimiters.setdefault(delimiter, []).append(path)
+            for expression in expressions:
+                if path.startswith('.github/'):
+                    if not re.fullmatch(r"toJSON\(.+\)", expression):
+                        problems.append(f"{where}: captures '{expression}', not toJSON(...)")
+                elif re.fullmatch(r"inputs\.[a-z0-9-]+", expression):
+                    captures.setdefault(path.split('/')[0], set()).add(expression.split('.', 1)[1])
+                else:
+                    problems.append(f"{where}: captures '{expression}', not an input")
+for delimiter, paths in delimiters.items():
+    if len(paths) > 1:
+        problems.append(f"delimiter {delimiter} is used {len(paths)} times: {', '.join(paths)}")
+
+def json_value(value):
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"\$\{\{\s*toJSON\(.+\)\s*\}\}", text):
+            return True
+        try:
+            json.loads(text)
+            return True
+        except ValueError:
+            return False
+    return value is None or isinstance(value, (bool, int, float))
+
+checked = 0
+for wf in sorted(glob.glob('.github/workflows/*.y*ml')):
+    doc = load(wf)
+    for job in (doc.get('jobs') or {}).values():
+        for step in job.get('steps') or []:
+            uses = step.get('uses') or ''
+            action = uses[2:] if uses.startswith('./') else uses.split('dsb-norge/github-actions-terraform/')[-1].split('@')[0] if 'dsb-norge/github-actions-terraform/' in uses else None
+            for name in sorted(captures.get(action, ())):
+                if name in (step.get('with') or {}):
+                    checked += 1
+                    if not json_value(step['with'][name]):
+                        problems.append(f"{wf} :: passes {action}'s captured input '{name}' as {step['with'][name]!r}, not toJSON(...) or JSON")
+
+print(f"checked {sum(len(v) for v in delimiters.values())} capture(s), {checked} call site(s)")
+for p in problems:
+    print(f"PROBLEM {p}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _capture_rc=0 || _capture_rc=$?
+if [[ "${_capture_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_capture_out}" | head -n1): JSON only, unique quoted delimiters"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_capture_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
