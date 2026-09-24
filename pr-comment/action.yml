@@ -67,9 +67,8 @@ inputs:
       Pass multi-line bodies via a YAML literal block scalar (`|`).
 
       Prefer `body-file` for anything a renderer produced. A body passed
-      here travels through the step's environment, where one value may
-      hold at most 128 KiB — see `body-file`. It is never pasted into the
-      step's script, so nothing in it runs as shell.
+      here is pasted into the step's script as JSON (toJSON), so nothing in
+      it runs as shell, and it never enters the step's environment.
     required: false
     default: ""
   body-file:
@@ -116,14 +115,20 @@ runs:
         input_mode: ${{ inputs.mode }}
         input_marker: ${{ inputs.marker }}
         input_body_file: ${{ inputs.body-file }}
-        # Free text, so through env: and never pasted into the script: a heredoc capture of a
-        # caller's markdown ends early at a line holding its delimiter, and the rest runs as shell.
-        # A body is capped by the API at 65536 characters, under the 128 KiB a single variable may
-        # hold; a larger one belongs in body-file, which every caller in this repository uses.
-        input_body: ${{ inputs.body }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Upsert or delete the PR comment identified by the marker
+        #
+        # The inline body is free text, so the action turns it into JSON first: toJSON of a string
+        # is one line, every newline in it escaped, so no line of the capture can be its delimiter,
+        # and the quoted heredoc keeps bash from expanding anything in it. Captured before
+        # allexport and never exported: a body may hold 65536 multibyte characters, more bytes than
+        # the 128 KiB one environment value may hold, so in envp it would fail every fork after it.
+        # step_pr_comment.sh decodes it.
+        input_body_json=$(cat <<'PR_COMMENT_BODY_JSON'
+        ${{ toJSON(inputs.body) }}
+        PR_COMMENT_BODY_JSON
+        )
         set -o allexport
         source "${{ github.action_path }}/step_pr_comment.sh"
         exit_code=$?

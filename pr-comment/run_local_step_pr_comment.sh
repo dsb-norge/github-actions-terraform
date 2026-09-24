@@ -62,7 +62,7 @@ export input_repo="dsb-norge/test-repo"
 export input_issue_number="295"
 export input_mode="upsert"
 export input_marker="<!-- tf:head:env:dev -->"
-export input_body="### dev
+input_body="### dev
 
 ⏳ Running (run #999)…
 "
@@ -73,6 +73,9 @@ echo "Running step_pr_comment.sh (upsert)..."
 echo "============================================================"
 
 (
+  # As the shim hands it over: toJSON(inputs.body), shell-local.
+  input_body_json="$(printf '%s' "${input_body}" | jq -Rs .)"
+  unset input_body
   set -o allexport
   source "${_this_script_dir}/step_pr_comment.sh"
 )
