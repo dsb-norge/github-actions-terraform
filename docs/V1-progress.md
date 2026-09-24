@@ -21,6 +21,14 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 5 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
 | 6 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
+### Outside the road steps
+
+Changes the road does not list, made on the v1 line because a step's review surfaced them.
+
+| What | Pull request | State | In `v1` |
+|---|---|---|---|
+| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) through `env:`; every `toJSON` capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60), stacked on #59 | draft | no |
+
 ## 2. Status per spec
 
 | Spec | Decided | Implemented | Verified on the test bed | As built |
@@ -94,9 +102,27 @@ table only says where.
   whose apply fails by design. The step's log group is titled by the run block's description
   comment, and `python3 -I -B` resolved the engine from the preview ref.
 
+### #60: hardened heredoc captures
+
+- CI: every suite green, the new structural test F9 included (16 captures, 17 call sites); F9
+  shown to fail on a bare `EOF` delimiter and on a call site passing a plain string.
+- Test bed, through `preview/pr-60` on a pull request with the seven-environment configuration:
+  the only failure is the environment whose apply fails by design; the seed job's reconcile,
+  reading its YAML through `env:`, posted each of the seven environment heads exactly once; the
+  environment export, per-goal resolution and metadata capture passed under their new delimiters.
+  The module cache's `cache-paths` steps did not run (no environment there resolves cacheable
+  modules), so that move rests on its suite.
+
 ## 5. Findings to carry
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
+
+- Run blocks that paste values straight into shell, with no heredoc: `matrix.vars.github-environment`
+  (caller-configured) in several steps of the default workflow, `matrix.test-file` in module CI and
+  `inputs.test-file` in `terraform-test` (file names from the repository under test), and path
+  inputs in `terraform-apply` and `terraform-init`. The same risk family #60 fixes for heredocs;
+  GitHub's advice is `env:` for every one. For the maintainer to decide whether it joins the v1
+  line.
 
 - The required-fields list lacks `runs-on` and `format-check-in-root-dir`, which the workflow reads
   (Decision-engine.md §9).
