@@ -35,7 +35,7 @@ EQUIVALENTS_FILE = os.path.join(TESTS_DIR, "mutation_equivalents.json")
 REPO_GITHUB_DIR = os.path.join(os.path.dirname(ENGINE_DIR), ".github")
 
 # Fastest first, so most mutants die within a second; the subprocess-heavy modules run last.
-SUITE_ORDER = ("test_values", "test_workflow", "test_purity", "test_model", "test_validation", "test_environments",
+SUITE_ORDER = ("test_values", "test_globs", "test_workflow", "test_purity", "test_model", "test_validation", "test_environments",
                "test_invariants", "test_adapter", "test_port", "test_cli", "test_entry", "test_generated",
                "test_determinism")
 
