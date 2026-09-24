@@ -121,9 +121,9 @@ runs:
         #
         # JSON input via heredoc — keeps quotes/special chars intact and
         # out of envp (the ARG_MAX guard pattern from CLAUDE.md).
-        input_additional_dirs_json=$(cat <<'EOF'
+        input_additional_dirs_json=$(cat <<'TERRAFORM_INIT_ADDITIONAL_DIRS_JSON'
         ${{ inputs.additional-dirs-json }}
-        EOF
+        TERRAFORM_INIT_ADDITIONAL_DIRS_JSON
         )
         export input_additional_dirs_json
         set -o allexport
