@@ -3,8 +3,10 @@ name: "DSB terraform CI/CD workflow"
 # A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
 #   permissions:
 #     id-token: write       # required for Azure password-less auth
-#     contents: read        # required for actions/checkout
-#     pull-requests: write  # required for commenting on PRs
+#     contents: read        # required for actions/checkout, and for the compare endpoint that
+#                           # lists a push's changed files (path relevance)
+#     pull-requests: write  # required for commenting on PRs; 'create-matrix' uses it read-only
+#                           # to list a pull request's changed files (path relevance)
 #     actions: read         # required by aggregate-validation-summaries to call
 #                           # the Jobs API and resolve [job log] URLs for the
 #                           # per-group head's Links column. Without it the
@@ -450,11 +452,22 @@ jobs:
   create-matrix:
     name: Create job matrix
     runs-on: ${{ inputs.runs-on }} # global setting
+    permissions:
+      contents: read      # checkout, and the compare endpoint for a push's changed files
+      pull-requests: read # a pull request's changed files (docs/Path-relevance.md §4.4)
     defaults:
       run:
         shell: bash
+    # Small values only. Every environment's verdict, the comment manifest and the decision record
+    # travel in the 'relevance' artifact: a job output enters every downstream interpolation, and
+    # nothing caps it.
     outputs:
       matrix-json: ${{ steps.create-matrix.outputs.matrix-json }}
+      affected-count: ${{ steps.create-matrix.outputs.affected-count }}
+      unaffected-count: ${{ steps.create-matrix.outputs.unaffected-count }}
+      relevance-mode: ${{ steps.create-matrix.outputs.relevance-mode }}
+      relevance-reason: ${{ steps.create-matrix.outputs.relevance-reason }}
+      changed-count: ${{ steps.create-matrix.outputs.changed-count }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
@@ -465,6 +478,11 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
         with:
           inputs-json: ${{ toJSON(inputs) }}
+      - name: "📦 Upload the relevance decision"
+        uses: actions/upload-artifact@v7
+        with:
+          name: relevance
+          path: ${{ steps.create-matrix.outputs.relevance-file }}
 
   # Pre-allocate per-group and per-env "head" comments at the top of the PR
   # conversation in a deterministic order. Heads are PATCHed in place across
@@ -490,108 +508,42 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: "📋 Compose head manifest from matrix"
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v4
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        continue-on-error: true # a missing manifest seeds nothing; the matrix jobs still post their heads
+      - name: "📋 Read the head manifest"
         id: compose
-        env:
-          MATRIX_JSON: ${{ needs.create-matrix.outputs.matrix-json }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          # Build heads as JSON first (easy to manipulate via jq), then
-          # convert to YAML for the reconcile action's heads-yml input.
-          # Order matters: reconcile POSTs sequentially so declared order
-          # becomes the created_at order on a fresh PR — group summaries
-          # POSTed first, per-env after.
+          # Hand the decision engine's heads and tag purges to the reconcile action as YAML
+          #
+          # The engine composed them with relevance (docs/Path-relevance.md §6.3): group heads
+          # first, then one head per ungrouped commenting environment, a placeholder when it is
+          # affected and its final "not affected" body when it is not. Reconcile POSTs in this
+          # order, so on a fresh pull request it becomes the conversation's order.
           set -euo pipefail
-
-          heads_json='[]'
-
-          # Group heads (distinct non-empty pr-comment-group values).
-          while IFS= read -r g; do
-            [ -z "${g}" ] && continue
-            # Same title rule as the rendered head: a group whose envs only
-            # plan keeps "validation summary"; one that applies or destroys on
-            # PR gets the shorter title, so the placeholder does not rename
-            # itself mid-run.
-            g_title="Terraform validation summary"
-            if echo "${MATRIX_JSON}" | jq -e --arg g "${g}" '
-              .include
-              | map(select((.vars["pr-comment-group"] // "") == $g))
-              | map(.vars.goals // [] | tostring)
-              | any(test("apply-on-pr|destroy-on-pr"))
-            ' >/dev/null 2>&1; then
-              g_title="Terraform summary"
-            fi
-            body=$(printf '%s\n\n%s' \
-              "### ${g_title} for group: \`${g}\`" \
-              "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
-            heads_json=$(jq -n \
-              --argjson cur "${heads_json}" \
-              --arg marker "<!-- tf:head:group:${g} -->" \
-              --arg body "${body}" \
-              '$cur + [{marker: $marker, body: $body}]')
-          done < <(echo "${MATRIX_JSON}" | jq -r '
-            .include
-            | map(select(.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true))
-            | map(.vars["pr-comment-group"] // "")
-            | map(select(. != "" and . != null))
-            | unique
-            | .[]
-          ')
-
-          # Per-env heads (one per UNGROUPED env with add-pr-comment=true).
-          # Grouped envs are represented in their per-group head's table — no
-          # standalone per-env head is seeded for them. See
-          # docs/Workflow-pr-comments.md §6.1 grouped mode.
-          # The placeholder carries the Mode line for an env that mutates on
-          # PR, so the warning is on the PR before init has finished — the
-          # head's Mode row (docs/Apply-and-destroy-reporting.md §8.2) then
-          # replaces it on the first render.
-          while IFS=$'\t' read -r e mode; do
-            [ -z "${e}" ] && continue
-            # ${mode} is non-empty exactly when this env mutates on PR.
-            e_title="Terraform validation summary"
-            [ -n "${mode}" ] && e_title="Terraform summary"
-            body=$(printf '%s\n\n%s' \
-              "### ${e_title} for environment: \`${e}\`" \
-              "⏳ Awaiting results (run #${RUN_ID} attempt #${RUN_ATTEMPT})…")
-            if [ -n "${mode}" ]; then
-              body="${body}"$'\n\n'"${mode}"
-            fi
-            heads_json=$(jq -n \
-              --argjson cur "${heads_json}" \
-              --arg marker "<!-- tf:head:env:${e} -->" \
-              --arg body "${body}" \
-              '$cur + [{marker: $marker, body: $body}]')
-          done < <(echo "${MATRIX_JSON}" | jq -r '
-            .include
-            | map(select(
-                (.vars["add-pr-comment"] == "true" or .vars["add-pr-comment"] == true)
-                and ((.vars["pr-comment-group"] // "") == "")
-              ))
-            | .[]
-            | .vars["github-environment"] as $e
-            | (.vars.goals // []) as $g
-            | ([ (if ($g | index("apply-on-pr"))   != null then "🐙 applies on PR"  else empty end),
-                (if ($g | index("destroy-on-pr")) != null then "☠ destroys on PR" else empty end)
-              ] | join(" · ")) as $mode
-            | "\($e)\t\($mode)"
-          ')
-
-          # JSON is valid YAML, so we can hand the JSON straight to the
-          # reconcile action. Pretty-print via yq for nicer logs.
-          heads_yml=$(echo "${heads_json}" | yq -P '.')
-
+          manifest="${RUNNER_TEMP}/relevance/relevance.json"
+          if [ -f "${manifest}" ]; then
+            heads_yml=$(jq '[.comments.heads[] | {marker, body}]' "${manifest}" | yq -P '.')
+            gc_yml=$(jq '.comments.gc' "${manifest}" | yq -P '.')
+          else
+            echo "::warning title=Seed PR comment heads::The relevance decision is missing; no heads are seeded and no tags are purged."
+            heads_yml='[]'
+            gc_yml='[]'
+          fi
           echo "Composed heads-yml:"
           printf '%s\n' "${heads_yml}"
-
-          delim=$(echo $RANDOM | md5sum | head -c 20)
-          {
-            echo "heads-yml<<${delim}"
-            printf '%s' "${heads_yml}"
-            echo
-            echo "${delim}"
-          } >> "${GITHUB_OUTPUT}"
+          echo "Composed gc-yml:"
+          printf '%s\n' "${gc_yml}"
+          write_output() {
+            local delim
+            delim="EOF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+            printf '%s<<%s\n%s\n%s\n' "${1}" "${delim}" "${2}" "${delim}" >>"${GITHUB_OUTPUT}"
+          }
+          write_output heads-yml "${heads_yml}"
+          write_output gc-yml "${gc_yml}"
 
       - name: "🌱 Seed heads"
         uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@v1
@@ -600,32 +552,29 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
           heads-yml: ${{ steps.compose.outputs.heads-yml }}
-          # Plan-tag GC is intentionally NOT done here. Each matrix job
-          # purges its own env's prior plan tags as its first commenting
-          # step — that works regardless of whether seed re-runs (e.g. on
-          # "Re-run failed jobs", seed is skipped if it previously
-          # succeeded, but the failed envs' matrix still re-runs and
-          # cleans up their tags). Doing GC here would over-delete on
-          # "Re-run failed jobs": envs that didn't re-run still have
-          # valid plan tags that should be preserved.
+          # Only unaffected environments' tags. Each matrix job purges its own environment's
+          # prior tags as its first commenting step, which holds when the seed is skipped on
+          # "Re-run failed jobs"; purging an affected environment here would delete tags that
+          # environments not re-run still show. An unaffected environment's job does not run, so
+          # without this a plan from an earlier run would stay under a head saying "not affected".
+          gc-yml: ${{ steps.compose.outputs.gc-yml }}
         continue-on-error: true # never fail the workflow over PR comment seeding
 
   terraform-ci-cd:
     name: "Terraform"
+    # seed-pr-comments is in needs for ordering only: the heads must exist before any matrix job
+    # upserts them. Its result is deliberately not tested: its steps never fail the job, it is
+    # skipped on every event but pull_request, and a broken seed must not skip the matrix while
+    # the conclusion stays green (docs/Path-relevance.md §5.3, P3). The status function
+    # !cancelled() replaces the implicit success(), which a skipped seed would fail.
+    #
+    # The count keeps an empty matrix away from GitHub, which rejects one: a false job-level
+    # condition is evaluated before the matrix, so no sentinel row is needed (P13).
     needs: [create-matrix, seed-pr-comments]
-    # seed-pr-comments only fires on pull_request events. On push / dispatch /
-    # schedule it is correctly skipped — but GitHub Actions' implicit
-    # `if: success()` for a job with no explicit `if:` requires every `needs:`
-    # dep to be `success`, and a skipped dep doesn't satisfy that. Without
-    # this guard, push-to-main runs skip the entire matrix and everything
-    # downstream cascades to 'skipped'. Allow seed to be either success or
-    # skipped while still requiring create-matrix actually succeeded, and
-    # propagate cancellation explicitly via !cancelled() so a cancelled
-    # upstream still cancels this matrix.
     if: |
       !cancelled()
       && needs.create-matrix.result == 'success'
-      && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
+      && needs.create-matrix.outputs.affected-count != '0'
     runs-on: ${{ matrix.vars.runs-on }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
@@ -1835,10 +1784,20 @@ jobs:
         # An empty artifact set is a valid input (sweep-only mode still
         # needs to run to clean up any orphan group comments).
         continue-on-error: true
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v4
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the action then behaves as
+        # it did before relevance.
+        continue-on-error: true
       - name: "🧮 Reconcile per-group PR comments"
         uses: dsb-norge/github-actions-terraform/aggregate-validation-summaries@v1
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
+          # Groups whose members are all unaffected have no metadata; the file keeps them rendered.
+          relevance-file: ${{ runner.temp }}/relevance/relevance.json
           pr-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
         continue-on-error: true # never fail the workflow over PR comment rendering
@@ -1870,52 +1829,100 @@ jobs:
         with:
           pattern: matrix-job-meta-*
           merge-multiple: true
-        # No artifacts (matrix skipped) is a valid input: the action renders
-        # a "no environments" block.
+        # No artifacts (matrix skipped) is a valid input.
+        continue-on-error: true
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v4
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the action then behaves as
+        # it did before relevance.
         continue-on-error: true
       - name: "📋 Write the run summary"
         uses: dsb-norge/github-actions-terraform/create-run-summary@v1
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
+          relevance-file: ${{ runner.temp }}/relevance/relevance.json
         continue-on-error: true # never fail the workflow over run-page reporting
 
-  # create a global result indicating if workflow steps succeeded or not,
-  # handy for branch protection rules
+  # The one check branch protection requires. Green means everything that should have run, ran
+  # and succeeded, including when nothing should have run: a pull request that touches no
+  # environment reports green instead of leaving the check pending (docs/Path-relevance.md §7).
+  # It reads named results and the matrix builder's counts, because "skipped" alone cannot tell
+  # "nothing to verify" from "something upstream broke". Reporting jobs stay out of needs: they
+  # must never redden a run.
   conclusion:
     if: always()
     name: "Terraform conclusion"
     needs: [create-matrix, terraform-ci-cd]
     runs-on: ${{ inputs.runs-on }} # global setting
+    permissions: {}
     defaults:
       run:
         shell: bash
     steps:
-      - name: "🛑 Fail if any job failed or was cancelled"
-        run: exit 1
-        # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
-        # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
-        if: >-
-          ${{
-               contains(needs.*.result, 'failure')
-            || contains(needs.*.result, 'cancelled')
-          }}
+      - name: "🛑 Verify everything that should have run, ran and passed"
+        env:
+          CREATE_MATRIX_RESULT: ${{ needs.create-matrix.result }}
+          AFFECTED_COUNT: ${{ needs.create-matrix.outputs.affected-count }}
+          UNAFFECTED_COUNT: ${{ needs.create-matrix.outputs.unaffected-count }}
+          RELEVANCE_MODE: ${{ needs.create-matrix.outputs.relevance-mode }}
+          RELEVANCE_REASON: ${{ needs.create-matrix.outputs.relevance-reason }}
+          ENVIRONMENTS_RESULT: ${{ needs.terraform-ci-cd.result }}
+        run: |
+          # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2)
+          set -euo pipefail
+          environments="environments: ${AFFECTED_COUNT:-?} affected, ${UNAFFECTED_COUNT:-?} not affected (${RELEVANCE_MODE:-?}: ${RELEVANCE_REASON:-?})"
+          verdict=red
+          if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
+            why="the matrix could not be built (${CREATE_MATRIX_RESULT})"
+          else
+            case "${ENVIRONMENTS_RESULT}" in
+              success) verdict=green why="${environments}" ;;
+              skipped)
+                if [ "${AFFECTED_COUNT}" = "0" ]; then
+                  verdict=green why="nothing to verify for this change; ${environments}"
+                else
+                  why="the environments should have run but were skipped; ${environments}"
+                fi
+                ;;
+              *) why="the environments' result is ${ENVIRONMENTS_RESULT}; ${environments}" ;;
+            esac
+          fi
+          line="conclusion: ${verdict} — ${why}"
+          echo "${line}"
+          echo "${line}" >>"${GITHUB_STEP_SUMMARY}"
+          if [ "${verdict}" = green ]; then
+            echo "::notice title=Terraform conclusion::${line}"
+          else
+            echo "::error title=Terraform conclusion::${line}"
+            exit 1
+          fi
 
   automerge:
     # job runs when:
-    #   - ci/cd job succeeded AND
+    #   - the conclusion is green AND
+    #   - the environments succeeded, or none was affected (docs/Path-relevance.md §8) AND
     #   - global setting pr-auto-merge-enabled is true AND
     #   - workflow triggered by pull request event AND
     #   - pull request is not being closed AND
     #   - pull request is not being converted to draft
+    # !cancelled() replaces the implicit success(), which a skipped matrix would fail (P14).
     if: |
-      needs.conclusion.result == 'success'
+      !cancelled()
+      && needs.conclusion.result == 'success'
+      && (
+        needs.terraform-ci-cd.result == 'success'
+        || (needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0')
+      )
       && inputs.pr-auto-merge-enabled == true
       && github.event_name == 'pull_request'
       && github.event.action != 'closed'
       && github.event.action != 'converted_to_draft'
       && github.event.pull_request.draft != true
     name: "PR auto merger"
-    needs: [terraform-ci-cd, conclusion]
+    needs: [create-matrix, terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
@@ -1938,11 +1945,22 @@ jobs:
         with:
           pattern: matrix-job-meta-* # uploaded by capture-matrix-job-meta step in terraform-ci-cd job
           merge-multiple: true
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v4
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the action then behaves as
+        # it did before relevance.
+        continue-on-error: true
       - name: "🔍 Evaluate PR auto merge eligibility across all environments"
         id: evaluate-automerge
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@v1
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
+          # Every affected environment must have its metadata; an unaffected one is judged on
+          # its enabled flag and actor allowlist, so a docs-only pull request is never merged blindly.
+          relevance-file: ${{ runner.temp }}/relevance/relevance.json
       - name: "🔑 Resolve auto-merge app private key"
         id: resolve-key
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'

@@ -1604,6 +1604,119 @@ else
 fi
 
 # ============================================================================
+# F10 — the jobs around the matrix judge named results and the builder's counts
+# (docs/Path-relevance.md §5.3, §7, §8; P3, P14).
+#
+# "Skipped" alone cannot tell "nothing to verify" from "something upstream
+# broke"; only the builder's affected count can. So the conclusion reads named
+# results, never contains(needs.*.result, ...); the matrix job does not test
+# the seed's result (a broken seed skipped every environment while the
+# conclusion stayed green) and keeps an empty matrix away from GitHub; and the
+# automerge job carries a status function, or the implicit success() skips it
+# whenever the matrix is skipped. The conclusion's script is also run, one case
+# per row of §7.2.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F10 - conclusion, matrix gate and automerge read named results and the counts${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f10_out=$(python3 - "${_workflow}" <<'PYEOF'
+import os, subprocess, sys, tempfile, yaml
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+jobs = yaml.safe_load(text)["jobs"]
+problems = []
+
+if "contains(needs.*.result" in text:
+    problems.append("the workflow still judges contains(needs.*.result, ...)")
+
+matrix = jobs["terraform-ci-cd"]
+if set(matrix.get("needs", [])) != {"create-matrix", "seed-pr-comments"}:
+    problems.append(f"terraform-ci-cd needs {matrix.get('needs')}, expected create-matrix and seed-pr-comments")
+condition = " ".join(str(matrix.get("if", "")).split())
+for clause in ("!cancelled()", "needs.create-matrix.result == 'success'",
+               "needs.create-matrix.outputs.affected-count != '0'"):
+    if clause not in condition:
+        problems.append(f"terraform-ci-cd's if lacks {clause}")
+if "seed-pr-comments.result" in condition:
+    problems.append("terraform-ci-cd's if tests the seed's result")
+
+conclusion = jobs["conclusion"]
+if str(conclusion.get("if")).strip() != "always()":
+    problems.append(f"conclusion's if is {conclusion.get('if')!r}, expected always()")
+if conclusion.get("needs") != ["create-matrix", "terraform-ci-cd"]:
+    problems.append(f"conclusion needs {conclusion.get('needs')}, expected [create-matrix, terraform-ci-cd]")
+steps = conclusion.get("steps", [])
+env = steps[0].get("env", {}) if steps else {}
+expected_env = {
+    "CREATE_MATRIX_RESULT": "${{ needs.create-matrix.result }}",
+    "AFFECTED_COUNT": "${{ needs.create-matrix.outputs.affected-count }}",
+    "ENVIRONMENTS_RESULT": "${{ needs.terraform-ci-cd.result }}",
+}
+for name, value in expected_env.items():
+    if env.get(name) != value:
+        problems.append(f"conclusion's step env {name} is {env.get(name)!r}, expected {value!r}")
+
+automerge = jobs["automerge"]
+if set(automerge.get("needs", [])) != {"create-matrix", "terraform-ci-cd", "conclusion"}:
+    problems.append(f"automerge needs {automerge.get('needs')}, expected create-matrix, terraform-ci-cd, conclusion")
+condition = " ".join(str(automerge.get("if", "")).split())
+for clause in ("!cancelled()", "needs.conclusion.result == 'success'", "needs.terraform-ci-cd.result == 'success'",
+               "(needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0')"):
+    if clause not in condition:
+        problems.append(f"automerge's if lacks {clause}")
+
+# Every download of the relevance artifact may fail: a download by name of a missing artifact throws (P8).
+downloads = 0
+for name, job in jobs.items():
+    for step in job.get("steps", []):
+        if str(step.get("uses", "")).startswith("actions/download-artifact") and (step.get("with") or {}).get("name") == "relevance":
+            downloads += 1
+            if step.get("continue-on-error") is not True:
+                problems.append(f"{name}: the relevance download is not continue-on-error")
+if downloads != 4:
+    problems.append(f"{downloads} relevance downloads, expected the seed, the aggregator, the run summary and automerge")
+
+# The conclusion's script, one case per row of §7.2.
+script = steps[0]["run"] if steps else "exit 3"
+cases = [
+    ("failure", "", "skipped", 1), ("cancelled", "", "skipped", 1), ("skipped", "", "skipped", 1),
+    ("success", "2", "success", 0), ("success", "0", "skipped", 0), ("success", "2", "skipped", 1),
+    ("success", "2", "failure", 1), ("success", "2", "cancelled", 1),
+]
+for create_matrix, affected, environments, expected in cases:
+    with tempfile.NamedTemporaryFile("w+") as summary:
+        run_env = dict(os.environ, CREATE_MATRIX_RESULT=create_matrix, AFFECTED_COUNT=affected, UNAFFECTED_COUNT="1",
+                       RELEVANCE_MODE="diff", RELEVANCE_REASON="diff", ENVIRONMENTS_RESULT=environments,
+                       GITHUB_STEP_SUMMARY=summary.name)
+        done = subprocess.run(["bash", "-e", "-c", script], env=run_env, capture_output=True, text=True)
+        written = open(summary.name, encoding="utf-8").read()
+    verdict = "green" if expected == 0 else "red"
+    annotation = "::notice title=Terraform conclusion::" if expected == 0 else "::error title=Terraform conclusion::"
+    label = f"create-matrix={create_matrix} affected={affected or '-'} environments={environments}"
+    if done.returncode != expected:
+        problems.append(f"conclusion exits {done.returncode} for {label}, expected {expected}")
+    if f"conclusion: {verdict} — " not in written or annotation + f"conclusion: {verdict} — " not in done.stdout:
+        problems.append(f"conclusion does not report {verdict} in the step summary and an annotation for {label}")
+
+print("checked the conclusion, the matrix gate, automerge, the relevance downloads and 8 conclusion cases")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f10_rc=0 || _f10_rc=$?
+if [[ "${_f10_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f10_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f10_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
