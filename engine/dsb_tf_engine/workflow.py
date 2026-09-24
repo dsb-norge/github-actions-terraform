@@ -51,6 +51,11 @@ class Log:
         self.line(f"::error title={escape_property(self.title)}::{escape_data(message)}")
 
 
+    def notice(self, title, message):
+        """One notice annotation under its own title."""
+        self.line(f"::notice title={escape_property(title)}::{escape_data(message)}")
+
+
 def append_output(path, name, value):
     """Append a multi-line step output under a random 128-bit delimiter, as GitHub recommends."""
     delimiter = f"EOF_{_token()}"

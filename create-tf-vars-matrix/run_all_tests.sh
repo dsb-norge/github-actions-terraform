@@ -98,6 +98,7 @@ run_step() {
     export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="workflow_dispatch"
     export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
     export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token" GITHUB_RUN_ID="4711" GITHUB_RUN_ATTEMPT="1"
+    mkdir -p "${SANDBOX}/temp" && export RUNNER_TEMP="${SANDBOX}/temp"
     export PATH="${SANDBOX}/bin:${PATH}"
     for assignment in "$@"; do export "${assignment?}"; done
     # The runner's shell for a composite step.
@@ -109,6 +110,11 @@ run_step() {
 # The matrix-json value from the sandbox's output file.
 matrix_output() {
   awk '/^matrix-json<<EOF_/{d=substr($0, index($0,"<<")+2); f=1; next} f && $0==d {f=0} f' "${SANDBOX}/output.txt"
+}
+
+# A single-line step output by name.
+step_output() {
+  awk -v name="${1}" 'index($0, name "<<EOF_") == 1 {getline; print; exit}' "${SANDBOX}/output.txt"
 }
 
 # The input document the adapter logged, from its verbatim log group.
@@ -363,7 +369,11 @@ echo '{"files": [{"filename": "README.md"}, {"filename": "envs/env-a/notes.md"}]
   >"${SANDBOX}/api/repos_example-org_example-repo_compare_${before}...${after}"
 run_step GITHUB_EVENT_NAME=push
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .)" == '{"environment":[],"include":[]}' ]] \
-  && [[ "$(logged_record)" == "env-a: skip — relevance: no changed file matches" ]]; then
+  && [[ "$(logged_record)" == "env-a: skip — relevance: no changed file matches" ]] \
+  && [[ "$(step_output affected-count) $(step_output unaffected-count) $(step_output changed-count)" == "0 1 2" ]] \
+  && [[ "$(step_output relevance-mode)/$(step_output relevance-reason)" == "diff/diff" ]] \
+  && [[ "$(jq -r '.environments[0].verdict' "$(step_output relevance-file)")" == "skip" ]] \
+  && grep -qx '::notice title=Terraform CI::relevance diff (diff): 0 of 1 environment affected; nothing to verify for this change' "${OUT_FILE}"; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the documentation-only push still ran env-a"
