@@ -1,10 +1,11 @@
-"""The fields of an environment: their types and their names.
+"""The fields of an environment: their types, their names, and what must be unique.
 
 The port kept every per-environment value as YAML typed it, so a per-environment `true` for a
 boolean input stayed a JSON boolean while the forwarded default was the string "true", and the
 workflow's gates, which compare `== 'true'`, silently dropped it. Environment names reached comment
-markers, artifact names, concurrency groups and shell with no rule on their characters. These
-tests hold the rules that end both.
+markers, artifact names, concurrency groups and shell with no rule on their characters, and two
+environments could share a github-environment and overwrite each other's comments and metadata.
+These tests hold the rules that end all three.
 """
 
 import os
@@ -136,6 +137,30 @@ class NamesTest(unittest.TestCase):
     def test_a_non_string_github_environment_is_an_error(self):
         output = decide_with({"environment": "env-a", "github-environment": 7})
         self.assertEqual([f"The github-environment 7 of environment 'env-a' must be {NAME_RULE}!"], output["errors"])
+
+
+class UniqueGithubEnvironmentTest(unittest.TestCase):
+    def test_two_environments_may_not_share_a_github_environment(self):
+        output = decide_with(None, environments=[{"environment": "env-a", "github-environment": "shared"},
+                                                 {"environment": "env-b", "github-environment": "shared"}])
+        self.assertEqual(["The environments 'env-a' and 'env-b' share the github-environment 'shared'; it names their "
+                          "comments, metadata and concurrency group, so each needs its own!"], output["errors"])
+
+    def test_the_comparison_ignores_case_as_github_does(self):
+        output = decide_with(None, environments=[{"environment": "Prod"}, {"environment": "prod"}])
+        self.assertEqual(["The environments 'Prod' and 'prod' share the github-environment 'prod'; it names their "
+                          "comments, metadata and concurrency group, so each needs its own!"], output["errors"])
+
+    def test_a_github_environment_equal_to_another_environments_default(self):
+        output = decide_with(None, environments=[{"environment": "env-a"},
+                                                 {"environment": "env-b", "github-environment": "env-a"}])
+        self.assertEqual(["The environments 'env-a' and 'env-b' share the github-environment 'env-a'; it names their "
+                          "comments, metadata and concurrency group, so each needs its own!"], output["errors"])
+
+    def test_distinct_github_environments_pass(self):
+        output = decide_with(None, environments=[{"environment": "env-a"}, {"environment": "env-b"},
+                                                 {"environment": "env-c", "github-environment": "other"}])
+        self.assertEqual([], output["errors"])
 
 
 if __name__ == "__main__":

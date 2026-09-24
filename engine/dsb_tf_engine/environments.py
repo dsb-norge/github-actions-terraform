@@ -258,5 +258,15 @@ def build_rows(document):
             raise ConfigError([f"Duplicate environment '{row['environment']}' in environments-yml specification!"])
         seen.add(row["environment"])
 
+    # GitHub compares environment names without case, and the markers, the metadata artifact and the
+    # concurrency group all key on this one.
+    owners = {}
+    for row in rows:
+        owner = owners.setdefault(row["github-environment"].casefold(), row["environment"])
+        if owner != row["environment"]:
+            raise ConfigError([f"The environments '{owner}' and '{row['environment']}' share the github-environment "
+                               f"'{row['github-environment']}'; it names their comments, metadata and concurrency "
+                               "group, so each needs its own!"])
+
     validate_rows(document, rows)
     return rows
