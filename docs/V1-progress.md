@@ -134,7 +134,13 @@ table only says where.
   `fixture-happy-day-v1` equals the bash builder's golden apart from the renamed environment and
   the one normalised boolean. Every calling repository's names fit the rule; none sets
   github-environment.
-- Test bed: pending.
+- Test bed, one environment with `add-pr-comment` and `verify-lock-file` false globally and YAML
+  `true` for the environment, run through `preview/pr-61` and, as a control, at `@v1`:
+  - `@v1` (before): the lock-file check and both head upserts **skipped**; the head stayed
+    "⏳ Awaiting results" for good, and the run was green although the lock file lacks hashes.
+  - #61: the lock-file check ran and failed on the missing hashes (the test bed's own lock file
+    covers only one of the three required platforms), and the head reached its final validation
+    table. Both per-environment booleans took effect.
 
 ## 5. Findings to carry
 
