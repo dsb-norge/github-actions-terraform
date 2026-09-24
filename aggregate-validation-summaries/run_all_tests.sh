@@ -114,6 +114,8 @@ FAKE_GH
 
   export input_metadata_files_pattern="matrix-job-meta-*.json"
   export input_pr_number="123"
+  # The shim passes the input's default, empty, when the caller gives none.
+  export input_relevance_file=""
 
   cd "${TEST_DIR}"
 }
@@ -212,6 +214,40 @@ ops_destroy() {
     "${outcome}" "${outcome}" "${t}" "${destroy}" "${completed}" "${w}"
 }
 
+# Write relevance.json as the matrix builder does, one environment entry per
+# argument, in environments-yml order, and point the step at it.
+# Argument: "<env>|<group>|<run|skip>[|<add-pr-comment>[|<mutates-on-pr, comma-separated>[|<github-environment>]]]"
+# add-pr-comment defaults to "true"; github-environment defaults to <env>.
+write_relevance() {
+  local spec env group verdict comment mutates gh_env entries='[]'
+  for spec in "$@"; do
+    IFS='|' read -r env group verdict comment mutates gh_env <<<"${spec}"
+    entries=$(jq -c --arg e "${env}" --arg ge "${gh_env:-${env}}" --arg g "${group}" --arg v "${verdict}" \
+      --arg c "${comment:-true}" --arg m "${mutates}" '
+      . + [{
+        "environment": $e, "github-environment": $ge, "verdict": $v,
+        "reasons": [if $v == "run" then "relevance: envs/\($e)/**" else "relevance: no changed file matches" end],
+        "add-pr-comment": $c, "pr-comment-group": $g,
+        "mutates-on-pr": ($m | split(",") | map(select(. != ""))),
+        "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": null, "pr-auto-merge-limits": null,
+        "paths": ["envs/\($e)/**", "main/**", "modules/**", ".tflint.hcl"], "paths-ignore": ["**/*.md"]
+      }]' <<<"${entries}")
+  done
+  jq -n --argjson envs "${entries}" '{
+    "schema_version": 1,
+    "relevance": {"mode": "diff", "reason": "diff", "changed_count": 1},
+    "counts": {"affected": ($envs | map(select(.verdict == "run")) | length),
+               "unaffected": ($envs | map(select(.verdict == "skip")) | length)},
+    "environments": $envs,
+    "comments": {"heads": [], "purge_tags_for": [], "gc": []},
+    "notices": [], "record": []
+  }' >"${TEST_DIR}/relevance.json"
+  export input_relevance_file="relevance.json"
+}
+
+# The not-affected cell every column of an unaffected environment carries.
+NA='<span title="not affected by this pull request">—</span>'
+
 # The rendered body for one group, from the step log ("Body:" up to the
 # blank line that closes the ##[group]).
 rendered_body() {
@@ -219,6 +255,23 @@ rendered_body() {
 }
 # One table row by its label, from the rendered body.
 row() { rendered_body | grep -F "| ${1} |" | head -n1; }
+# The visible part of one group's rendered body, H3 through the workflow-log
+# line, picked by group name when several groups render in one run.
+group_body() {
+  awk -v h="for group: \`${1}\`" '
+    /Body:$/ {f=1; buf=""; next}
+    f && /^::endgroup::/ {f=0; if (index(buf, h)) {printf "%s", buf; exit}; next}
+    f {buf = buf $0 "\n"}
+  ' "${TEST_DIR}/step.log" | sed -n '/^### /,/^\[Workflow log\]/p'
+}
+# The six always-present step rows of a column pair, for byte-exact bodies.
+# $1 cell of the first env column, $2 of the second.
+step_rows() {
+  local a="${1}" b="${2}" def
+  for def in "Initialization|⚙️" "Lock file|🔒" "Format and Style|🖌" "Validate|✔" "TFLint|🧹" "Plan|📖"; do
+    printf '| <span title="%s">%s</span> | %s | %s | %s |\n' "${def%%|*}" "${def##*|}" "${def%%|*}" "${a}" "${b}"
+  done
+}
 
 # Set up the fake Jobs API response so per-env job URL resolution succeeds.
 # Each env arg gets a synthetic html_url. The job name format mirrors what
@@ -1629,6 +1682,294 @@ test_p30_mixed_success_and_skipped() {
 }
 
 # ============================================================================
+# Path relevance: the relevance-file input (docs/Path-relevance.md §6.2, §6.4)
+# ============================================================================
+
+# Mixed group: the unaffected member keeps its column, every cell a dash, an
+# empty Links cell, and the footer names it above the workflow-log line.
+test_rel_unaffected_column_in_mixed_group() {
+  write_meta "alpha" "g"
+  write_relevance "alpha|g|run" "bravo|g|skip"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local ok='<span title="success">✅</span>'
+  local pd='<div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div>'
+  local expected
+  expected="### Terraform validation summary for group: \`g\`
+|  | Step | alpha | bravo |
+|:---:|---|:---:|:---:|
+$(step_rows "${ok}" "${NA}")
+| <span title=\"Plan details\">📊</span> | Plan details | ${pd} | ${NA} |
+| <span title=\"Plan time\">⏱</span> | Plan time | <span title=\"mm:ss (minutes:seconds)\">—</span> | ${NA} |
+| <span title=\"Links\">🔗</span> | Links |  |  |
+
+➖ Not affected by this pull request: \`bravo\`
+
+[Workflow log](https://github.com/dsb-norge/test-repo/actions/runs/999)"
+  local got; got="$(group_body g)"
+  [[ "${got}" == "${expected}" ]] || { echo "mixed-group body mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# An all-unaffected group, while another group ran: rendered with every cell
+# a dash and PATCHed in place, never deleted as an orphan (P4). Columns and
+# footer names follow environments-yml order, not the alphabet.
+test_rel_all_unaffected_group_rendered_not_deleted() {
+  write_meta "alpha" "ran"
+  write_relevance "alpha|ran|run" "yankee|quiet|skip" "xray|quiet|skip"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:quiet -->\n\n### Terraform validation summary for group: `quiet`\n\n⏳ Awaiting results (run #999 attempt #1)…"},
+  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:ran -->\n\n### Terraform validation summary for group: `ran`\n\n⏳ Awaiting results (run #999 attempt #1)…"}
+]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  if grep -q 'DELETE' "${GH_FAKE_CALL_LOG}"; then
+    echo "an all-unaffected group must not be deleted; calls were:"; cat "${GH_FAKE_CALL_LOG}"; return 1
+  fi
+  grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}" || { echo "expected PATCH of 7001 (quiet)"; return 1; }
+  grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7002' "${GH_FAKE_CALL_LOG}" || { echo "expected PATCH of 7002 (ran)"; return 1; }
+  local expected
+  expected="### Terraform validation summary for group: \`quiet\`
+|  | Step | yankee | xray |
+|:---:|---|:---:|:---:|
+$(step_rows "${NA}" "${NA}")
+| <span title=\"Plan time\">⏱</span> | Plan time | ${NA} | ${NA} |
+| <span title=\"Links\">🔗</span> | Links |  |  |
+
+➖ Not affected by this pull request: \`yankee\`, \`xray\`
+
+[Workflow log](https://github.com/dsb-norge/test-repo/actions/runs/999)"
+  local got; got="$(group_body quiet)"
+  [[ "${got}" == "${expected}" ]] || { echo "all-unaffected body mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  local processed; processed=$(get_processed_json)
+  [[ "$(jq -r '[.[] | select(.group == "quiet") | .action] | join(",")' <<<"${processed}")" == "patched" ]] ||
+    { echo "expected quiet to be recorded as patched; got ${processed}"; return 1; }
+  return 0
+}
+
+# A group no metadata mentions but relevance.json declares is posted.
+test_rel_group_absent_from_metadata_present_in_file() {
+  write_meta "alpha" "ran"
+  write_relevance "alpha|ran|run" "bravo|quiet|skip"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -eq 2 ]] || { echo "expected one POST per group (2)"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  local processed; processed=$(get_processed_json)
+  [[ "$(jq -r '[.[].group] | sort | join(",")' <<<"${processed}")" == "quiet,ran" ]] ||
+    { echo "expected groups quiet and ran to be processed; got ${processed}"; return 1; }
+  group_body quiet | grep -qF "| <span title=\"Links\">🔗</span> | Links |  |" || { echo "quiet group body missing"; return 1; }
+  return 0
+}
+
+# Nothing ran at all: no metadata, every environment unaffected. The group's
+# placeholder is finalised, not left at "Awaiting results" (P4).
+test_rel_all_unaffected_run_without_metadata_reconciles() {
+  write_relevance "prod||skip" "staging|platform|skip" "sandbox|platform|skip"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:platform -->\n\n### Terraform validation summary for group: `platform`\n\n⏳ Awaiting results (run #999 attempt #1)…"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}" || { echo "expected PATCH of the platform placeholder"; return 1; }
+  grep -qE 'DELETE|POST' "${GH_FAKE_CALL_LOG}" && { echo "expected only a PATCH"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  local got; got="$(group_body platform)"
+  [[ "${got}" == *'|  | Step | staging | sandbox |'* ]] || { echo "expected staging and sandbox columns in environments-yml order"; echo "${got}"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `staging`, `sandbox`'* ]] || { echo "footer must name both"; echo "${got}"; return 1; }
+  [[ "${got}" != *'Awaiting'* ]] || { echo "placeholder text must be gone"; return 1; }
+  return 0
+}
+
+# The only commenting environments are unaffected; the affected one has
+# add-pr-comment false. Without the file this run would not reconcile at all
+# (test_add_pr_comment_false_touches_nothing).
+test_rel_only_unaffected_envs_comment_still_reconciles() {
+  write_meta_no_comment "alpha" ""
+  write_relevance "alpha||run|false" "bravo|g|skip"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -eq 1 ]] || { echo "expected one POST for group g"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  group_body g | grep -qF '➖ Not affected by this pull request: `bravo`' || { echo "g must render bravo as not affected"; return 1; }
+  return 0
+}
+
+# An environment in a group whose add-pr-comment is false does not declare
+# the group; with nothing else declaring it, the group is not rendered.
+test_rel_non_commenting_unaffected_group_not_declared() {
+  write_meta "alpha" "ran"
+  write_relevance "alpha|ran|run" "bravo|silent|skip|false"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ $(grep -c 'POST' "${GH_FAKE_CALL_LOG}") -eq 1 ]] || { echo "expected one POST (group ran only)"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  grep -qF 'for group: `silent`' "${TEST_DIR}/step.log" && { echo "group silent must not render"; return 1; }
+  return 0
+}
+
+# Unaffected members stay out of the group-wide gates and the Links cell: no
+# Plan details row when only they lack plan data, a dash in every row of an
+# operation block another member ran, and no link even when a tag or a job
+# with their name exists.
+test_rel_unaffected_excluded_from_gates_and_links() {
+  write_meta "alpha" "g" success "" "" "" "$(ops_apply success true 0 0 0)"
+  jq '.steps["parse-plan"].outputs = {}' "${TEST_DIR}/matrix-job-meta-alpha.json" >"${TEST_DIR}/t.json" && mv "${TEST_DIR}/t.json" "${TEST_DIR}/matrix-job-meta-alpha.json"
+  write_relevance "alpha|g|run" "bravo|g|skip"
+  with_jobs_for alpha bravo
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 4343, "body": "<!-- tf:tag:plan:bravo:run-id-999:attempt-1 -->\nstale"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [ -z "$(row 'Plan details')" ] || { echo "Plan details must stay omitted: only the unaffected member lacks data and it is not counted"; return 1; }
+  [ -z "$(row 'Warnings')" ] || { echo "Warnings row must stay omitted"; return 1; }
+  local label r
+  for label in 'Apply' 'Apply details' 'Apply time'; do
+    r="$(row "${label}")"
+    [[ "${r}" == *" | ${NA} |" ]] || { echo "row '${label}' must end with the not-affected cell; got: ${r}"; return 1; }
+  done
+  r="$(row Links)"
+  [[ "${r}" == '| <span title="Links">🔗</span> | Links | [job log](https://github.com/dsb-norge/test-repo/actions/runs/999/job/alpha#logs) |  |' ]] ||
+    { echo "bravo's Links cell must be empty; got: ${r}"; return 1; }
+  return 0
+}
+
+# The title and the Mode row count an unaffected member's mutates-on-pr like
+# an affected member's goals, so the head keeps the seed placeholder's title.
+test_rel_unaffected_mutating_member_sets_title_and_mode() {
+  write_meta "alpha" "g"
+  write_relevance "alpha|g|run" "bravo|g|skip|true|apply-on-pr,destroy-on-pr"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local first; first="$(group_body g | head -n1)"
+  [[ "${first}" == '### Terraform summary for group: `g`' ]] || { echo "expected 'Terraform summary' title; got: ${first}"; return 1; }
+  local t='This environment mutates infrastructure on pull request'
+  local expected="| <span title=\"Mode\">🐙☠</span> | Mode | <span title=\"${t}\">—</span> | ${NA} |"
+  local r; r="$(row Mode)"
+  [[ "${r}" == "${expected}" ]] || { echo "Mode row mismatch"; echo "  expected: ${expected}"; echo "  got:      ${r}"; return 1; }
+  return 0
+}
+
+# Columns follow environments-yml order when the file is given, affected and
+# unaffected alike; a metadata environment the file does not list follows,
+# alphabetically.
+test_rel_columns_follow_environments_yml_order() {
+  write_meta "charlie" "g"
+  write_meta "alpha" "g"
+  write_meta "delta" "g"
+  write_relevance "charlie|g|run" "bravo|g|skip" "alpha|g|run" "echo|g|skip"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "${got}" == *'|  | Step | charlie | bravo | alpha | echo | delta |'* ]] || { echo "unexpected column order"; grep -F '| Step |' <<<"${got}"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `bravo`, `echo`'* ]] || { echo "footer order mismatch"; echo "${got}"; return 1; }
+  return 0
+}
+
+# Metadata is keyed by the github-environment; so is the match against the
+# file, and the unaffected column and footer carry that name too.
+test_rel_matches_on_github_environment() {
+  write_meta "stg-gh" "g"
+  write_relevance "stg|g|run|true||stg-gh" "prd|g|skip|true||prd-gh"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "${got}" == *'|  | Step | stg-gh | prd-gh |'* ]] || { echo "expected github-environment names as columns"; grep -F '| Step |' <<<"${got}"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `prd-gh`'* ]] || { echo "footer must name the github-environment"; echo "${got}"; return 1; }
+  [[ "$(row Initialization)" == *'<span title="success">✅</span> | '"${NA}"' |' ]] || { echo "stg-gh must render from metadata"; row Initialization; return 1; }
+  return 0
+}
+
+# An environment that has metadata renders from it even when the file calls
+# it unaffected: results that exist are shown, not hidden.
+test_rel_metadata_wins_over_skip_verdict() {
+  write_meta "alpha" "g"
+  write_relevance "alpha|g|skip"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "${got}" != *'Not affected'* ]] || { echo "alpha has metadata; no footer line expected"; echo "${got}"; return 1; }
+  [[ "$(row Initialization)" == *'| <span title="success">✅</span> |' ]] || { echo "alpha must render from metadata"; return 1; }
+  return 0
+}
+
+# Capture the visible bodies and the gh call sequence of one run, with the
+# per-run temp paths of POST/PATCH body files and the fake's posted ids (its
+# counter outlives the test) normalised away.
+_capture_run() {
+  local out="${1}"
+  : > "${GH_FAKE_CALL_LOG}"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  {
+    awk '/Body:$/ {f=1; next} f && /^::endgroup::/ {f=0} f' "${TEST_DIR}/step.log"
+    echo "--- calls ---"
+    sed -E 's#body=@[^ ]+#body=@<file>#' "${GH_FAKE_CALL_LOG}"
+  } | sed -E 's/comment id=[0-9]+/comment id=<n>/' >"${out}"
+}
+
+# A scenario touching every path: two groups, an orphan, an existing head,
+# plan data, warnings, an apply block and a mutating env.
+_rel_baseline_fixture() {
+  local plan_counts='{"count-add":"1","count-change":"2","count-destroy":"0","count-import":"0","count-move":"0","count-remove":"0"}'
+  write_meta "alpha" "g" success "${plan_counts}" "0:04" "1:0:0" "$(ops_apply failure false 1 0 0 1:07)" '["all","apply-on-pr"]'
+  write_meta "bravo" "g" failure
+  write_meta "charlie" "h"
+  write_meta "delta"
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[
+  {"id": 7001, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:g -->\nold"},
+  {"id": 7002, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:stale -->\nold"},
+  {"id": 4242, "body": "<!-- tf:tag:plan:alpha:run-id-999:attempt-1 -->\nplan"}
+]
+JSON
+  with_jobs_for alpha bravo charlie delta
+}
+
+# The no-file path, the empty default and a file given but absent on disk
+# (a failed download-artifact, P8) all behave exactly as before.
+test_rel_file_missing_on_disk_is_no_file() {
+  _rel_baseline_fixture
+  _capture_run "${TEST_DIR}/no-file.out" || return 1
+  grep -q 'DELETE repos/dsb-norge/test-repo/issues/comments/7002' "${TEST_DIR}/no-file.out" || { echo "baseline must delete the orphan"; return 1; }
+  export input_relevance_file="does-not-exist/relevance.json"
+  _capture_run "${TEST_DIR}/missing.out" || return 1
+  diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/missing.out" >/dev/null ||
+    { echo "a missing relevance file must behave as no file:"; diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/missing.out" | sed 's/^/  /'; return 1; }
+  grep -q 'relevance file .* not found' "${TEST_DIR}/step.log" || { echo "expected a log line naming the missing file"; return 1; }
+  return 0
+}
+
+# A file that is not a relevance.json (malformed JSON, or no environments
+# list) is ignored with a warning, like a malformed metadata file.
+test_rel_malformed_file_is_no_file() {
+  _rel_baseline_fixture
+  _capture_run "${TEST_DIR}/no-file.out" || return 1
+  echo '{not json' > "${TEST_DIR}/relevance.json"
+  export input_relevance_file="relevance.json"
+  _capture_run "${TEST_DIR}/malformed.out" || return 1
+  diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/malformed.out" >/dev/null ||
+    { echo "a malformed relevance file must behave as no file:"; diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/malformed.out" | sed 's/^/  /'; return 1; }
+  grep -q 'WARN: .*relevance' "${TEST_DIR}/step.log" || { echo "expected a warning"; return 1; }
+  echo '{"schema_version": 1}' > "${TEST_DIR}/relevance.json"
+  _capture_run "${TEST_DIR}/no-envs.out" || return 1
+  diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/no-envs.out" >/dev/null ||
+    { echo "a relevance file without environments must behave as no file"; return 1; }
+  return 0
+}
+
+# Mode all (every environment affected) with environments-yml in alphabetical
+# order renders byte for byte what the no-file path renders.
+test_rel_mode_all_matches_no_file() {
+  _rel_baseline_fixture
+  _capture_run "${TEST_DIR}/no-file.out" || return 1
+  write_relevance "alpha|g|run|true|apply-on-pr" "bravo|g|run" "charlie|h|run" "delta||run"
+  _capture_run "${TEST_DIR}/all.out" || return 1
+  diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/all.out" >/dev/null ||
+    { echo "mode all must render as the no-file path:"; diff "${TEST_DIR}/no-file.out" "${TEST_DIR}/all.out" | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# ============================================================================
 # Run tests
 # ============================================================================
 
@@ -1695,6 +2036,20 @@ run_test "E8: Mode row omitted when no env in the group mutates on PR"      test
 run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals
 run_test "P30: every env skipped the step → no block at all"                test_p30_all_skipped_no_block
 run_test "P30: one env ran, one skipped → row with ✅ and ⏭️"                test_p30_mixed_success_and_skipped
+run_test "relevance: unaffected member keeps a dash column in a mixed group" test_rel_unaffected_column_in_mixed_group
+run_test "relevance: all-unaffected group rendered, never orphan-deleted"   test_rel_all_unaffected_group_rendered_not_deleted
+run_test "relevance: group absent from metadata but in the file is posted"  test_rel_group_absent_from_metadata_present_in_file
+run_test "relevance: all-unaffected run without metadata still reconciles"  test_rel_all_unaffected_run_without_metadata_reconciles
+run_test "relevance: only unaffected envs comment → still reconciles"       test_rel_only_unaffected_envs_comment_still_reconciles
+run_test "relevance: non-commenting unaffected env declares no group"       test_rel_non_commenting_unaffected_group_not_declared
+run_test "relevance: unaffected member out of gates and Links"              test_rel_unaffected_excluded_from_gates_and_links
+run_test "relevance: unaffected mutates-on-pr sets title and Mode row"      test_rel_unaffected_mutating_member_sets_title_and_mode
+run_test "relevance: columns follow environments-yml order"                 test_rel_columns_follow_environments_yml_order
+run_test "relevance: match on github-environment"                           test_rel_matches_on_github_environment
+run_test "relevance: metadata wins over a skip verdict"                     test_rel_metadata_wins_over_skip_verdict
+run_test "relevance: file given but missing on disk behaves as no file"     test_rel_file_missing_on_disk_is_no_file
+run_test "relevance: malformed file behaves as no file"                     test_rel_malformed_file_is_no_file
+run_test "relevance: mode all renders byte-identical to the no-file path"   test_rel_mode_all_matches_no_file
 
 # ============================================================================
 echo ""

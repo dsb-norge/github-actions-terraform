@@ -15,6 +15,9 @@ description: |
       (orphans from removed/renamed groups), plus existing group comments that
       ARE desired (will be reposted with fresh body).
     - Posts one fresh per-group comment per distinct non-empty group.
+    - With relevance-file: also renders the groups relevance.json declares and
+      the environments path relevance left out of the run, as columns of dashes
+      (docs/Path-relevance.md §6.2, §6.4).
 
   Failure isolation:
     - Empty desired set + empty existing set -> no-op.
@@ -35,6 +38,22 @@ inputs:
     description: |
       The pull request number to reconcile group comments against.
     required: true
+  relevance-file:
+    description: |
+      Path of the relevance.json the matrix builder writes (create-tf-vars-matrix's
+      relevance-file output, shipped to this job as the `relevance` artifact).
+
+      With it, the desired set of groups is the union of the groups declared in
+      the file for environments with add-pr-comment "true" and the groups seen in
+      metadata; an environment the file marks unaffected keeps its column in its
+      group's table, every cell a dash, and is named in a footer line. Columns
+      then follow environments-yml order. A run whose only commenting
+      environments are unaffected still reconciles.
+
+      Empty, or a path that does not exist (the artifact download may fail), and
+      the action behaves exactly as without relevance.
+    required: false
+    default: ""
   github-token:
     description: |
       Token used by the `gh` CLI to call the GitHub API. Needs `pull-requests: write`.
@@ -61,6 +80,7 @@ runs:
       env:
         input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
         input_pr_number: ${{ inputs.pr-number }}
+        input_relevance_file: ${{ inputs.relevance-file }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Reconcile the per-group validation summary PR comments
