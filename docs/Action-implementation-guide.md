@@ -290,7 +290,17 @@ For inputs that are simple strings, pass them as environment variables. Use `set
 
 ### Step shim pattern — JSON inputs
 
-JSON values passed from GitHub Actions expressions can contain special characters that break normal variable assignment. Use heredocs. **Do NOT `export` the heredoc-captured variable** — the step script is `source`d in the same shell and reads it as a shell-local, so it never needs to be in envp. Exporting it would push the JSON into envp for every subsequent fork and risk an ARG_MAX crash on big inputs — see [Anti-pattern: exporting heredoc-captured JSON](#anti-pattern-exporting-heredoc-captured-json) below for the full rationale.
+GitHub pastes an expression's value into the `run:` script **before bash parses it**. A value that
+goes through `env:` is never parsed as shell; a value pasted into the script is shell source.
+Choose the channel by what the value is:
+
+| The value | Channel | Why |
+|---|---|---|
+| Free text, or anything not produced by `toJSON(...)`: markdown, YAML, paths, names | `env:` | A heredoc capture ends at the first line equal to its delimiter, and the rest of the value runs as shell. No delimiter is safe for text the caller controls, least of all in a public repository where the delimiter can be read. One value may hold at most 128 KiB in the environment; anything larger comes in through a file input (`body-file`). |
+| `toJSON(...)` output that can be large or holds secrets: contexts, event payloads, `toJSON(inputs)`, `toJSON(secrets)` | a quoted heredoc capture, **not exported** | JSON escapes every newline inside a string, so no line of it can equal the delimiter, and the quoted delimiter keeps bash from expanding anything in it. Kept shell-local, it stays out of every child process's environment (ARG_MAX, and secrets). |
+| Small values, JSON or not | `env:` | The simplest channel with no parsing at all. |
+
+The heredoc capture, when it applies:
 
 ```yaml
 - id: my-step
@@ -300,16 +310,23 @@ JSON values passed from GitHub Actions expressions can contain special character
   run: |
     # <What this step does>
     #
-    # Heredoc capture (special chars survive verbatim). Intentionally NOT
-    # exported — step_my_step.sh reads it as a shell-local via `source`.
-    input_json_data=$(cat <<'EOF'
+    # toJSON output through a quoted heredoc: no line of it can be the delimiter. Intentionally
+    # NOT exported — step_my_step.sh reads it as a shell-local via `source`.
+    input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
     ${{ inputs.json-data }}
-    EOF
+    MY_ACTION_JSON_DATA_JSON
     )
 
     set -o allexport
     source "${{ github.action_path }}/step_my_step.sh"
 ```
+
+- The delimiter is quoted and names what it captures, `<ACTION>_<INPUT>` in capitals ending in
+  `_JSON`, never a bare `EOF`, and is unique in the repository.
+- The captured input is documented as JSON, every caller passes it as `${{ toJSON(...) }}` or a
+  JSON literal, and the step parses it as JSON, so a caller that passes anything else fails loudly.
+- A structural test holds all of this for every action and workflow in the repository
+  (`evaluate-automerge-eligibility/run_all_tests.sh`, F9).
 
 > Note the order: the heredoc capture happens **before** `set -o allexport`. That keeps `input_json_data` from being auto-exported. Variables set later by the step script (under allexport) still get the export attribute, which is what allexport is there for.
 
@@ -556,7 +573,7 @@ Most existing actions embed their logic directly in `action.yml` YAML strings. H
    - Move `${{ inputs.* }}` references into `env:` as `input_*` variables
    - Replace the `run:` block with the `set -o allexport` + `source` shim (no exit code capture needed)
    - Open the `run:` block with the one-line description comment (see [Every `run:` block opens with a description comment](#every-run-block-opens-with-a-description-comment))
-   - Use heredocs for JSON inputs
+   - Pass free text and small values through `env:`; capture large `toJSON` output through a quoted heredoc with a unique delimiter ("Step shim pattern — JSON inputs")
 
 5. **Create `run_local_step_<name>.sh`**:
    - Copy from a reference action (e.g., `capture-matrix-job-meta/run_local_step_capture.sh`)
@@ -683,9 +700,9 @@ Neither shows up as an error. Both show up as a wrong comment on a PR.
 
 ```yaml
 run: |
-  input_json_data=$(cat <<'EOF'
+  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
   ${{ inputs.json-data }}
-  EOF
+  MY_ACTION_JSON_DATA_JSON
   )
   export input_json_data           # ← anti-pattern
   source "${{ github.action_path }}/step_my_step.sh"
@@ -696,9 +713,9 @@ Equally bad — capturing under allexport:
 ```yaml
 run: |
   set -o allexport
-  input_json_data=$(cat <<'EOF'    # ← variables created under allexport are auto-exported
+  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'    # ← variables created under allexport are auto-exported
   ${{ inputs.json-data }}
-  EOF
+  MY_ACTION_JSON_DATA_JSON
   )
   source "${{ github.action_path }}/step_my_step.sh"
 ```
@@ -725,9 +742,9 @@ run: |
   # <What this step does>
   #
   # Heredoc capture, NOT exported.
-  input_json_data=$(cat <<'EOF'
+  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
   ${{ inputs.json-data }}
-  EOF
+  MY_ACTION_JSON_DATA_JSON
   )
 
   # set -o allexport AFTER the heredoc so this variable isn't auto-exported.
@@ -753,7 +770,7 @@ Use this checklist when creating or converting an action:
 - [ ] Each `step_<name>.sh` sources `helpers.sh`, uses a `main` function, and ends with `exit`
 - [ ] `action.yml` steps use the `set -o allexport` + `source` shim (no exit code capture)
 - [ ] Every `run:` block starts with a one-line `#` comment describing what the step does
-- [ ] JSON inputs are passed via heredocs in the YAML shim
+- [ ] Free text reaches the step through `env:`, never a heredoc; a heredoc captures only `toJSON` output, under a quoted `<ACTION>_<INPUT>_JSON` delimiter, and is not exported
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
 - [ ] Multi-step actions have `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
 - [ ] `run_all_tests.sh` covers happy path, edge cases, and error conditions
