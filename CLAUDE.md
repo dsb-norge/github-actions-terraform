@@ -63,18 +63,18 @@ For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` �
 
 Every `run:` block in an `action.yml` **opens with a one-line `#` comment describing what the step does**. GitHub ignores a composite step's `name:` and titles the log group `Run <first line of the run block>` — without the comment every shim renders as an indistinguishable `Run set -o allexport`. Rationale and wording rules: `docs/Action-implementation-guide.md` → "Every `run:` block opens with a description comment".
 
-**How a value reaches a step script** (`docs/Action-implementation-guide.md` → "Step shim pattern — JSON inputs"). GitHub pastes an expression's value into the `run:` script before bash parses it, so a heredoc capture of free text ends at a line equal to its delimiter and runs the rest as shell. Free text and small values go through `env:`. Only `toJSON(...)` output that is large or holds secrets is captured through a quoted heredoc, kept shell-local:
+**How a value reaches a step script** (`docs/Action-implementation-guide.md` → "Step shim pattern — JSON inputs"). GitHub pastes an expression's value into the `run:` script before bash parses it, so a heredoc capture of free text ends at a line equal to its delimiter and runs the rest as shell; and a value in envp (`env:`, `export`, `allexport`) reaches every fork, past 128 KiB in bytes with E2BIG. Only **small scalars** go through `env:`. JSON-contract inputs (`*-json`, callers pass `toJSON(...)`) are captured as they are; **free text and anything large is captured as `toJSON(inputs.<name>)`** (one line, so no delimiter line can occur) and decoded in the step, which unexports it at once:
 ```yaml
 run: |
   # <What this step does>
-  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
-  ${{ inputs.json-data }}
-  MY_ACTION_JSON_DATA_JSON
+  input_body_json=$(cat <<'MY_ACTION_BODY_JSON'
+  ${{ toJSON(inputs.body) }}
+  MY_ACTION_BODY_JSON
   )
   set -o allexport
-  source "${{ github.action_path }}/step_<name>.sh"
+  source "${{ github.action_path }}/step_<name>.sh"   # input_body="$(jq -r '. // ""' <<<"${input_body_json}")"; export -n input_body
 ```
-The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository; every caller passes that input as `${{ toJSON(...) }}` or a JSON literal. The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces it.
+The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository. The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces it. **Check the history before moving a value into envp**: the May 2026 fixes (`f9594c2`, `07eeddd`, `4fedab9`, `8cd5d63`, `8aafc32`) took large values out of it after production E2BIG failures.
 
 ### Watch for ARG_MAX in step scripts
 
