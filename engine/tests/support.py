@@ -39,6 +39,7 @@ def document(environments=None, inputs=None, env_yaml=None, directories=None, re
     environments = [{"environment": "env-a"}] if environments is None else environments
     workflow_inputs = {
         "add-pr-comment": True, "apply-extract-include-outputs": False, "cache-terraform-modules": True,
+        "path-relevance-enabled": True,
         "pr-auto-merge-enabled": False, "pr-comment-group": "", "terraform-version": "latest",
         "tflint-version": "latest", "verify-lock-file": True,
     }

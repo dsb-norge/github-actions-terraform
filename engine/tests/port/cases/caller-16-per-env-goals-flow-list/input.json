@@ -25,6 +25,7 @@
     "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true # comment\n",
     "format-check-in-root-dir": false,
     "goals-yml": "[all]",
+    "path-relevance-enabled": true,
     "pr-auto-merge-app-id": "",
     "pr-auto-merge-app-private-key-secret": "",
     "pr-auto-merge-enabled": false,

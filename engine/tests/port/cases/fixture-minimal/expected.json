@@ -42,6 +42,7 @@
           "goals": [
             "all"
           ],
+          "path-relevance-enabled": "true",
           "pr-auto-merge-enabled": "false",
           "pr-auto-merge-from-actors": [],
           "pr-auto-merge-limits": {

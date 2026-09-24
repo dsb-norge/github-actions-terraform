@@ -49,6 +49,7 @@
           "goals": [
             "all"
           ],
+          "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "1234567",
           "pr-auto-merge-app-private-key-secret": "SECRET_A",
           "pr-auto-merge-enabled": "true",

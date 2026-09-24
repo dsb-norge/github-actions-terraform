@@ -9,7 +9,7 @@ import unittest
 import support
 
 PACKAGE_DIR = os.path.join(os.path.dirname(support.TESTS_DIR), "dsb_tf_engine")
-CORE = ("__init__.py", "decide.py", "environments.py", "globs.py", "model.py", "record.py", "values.py")
+CORE = ("__init__.py", "decide.py", "environments.py", "globs.py", "model.py", "record.py", "relevance.py", "values.py")
 ADAPTER_SIDE = ("__main__.py", "adapter.py", "workflow.py")
 CORE_MAY_IMPORT = {"json", "re", "dsb_tf_engine"}
 

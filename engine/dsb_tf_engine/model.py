@@ -13,6 +13,10 @@ class DocumentError(Exception):
 
 
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
+# Present only when the adapter fetched them; absent means "relevance not computed".
+OPTIONAL_KEYS = ("changed_files",)
+CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
+PUSH_KEYS = ("created", "forced", "deleted")
 
 
 def _require(condition, message):
@@ -28,10 +32,22 @@ def _is_parsed_map(value):
     )
 
 
+def _is_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_changed_files(value):
+    return (isinstance(value, dict) and set(value) == set(CHANGED_FILES_KEYS)
+            and isinstance(value["available"], bool) and isinstance(value["truncated"], bool)
+            and isinstance(value["error"], (str, type(None))) and isinstance(value["api_head_sha"], (str, type(None)))
+            and _is_count(value["count"])
+            and isinstance(value["files"], list) and all(isinstance(path, str) for path in value["files"]))
+
+
 def check(document):
     """Raise DocumentError unless the document has the shape the engine reads."""
     _require(isinstance(document, dict), "input document: not a JSON object")
-    unknown = sorted(set(document) - set(TOP_LEVEL_KEYS))
+    unknown = sorted(set(document) - set(TOP_LEVEL_KEYS) - set(OPTIONAL_KEYS))
     _require(not unknown, f"input document: unknown key(s) {unknown}")
     missing = [key for key in TOP_LEVEL_KEYS if key not in document]
     _require(not missing, f"input document: missing key(s) {missing}")
@@ -46,6 +62,15 @@ def check(document):
     _require(isinstance(event, dict) and isinstance(event.get("name"), str)
              and isinstance(event.get("ref_name"), str),
              "input document: 'event' needs the strings 'name' and 'ref_name'")
+    if "push" in event:
+        push = event["push"]
+        _require(isinstance(push, dict) and all(isinstance(push.get(key), bool) for key in PUSH_KEYS),
+                 "input document: 'event.push' needs the booleans 'created', 'forced' and 'deleted'")
+    if "pull_request" in event:
+        pull_request = event["pull_request"]
+        _require(isinstance(pull_request, dict) and _is_count(pull_request.get("number"))
+                 and isinstance(pull_request.get("head_sha"), str),
+                 "input document: 'event.pull_request' needs the integer 'number' and the string 'head_sha'")
     _require(isinstance(document["workflow_inputs"], dict), "input document: 'workflow_inputs' is not an object")
 
     yaml = document["yaml"]
@@ -58,3 +83,7 @@ def check(document):
     directories = document["directories_exist"]
     _require(isinstance(directories, dict) and all(isinstance(v, bool) for v in directories.values()),
              "input document: 'directories_exist' is not a map of booleans")
+    if "changed_files" in document:
+        _require(_is_changed_files(document["changed_files"]),
+                 "input document: 'changed_files' needs exactly 'available', 'truncated', 'error', 'api_head_sha', "
+                 "'count' and 'files', typed as the adapter reports them")
