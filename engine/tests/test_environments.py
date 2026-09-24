@@ -29,11 +29,11 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertIsNone(vars_of(output)["extra-envs"])
 
     def test_a_row_carries_the_run_verdict_and_the_record(self):
-        output = decide.decide(support.document(environments=[{"environment": "env-a"}, {"environment": 7}],
-                                                directories={"./envs/env-a": True, "./envs/7": True}))
+        output = decide.decide(support.document(environments=[{"environment": "env-a"}, {"environment": "env-7"}],
+                                                directories={"./envs/env-a": True, "./envs/env-7": True}))
         self.assertEqual([{"environment": "env-a", "verdict": "run", "reasons": ["port"]},
-                          {"environment": 7, "verdict": "run", "reasons": ["port"]}], output["environments"])
-        self.assertEqual(["env-a: run — port", "7: run — port"], output["record"])
+                          {"environment": "env-7", "verdict": "run", "reasons": ["port"]}], output["environments"])
+        self.assertEqual(["env-a: run — port", "env-7: run — port"], output["record"])
         self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
 
     def test_the_record_joins_every_reason_in_order(self):
@@ -59,10 +59,9 @@ class EnvironmentsTest(unittest.TestCase):
     def test_a_configuration_error_reads_as_its_messages_joined(self):
         self.assertEqual("first; second", str(environments.ConfigError(["first", "second"])))
 
-    def test_names_are_compared_as_rendered_for_duplicates(self):
-        document = support.document(environments=[{"environment": 1}, {"environment": "1"}],
-                                    directories={"./envs/1": True})
-        self.assertEqual(["Duplicate environment '1' in environments-yml specification!"],
+    def test_a_duplicated_name_is_an_error(self):
+        document = support.document(environments=[{"environment": "env-a"}, {"environment": "env-a", "url": "x"}])
+        self.assertEqual(["Duplicate environment 'env-a' in environments-yml specification!"],
                          decide.decide(document)["errors"])
 
 

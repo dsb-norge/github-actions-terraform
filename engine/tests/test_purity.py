@@ -1,5 +1,6 @@
 """The decision core is pure: it imports nothing that reads the environment, the filesystem, the
-network or the clock, and nothing from the adapter side. docs/Decision-engine.md D2."""
+network or the clock (only json and re from the standard library), and nothing from the adapter
+side. docs/Decision-engine.md D2."""
 
 import ast
 import os
@@ -10,7 +11,7 @@ import support
 PACKAGE_DIR = os.path.join(os.path.dirname(support.TESTS_DIR), "dsb_tf_engine")
 CORE = ("__init__.py", "decide.py", "environments.py", "model.py", "record.py", "values.py")
 ADAPTER_SIDE = ("__main__.py", "adapter.py", "workflow.py")
-CORE_MAY_IMPORT = {"json", "dsb_tf_engine"}
+CORE_MAY_IMPORT = {"json", "re", "dsb_tf_engine"}
 
 
 def imports(name):
@@ -32,7 +33,7 @@ class PurityTest(unittest.TestCase):
         modules = {name for name in os.listdir(PACKAGE_DIR) if name.endswith(".py")}
         self.assertEqual(modules, set(CORE) | set(ADAPTER_SIDE))
 
-    def test_the_core_imports_only_json_and_itself(self):
+    def test_the_core_imports_only_json_re_and_itself(self):
         for name in CORE:
             with self.subTest(module=name):
                 external = {module for module in imports(name) if not module.startswith("dsb_tf_engine")}

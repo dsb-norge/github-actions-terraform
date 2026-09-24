@@ -1,9 +1,10 @@
-"""The fields of an environment: the types of the values it sets for workflow inputs.
+"""The fields of an environment: their types and their names.
 
 The port kept every per-environment value as YAML typed it, so a per-environment `true` for a
 boolean input stayed a JSON boolean while the forwarded default was the string "true", and the
-workflow's gates, which compare `== 'true'`, silently dropped it. These tests hold the rule that
-ends it.
+workflow's gates, which compare `== 'true'`, silently dropped it. Environment names reached comment
+markers, artifact names, concurrency groups and shell with no rule on their characters. These
+tests hold the rules that end both.
 """
 
 import os
@@ -18,6 +19,9 @@ WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(support.TESTS_DIR)),
 
 BOOLEAN_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
                   "format-check-in-root-dir", "pr-auto-merge-enabled", "verify-lock-file")
+
+NAME_RULE = "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit"
+
 
 def decide_with(environment, inputs=None, environments=None):
     environments = [environment] if environments is None else environments
@@ -107,6 +111,31 @@ class StringInputsTest(unittest.TestCase):
         output = decide_with({"environment": "env-a", "runs-on": ["self-hosted", "x"], "my-key": {"a": 1}})
         self.assertEqual([], output["errors"])
         self.assertEqual((["self-hosted", "x"], {"a": 1}), (row(output)["runs-on"], row(output)["my-key"]))
+
+
+class NamesTest(unittest.TestCase):
+    def test_valid_environment_names(self):
+        for name in ("env-a", "A", "0", "a.b_c-1", "tenant.example.com", "x" * 255):
+            with self.subTest(name=name):
+                self.assertEqual([], decide_with({"environment": name})["errors"])
+
+    def test_invalid_environment_names_are_errors(self):
+        for name, shown in (("has space", "'has space'"), ("a:b", "'a:b'"), ("a/b", "'a/b'"), ("-lead", "'-lead'"),
+                            (".lead", "'.lead'"), ("", "''"), ("a\nb", "'a\\nb'"), ("ø", "'ø'"), ("a-->", "'a-->'"),
+                            ("x" * 256, repr("x" * 256)), (123, "123"), (None, "null"), (["a"], '["a"]')):
+            with self.subTest(name=name):
+                output = decide_with({"environment": name, "project-dir": "."}, environments=None)
+                self.assertEqual([f"The environment name {shown} must be {NAME_RULE}!"], output["errors"])
+
+    def test_an_explicit_github_environment_follows_the_same_rule(self):
+        output = decide_with({"environment": "env-a", "github-environment": "Prod env"})
+        self.assertEqual([f"The github-environment 'Prod env' of environment 'env-a' must be {NAME_RULE}!"],
+                         output["errors"])
+        self.assertEqual([], decide_with({"environment": "env-a", "github-environment": "prod.env-1"})["errors"])
+
+    def test_a_non_string_github_environment_is_an_error(self):
+        output = decide_with({"environment": "env-a", "github-environment": 7})
+        self.assertEqual([f"The github-environment 7 of environment 'env-a' must be {NAME_RULE}!"], output["errors"])
 
 
 if __name__ == "__main__":

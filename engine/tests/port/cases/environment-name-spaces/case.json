@@ -27,5 +27,12 @@
   "default_branch": "main",
   "directories": [
     "envs/also an env"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "an environment name must be a string of the safe characters; a space is refused",
+    "errors": [
+      "The environment name 'also an env' must be 1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit!"
+    ]
+  }
 }
