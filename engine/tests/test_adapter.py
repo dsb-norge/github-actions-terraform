@@ -253,8 +253,8 @@ class DirectoriesTest(unittest.TestCase):
         self.assertEqual({}, adapter.check_directories(None, lambda path: True))
 
     def test_the_path_is_the_one_the_built_row_is_checked_with(self):
-        for environment in ({"environment": "a"}, {"environment": 5}, {"environment": "a", "project-dir": 3},
-                            {"environment": "a", "project-dir": None}, {"environment": "x\n"}, {"environment": None}):
+        for environment in ({"environment": "a"}, {"environment": "a", "project-dir": 3},
+                            {"environment": "a", "project-dir": None}, {"environment": "a", "project-dir": "d\n"}):
             with self.subTest(environment=environment):
                 document = support.document(environments=[environment], directories={})
                 globals_ = environments.parsed_inputs(document)
@@ -325,18 +325,18 @@ class RunTest(unittest.TestCase):
         self.assertEqual((0, 1, 2), (adapter.EXIT_OK, adapter.EXIT_FAULT, adapter.EXIT_INVALID))
 
     def test_the_log_groups_hold_the_exact_documents_indented_sorted_and_unescaped(self):
-        inputs = {**DEFAULT_INPUTS, "environments-yml": '[{"environment": "å-env"}, {"environment": "b"}]'}
+        inputs = {**DEFAULT_INPUTS, "environments-yml": '[{"environment": "env-a", "url": "https://example.com/å"}, {"environment": "b"}]'}
         runner = Runner(self, inputs=inputs)
         self.assertEqual(0, runner.run())
         groups = _groups(runner.log.getvalue())
         self.assertEqual(json.dumps(inputs, indent=2, ensure_ascii=False), groups["input 'inputs-json'"])
         document = json.loads(groups["decision engine input document"])
         self.assertEqual(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False), groups["decision engine input document"])
-        self.assertIn("å-env", groups["decision engine input document"])
-        self.assertEqual("å-env: run — port\nb: run — port", groups["decision record"])
+        self.assertIn("example.com/å", groups["decision engine input document"])
+        self.assertEqual("env-a: run — port\nb: run — port", groups["decision record"])
         matrix = runner.matrix()
         self.assertEqual(json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False), groups["matrix-json"])
-        self.assertIn('"å-env"', runner.output())
+        self.assertIn('"https://example.com/å"', runner.output())
 
     def test_the_published_matrix_is_the_engines_compact_and_sorted(self):
         runner = Runner(self)
@@ -354,11 +354,14 @@ class RunTest(unittest.TestCase):
                                                       row["caller-repo-is-on-default-branch"]))
 
     def test_a_configuration_error_is_annotated_escaped_and_publishes_nothing(self):
-        runner = Runner(self, inputs={**DEFAULT_INPUTS, "environments-yml": '[{"environment": "x%\\n::warning::no"}, {"environment": "x%\\n::warning::no"}]'})
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "environments-yml": '[{"environment": "x%\\n::warning::no"}]'})
         self.assertEqual(2, runner.run())
         self.assertEqual("", runner.output())
-        errors = [line for line in runner.log.getvalue().splitlines() if line.startswith("::error")]
-        self.assertEqual(["::error title=create-tf-vars-matrix::Duplicate environment 'x%25%0A::warning::no' in environments-yml specification!"], errors)
+        log = runner.log.getvalue()
+        errors = [line for line in log.splitlines() if line.startswith("::error")]
+        self.assertEqual(["::error title=create-tf-vars-matrix::The environment name 'x%25\\n::warning::no' must be "
+                          "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit!"], errors)
+        self.assertEqual([], [line for line in log.splitlines() if line.startswith("::warning")])
 
     def test_every_error_is_its_own_annotation(self):
         runner = Runner(self, inputs={**DEFAULT_INPUTS, "tflint-version": "", "terraform-version": ""})
@@ -418,12 +421,12 @@ class RunTest(unittest.TestCase):
         self.assertIn("yq on the runner", runner.log.getvalue())
         self.assertNotIn("inputs-json", runner.log.getvalue())
 
-    def test_a_caller_value_in_the_record_cannot_start_a_workflow_command(self):
+    def test_a_name_carrying_a_workflow_command_never_reaches_the_record(self):
         runner = Runner(self, inputs={**DEFAULT_INPUTS, "environments-yml": '[{"environment": "a\\n::warning::no", "project-dir": "."}]'})
-        self.assertEqual(0, runner.run())
+        self.assertEqual(2, runner.run())
         log = runner.log.getvalue()
-        self.assertIn("\n::warning::no: run — port\n", log)
-        self.assertEqual([], [line for line in _outside_verbatim(log) if line.startswith("::warning")])
+        self.assertNotIn("decision record", log)
+        self.assertEqual([], [line for line in log.splitlines() if line.startswith("::warning")])
 
 
 def _groups(log):

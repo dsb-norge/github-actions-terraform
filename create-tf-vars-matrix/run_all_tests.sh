@@ -266,26 +266,26 @@ else
   fail "exit ${STEP_EXIT}, or a JSON value escaped the heredoc"
 fi
 
-begin "log: a newline in an environment name cannot start a workflow command"
+begin "log: a name carrying a workflow command is refused, and the refusal starts no command"
 make_sandbox "${baseline}"
 jq '.["environments-yml"] = "- environment: \"env-a\\n::warning::injected\"\n  project-dir: .\n"' \
   "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
 run_step
-if [[ ${STEP_EXIT} -eq 0 ]] && grep -q '^::warning::injected' "${OUT_FILE}" \
-  && ! outside_verbatim | grep -q '^::warning::'; then
+if [[ ${STEP_EXIT} -eq 2 ]] && ! grep -q '^::warning::' "${OUT_FILE}" && ! grep -q 'decision record' "${OUT_FILE}" \
+  && [[ -z "$(matrix_output)" ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, or a caller's value reached the log as a workflow command"
 fi
 
-begin "log: an error naming a caller's value is one annotation, its newline and percent escaped"
+begin "log: an error naming a caller's value is one annotation, its percent escaped and its newline shown as \\n"
 make_sandbox "${baseline}"
-jq '.["environments-yml"] = "- environment: \"x%\\n::warning::injected\"\n- environment: \"x%\\n::warning::injected\"\n"' \
+jq '.["environments-yml"] = "- environment: \"x%\\n::warning::injected\"\n"' \
   "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.new" && mv "${SANDBOX}/inputs.new" "${SANDBOX}/inputs.json"
 run_step
 if [[ ${STEP_EXIT} -eq 2 ]] && ! grep -q '^::warning::' "${OUT_FILE}" \
   && [[ "$(grep -c '^::error title=create-tf-vars-matrix::' "${OUT_FILE}")" == "1" ]] \
-  && grep -q "^::error title=create-tf-vars-matrix::Duplicate environment 'x%25%0A::warning::injected'" "${OUT_FILE}"; then
+  && grep -qF "::error title=create-tf-vars-matrix::The environment name 'x%25\\n::warning::injected' must be" "${OUT_FILE}"; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the error annotation was split or unescaped"

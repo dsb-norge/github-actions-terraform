@@ -8,6 +8,7 @@ each step reproduces where it is not obvious, because the goldens under tests/po
 """
 
 import json
+import re
 
 from . import values
 from .model import DocumentError
@@ -56,6 +57,11 @@ BOOLEAN_INPUTS = (
     "format-check-in-root-dir", "pr-auto-merge-enabled", "verify-lock-file",
 )
 
+# An environment name, and a github-environment, reach comment markers (':'-separated, ended by
+# '-->'), artifact names, concurrency groups and shell; this is what is safe in all of them.
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
+NAME_RULE = "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit"
+
 # Maps from goal name to variables, which must hold every goal key.
 PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 
@@ -88,6 +94,10 @@ def _unsuffixed(field):
 def _shown(value):
     """A caller's value as a message shows it: a string quoted with its escapes, else JSON."""
     return repr(value) if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _is_name(value):
+    return isinstance(value, str) and NAME.fullmatch(value) is not None
 
 
 def _boolean(name, field, value):
@@ -140,7 +150,12 @@ def build_row(document, globals_, index, environment):
     """One environment's row, in the order the bash builder assembled it."""
     if not isinstance(environment, dict) or "environment" not in environment:
         raise ConfigError(["Missing property 'environment' in environments-yml specification!"])
-    name = values.get_val(environment["environment"])
+    name = environment["environment"]
+    if not _is_name(name):
+        raise ConfigError([f"The environment name {_shown(name)} must be {NAME_RULE}!"])
+    if "github-environment" in environment and not _is_name(environment["github-environment"]):
+        raise ConfigError([f"The github-environment {_shown(environment['github-environment'])} of environment "
+                           f"'{name}' must be {NAME_RULE}!"])
     row = dict(environment)
     row.update(_typed_overrides(document, name, environment))
 
@@ -239,10 +254,9 @@ def build_rows(document):
 
     seen = set()
     for row in rows:
-        name = values.get_val(row["environment"])
-        if name in seen:
-            raise ConfigError([f"Duplicate environment '{name}' in environments-yml specification!"])
-        seen.add(name)
+        if row["environment"] in seen:
+            raise ConfigError([f"Duplicate environment '{row['environment']}' in environments-yml specification!"])
+        seen.add(row["environment"])
 
     validate_rows(document, rows)
     return rows
