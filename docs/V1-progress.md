@@ -87,7 +87,12 @@ table only says where.
   survive until they compared against literals; all killed, none equivalent), rebuilds all 73
   input documents byte for byte, and runs isolated (`python3 -I`) after a caller's `json.py` was
   shown to shadow the standard library. The floor is Python 3.12, by the maintainer's decision,
-  tested in CI on 3.12 and the newest 3.x. The test bed re-run through the adapter: see below.
+  tested in CI on 3.12 (3.12.14) and the newest 3.x (3.14.7), all mutants killed on both.
+- Test bed re-run through the adapter (`preview/pr-59` at the adapter commit): on
+  `workflow_dispatch` the matrix is identical to the `@v0` baseline apart from the calling branch,
+  every job green; on `pull_request` the whole graph ran and the only failure is the environment
+  whose apply fails by design. The step's log group is titled by the run block's description
+  comment, and `python3 -I -B` resolved the engine from the preview ref.
 
 ## 5. Findings to carry
 
