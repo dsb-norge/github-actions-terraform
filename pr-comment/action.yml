@@ -67,8 +67,9 @@ inputs:
       Pass multi-line bodies via a YAML literal block scalar (`|`).
 
       Prefer `body-file` for anything a renderer produced. A body passed
-      here is interpolated into the composite step's script text, so a
-      65k plan extract becomes 65k of inline shell — see `body-file`.
+      here travels through the step's environment, where one value may
+      hold at most 128 KiB — see `body-file`. It is never pasted into the
+      step's script, so nothing in it runs as shell.
     required: false
     default: ""
   body-file:
@@ -115,30 +116,14 @@ runs:
         input_mode: ${{ inputs.mode }}
         input_marker: ${{ inputs.marker }}
         input_body_file: ${{ inputs.body-file }}
+        # Free text, so through env: and never pasted into the script: a heredoc capture of a
+        # caller's markdown ends early at a line holding its delimiter, and the rest runs as shell.
+        # A body is capped by the API at 65536 characters, under the 128 KiB a single variable may
+        # hold; a larger one belongs in body-file, which every caller in this repository uses.
+        input_body: ${{ inputs.body }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Upsert or delete the PR comment identified by the marker
-        #
-        # Inline body is passed via a heredoc with a quoted delimiter so
-        # multi-line markdown is preserved verbatim, not subjected to YAML
-        # expression interpolation as it would be in the env: list above.
-        #
-        # Intentionally NOT exported. step_pr_comment.sh is sourced from
-        # this same shell and reads ${input_body} as a shell-local, so it
-        # never needs to be in envp. A single env var the size of a plan
-        # extract (~65k, capped) sits just under Linux's per-string execve
-        # limit (MAX_ARG_STRLEN = 128k). Keeping it out of envp removes the
-        # only realistic ARG_MAX exposure on this action's surface.
-        #
-        # The heredoc still expands `${{ inputs.body }}` into this script's
-        # text even when the caller used body-file — GitHub interpolates
-        # before bash runs. That is fine: the default is the empty string,
-        # so a body-file caller contributes nothing here. What body-file
-        # removes is the large-body case of that interpolation.
-        input_body=$(cat <<'EOF_PR_COMMENT_BODY'
-        ${{ inputs.body }}
-        EOF_PR_COMMENT_BODY
-        )
         set -o allexport
         source "${{ github.action_path }}/step_pr_comment.sh"
         exit_code=$?

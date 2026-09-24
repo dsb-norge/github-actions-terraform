@@ -303,6 +303,10 @@ function do_delete {
 # ============================================================================
 
 function main {
+  # The inline body used to arrive through a heredoc capture, which stripped trailing newlines;
+  # through env: they arrive intact. Strip them, so a body renders byte for byte as before.
+  while [[ "${input_body:-}" == *$'\n' ]]; do input_body="${input_body%$'\n'}"; done
+
   log-info "Starting pr-comment..."
   log-info "Repo:         ${input_repo:-<unset>}"
   log-info "Issue number: ${input_issue_number:-<unset>}"
