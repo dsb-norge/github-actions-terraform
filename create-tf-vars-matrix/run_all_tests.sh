@@ -93,7 +93,9 @@ run_step() {
   render_run_block >"${SANDBOX}/step.sh"
   (
     cd "${SANDBOX}/ws" || exit 1
-    export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="push"
+    # A dispatch fetches no changed files: the port cases decide rows, and relevance, which a
+    # push or a pull request adds, has its own tests below.
+    export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="workflow_dispatch"
     export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
     export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token"
     export PATH="${SANDBOX}/bin:${PATH}"
@@ -321,6 +323,79 @@ if [[ ${STEP_EXIT} -eq 0 ]] && ! grep -q "imported" "${OUT_FILE}" && [[ -n "$(ma
   pass
 else
   fail "exit ${STEP_EXIT}, or a module from the checkout or PYTHONPATH was imported"
+fi
+
+# ======================================================================
+# 4: relevance, with the changed files fetched through gh
+# ======================================================================
+
+# A gh answering the changed-file endpoints of the example repository from files in ${SANDBOX}/api,
+# named after the endpoint with '/' as '_'; any other request fails as the API would.
+make_gh() {
+  mkdir -p "${SANDBOX}/api"
+  cat >"${SANDBOX}/bin/gh" <<'GH'
+#!/usr/bin/env bash
+answer="$(dirname "$0")/../api/${2//\//_}"
+[[ "$1" == "api" && -f "${answer}" ]] && cat "${answer}" && exit 0
+echo "gh: Not Found (HTTP 404) for $2" >&2
+exit 1
+GH
+  chmod +x "${SANDBOX}/bin/gh"
+}
+
+# The decision record the adapter logged.
+logged_record() {
+  awk '/^::group::create-tf-vars-matrix: decision record$/{g=1; next}
+       g && /^::stop-commands::/{t="::" substr($0, 18) "::"; next}
+       g && t && $0==t {exit}
+       g && t' "${OUT_FILE}"
+}
+
+before="$(printf 'b%.0s' {1..40})"
+after="$(printf 'a%.0s' {1..40})"
+
+begin "relevance: a push touching only documentation leaves an empty matrix and succeeds"
+make_sandbox "${baseline}"
+make_gh
+jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+echo '{"files": [{"filename": "README.md"}, {"filename": "envs/env-a/notes.md"}]}' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_compare_${before}...${after}"
+run_step GITHUB_EVENT_NAME=push
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .)" == '{"environment":[],"include":[]}' ]] \
+  && [[ "$(logged_record)" == "env-a: skip — relevance: no changed file matches" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the documentation-only push still ran env-a"
+fi
+
+begin "relevance: a pull request is read through its files, paged, and runs what it touches"
+make_sandbox "${baseline}"
+make_gh
+echo '{"repository": {"default_branch": "main"}, "pull_request": {"number": 87, "head": {"sha": "abc"}}}' \
+  >"${SANDBOX}/event.json"
+echo '{"changed_files": 1, "head": {"sha": "abc"}}' >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87"
+echo '[{"filename": "envs/env-a/main.tf", "status": "modified"}]' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87_files?per_page=100&page=1"
+run_step GITHUB_EVENT_NAME=pull_request
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]] \
+  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the pull request's own change did not run env-a"
+fi
+
+begin "relevance: an API that cannot answer runs every environment and the step succeeds"
+make_sandbox "${baseline}"
+make_gh
+jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+run_step GITHUB_EVENT_NAME=push
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]] \
+  && [[ "$(logged_record)" == "env-a: run — relevance: all:api-error" ]] && ! grep -q '^::error' "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a failed fetch did not fail open"
 fi
 
 echo ""

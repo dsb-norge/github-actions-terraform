@@ -46,8 +46,8 @@ class PortTest(unittest.TestCase):
                 if expected["exit_code"] == 0:
                     self.assertEqual([], output["errors"])
                     self.assertEqual(expected["matrix"], output["matrices"]["1"])
-                    # No changed files in a port case: every environment runs, as it did before relevance.
-                    self.assertEqual(["relevance: all:not-computed"] * len(output["environments"]),
+                    # A port case is a dispatch: every environment runs, as it did before relevance.
+                    self.assertEqual(["relevance: all:event"] * len(output["environments"]),
                                      [reason for e in output["environments"] for reason in e["reasons"]])
                 else:
                     self.assertEqual(expected["errors"], output["errors"])
