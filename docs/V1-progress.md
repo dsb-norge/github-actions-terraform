@@ -14,7 +14,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | Step | What | Pull request | State | In `v1` |
 |---|---|---|---|---|
 | 0 | Concurrency `queue: max`; apply-reporting invariant, fixtures, contract tests | [#56](https://github.com/dsb-norge/github-actions-terraform/pull/56), [#57](https://github.com/dsb-norge/github-actions-terraform/pull/57) | merged, released in `v0.33` | inherited |
-| 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | draft | no |
+| 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | merged 2026-09-24 | yes, `v1` created on it |
 | 2 | Path relevance: rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | — | outstanding | no |
 | 3 | Terraform tests: the test stage, lanes, environments, provider sets, summary | — | outstanding | no |
 | 4 | Dispatch and trigger events; the `goals-granted` gate switch | — | outstanding | no |
@@ -27,7 +27,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | What | Pull request | State | In `v1` |
 |---|---|---|---|
-| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60), stacked on #59 | draft | no |
+| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | draft | no |
 
 ## 2. Status per spec
 
