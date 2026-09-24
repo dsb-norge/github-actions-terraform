@@ -27,7 +27,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | What | Pull request | State | In `v1` |
 |---|---|---|---|
-| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) through `env:`; every `toJSON` capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60), stacked on #59 | draft | no |
+| Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60), stacked on #59 | draft | no |
 
 ## 2. Status per spec
 
@@ -103,6 +103,13 @@ table only says where.
   comment, and `python3 -I -B` resolved the engine from the preview ref.
 
 ### #60: hardened heredoc captures
+
+- Review caught the first version moving free text into `env:`, which reversed the May 2026 fixes
+  that took large values out of envp after production E2BIG failures (`f9594c2` for this very
+  body), and whose size argument was wrong (128 KiB is bytes, the body cap 65536 characters).
+  Reworked: free text is captured as `toJSON` of the input, which closes the injection and keeps
+  it out of envp; a 150 KB body (50000 three-byte characters) now posts intact, and fails the test
+  when the step leaves it exported.
 
 - CI: every suite green, the new structural test F9 included (16 captures, 17 call sites); F9
   shown to fail on a bare `EOF` delimiter and on a call site passing a plain string.
