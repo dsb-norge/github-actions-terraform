@@ -83,9 +83,9 @@ runs:
         # MAX_ARG_STRLEN (128 KB per envp string on Ubuntu); see
         # docs/Action-implementation-guide.md §"Anti-pattern: exporting
         # heredoc-captured JSON".
-        input_github_event_context_json=$(cat <<'EOF'
+        input_github_event_context_json=$(cat <<'AUTO_MERGE_PR_GITHUB_EVENT_CONTEXT_JSON'
         ${{ inputs.github-event-context-json }}
-        EOF
+        AUTO_MERGE_PR_GITHUB_EVENT_CONTEXT_JSON
         )
 
         source "${GITHUB_ACTION_PATH}/step_auto_merge_pr.sh"

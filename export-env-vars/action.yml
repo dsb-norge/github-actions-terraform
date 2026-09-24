@@ -41,21 +41,21 @@ runs:
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         # Read inputs
-        EXTRA_ENVS_JSON=$(cat <<'EOF'
+        EXTRA_ENVS_JSON=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_JSON'
         ${{ inputs.extra-envs }}
-        EOF
+        EXPORT_ENV_VARS_EXTRA_ENVS_JSON
         )
         log-multiline "input 'extra-envs'" "${EXTRA_ENVS_JSON}"
 
-        EXTRA_SECRETS_JSON=$(cat <<'EOF'
+        EXTRA_SECRETS_JSON=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_FROM_SECRETS_JSON'
         ${{ inputs.extra-envs-from-secrets }}
-        EOF
+        EXPORT_ENV_VARS_EXTRA_ENVS_FROM_SECRETS_JSON
         )
         log-multiline "input 'extra-envs-from-secrets'" "${EXTRA_SECRETS_JSON}"
 
-        SECRETS_JSON=$(cat <<'EOF'
+        SECRETS_JSON=$(cat <<'EXPORT_ENV_VARS_SECRETS_JSON'
         ${{ inputs.secrets-json }}
-        EOF
+        EXPORT_ENV_VARS_SECRETS_JSON
         )
 
         # regular env vars

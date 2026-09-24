@@ -1934,9 +1934,9 @@ jobs:
         env:
           SECRET_NAME: ${{ inputs.pr-auto-merge-app-private-key-secret }}
         run: |
-          SECRETS_JSON=$(cat <<'EOF'
+          SECRETS_JSON=$(cat <<'TERRAFORM_CI_CD_SECRETS_JSON'
           ${{ toJSON(secrets) }}
-          EOF
+          TERRAFORM_CI_CD_SECRETS_JSON
           )
           PRIVATE_KEY=$(echo "${SECRETS_JSON}" | jq --arg key "${SECRET_NAME}" -r '.[$key]')
           if [ -z "${PRIVATE_KEY}" ] || [ "${PRIVATE_KEY}" == "null" ]; then

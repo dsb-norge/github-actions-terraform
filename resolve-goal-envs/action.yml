@@ -83,28 +83,28 @@ runs:
         # deliberate. Ref. docs/Per-goal-environment-variables.md §8.
         input_secrets_file="$(mktemp "${RUNNER_TEMP:-/tmp}/secrets-bag-XXXXXXXX.json")"
         chmod 0600 "${input_secrets_file}"
-        cat >"${input_secrets_file}" <<'EOF'
+        cat >"${input_secrets_file}" <<'RESOLVE_GOAL_ENVS_SECRETS_JSON'
         ${{ inputs.secrets-json }}
-        EOF
+        RESOLVE_GOAL_ENVS_SECRETS_JSON
         export input_secrets_file
 
         # Heredoc captures (special chars survive verbatim). Intentionally NOT
         # exported — step_resolve.sh reads them as shell-locals via 'source'.
-        input_extra_envs=$(cat <<'EOF'
+        input_extra_envs=$(cat <<'RESOLVE_GOAL_ENVS_EXTRA_ENVS_JSON'
         ${{ inputs.extra-envs }}
-        EOF
+        RESOLVE_GOAL_ENVS_EXTRA_ENVS_JSON
         )
-        input_extra_envs_from_secrets=$(cat <<'EOF'
+        input_extra_envs_from_secrets=$(cat <<'RESOLVE_GOAL_ENVS_EXTRA_ENVS_FROM_SECRETS_JSON'
         ${{ inputs.extra-envs-from-secrets }}
-        EOF
+        RESOLVE_GOAL_ENVS_EXTRA_ENVS_FROM_SECRETS_JSON
         )
-        input_extra_envs_per_goal=$(cat <<'EOF'
+        input_extra_envs_per_goal=$(cat <<'RESOLVE_GOAL_ENVS_EXTRA_ENVS_PER_GOAL_JSON'
         ${{ inputs.extra-envs-per-goal }}
-        EOF
+        RESOLVE_GOAL_ENVS_EXTRA_ENVS_PER_GOAL_JSON
         )
-        input_extra_envs_from_secrets_per_goal=$(cat <<'EOF'
+        input_extra_envs_from_secrets_per_goal=$(cat <<'RESOLVE_GOAL_ENVS_EXTRA_ENVS_FROM_SECRETS_PER_GOAL_JSON'
         ${{ inputs.extra-envs-from-secrets-per-goal }}
-        EOF
+        RESOLVE_GOAL_ENVS_EXTRA_ENVS_FROM_SECRETS_PER_GOAL_JSON
         )
 
         set -o allexport
