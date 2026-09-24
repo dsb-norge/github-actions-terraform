@@ -15,7 +15,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 |---|---|---|---|---|
 | 0 | Concurrency `queue: max`; apply-reporting invariant, fixtures, contract tests | [#56](https://github.com/dsb-norge/github-actions-terraform/pull/56), [#57](https://github.com/dsb-norge/github-actions-terraform/pull/57) | merged, released in `v0.33` | inherited |
 | 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | merged 2026-09-24 | yes, `v1` created on it |
-| 2 | Path relevance: rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | — | outstanding | no |
+| 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | draft | no |
 | 3 | Terraform tests: the test stage, lanes, environments, provider sets, summary | — | outstanding | no |
 | 4 | Dispatch and trigger events; the `goals-granted` gate switch | — | outstanding | no |
 | 5 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
@@ -28,14 +28,14 @@ Changes the road does not list, made on the v1 line because a step's review surf
 | What | Pull request | State | In `v1` |
 |---|---|---|---|
 | Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | merged 2026-09-24 | yes |
-| The engine reviewed for what should change after the port: per-environment values of workflow inputs take the inputs' types (per-environment booleans were silently ignored by the gates), environment names follow one rule, one environment per github-environment | [#61](https://github.com/dsb-norge/github-actions-terraform/pull/61) | draft | no |
+| The engine reviewed for what should change after the port: per-environment values of workflow inputs take the inputs' types (per-environment booleans were silently ignored by the gates), environment names follow one rule, one environment per github-environment | [#61](https://github.com/dsb-norge/github-actions-terraform/pull/61) | merged 2026-09-24 | yes |
 
 ## 2. Status per spec
 
 | Spec | Decided | Implemented | Verified on the test bed | As built |
 |---|---|---|---|---|
-| Decision-engine.md | yes | the port (#59); rules 2-6 come with steps 2-5 | the port, #59 (§4): identical matrices to `@v0` | the port |
-| Path-relevance.md | yes | no | the empty-matrix short-circuit and the push payload fields | no |
+| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3, 5 and 6 come with steps 3-5 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
+| Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
 | Terraform-tests.md | yes | no | no | no |
 | Dispatch-and-triggers.md | yes | no | dispatch inputs inside a called workflow, `schedule` actor | no |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
@@ -55,7 +55,10 @@ table only says where.
 | Decision-engine.md | `github.actor` on `schedule` | closed: the account that last pushed the cron line (test-bed probe) |
 | Path-relevance.md | empty matrix behind a false `if:` | closed: no error, no sentinel (ordering test bed) |
 | Path-relevance.md | `created`, `forced` inside a called workflow | closed: populated (test-bed probe) |
-| Path-relevance.md | `changed_files` accuracy; re-run check attempt; the `created` improvement | open, answered in step 2 |
+| Path-relevance.md | `changed_files` accuracy | closed: equals the paged count; a rename is one `renamed` entry with `previous_filename` (test-bed probe pull request) |
+| Path-relevance.md | which attempt's check branch protection reads after a re-run | closed: undocumented, and the design holds for any attempt (Path-relevance.md §14) |
+| Path-relevance.md | a push that creates a branch | closed: compared against the default branch (Path-relevance.md D13) |
+| Path-relevance.md | the root `.tflint.hcl` of `auto` matches every `.tflint.hcl` (basename rule) | **for the maintainer**: accept the over-run as built, or give the grammar a root anchor |
 | Dispatch-and-triggers.md | `github.event.inputs` inside a called workflow | closed: the caller's inputs; `null` without a block; empty strings absent (test-bed probe) |
 | Dispatch-and-triggers.md | `github.actor` on `schedule` | closed, as above |
 | Dispatch-and-triggers.md | callers with dispatch inputs named `environment`, `goal`, `reason` | closed: none (survey of the callers) |
@@ -142,6 +145,36 @@ table only says where.
     covers only one of the three required platforms), and the head reached its final validation
     table. Both per-environment booleans took effect.
 
+### Step 2, #62: path relevance
+
+- Test first for every engine module: the glob matcher, the relevance rules, the adapter's fetch,
+  the seed manifest and the published decision, each shown failing before it existed. Gates at the
+  last engine commit: 300 tests, 100 percent of lines and branches, 1885 mutants all killed. The
+  aggregator, run summary and auto-merge evaluator each gained their tests beside unchanged old
+  ones (14, 22 and 19 new); structural test F10 was shown failing against the old workflow.
+- The seed manifest in mode `all` against the old seed job's jq: 300 random configurations, no
+  difference.
+- Test bed through `preview/pr-62`, three environments on `auto` (`noop-poc` ungrouped,
+  `outputs-kept-poc` and `destroy-plan-poc` in the group `platform`), every case green and as §9
+  of the spec says:
+  - push to `main` changing the calling workflow: all three, `all (workflow-changed)`;
+  - documentation only (a README at the root and one inside an environment): nothing ran,
+    "nothing to verify"; `noop-poc`'s head its final "not affected" body with the path rules, the
+    group all dashes with the footer;
+  - one environment: only `outputs-kept-poc`, its group neighbour a dash column, `noop-poc` not
+    affected;
+  - shared code under `main/`: all three, matched by `main/**`;
+  - `path-relevance-enabled: false`: all three, `all (disabled)`;
+  - a pull request that had run all three, then turned documentation-only: the seed purged the
+    three environments' plan tags and the heads flipped to "not affected";
+  - the push that merged the one-environment pull request: only `outputs-kept-poc`, from the
+    compare;
+  - the run summary's headline, relevance line and dash rows, and the relevance notice, on every
+    run.
+- Not exercised on the test bed, covered by tests: auto-merge (the test bed has no merge app), a
+  force push, a push that creates a branch (the test bed's workflow runs on pushes to `main`
+  only), a pull request whose head moved, the API caps.
+
 ## 5. Findings to carry
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
@@ -155,11 +188,10 @@ Recorded while building, not fixed in the step that found them, each waiting for
 
 - The required-fields list lacks `runs-on` and `format-check-in-root-dir`, which the workflow reads
   (Decision-engine.md §9).
-- A per-environment YAML boolean stays a JSON boolean in `vars`, so `format-check-in-root-dir:
-  false` per environment does not do what it says (Decision-engine.md P11). Retyping is its own
-  change with a release note.
 - `ubuntu-latest` moving to ubuntu-26.04 brings Python 3.14 to `create-matrix`; the engine is
   standard library only, and CI runs its suite on the newest 3.x as well as the 3.12 floor.
-- The relevance and tests specs describe their fact-gathering (`resolve-changed-files`,
-  `create-tftest-matrix`) as composite shims; under Decision-engine.md D13 they become adapter-side
-  modules unless something outweighs it. Decide when each step starts.
+- The tests spec describes its fact-gathering (`create-tftest-matrix`) as a composite shim; under
+  Decision-engine.md D13 it becomes an adapter-side module unless something outweighs it, as
+  relevance's did (Path-relevance.md D12). Decide when step 3 starts.
+- `verify-terraform-lock`'s test 12 failed once when every suite ran in parallel on one machine and
+  passed alone; CI runs each suite in its own job. Worth a look if it recurs.

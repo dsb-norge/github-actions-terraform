@@ -734,3 +734,9 @@ AI-assistant configuration files are never in these commits.
   only by the forwarded `path-relevance-enabled`.
 - **The auto-merge evaluator needed rules the draft did not name**: two inputs that disagree
   about which environments ran are not eligible, and neither is an empty environment list.
+- **On the test bed it behaved as §9 says.** Three environments on `auto`, one ungrouped and two
+  grouped: a documentation-only pull request ran nothing and reported green; one environment's
+  change ran that environment and rendered its neighbours as "not affected"; shared code ran all;
+  the switch and a workflow change ran all with their reasons; a pull request that turned
+  documentation-only lost its old plan comments to the seed's purge; and the merge's push ran only
+  the environment it touched.
