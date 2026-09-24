@@ -144,7 +144,7 @@ random delimiter. Every external program sits behind one `Tools` object, so the 
 Adapters fetch facts and report them raw; they decide nothing. `adapter.py` is the first; the
 features bring two more, as adapter-side modules under the same gates:
 
-- `resolve-changed-files` calls the pull request or compare endpoints and reports `{available,
+- fetching the changed files (in `adapter.py`) calls the pull request or compare endpoints and reports `{available,
   truncated, error, files_path}` plus the pull request's live head SHA; the engine turns that into a
   relevance mode and reason (Path-relevance.md §4.2).
 - `create-tftest-matrix` lists committed test files, the directories that hold `.tf` files, and the
