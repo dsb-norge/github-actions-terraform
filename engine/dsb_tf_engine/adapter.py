@@ -13,7 +13,9 @@ the value's own trailing newlines.
 """
 
 import json
+import os
 import subprocess
+import tempfile
 import urllib.parse
 
 from . import SCHEMA_VERSION, decide, environments, relevance, workflow
@@ -25,7 +27,11 @@ YQ = ("yq", "e", "-o=json")
 YQ_PROBE_TEXT = "probe: [1]\n"
 YQ_PROBE_JSON = '{"probe":[1]}'
 REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
-                        "GITHUB_RUN_ATTEMPT")
+                        "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP")
+NOTICE_TITLE = "Terraform CI"
+# What the jobs after the matrix read, by file: never a job output, which nothing caps and every
+# downstream interpolation would carry.
+PUBLISHED = ("schema_version", "relevance", "counts", "environments", "comments", "notices", "record")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -273,6 +279,18 @@ def run_number(environ, name):
     return int(value)
 
 
+def write_relevance_file(runner_temp, output):
+    """The decision without its matrices, in a directory of its own under the runner's temp."""
+    try:
+        path = os.path.join(tempfile.mkdtemp(dir=runner_temp), "relevance.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({key: output[key] for key in PUBLISHED}, indent=2, sort_keys=True,
+                                    ensure_ascii=False) + "\n")
+    except OSError as error:
+        raise AdapterError(f"the relevance file cannot be written under '{runner_temp}': {error}") from None
+    return path
+
+
 def read_inputs(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -349,9 +367,26 @@ def run(inputs_file, environ, stream, tools, isdir):
             log.error(message)
         return EXIT_INVALID
 
+    try:
+        relevance_file = write_relevance_file(environ["RUNNER_TEMP"], output)
+    except AdapterError as error:
+        log.error(error.message)
+        return EXIT_FAULT
+
     log.group("decision record", "\n".join(output["record"]))
+    for notice in output["notices"]:
+        log.notice(NOTICE_TITLE, notice)
     matrix = output["matrices"]["1"]
     log.group("matrix-json", json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
-    workflow.append_output(environ["GITHUB_OUTPUT"], "matrix-json",
-                           json.dumps(matrix, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+    outputs = {
+        "matrix-json": json.dumps(matrix, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+        "affected-count": str(output["counts"]["affected"]),
+        "unaffected-count": str(output["counts"]["unaffected"]),
+        "relevance-mode": output["relevance"]["mode"],
+        "relevance-reason": output["relevance"]["reason"],
+        "changed-count": str(output["relevance"]["changed_count"]),
+        "relevance-file": relevance_file,
+    }
+    for name, value in outputs.items():
+        workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
     return EXIT_OK

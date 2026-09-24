@@ -12,8 +12,29 @@ inputs:
     required: true
 outputs:
   matrix-json:
-    description: "All terraform ci/cd variables as json"
+    description: "All terraform ci/cd variables as json, one row per affected environment; may be empty"
     value: ${{ steps.create-matrix.outputs.matrix-json }}
+  affected-count:
+    description: "How many environments this change is relevant to, as a string (docs/Path-relevance.md)"
+    value: ${{ steps.create-matrix.outputs.affected-count }}
+  unaffected-count:
+    description: "How many environments this change is not relevant to, as a string"
+    value: ${{ steps.create-matrix.outputs.unaffected-count }}
+  relevance-mode:
+    description: "'diff' when relevance was decided from the changed files, 'all' when every environment runs"
+    value: ${{ steps.create-matrix.outputs.relevance-mode }}
+  relevance-reason:
+    description: "Why the mode: 'diff', or the fail-open reason of mode 'all'"
+    value: ${{ steps.create-matrix.outputs.relevance-reason }}
+  changed-count:
+    description: "How many files the change touched, as the API counted them; '0' when not fetched"
+    value: ${{ steps.create-matrix.outputs.changed-count }}
+  relevance-file:
+    description: |
+      Path of relevance.json on the runner: every environment's verdict and resolved path rules, the
+      counts, the relevance block, the pull request comment manifest and the decision record. Upload it
+      for the jobs after the matrix; never pass its content as an output.
+    value: ${{ steps.create-matrix.outputs.relevance-file }}
 runs:
   using: "composite"
   steps:

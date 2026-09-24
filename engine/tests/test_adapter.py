@@ -89,7 +89,8 @@ class Runner:
         open(self.output_file, "w").close()
         self.environ = {"GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main",
                         "GITHUB_EVENT_PATH": self.event_file, "GITHUB_OUTPUT": self.output_file,
-                        "GITHUB_RUN_ID": "4711", "GITHUB_RUN_ATTEMPT": "2"}
+                        "GITHUB_RUN_ID": "4711", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_TEMP": os.path.join(path, "temp")}
+        os.mkdir(self.environ["RUNNER_TEMP"])
         self.environ.update(environ or {})
         self.log = io.StringIO()
 
@@ -101,17 +102,18 @@ class Runner:
         with open(self.output_file, encoding="utf-8") as handle:
             return handle.read()
 
-    def matrix(self):
-        lines = self.output().splitlines()
-        if not lines:
-            return None
-        self.assert_delimited(lines)
-        return json.loads(lines[1])
+    def outputs(self):
+        """{name: value} of the step outputs, in the order written; each one line under its delimiter."""
+        lines, outputs = self.output().splitlines(), {}
+        for index in range(0, len(lines), 3):
+            name, delimiter = lines[index].split("<<")
+            assert lines[index + 2] == delimiter, lines
+            outputs[name] = lines[index + 1]
+        return outputs
 
-    @staticmethod
-    def assert_delimited(lines):
-        name, delimiter = lines[0].split("<<")
-        assert name == "matrix-json" and lines[2] == delimiter and len(lines) == 3, lines
+    def matrix(self):
+        outputs = self.outputs()
+        return json.loads(outputs["matrix-json"]) if outputs else None
 
 
 class TextTest(unittest.TestCase):
@@ -648,10 +650,61 @@ class RunTest(unittest.TestCase):
         self.assertIn("env-a: run — relevance: all:api-error", runner.log.getvalue())
         self.assertNotIn("::error", runner.log.getvalue())
 
+    def test_the_outputs_are_the_matrix_the_counts_the_mode_and_the_file(self):
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "environments-yml": '[{"environment": "env-a"}, {"environment": "b"}]'})
+        self.assertEqual(0, runner.run())
+        outputs = runner.outputs()
+        self.assertEqual(["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason",
+                          "changed-count", "relevance-file"], list(outputs))
+        self.assertEqual(("1", "1", "diff", "diff", "1"),
+                         (outputs["affected-count"], outputs["unaffected-count"], outputs["relevance-mode"],
+                          outputs["relevance-reason"], outputs["changed-count"]))
+        path = outputs["relevance-file"]
+        self.assertEqual(runner.environ["RUNNER_TEMP"], os.path.dirname(os.path.dirname(path)))
+        self.assertEqual("relevance.json", os.path.basename(path))
+        with open(path, encoding="utf-8") as handle:
+            published = json.load(handle)
+        self.assertEqual({"schema_version", "relevance", "counts", "environments", "comments", "notices", "record"},
+                         set(published))
+        self.assertEqual((["env-a", "b"], ["run", "skip"], {"affected": 1, "unaffected": 1}),
+                         ([e["environment"] for e in published["environments"]],
+                          [e["verdict"] for e in published["environments"]], published["counts"]))
+
+    def test_the_file_is_the_engines_output_without_the_matrices(self):
+        runner = Runner(self)
+        runner.run()
+        with open(runner.outputs()["relevance-file"], encoding="utf-8") as handle:
+            text = handle.read()
+        document = adapter.build_document(DEFAULT_INPUTS, {
+            "repository": "o/r", "default_branch": "main", "event_name": "push", "ref_name": "main",
+            "payload": PUSH_PAYLOAD, "run": {"id": 4711, "attempt": 2}}, runner.tools, lambda path: True)
+        output = decide.decide(document)
+        del output["matrices"], output["errors"]
+        self.assertEqual(json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False) + "\n", text)
+
+    def test_the_decision_is_announced_once(self):
+        runner = Runner(self)
+        runner.run()
+        notices = [line for line in _outside_verbatim(runner.log.getvalue()) if line.startswith("::notice")]
+        self.assertEqual(["::notice title=Terraform CI::relevance diff (diff): 1 of 1 environment affected"], notices)
+
+    def test_a_relevance_file_that_cannot_be_written_is_a_fault(self):
+        runner = Runner(self, environ={"RUNNER_TEMP": "/nonexistent/runner/temp"})
+        self.assertEqual(1, runner.run())
+        self.assertEqual("", runner.output())
+        self.assertIn("::error title=create-tf-vars-matrix::the relevance file cannot be written under "
+                      "'/nonexistent/runner/temp'", runner.log.getvalue())
+
+    def test_a_configuration_error_announces_and_writes_nothing(self):
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "tflint-version": ""})
+        self.assertEqual(2, runner.run())
+        self.assertNotIn("::notice", runner.log.getvalue())
+        self.assertEqual([], os.listdir(runner.environ["RUNNER_TEMP"]))
+
     def test_the_published_matrix_is_the_engines_compact_and_sorted(self):
         runner = Runner(self)
         runner.run()
-        line = runner.output().splitlines()[1]
+        line = runner.outputs()["matrix-json"]
         self.assertNotIn(" ", line)
         self.assertEqual(json.dumps(json.loads(line), sort_keys=True, separators=(",", ":")), line)
 
@@ -713,7 +766,7 @@ class RunTest(unittest.TestCase):
 
     def test_missing_runner_variables_are_named_before_anything_runs(self):
         for name in ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
-                     "GITHUB_RUN_ATTEMPT"):
+                     "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP"):
             with self.subTest(name=name):
                 runner = Runner(self, environ={name: ""})
                 self.assertEqual(1, runner.run())
@@ -725,7 +778,7 @@ class RunTest(unittest.TestCase):
         runner.environ = {"GITHUB_OUTPUT": runner.output_file}
         runner.run()
         self.assertIn("the runner did not set GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF_NAME, GITHUB_RUN_ID, "
-                      "GITHUB_RUN_ATTEMPT", runner.log.getvalue())
+                      "GITHUB_RUN_ATTEMPT, RUNNER_TEMP", runner.log.getvalue())
 
     def test_the_run_comes_from_the_runner(self):
         runner = Runner(self)

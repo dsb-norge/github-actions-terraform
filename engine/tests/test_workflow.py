@@ -57,6 +57,10 @@ class LogTest(unittest.TestCase):
         self.log.error("a\nb%")
         self.assertEqual(["::error title=my%3A title::a%0Ab%25"], self.lines())
 
+    def test_a_notice_is_one_line_with_its_own_escaped_title_and_message(self):
+        self.log.notice("Terraform CI, again", "a\nb%: c")
+        self.assertEqual(["::notice title=Terraform CI%2C again::a%0Ab%25: c"], self.lines())
+
     def test_a_line(self):
         self.log.line("x")
         self.log.line()
