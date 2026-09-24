@@ -20,9 +20,27 @@ inputs:
       be a JSON file with the structure produced by capture-matrix-job-meta.
     required: false
     default: "matrix-job-meta-*.json"
+  relevance-file:
+    description: |
+      Path of the relevance.json the matrix builder writes (artifact
+      `relevance`). With it, every environment of environments-yml gets a
+      row, in environments-yml order: an unaffected one a row of dashes
+      with the tooltip "not affected", an affected one without a metadata
+      artifact a "❔" row. The headline becomes
+      `N environments · A affected · U not affected · X applied · Y failed`
+      (plus `· D destroyed` before `failed` and `· M not reported` after it
+      when non-zero), a line states the relevance mode and reason, and a
+      run with nothing affected says nothing needed verifying.
+      Empty, missing on disk (a failed download) or not a relevance
+      document: rendered exactly as without it.
+      See docs/Path-relevance.md §6.5.
+    required: false
+    default: ""
 outputs:
   environment-count:
-    description: Number of environments rendered.
+    description: |
+      Number of environments rendered; with relevance-file, the number of
+      environments in it, affected or not.
     value: ${{ steps.summary.outputs.environment-count }}
   failed-count:
     description: Number of environments whose worst outcome was a failure.
@@ -34,6 +52,7 @@ runs:
       shell: bash
       env:
         input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+        input_relevance_file: ${{ inputs.relevance-file }}
       run: |
         # Write the run-level rollup of every environment to the job summary
         set -o allexport

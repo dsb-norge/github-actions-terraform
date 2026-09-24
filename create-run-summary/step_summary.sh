@@ -18,6 +18,11 @@
 # Required environment variables:
 #   input_metadata_files_pattern - Glob for the downloaded artifacts
 #
+# Optional environment variables:
+#   input_relevance_file - Path of the matrix builder's relevance.json. Empty,
+#                          missing on disk or unreadable → rendered exactly as
+#                          without it (docs/Path-relevance.md §6.5, P8)
+#
 # Standard GitHub environment variables used:
 #   GITHUB_STEP_SUMMARY - the job summary file; unset → rendered to the log only
 #   GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID - the run URL
@@ -90,6 +95,13 @@ function render_summary {
     row_by_env["${env}"]="| \`${env}\` | ${worst_emoji} | $(plan_cell "${file}") | $(apply_cell "${file}") | $(destroy_cell "${file}") | ${time_cell} | [run](${run_url}) |"
   done
 
+  local relevance_file
+  relevance_file=$(usable_relevance_file "${input_relevance_file:-}")
+  if [ -n "${relevance_file}" ]; then
+    render_with_relevance "${relevance_file}" "${run_url}"
+    return 0
+  fi
+
   local n_env=${#row_by_env[@]} n_applied=0 n_destroyed=0 n_failed=0
   for env in "${!row_by_env[@]}"; do
     [ "${worst_by_env[${env}]}" = 'failure' ] && n_failed=$((n_failed + 1))
@@ -120,7 +132,141 @@ function render_summary {
     [ -z "${env}" ] && continue
     printf '%s\n' "${row_by_env[${env}]}"
   done < <(printf '%s\n' "${!row_by_env[@]}" | sort)
+  print_footer
+}
+
+function print_footer {
   printf '\n_Plan / Apply / Destroy: `💫` added `🛠️` changed `💥` destroyed; apply and destroy cells are applied/planned, `?` when the operation did not complete. Time is the sum of the env'"'"'s terraform invocations._\n'
+}
+
+# The path of the relevance file when it can be used, else empty. A missing
+# file is expected, not an error: the download that fetches it is
+# continue-on-error, so a run that uploaded none still reaches this step (P8).
+function usable_relevance_file {
+  local file="${1}"
+  [ -z "${file}" ] && return 0
+  if [ ! -f "${file}" ]; then
+    log-warn "relevance file not found: ${file}; rendering without relevance" 1>&2
+    return 0
+  fi
+  if ! jq -e '(.environments | type) == "array" and (.relevance | type) == "object"' "${file}" >/dev/null 2>&1; then
+    log-warn "${file} is not a relevance document; rendering without relevance" 1>&2
+    return 0
+  fi
+  printf '%s' "${file}"
+}
+
+# The summary with relevance: every environment of environments-yml, affected
+# or not. Uses row_by_env / worst_by_env / applied_by_env / destroyed_by_env
+# from render_summary (bash dynamic scope).
+#
+# Rows follow the file's order, which is environments-yml order, with the
+# affected and unaffected ones interleaved: the caller wrote that order, and
+# it keeps a row in the same place from one run to the next whether or not
+# the change touched it. Today's alphabetical order only stands in for an
+# order the metadata artifacts cannot provide.
+function render_with_relevance {
+  local file="${1}" run_url="${2}"
+  local n_env=0 n_affected=0 n_unaffected=0 n_missing=0 n_applied=0 n_destroyed=0 n_failed=0
+  local rows_file
+  rows_file=$(mktemp)
+  declare -A listed=()
+
+  local verdict genv
+  # Metadata is keyed by github-environment (the workflow passes it as the
+  # capture's environment name), so rows are matched and labelled by it,
+  # exactly as today's rows are.
+  # Unit separator, not tab: tab is IFS whitespace, so `read` would collapse an
+  # empty verdict field and shift the name into it.
+  while IFS=$'\x1f' read -r verdict genv; do
+    if [ -z "${genv}" ]; then
+      log-warn "skipping a relevance entry without github-environment" 1>&2
+      continue
+    fi
+    listed["${genv}"]="true"
+    n_env=$((n_env + 1))
+    if [ "${verdict}" = 'skip' ]; then
+      n_unaffected=$((n_unaffected + 1))
+      printf '| `%s` | %s | %s | %s | %s | %s | %s |\n' "${genv}" \
+        "${NOT_AFFECTED_CELL}" "${NOT_AFFECTED_CELL}" "${NOT_AFFECTED_CELL}" \
+        "${NOT_AFFECTED_CELL}" "${NOT_AFFECTED_CELL}" "${NOT_AFFECTED_CELL}" >>"${rows_file}"
+      continue
+    fi
+    # Anything but 'skip' is affected: the engine fails open, so does this.
+    n_affected=$((n_affected + 1))
+    if [ -n "${row_by_env[${genv}]:-}" ]; then
+      printf '%s\n' "${row_by_env[${genv}]}" >>"${rows_file}"
+      count_env "${genv}"
+    else
+      # The matrix job was cancelled or crashed before its metadata upload.
+      # Not counted as failed — nothing says it failed — but never absent:
+      # a missing row would read as "nothing to see".
+      n_missing=$((n_missing + 1))
+      printf '| `%s` | <span title="affected, but its job left no metadata: cancelled, crashed or not uploaded">❔</span> | — | — | — | — | [run](%s) |\n' \
+        "${genv}" "${run_url}" >>"${rows_file}"
+    fi
+  done < <(jq -r '.environments[] | [(.verdict // "" | tostring), (.["github-environment"] // .environment // "" | tostring)] | join("\u001f")' "${file}" 2>/dev/null)
+
+  # Metadata for an environment the file does not list cannot happen when both
+  # come from the same run's matrix builder. Render it rather than drop it, and
+  # leave N/A/U to the file, which is the decision this summary reports.
+  local env
+  while IFS= read -r env; do
+    [ -z "${env}" ] && continue
+    [ -n "${listed[${env}]:-}" ] && continue
+    log-warn "metadata for '${env}', which is not in the relevance file; rendered after the listed environments" 1>&2
+    printf '%s\n' "${row_by_env[${env}]}" >>"${rows_file}"
+    count_env "${env}"
+  done < <(printf '%s\n' "${!row_by_env[@]}" | sort)
+
+  ENVIRONMENT_COUNT="${n_env}"
+  FAILED_COUNT="${n_failed}"
+
+  local mode reason changed
+  mode=$(jq -r '.relevance.mode // "" | tostring' "${file}")
+  reason=$(jq -r '.relevance.reason // "" | tostring' "${file}")
+  changed=$(jq -r '.relevance.changed_count // 0 | tostring' "${file}")
+
+  local env_word="environments"; [ "${n_env}" -eq 1 ] && env_word="environment"
+  local headline
+  headline="${n_env} ${env_word} · ${n_affected} affected · ${n_unaffected} not affected · ${n_applied} applied"
+  # Destroyed and not-reported appear only when non-zero, like today's
+  # destroyed counter: permanent zeros would be noise on almost every run.
+  [ "${n_destroyed}" -gt 0 ] && headline="${headline} · ${n_destroyed} destroyed"
+  headline="${headline} · ${n_failed} failed"
+  [ "${n_missing}" -gt 0 ] && headline="${headline} · ${n_missing} not reported"
+
+  printf '## Terraform run summary\n\n'
+  printf '**%s**\n\n' "${headline}"
+  if [ "${n_affected}" -eq 0 ]; then
+    printf '_Nothing needed verifying: no environment is affected by this change._\n\n'
+  fi
+  # In mode diff the reason is always 'diff' and the count is what matters; in
+  # mode all the count explains nothing and the fail-open reason everything.
+  if [ "${mode}" = 'diff' ]; then
+    local file_word="changed files"; [ "${changed}" = '1' ] && file_word="changed file"
+    printf 'Relevance: `diff`, %s %s\n\n' "${changed}" "${file_word}"
+  else
+    printf 'Relevance: `%s` (%s)\n\n' "${mode}" "${reason}"
+  fi
+  printf '| Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |\n'
+  printf '|---|:---:|---|---|---|---|---|\n'
+  cat "${rows_file}"
+  rm -f "${rows_file}"
+  print_footer
+  # A tooltip does not show on a phone, where this page is often read.
+  if [ "${n_unaffected}" -gt 0 ]; then
+    printf '\n_Rows of `—`: not affected by this change, so not planned._\n'
+  fi
+}
+
+# Adds one rendered metadata row's outcome to render_with_relevance's counters.
+function count_env {
+  local env="${1}"
+  [ "${worst_by_env[${env}]:-}" = 'failure' ] && n_failed=$((n_failed + 1))
+  [ "${applied_by_env[${env}]:-}" = 'true' ] && n_applied=$((n_applied + 1))
+  [ "${destroyed_by_env[${env}]:-}" = 'true' ] && n_destroyed=$((n_destroyed + 1))
+  return 0
 }
 
 function main {
