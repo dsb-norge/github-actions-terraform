@@ -97,7 +97,7 @@ run_step() {
     # push or a pull request adds, has its own tests below.
     export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="workflow_dispatch"
     export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
-    export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token"
+    export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token" GITHUB_RUN_ID="4711" GITHUB_RUN_ATTEMPT="1"
     export PATH="${SANDBOX}/bin:${PATH}"
     for assignment in "$@"; do export "${assignment?}"; done
     # The runner's shell for a composite step.

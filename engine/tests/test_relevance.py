@@ -28,7 +28,7 @@ def document(environments=None, files=None, event="pull_request", changed=None, 
     doc = support.document(environments=environments, inputs={"path-relevance-enabled": enabled}, env_yaml=env_yaml)
     doc["event"]["name"] = event
     if event == "pull_request":
-        doc["event"]["pull_request"] = {"number": 87, "head_sha": "abc"}
+        doc["event"]["pull_request"] = {"number": 87, "head_sha": "abc", "is_fork": False}
     if event == "push":
         doc["event"]["push"] = {"created": False, "forced": False, "deleted": False, **(push or {})}
     if changed is None and files is not None:

@@ -88,7 +88,9 @@ class RelevanceFactsTest(unittest.TestCase):
     def test_the_sections_are_optional_and_pass_when_whole(self):
         document = support.document()
         document["event"]["push"] = {"created": True, "forced": False, "deleted": False}
-        document["event"]["pull_request"] = {"number": 87, "head_sha": "abc"}
+        document["event"]["pull_request"] = {"number": 87, "head_sha": "abc", "is_fork": False}
+        document["event"]["action"] = "opened"
+        document["run"] = {"id": 4711, "attempt": 1}
         document["changed_files"] = dict(CHANGED)
         model.check(document)
         model.check(support.document())
@@ -123,12 +125,27 @@ class RelevanceFactsTest(unittest.TestCase):
                 self.assertDocumentError(document, "'event.push' needs the booleans 'created', 'forced' and 'deleted'")
 
     def test_the_pull_request_needs_its_number_and_head(self):
-        for bad in ({"number": "87", "head_sha": "abc"}, {"number": 87}, {"number": True, "head_sha": "a"},
-                    {"number": 87, "head_sha": None}, None):
+        for bad in ({"number": "87", "head_sha": "abc", "is_fork": False}, {"number": 87, "is_fork": False},
+                    {"number": True, "head_sha": "a", "is_fork": False}, {"number": 87, "head_sha": None, "is_fork": False},
+                    {"number": 87, "head_sha": "a"}, {"number": 87, "head_sha": "a", "is_fork": "false"}, None):
             with self.subTest(bad=bad):
                 document = support.document()
                 document["event"]["pull_request"] = bad
-                self.assertDocumentError(document, "'event.pull_request' needs")
+                self.assertDocumentError(document, "input document: 'event.pull_request' needs the integer 'number', "
+                                                   "the string 'head_sha' and the boolean 'is_fork'")
+
+    def test_the_action_is_a_string(self):
+        document = support.document()
+        document["event"]["action"] = None
+        self.assertDocumentError(document, "input document: 'event.action' is not a string")
+
+    def test_the_run_needs_its_id_and_attempt(self):
+        for bad in ({"id": 1}, {"attempt": 1}, {"id": "1", "attempt": 1}, {"id": 1, "attempt": True},
+                    {"id": 1, "attempt": -1}, []):
+            with self.subTest(bad=bad):
+                document = support.document()
+                document["run"] = bad
+                self.assertDocumentError(document, "input document: 'run' needs the integers 'id' and 'attempt'")
 
 
 if __name__ == "__main__":

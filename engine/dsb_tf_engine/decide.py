@@ -1,6 +1,6 @@
 """The `decide` command: the input document in, the output document out."""
 
-from . import SCHEMA_VERSION, environments, model, record, relevance
+from . import SCHEMA_VERSION, comments, environments, model, record, relevance
 
 
 def _failed(errors):
@@ -15,7 +15,7 @@ def _failed(errors):
     }
 
 
-def _decided(block, rows, entries):
+def _decided(document, block, rows, entries):
     affected = [row for row, entry in zip(rows, entries) if entry["verdict"] == "run"]
     matrix = {
         "environment": [row["environment"] for row in affected],
@@ -30,6 +30,7 @@ def _decided(block, rows, entries):
         # One stage until environment ordering assigns more.
         "matrices": {"1": matrix},
         "counts": {"affected": len(affected), "unaffected": len(rows) - len(affected)},
+        "comments": comments.manifest(document, block, entries),
         "record": record.lines(entries),
     }
 
@@ -46,4 +47,4 @@ def decide(document):
         block, entries = relevance.decide_relevance(document, declared, rows)
     except environments.ConfigError as error:
         return _failed(error.messages)
-    return _decided(block, rows, entries)
+    return _decided(document, block, rows, entries)

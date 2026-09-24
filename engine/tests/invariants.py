@@ -69,4 +69,28 @@ def check(document, output):
         violations.append("I13: relevance switched off but the reason is not 'disabled'")
     if output["errors"] and relevance is not None:
         violations.append("errors present but a relevance block is emitted")
+
+    # I14: "not affected" heads and tag purges only where the seed runs, only for commenting
+    # environments skipped by relevance, and no environment head for a grouped environment.
+    manifest = output.get("comments")
+    if manifest is not None:
+        event = document["event"]
+        seeded = (event["name"] == "pull_request" and "pull_request" in event and not event["pull_request"]["is_fork"]
+                  and event.get("action", "") not in ("closed", "converted_to_draft") and "run" in document)
+        by_key = {entry["github-environment"]: entry for entry in environments}
+        if not seeded and (manifest["heads"] or manifest["purge_tags_for"] or manifest["gc"]):
+            violations.append("I14: a manifest where the seed does not run")
+        for head in manifest["heads"]:
+            entry = by_key.get(head["key"]) if head["kind"] == "env" else None
+            if head["kind"] == "env" and (entry is None or entry["pr-comment-group"] != ""
+                                          or entry["add-pr-comment"] != "true"):
+                violations.append(f"I14: an environment head for '{head['key']}', which gets none")
+            if head["state"] == "not-affected" and (entry is None or entry["verdict"] != "skip"):
+                violations.append(f"I14: a 'not affected' head for '{head['key']}', which is affected")
+        for name in manifest["purge_tags_for"]:
+            entry = by_key.get(name)
+            if entry is None or entry["verdict"] != "skip" or entry["add-pr-comment"] != "true":
+                violations.append(f"I14: a tag purge for '{name}', which is not an unaffected commenting environment")
+        if len(manifest["gc"]) != 4 * len(manifest["purge_tags_for"]):
+            violations.append("I14: not four purge rules per purged environment")
     return violations
