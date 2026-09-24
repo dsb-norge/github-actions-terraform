@@ -44,7 +44,7 @@ Because matching is by substring, **every segment is terminated by `:`**. The pu
 ```mermaid
 flowchart TD
     cm["create-matrix"]
-    seed["Seed phase - top of workflow, before matrix<br>seed-pr-comments job<br>- reconcile heads, POST or PATCH per marker<br>- heads only; plan-tag GC lives in the matrix, see section 3.2"]
+    seed["Seed phase - top of workflow, before matrix<br>seed-pr-comments job<br>- reconcile heads, POST or PATCH per marker<br>- purge only unaffected envs' tags; affected envs purge their own in the matrix, see section 3.2"]
     matrix["Matrix jobs - parallel, one per env<br>- DELETE prior tf-tag-plan / apply / destroy-plan / destroy tags for ENV<br>- phase 1 after plan: PATCH tf-head-env-ENV, POST tf-tag-plan-ENV<br>- phase 2 after apply / destroy: POST tf-tag-apply / destroy-plan / destroy tags, PATCH tf-head-env-ENV again"]
     agg["Aggregator job - after matrix<br>- PATCH each tf-head-group-GROUP head with the rolled-up grouped table"]
 
@@ -53,14 +53,16 @@ flowchart TD
 
 ### 3.1 Seed phase
 
-The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) composes a `heads-yml` manifest from `create-matrix` outputs:
+The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) reads the manifest the decision engine composed with path relevance (`comments` in the `relevance` artifact, [Path-relevance.md §6.3](Path-relevance.md)) and hands it to [`pr-comments-reconcile`](../pr-comments-reconcile/) as `heads-yml` and `gc-yml`:
 
-1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value.
-2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table.
+1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value among commenting envs, affected or not, sorted by name; always the `⏳ Awaiting results…` placeholder.
+2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**, in `environments-yml` order. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table. An affected env gets the placeholder; an env the change does not touch gets its final "not affected" body (§5.1), since no matrix job will run to finalise it.
 
-Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body.
+Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
 
-The seed job does **not** GC plan tags — that work happens per-env in the matrix (§3.2). This is what makes "Re-run failed jobs" behave correctly: when a previous attempt's seed already succeeded, GitHub skips it on the re-run, so any cleanup hooked into the seed phase wouldn't fire. Each matrix job purges its own env's plan tags as its first commenting step, which works whether the seed re-ran or not. The seed is `terraform-ci-cd`'s `needs:` dependency so matrix jobs still can't race ahead of head seeding.
+The seed job GCs only the tags of **unaffected** envs with `add-pr-comment: true`: four rules each, one per tag kind, so an earlier run's plan does not stay visible under a head that says "not affected". Affected envs' tags are purged per env in the matrix (§3.2). This is what makes "Re-run failed jobs" behave correctly: when a previous attempt's seed already succeeded, GitHub skips it on the re-run, so any cleanup of affected envs hooked into the seed phase wouldn't fire, while an unaffected env is unaffected on every attempt and its purge is already done. Each matrix job purges its own env's plan tags as its first commenting step, which works whether the seed re-ran or not. The seed is `terraform-ci-cd`'s `needs:` dependency so matrix jobs still can't race ahead of head seeding; its result is not tested, so a broken seed never skips the matrix.
+
+A missing `relevance` artifact seeds nothing and purges nothing, with a warning; the matrix jobs' upserts then create the heads they would have patched.
 
 ### 3.2 Matrix phase
 
@@ -80,14 +82,14 @@ Trade-off of the early-purge placement: if the matrix job crashes between the pu
 
 ### 3.3 Aggregator phase
 
-[`aggregate-validation-summaries`](../aggregate-validation-summaries/) downloads all `matrix-job-meta-*.json` artifacts, builds the per-group rolled-up table, and upserts each `tf:head:group:<group>` head with the final rendered body. Seed job has already pre-allocated these heads, so the upsert resolves to a PATCH (preserving `created_at`).
+[`aggregate-validation-summaries`](../aggregate-validation-summaries/) downloads all `matrix-job-meta-*.json` artifacts and the `relevance` artifact, builds the per-group rolled-up table, and upserts each `tf:head:group:<group>` head with the final rendered body. Seed job has already pre-allocated these heads, so the upsert resolves to a PATCH (preserving `created_at`). Its desired set of groups is every group `relevance.json` declares for a commenting env, affected or not, plus every group seen in metadata; an env with no metadata because the change did not touch it renders as a column of dashes ([Path-relevance.md §6.4](Path-relevance.md)).
 
 ## 4. Re-run behavior
 
 ### Heads
 
-1. Seed phase PATCHes each head body to `⏳ Awaiting results (run #N)…`.
-2. Matrix / aggregator phase PATCHes each head body to its final state.
+1. Seed phase PATCHes each head body to `⏳ Awaiting results (run #N)…`, or an unaffected ungrouped env's head straight to its final "not affected" body.
+2. Matrix / aggregator phase PATCHes each head body to its final state. The aggregator finalises every group on every pull-request run, including a group whose members are all unaffected.
 
 Heads keep their original `created_at` across runs (PATCH preserves it). Their position at the top of the conversation is fixed from the first POST onwards.
 
@@ -96,6 +98,7 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 1. Each matrix job's **first** post-checkout steps delete any existing tag for its own env — one purge per tag kind (`<!-- tf:tag:plan:<env>:`, `…apply…`, `…destroy-plan…`, `…destroy…`), substring match regardless of run-id or attempt. This handles cross-run AND cross-attempt cleanup uniformly: prior runs' tags, prior attempts of the current run's tags, all go.
 2. The matrix job then runs the validation pipeline (init → fmt → validate → lint → plan), and after that POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
 3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
+4. Envs the change does not touch have their tags purged by the seed (§3.1); their matrix job does not run at all.
 
 The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing, and the prior attempt's plan tags disappear from the conversation within seconds of each matrix job starting. Envs that aren't being re-run keep their existing tags showing the right state.
 
@@ -144,6 +147,10 @@ Plan details row is rendered only when `include-plan-details=true`. Shape (badge
 
 Optional badges (move / import / remove) are appended `<br>`-separated when the count is non-zero.
 
+#### Not affected
+
+An ungrouped env the change does not touch gets its head written once, at seed time, as its final body: the same title as above, a `➖ Not affected by this pull request: no changed file matches this environment's paths (run #N attempt #M).` line, and a collapsed "Path rules" section listing its included and ignored patterns and the relevance mode, so a reviewer can tell a `diff` run from a fail-open `all` run, in which no head says "not affected". Exact body: [Path-relevance.md §6.1](Path-relevance.md).
+
 #### Grouped mode
 
 When `pr-comment-group` is non-empty, the env has **no per-env head at all** — its row in the per-group head's table is the env's summary surface, and its plan output still gets its own per-env plan tag (§5.2). The seed manifest excludes grouped envs from per-env head seeding, and the matrix-job step that PATCHes the per-env head is skipped via an `if:` guard on `matrix.vars.pr-comment-group`. Reviewers reach the grouped env's plan output via the per-group head's Links column.
@@ -172,7 +179,7 @@ When `warning-count > 0`, a sibling `<details><summary>⚠️ N warnings</summar
 
 ### 5.3 Per-group head
 
-The rolled-up grouped table aggregates every env in the group (alphabetical column order):
+The rolled-up grouped table aggregates every env in the group (alphabetical column order, or `environments-yml` order when the aggregator has the relevance file):
 
 ```markdown
 ### Terraform validation summary for group: `<group>`   ← every env in the group only plans
@@ -206,6 +213,8 @@ Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missi
 
 Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag, located by the `<!-- tf:tag:plan:<env>:run-id-<run-id>:` marker-prefix substring — matches any attempt of the current run; stale tags from prior runs are ignored) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
+An env the change does not touch keeps its column: every cell `<span title="not affected by this pull request">—</span>`, an empty Links cell, excluded from the group-wide row gates, and a `➖ Not affected by this pull request: \`<env>\`` line above the footer names it. A group whose members are all unaffected is rendered all dashes, never deleted. [Path-relevance.md §6.2](Path-relevance.md).
+
 The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§5.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
 ### 5.4 Per-env operation tags
@@ -230,6 +239,7 @@ Workflow inputs:
 |---|---|
 | `add-pr-comment` (global default `true`) | When `false`, suppresses both the env's head + plan tag for that environment. The env does not appear in the seed manifest either. |
 | `apply-extract-include-outputs` (global default `false`, per env) | When `true`, the apply and destroy tags keep terraform's `Outputs:` section — the actual output values. See §5.4. |
+| `paths`, `paths-ignore` (per env, optional) and `path-relevance-enabled` (global) | Which envs a change is relevant to ([Path-relevance.md](Path-relevance.md)). An unaffected env keeps its comment surface: its head says "not affected", or its column in a group's table is filled with dashes. |
 | `pr-comment-group` (per env, optional) | When non-empty, the env is represented in that group's per-group head only — no standalone per-env head is created (the env's row in the per-group head's table is its summary surface). The env's own plan tag is still POSTed and is reachable from the per-group head's Links column. When empty (default), the env is "ungrouped" and gets its own per-env head with the full validation table. |
 
 Triggering rules: comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Forks cannot post (the workflow guards against `github.event.pull_request.head.repo.fork == true` at the seed-job level).
@@ -271,7 +281,7 @@ Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }
 A repository may call this reusable workflow from more than one workflow (a CI run and an integration-test run, say). They share the pull request's comment thread, and the aggregator's orphan pass deletes group comments whose group is not in **its** desired set. Two rules keep one caller from deleting another's comments:
 
 1. **A run that declares no groups at all deletes nothing.** An empty desired set means the run has no opinion about which group comments belong on the thread, not that none do.
-2. **A run where no environment has `add-pr-comment` enabled does not list, post or delete anything.** A caller told not to comment touches no comments. An *absent* `add-pr-comment` key in the job metadata counts as unknown, not false, so metadata from an older version cannot silently switch reconciliation off.
+2. **A run where no environment has `add-pr-comment` enabled does not list, post or delete anything.** With the relevance file, an unaffected env with `add-pr-comment` enabled counts, so a run whose only commenting envs are unaffected still reconciles. A caller told not to comment touches no comments. An *absent* `add-pr-comment` key in the job metadata counts as unknown, not false, so metadata from an older version cannot silently switch reconciliation off.
 
 Without these, the caller that finished first had its group heads deleted by the other and re-posted at the bottom of the thread by its own aggregator — defeating the seeding that exists to keep summaries at the top (§3.1). The cost of rule 1 is a group comment that outlives the removal of a repository's last group, on pull requests open across that change; a new pull request never gets one.
 

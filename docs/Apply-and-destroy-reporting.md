@@ -723,7 +723,9 @@ Warning collapsers are appended as siblings after the block, exactly as the plan
 | `other` | ❌ | `💫 0` `🛠️ 0` `💥 0` | — | — | `9:49` | [log](…) |
 ```
 
-The headline line is the part that survives being read on a phone. `Time` is the sum of the env's invocation times.
+The headline line is the part that survives being read on a phone. `Time` is the sum of the env's invocation times. Rows are alphabetical when the job has no relevance file.
+
+With path relevance the job also downloads the `relevance` artifact, and the rollup lists every environment of `environments-yml` in that order, the unaffected ones as rows of dashes, under the headline `N environments · A affected · U not affected · X applied · Y failed` and a line stating the relevance mode. An affected environment whose job left no metadata gets a `❔` row and counts as not reported. The exact shapes: [Path-relevance.md §6.5](Path-relevance.md).
 
 ### 8.8 Per-group head
 
@@ -765,6 +767,15 @@ Collected from §7-§8 for review convenience. Each is expanded at its source.
 | P33 | §13 | A saved `-destroy` plan applied prints `Apply complete!` — see the table there |
 | P34 | §7.2, §14 | A tag's shape must not contradict the head's status row — the outcome is the step's, never the parse's |
 | P35–P39 | §13 | Found while capturing real output for the contract tests, and in their review — see the table there |
+
+Four pitfalls of [Path-relevance.md](Path-relevance.md) §12 touch these jobs:
+
+| # | Where | Concern |
+|---|---|---|
+| PR-P3 | Path-relevance.md §5.3 | The matrix job must not test the seed job's result: a broken seed skipped every environment while the conclusion stayed green |
+| PR-P4 | Path-relevance.md §6.4 | The aggregator's desired set of groups is relevance ∪ metadata, or an all-unaffected group is deleted or left at its placeholder |
+| PR-P14 | Path-relevance.md §8 | The `automerge` job needs `!cancelled()`, or the implicit `success()` skips it whenever the matrix is skipped |
+| PR-P15 | Path-relevance.md §8 | Auto-merge eligibility with no metadata must still run the enabled and actor checks, from the relevance file |
 
 ## 10. Test coverage
 

@@ -8,10 +8,11 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **the port (§9) is built** and is what `create-tf-vars-matrix` runs, through the
-create-matrix adapter (§3): rules 1 and 7 of §6, the input and output documents of §4 and §5 in
-the shape the port needs, the tests of §8 and both gates. Rules 2 to 6, the test matrix, the comment manifest and the `validate` and
-`render-summary` commands are specified here and are built with the features that need them:
+Status: **the port (§9), relevance and the comment manifest are built** and are what
+`create-tf-vars-matrix` runs, through the create-matrix adapter (§3): rules 1, 4 and 7 of §6, the
+input and output documents of §4 and §5 in the shape they need, the tests of §8 and both gates.
+Rules 2, 3, 5 and 6, the test matrix and the `validate` and `render-summary` commands are
+specified here and are built with the features that need them:
 [Terraform-tests.md](Terraform-tests.md), [Path-relevance.md](Path-relevance.md),
 [Dispatch-and-triggers.md](Dispatch-and-triggers.md) and
 [Environment-ordering.md](Environment-ordering.md). §13 holds what implementation taught the spec.
@@ -63,6 +64,9 @@ engine/
 │   ├── decide.py             # core: the decide command, input document in, output document out
 │   ├── environments.py       # core: environment rows, rule 1 (the port's validation) and rule 7
 │   ├── values.py             # core: jq-compatible rendering, merge and per-goal normalisation
+│   ├── globs.py              # core: the one glob matcher (Terraform-tests.md §4.4)
+│   ├── relevance.py          # core: rule 4, path relevance (Path-relevance.md §3-§5)
+│   ├── comments.py           # core: the seed manifest, heads and tag purges (Path-relevance.md §6.3)
 │   ├── record.py             # core: the decision record
 │   ├── __main__.py           # adapter side: the command line, decide and create-matrix
 │   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
@@ -78,17 +82,16 @@ engine/
     └── invariants.py         # the checks of §7, importable by every test
 ```
 
-**The core is pure**: its modules import nothing but `json` and each other, and nothing from the
+**The core is pure**: its modules import nothing but `json`, `re` and each other, and nothing from the
 adapter side (`test_purity.py` checks the imports). **The adapter side** reads the environment,
 the filesystem and the network, runs programs and writes the log, so that the core does not have
 to; it sits under the same coverage and mutation gates.
 
-The features add their modules as their rules are built: on the core side `events.py` (event
-kind, branch facts, the fork and Dependabot rules), `globs.py` (the one glob matcher of
-Terraform-tests.md §4.4), `relevance.py` (Path-relevance.md §4-§5), `tests.py` (test roots,
-lanes, environments, provider sets) and `comments.py` (which heads and tags the seed job creates
-or purges); `environments.py` gains goals, trigger events, dispatch and stages, and `record.py`
-the rendering for the run summary. Their fact-gathering joins the adapter side (§3.1).
+The remaining features add their modules as their rules are built: on the core side `events.py`
+(event kind, branch facts, the fork and Dependabot rules) and `tests.py` (test roots, lanes,
+environments, provider sets); `environments.py` gains goals, trigger events, dispatch and stages,
+`comments.py` the tests head, and `record.py` the rendering for the run summary. Their
+fact-gathering joins the adapter side (§3.1).
 
 Composite actions call it with the repository checked out at the action's ref, which is always the
 case for an action referenced as `dsb-norge/github-actions-terraform/<action>@<ref>`: GitHub
@@ -133,10 +136,15 @@ for exactly the paths the engine will check, asking the engine for them
 (`environments.project_dir_path`). It reads the default branch from the event payload file
 (`GITHUB_EVENT_PATH`), which carries it on every event this workflow runs on, `schedule`
 included, and falls back to `gh api`; a failed fallback stops the step with the API's answer
-instead of guessing. Then it decides in-process, logs the inputs, the input document, the
-decision record and the matrix in collapsed groups printed verbatim (P20), turns each validation
-error into one escaped `::error` annotation, and appends `matrix-json` to `$GITHUB_OUTPUT` under a
-random delimiter. Every external program sits behind one `Tools` object, so the tests stand in for
+instead of guessing. It reads the payload once more for the change: a push's `created`, `forced`
+and `deleted`, a pull request's action, number, head commit and whether it comes from a fork, and
+the run's id and attempt from the runner; then it fetches the changed files (§3.1). Then it
+decides in-process, logs the inputs, the changed files, the input document (with the file list
+elided, since it is already in its own group), the decision record and the matrix in collapsed
+groups printed verbatim (P20), turns each validation error into one escaped `::error` annotation
+and each notice into one `::notice`, writes `relevance.json` (the output document without its
+matrices) under `RUNNER_TEMP`, and appends `matrix-json`, the counts, the relevance mode, reason
+and changed count, and the file's path to `$GITHUB_OUTPUT`, each under a random delimiter. Every external program sits behind one `Tools` object, so the tests stand in for
 `yq` and `gh`.
 
 ### 3.1 Adapters
@@ -144,9 +152,12 @@ random delimiter. Every external program sits behind one `Tools` object, so the 
 Adapters fetch facts and report them raw; they decide nothing. `adapter.py` is the first; the
 features bring two more, as adapter-side modules under the same gates:
 
-- fetching the changed files (in `adapter.py`) calls the pull request or compare endpoints and reports `{available,
-  truncated, error, files_path}` plus the pull request's live head SHA; the engine turns that into a
-  relevance mode and reason (Path-relevance.md §4.2).
+- fetching the changed files (in `adapter.py`) calls the pull request or compare endpoints and
+  reports `{available, truncated, error, api_head_sha, count, files}`, the file list inline because
+  the core reads no files; the engine turns that into a relevance mode and reason
+  (Path-relevance.md §4.2-§4.3). Nothing is fetched when relevance is switched off, for an event
+  other than a push or a pull request, or for a forced or deleting push, whose files the core
+  would not read.
 - `create-tftest-matrix` lists committed test files, the directories that hold `.tf` files, and the
   environments' lock files by `project-dir`; the engine derives roots, lanes, environments and
   provider sets and validates them. Its existing `all-tests` output stays for the module CI
@@ -209,14 +220,14 @@ The features extend it; the full document, as they specify it:
     "ref_name": "feature/x",
     "actor": "octocat",
     "triggering_actor": "octocat",
-    "push": { "before": "…", "after": "…", "created": false, "forced": false, "deleted": false },
-    "pull_request": { "number": 87, "base_ref": "main", "head_sha": "…", "api_head_sha": "…", "is_fork": false, "changed_files_count": 3, "draft": false },
+    "push": { "created": false, "forced": false, "deleted": false },
+    "pull_request": { "number": 87, "base_ref": "main", "head_sha": "…", "is_fork": false, "draft": false },
     "dispatch_inputs": { "environment": "", "goal": "", "reason": "" }
   },
   "workflow_inputs": { … },
   "yaml": { … },
   "directories_exist": { "./envs/prod": true, "./envs/staging": true },
-  "changed_files": { "available": true, "truncated": false, "error": null, "files_path": "/tmp/changed-files.txt" },
+  "changed_files": { "available": true, "truncated": false, "error": null, "api_head_sha": "…", "count": 3, "files": ["envs/prod/main.tf", "…"] },
   "tests": {
     "files": ["tests/unit-net.tftest.hcl", "modules/net/tests/unit-net.tftest.hcl"],
     "directories_with_tf": ["modules/net", "main", "envs/prod"],
@@ -230,7 +241,13 @@ The features extend it; the full document, as they specify it:
   block the payload key is `null`, and a string input left empty is absent from the payload
   rather than `""`; the adapter passes all three keys, `""` for each that is missing.
 - Only the sections a command needs must be present; an absent `tests` section means "no test
-  stage", an absent `changed_files` means "relevance not computed".
+  stage", an absent `changed_files` means "relevance not computed" (mode `all`, reason
+  `not-computed`). `run`, `event.action`, `event.push` and `event.pull_request` are optional too;
+  when present they are checked whole. As built: `push` holds exactly its three booleans,
+  `pull_request` its `number`, `head_sha` and `is_fork`, `changed_files` exactly its six facts;
+  `base_ref`, `draft`, `actor` and `dispatch_inputs` arrive with the rules that read them.
+- A renamed file is in `files` under both its paths; `count` is what the API counted, one per
+  changed file.
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
   `is_fork` and `actor == 'dependabot[bot]'`, one rule in one place; secret names appear only as
   names inside lane definitions.
@@ -238,28 +255,48 @@ The features extend it; the full document, as they specify it:
 
 ## 5. The output document
 
-What the port emits:
+What it emits as built, the port with relevance and the comment manifest:
 
 ```json
 {
   "schema_version": 1,
   "errors": [],
-  "notices": [],
-  "environments": [ { "environment": "prod", "verdict": "run", "reasons": ["port"] } ],
+  "notices": ["relevance diff (diff): 1 of 2 environments affected"],
+  "relevance": { "mode": "diff", "reason": "diff", "changed_count": 3 },
+  "environments": [
+    { "environment": "prod", "verdict": "run", "reasons": ["relevance: envs/prod/**"],
+      "github-environment": "prod", "add-pr-comment": "true", "pr-comment-group": "", "mutates-on-pr": [],
+      "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": [], "pr-auto-merge-limits": { … },
+      "paths": ["envs/prod/**", "main/**", "modules/**", ".tflint.hcl"], "paths-ignore": ["**/*.md"] },
+    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], … }
+  ],
   "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },
-  "counts": { "affected": 1, "unaffected": 0 },
-  "record": [ "prod: run — port" ]
+  "counts": { "affected": 1, "unaffected": 1 },
+  "comments": {
+    "heads": [ { "kind": "env", "key": "prod", "state": "placeholder", "title": "Terraform validation summary",
+                 "marker": "<!-- tf:head:env:prod -->", "body": "### Terraform validation summary for environment: `prod`\n\n⏳ Awaiting results (run #4711 attempt #1)…" },
+               { "kind": "env", "key": "staging", "state": "not-affected", … } ],
+    "purge_tags_for": ["staging"],
+    "gc": [ { "marker-prefix": "<!-- tf:tag:plan:staging:", "keep-marker-substring": "" }, … ]
+  },
+  "record": [ "prod: run — relevance: envs/prod/**", "staging: skip — relevance: no changed file matches" ]
 }
 ```
 
-An output with errors carries no environments and no matrices: a configuration error never leaves
-a matrix to run. The features extend it to the full document:
+An output with errors carries no environments, no matrices, no `relevance` and no `comments`: a
+configuration error never leaves a matrix to run. A decision with no affected environment carries
+the empty matrix `{"environment": [], "include": []}`; the workflow's count gate keeps it from
+GitHub. Each environment entry carries, besides its verdict, what the jobs after the matrix read
+for it whether or not it runs: the row's `github-environment`, `add-pr-comment`,
+`pr-comment-group` and resolved `pr-auto-merge-*` values, `mutates-on-pr` (the `apply-on-pr` and
+`destroy-on-pr` goals it holds, read as the workflow's `contains()` reads them), and its resolved
+`paths` and `paths-ignore`. The features extend it to the full document:
 
 ```json
 {
   "schema_version": 1,
   "errors": [],
-  "notices": ["relevance diff (pull request #87, 3 changed files): 1 of 3 environments affected"],
+  "notices": ["relevance diff (diff): 1 of 3 environments affected"],
   "relevance": { "mode": "diff", "reason": "diff", "changed_count": 3 },
   "environments": [
     { "environment": "prod", "verdict": "run", "reasons": ["trigger-events: pull_request", "relevance: envs/prod/**", "ordering: stage 2"],
@@ -301,7 +338,8 @@ a matrix to run. The features extend it to the full document:
 - `record` is prose for people; every line is derived from `reasons`, never written separately.
 - What leaves the job as `$GITHUB_OUTPUT`: `matrix-json`, the test matrices, counts, flags and the
   relevance mode and reason, all small. `environments`, `tests.not_run`, `comments` and `record`
-  travel as the `relevance` artifact and as files to the seed job, never as job outputs: a job
+  travel in `relevance.json`, uploaded as the `relevance` artifact that the seed job, the
+  aggregator, the run summary and the auto-merge evaluator download, never as job outputs: a job
   output enters every `needs.*.outputs` interpolation downstream, and nothing caps it (the ARG_MAX
   rule of CLAUDE.md).
 
@@ -309,12 +347,12 @@ The other specs name the same data under their own output names. The mapping is 
 
 | Spec | Name there | Here |
 |---|---|---|
-| Path-relevance.md §5.2 | `envs-json` rows with `relevance`, `matched-rule`, `paths`, `paths-ignore` | `environments[]`: `verdict` `run` is `affected`, the first `relevance:` reason is `matched-rule`, the resolved `paths` and `paths-ignore` on the entry |
+| Path-relevance.md §5.2 | the environments of `relevance.json` | `environments[]`: `verdict` `run` is affected, the `relevance:` reason names the matched rule, the resolved `paths` and `paths-ignore` on the entry |
 | Path-relevance.md §5.2 | `affected-count`, `unaffected-count` | `counts.affected`, `counts.unaffected` |
 | Path-relevance.md §4.3 | `relevance-mode`, `relevance-reason`, `changed-count` | `relevance.mode`, `relevance.reason`, `relevance.changed_count` |
 | Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-env-matrix-json`, `tests-count`, `tests-active`, `tests-env-active`, `tests-not-run-json` | `tests.matrix`, `tests.env_matrix`, `tests.count`, `tests.active`, `tests.env_active`, `tests.not_run`; a row is exactly the §4.5 row schema |
 | Terraform-tests.md §5.3 | provider sets | `tests.provider_sets` |
-| Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `state` `placeholder` or `not-affected`, `title`, and the mode line for an environment that mutates on pull request; `comments.purge_tags_for`; both empty on non-pull-request events, forks, `closed` and `converted_to_draft` |
+| Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder` or `not-affected`, `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`, one per decision kind, in the relevance spec's format |
 
 ## 6. The decision procedure
@@ -342,9 +380,10 @@ environments' verdicts and the event.
 
 Checked by `invariants.py` on every case of every kind (§8). A violated invariant fails the suite
 even when the case's expected output matches. An invariant is checked from the commit that builds
-the rule it constrains; the port checks I7, I8, I11 and I12, and two properties of its own: an
-output with errors carries no environments and no matrices, and the record has one line per
-environment.
+the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, and
+properties of their own: an output with errors carries no environments, no matrices and no
+relevance block, the record has one line per environment, and the affected and unaffected counts
+sum to the environments decided.
 
 | # | Invariant |
 |---|---|
@@ -407,6 +446,8 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
 4. **Random cases**: a seeded random walk of 3,000 documents over the same shapes, adding malformed
    entries (non-mapping environments, missing names, failed parses), asserting the invariants and
    that the engine either produces an output document or a validation error, never a crash.
+   A second walk of 3,000 covers relevance: rule shapes, project directories, the switch, the
+   events, the push and pull request facts and random changed files, and must reach both verdicts.
 5. **Negative tests, one check at a time** (`test_validation.py`): every required field removed on
    its own, every not-empty field emptied on its own, each producing exactly its one message; the
    required fields deliberately allowed empty pinned as such; what counts as empty; the reporting
@@ -532,8 +573,9 @@ as read from that action and its helpers:
 - the shape `{"environment": [names], "include": [{"environment", "vars"}]}` with `vars` the
   whole row; the action's only output is `matrix-json`, its only input `inputs-json`.
 
-Verdict `run` for every environment; reasons `port`. The deliberate deviations, each pinned by a
-port case with its reason:
+A port case is a dispatch, which fetches no changed files: every environment has verdict `run`
+with the reason `relevance: all:event`, as before relevance. The deliberate deviations, each
+pinned by a port case with its reason:
 
 | Case | Bash builder | Engine |
 |---|---|---|
@@ -656,3 +698,12 @@ AI-assistant configuration files are never in these commits.
   apply produced the same matrix as `@v0` on `workflow_dispatch`, apart from the calling branch;
   the `pull_request` and `push` runs built the matrix the same way and ran their whole graph as
   `@v0` does. No run needed the API for the default branch.
+- **Relevance joined without moving a row.** The port cases are dispatches, which fetch nothing
+  and run everything with the reason `relevance: all:event`; every golden changed only by the
+  forwarded `path-relevance-enabled`. A document without changed files is mode `all` with the
+  reason `not-computed`, so a caller of `decide` that builds no facts keeps its rows. The seed
+  manifest in mode `all` was compared with the seed job's own jq on 300 random configurations and
+  matched every one, which pinned a detail the draft had wrong: group heads are sorted, as jq's
+  `unique` sorts them, not in first-seen order. The first mutation run on the new modules found
+  seven survivors, each redundant code (a defensive copy, an early return whose value nobody read)
+  or an untested literal; the code was removed or the literal tested.
