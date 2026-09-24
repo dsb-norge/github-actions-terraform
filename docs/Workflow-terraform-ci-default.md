@@ -2,6 +2,7 @@
 
 Default DSB CI/CD workflow for terraform projects that performs various operations depending on from what github event it was called and given input. Default behavior (when not modified by inputs):
 
+0. On `pull_request` and `push`, run only the environments the change is relevant to, see [which environments run](#which-environments-run-path-relevance)
 1. Install `latest` version of terraform
 2. Install `latest` version of TFLint
 3. Run `terraform init`
@@ -44,6 +45,69 @@ environments-yml: |
 See more examples under [example usage](#example-usage) further down.
 
 There are several optional fields for each entry in `environments-yml`, see description of each in the [workflow declaration](.github/workflows/terraform-ci-cd-default.yml).
+
+#### Which environments run: path relevance
+
+On `pull_request` and `push`, an environment runs only when the change touches a file that is relevant to it. A pull request is judged on its whole diff, a push on everything it carried. On `schedule` and `workflow_dispatch` every environment runs. The full design is [Path-relevance.md](./Path-relevance.md).
+
+Two optional fields per environment decide what is relevant:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `paths` | `[auto]` | Files that make this environment relevant. A list containing `auto` is the standard set plus the other entries; a list without it replaces the standard set. `["**"]` means always relevant. |
+| `paths-ignore` | `["**/*.md"]` when `paths` uses `auto`, otherwise `[]` | Files that never make this environment relevant, applied after `paths`. `[]` means ignore nothing. |
+
+`auto` is the environment's `project-dir` (`envs/<environment>/**` by default), `main/**`, `modules/**`, every directory of its `terraform-init-additional-dirs-yml`, and `.tflint.hcl`. Patterns follow a small glob grammar: `*` within one directory level, `**` any number of levels, `?` one character, and a pattern without `/` matches the file name anywhere. There is no negation, no `[…]` and no `{…}`. An environment that reads files from outside the standard set, such as a `-var-file` passed through `TF_CLI_ARGS_*`, a local module outside `main/` and `modules/`, or Markdown through `file()`, must list them in `paths`.
+
+```yaml
+environments-yml: |
+  - environment: prod                      # auto
+  - environment: staging
+    paths: [auto, "scripts/**"]            # the standard set plus one directory
+    paths-ignore: ["**/*.md", "**/*.txt"]  # replaces the implied ignore
+  - environment: sandbox
+    paths: ["**"]                          # every change
+```
+
+Every uncertainty runs every environment: a change under `.github/workflows/`, a force push, a pull request whose head moved since the run started, more files than the API lists, or an API that cannot answer. The run page says which applied, in a notice such as `relevance diff (diff): 1 of 3 environments affected`, and in the run summary.
+
+**Remove `paths` and `paths-ignore` from the `on:` block of your calling workflow.** A workflow skipped by `on.paths` reports no check at all, so a required `Terraform conclusion` check stays pending and blocks the pull request. Relevance lives inside the workflow instead, and a pull request that touches nothing relevant runs one short job and reports a green check. Before:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+    paths: ["envs/staging/**", "main/**", "modules/**"]
+```
+
+After:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+```
+
+To keep every environment running on every change, for instance while you review your `paths`, set the input `path-relevance-enabled: false`. It applies to all environments; to run one environment on every change, give it `paths: ["**"]`.
+
+What a pull request shows for an environment the change does not touch: an ungrouped environment's summary comment says "➖ Not affected by this pull request" with its path rules, and its old plan comments are removed; in a group's table the environment keeps its column, filled with `—`, and a line under the table names it as not affected. A pull request that touches no environment is eligible for auto-merge, under the same enabled and actor checks as any other.
+
+Examples, for `prod` ungrouped and `staging` and `sandbox` in the group `platform`:
+
+| Change | Runs | Conclusion |
+|---|---|---|
+| `README.md`, `docs/runbook.md` | nothing | green, nothing to verify |
+| `envs/staging/main.tf` | `staging` | green if `staging` passes |
+| `modules/net/main.tf` | all three | as always |
+| `envs/prod/README.md` | nothing (the implied ignore) | green |
+| `.github/workflows/terraform.yml` | all three (the workflow changed) | as always |
+| A push to `main` merging the `staging` change | `staging` | green if the apply passes |
+
+Three things to know:
+
+- An apply that failed on one push is not retried by a later push that does not touch that environment. Run the workflow by `workflow_dispatch` to reconcile it; a dispatch always runs every environment.
+- A pull request with a merge conflict gets no run at all, so its check stays "Expected" until the conflict is resolved. That is GitHub's behaviour, not relevance.
+- The repository's Environments view shows the last deployment of each environment, which may be from an older change than the latest run when later changes did not touch it.
 
 #### Variables and secrets
 
