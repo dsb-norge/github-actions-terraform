@@ -85,13 +85,22 @@ runs:
       env:
         input_repo: ${{ inputs.repo }}
         input_issue_number: ${{ inputs.issue-number }}
-        # YAML text, so through env: (which keeps its newlines) and never pasted into the script,
-        # where a line holding a heredoc's delimiter would end the capture and run the rest.
-        input_heads_yml: ${{ inputs.heads-yml }}
-        input_gc_yml: ${{ inputs.gc-yml }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Upsert the head comments, then garbage collect stale tag comments
+        #
+        # heads-yml and gc-yml are YAML text, so the action turns them into JSON first: toJSON of a
+        # string is one line, so no line of a capture can be its delimiter. Captured before
+        # allexport and never exported, so the head bodies they carry stay out of envp.
+        # step_reconcile.sh decodes them.
+        input_heads_yml_json=$(cat <<'PR_COMMENTS_RECONCILE_HEADS_YML_JSON'
+        ${{ toJSON(inputs.heads-yml) }}
+        PR_COMMENTS_RECONCILE_HEADS_YML_JSON
+        )
+        input_gc_yml_json=$(cat <<'PR_COMMENTS_RECONCILE_GC_YML_JSON'
+        ${{ toJSON(inputs.gc-yml) }}
+        PR_COMMENTS_RECONCILE_GC_YML_JSON
+        )
         set -o allexport
         source "${{ github.action_path }}/step_reconcile.sh"
         exit_code=$?

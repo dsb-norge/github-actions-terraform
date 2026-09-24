@@ -25,7 +25,7 @@
 #                  is immutable. Fails closed.
 #
 # Required environment variables:
-#   input_cache_paths  - newline-separated cache paths from the resolve step.
+#   input_cache_paths_json - toJSON of the newline-separated cache paths from the resolve step.
 #   input_snapshot_dir - where the snapshot step put the before-images.
 #
 # Optional environment variables:
@@ -83,6 +83,9 @@ function _first_mutable {
 }
 
 function main {
+  # cache-paths arrives as JSON (the shim captures toJSON(inputs.cache-paths)); decoded here,
+  # trailing newlines stripped by the command substitution as the old raw capture did.
+  input_cache_paths="$(jq -r '. // ""' <<<"${input_cache_paths_json:-\"\"}")"
   local path manifest mutable safe='true' checked=0
 
   if [ -z "${input_cache_paths}" ]; then

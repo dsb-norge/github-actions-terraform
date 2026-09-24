@@ -97,7 +97,11 @@ run_step() {
   # Match production: action.yml shim sources step under 'bash -eo pipefail'.
   # Without -eo pipefail the harness silently tolerates bugs (failed
   # subcommand, broken pipeline) that would crash the step in CI.
+  # Mirror the shim: each YAML input arrives as toJSON of the caller's text, shell-local.
   (
+    input_heads_yml_json="$(printf '%s' "${input_heads_yml-}" | jq -Rs .)"
+    input_gc_yml_json="$(printf '%s' "${input_gc_yml-}" | jq -Rs .)"
+    unset input_heads_yml input_gc_yml
     set -eo pipefail
     set -o allexport
     source "${_this_script_dir}/step_reconcile.sh"

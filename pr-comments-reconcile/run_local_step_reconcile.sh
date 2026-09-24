@@ -79,6 +79,10 @@ echo "Running step_reconcile.sh..."
 echo "============================================================"
 
 (
+  # As the shim hands them over: toJSON of each YAML input, shell-local.
+  input_heads_yml_json="$(printf '%s' "${input_heads_yml}" | jq -Rs .)"
+  input_gc_yml_json="$(printf '%s' "${input_gc_yml}" | jq -Rs .)"
+  unset input_heads_yml input_gc_yml
   set -o allexport
   source "${_this_script_dir}/step_reconcile.sh"
 )

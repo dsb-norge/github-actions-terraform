@@ -76,7 +76,16 @@ run_step() {
   # in. A command whose non-zero status is normal — a find that hits an
   # unreadable path, a grep that matches nothing — ends the step there, so a
   # harness without errexit passes code that fails on every real run.
-  (bash -e -o pipefail "${_this_script_dir}/${script}") >"${STEP_LOG}" 2>&1
+  # cache-paths reaches the step as the shim hands it over, toJSON of the list; tests set the
+  # raw list in input_cache_paths.
+  (
+    if [ -n "${input_cache_paths+set}" ]; then
+      input_cache_paths_json="$(printf '%s' "${input_cache_paths}" | jq -Rs .)"
+      export input_cache_paths_json
+      unset input_cache_paths
+    fi
+    bash -e -o pipefail "${_this_script_dir}/${script}"
+  ) >"${STEP_LOG}" 2>&1
   LAST_EXIT=$?
 }
 

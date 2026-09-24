@@ -62,10 +62,12 @@ function validate_inputs {
 function parse_yaml_inputs {
   start-group "Parse heads-yml / gc-yml"
 
-  # Treat empty / unset as an empty list. yq blows up on an empty string,
-  # so handle that case explicitly.
-  local heads_raw="${input_heads_yml:-}"
-  local gc_raw="${input_gc_yml:-}"
+  # The YAML arrives as JSON strings (the shim captures toJSON of each input); decoded here,
+  # shell-local. Treat empty / unset as an empty list. yq blows up on an empty string, so handle
+  # that case explicitly.
+  local heads_raw gc_raw
+  heads_raw="$(jq -r '. // ""' <<<"${input_heads_yml_json:-\"\"}")"
+  gc_raw="$(jq -r '. // ""' <<<"${input_gc_yml_json:-\"\"}")"
 
   if [ -z "${heads_raw}" ] || [ "${heads_raw}" = "[]" ]; then
     HEADS_JSON='[]'

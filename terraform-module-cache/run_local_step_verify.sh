@@ -34,7 +34,7 @@ cat >"${MODULES_DIR}/modules.json" <<'JSON'
 ]}
 JSON
 
-export input_cache_paths="envs/sandbox/.terraform/modules"
+export input_cache_paths_json="$(printf '%s' "envs/sandbox/.terraform/modules" | jq -Rs .)"
 export input_cache_hit="true"
 export input_snapshot_dir="${SNAPSHOT_DIR}"
 

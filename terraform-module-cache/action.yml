@@ -111,9 +111,15 @@ runs:
       shell: bash
       env:
         input_cache_hit: ${{ inputs.cache-hit }}
-        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Copy the restored module manifests aside as a before-image
+        #
+        # cache-paths is a newline list, turned into JSON (one line, so no line of the capture can
+        # be its delimiter) and captured before allexport, never exported; step_snapshot.sh decodes it.
+        input_cache_paths_json=$(cat <<'TERRAFORM_MODULE_CACHE_SNAPSHOT_CACHE_PATHS_JSON'
+        ${{ toJSON(inputs.cache-paths) }}
+        TERRAFORM_MODULE_CACHE_SNAPSHOT_CACHE_PATHS_JSON
+        )
         set -o allexport
         source "${{ github.action_path }}/step_snapshot.sh"
 
@@ -123,18 +129,29 @@ runs:
       env:
         input_cache_hit: ${{ inputs.cache-hit }}
         input_snapshot_dir: ${{ inputs.snapshot-dir }}
-        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Check the module cache digest for completeness and gate the save
+        #
+        # cache-paths is a newline list, turned into JSON (one line, so no line of the capture can
+        # be its delimiter) and captured before allexport, never exported; step_verify.sh decodes it.
+        input_cache_paths_json=$(cat <<'TERRAFORM_MODULE_CACHE_VERIFY_CACHE_PATHS_JSON'
+        ${{ toJSON(inputs.cache-paths) }}
+        TERRAFORM_MODULE_CACHE_VERIFY_CACHE_PATHS_JSON
+        )
         set -o allexport
         source "${{ github.action_path }}/step_verify.sh"
 
     - id: prune
       if: inputs.phase == 'prune'
       shell: bash
-      env:
-        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Drop the git metadata terraform's module clones left behind
+        #
+        # cache-paths is a newline list, turned into JSON (one line, so no line of the capture can
+        # be its delimiter) and captured before allexport, never exported; step_prune.sh decodes it.
+        input_cache_paths_json=$(cat <<'TERRAFORM_MODULE_CACHE_PRUNE_CACHE_PATHS_JSON'
+        ${{ toJSON(inputs.cache-paths) }}
+        TERRAFORM_MODULE_CACHE_PRUNE_CACHE_PATHS_JSON
+        )
         set -o allexport
         source "${{ github.action_path }}/step_prune.sh"
