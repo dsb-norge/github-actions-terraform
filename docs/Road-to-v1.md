@@ -107,7 +107,7 @@ early.
 | 2 | Path-relevance.md §15: relevance rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | The conclusion rewrite is what the other stages' `needs` entries depend on, and it fixes the blocked pull request. |
 | 3 | Terraform-tests.md §13: the test stage, lanes, environments, provider sets, summary | Depends on the conclusion table and the engine. |
 | 4 | Dispatch-and-triggers.md §11: trigger events, dispatch, the `goals-granted` gate switch | Depends on the engine; the smallest of the four. |
-| 5 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`envs-json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
+| 5 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`relevance.json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
 | 6 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8). |
 
 ## 7. Release mechanics
