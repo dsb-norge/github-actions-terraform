@@ -32,5 +32,12 @@
     "envs/env-d",
     "envs/env-e",
     "envs/env-f"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "the flag used to be false for anything but true and 'true'; anything but true or false is now an error",
+    "errors": [
+      "The environment 'env-d' sets 'allow-failing-terraform-operations' to null; it must be true or false!"
+    ]
+  }
 }

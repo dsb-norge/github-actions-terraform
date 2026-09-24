@@ -1,0 +1,102 @@
+{
+  "description": "per-environment values of workflow inputs take the inputs' types: booleans the gates' strings, strings kept",
+  "inputs_json": {
+    "environments-yml": "- environment: \"env-a\"\n  format-check-in-root-dir: false\n  terraform-version: \"1.5\"\n  pr-auto-merge-enabled: true\n  add-pr-comment: \"false\"\n  verify-lock-file: true\n",
+    "goals-yml": "[all]",
+    "terraform-init-additional-dirs-yml": "",
+    "extra-envs-yml": "{}",
+    "extra-envs-from-secrets-yml": "{}",
+    "extra-envs-per-goal-yml": "{}",
+    "extra-envs-from-secrets-per-goal-yml": "{}",
+    "terraform-version": "latest",
+    "tflint-version": "latest",
+    "format-check-in-root-dir": false,
+    "add-pr-comment": true,
+    "verify-lock-file": true,
+    "cache-terraform-modules": true,
+    "apply-extract-include-outputs": false,
+    "pr-comment-group": "",
+    "pr-auto-merge-enabled": false,
+    "pr-auto-merge-from-actors-yml": "[]",
+    "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
+    "pr-auto-merge-app-id": "",
+    "pr-auto-merge-app-private-key-secret": "",
+    "runs-on": "ubuntu-latest"
+  },
+  "ref_name": "main",
+  "default_branch": "main",
+  "directories": [
+    "envs/env-a"
+  ],
+  "engine_expected": {
+    "exit_code": 0,
+    "deviation": "per-environment values of workflow inputs take the inputs' types",
+    "matrix": {
+      "environment": [
+        "env-a"
+      ],
+      "include": [
+        {
+          "environment": "env-a",
+          "vars": {
+            "add-pr-comment": "false",
+            "environment": "env-a",
+            "format-check-in-root-dir": "false",
+            "pr-auto-merge-enabled": "true",
+            "terraform-version": "1.5",
+            "verify-lock-file": "true",
+            "project-dir": "./envs/env-a",
+            "apply-extract-include-outputs": "false",
+            "cache-terraform-modules": "true",
+            "pr-auto-merge-app-id": "",
+            "pr-auto-merge-app-private-key-secret": "",
+            "pr-comment-group": "",
+            "runs-on": "ubuntu-latest",
+            "tflint-version": "latest",
+            "github-environment": "env-a",
+            "allow-failing-terraform-operations": false,
+            "url": "",
+            "goals": [
+              "all"
+            ],
+            "terraform-init-additional-dirs": [],
+            "extra-envs-from-secrets-per-goal": {
+              "init": {},
+              "format": {},
+              "validate": {},
+              "lint": {},
+              "plan": {},
+              "apply": {},
+              "destroy-plan": {},
+              "destroy": {}
+            },
+            "extra-envs-from-secrets": {},
+            "extra-envs-per-goal": {
+              "init": {},
+              "format": {},
+              "validate": {},
+              "lint": {},
+              "plan": {},
+              "apply": {},
+              "destroy-plan": {},
+              "destroy": {}
+            },
+            "extra-envs": {},
+            "pr-auto-merge-from-actors": [],
+            "pr-auto-merge-limits": {
+              "plan-max-count-add": 0,
+              "plan-max-count-change": 0,
+              "plan-max-count-destroy": 0,
+              "plan-max-count-import": -1,
+              "plan-max-count-move": -1,
+              "plan-max-count-remove": 0
+            },
+            "caller-repo-default-branch": "main",
+            "caller-repo-calling-branch": "main",
+            "caller-repo-is-on-default-branch": "true"
+          }
+        }
+      ]
+    }
+  }
+}

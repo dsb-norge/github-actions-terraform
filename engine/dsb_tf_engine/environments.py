@@ -1,10 +1,13 @@
 """Environment rows: the port of the bash matrix builder, rule 7 of docs/Decision-engine.md §6.
 
-Every row carries today's variables with today's types (D9): a forwarded workflow input is a
-string, a per-environment YAML value keeps its YAML type, and allow-failing-terraform-operations
-is the one JSON boolean. The comments name the bash behaviour each step reproduces where it is
-not obvious, because the goldens under tests/port pin all of it.
+Every row carries the workflow's variables in the types its gates compare (D9): a workflow input,
+forwarded or set per environment, is a string ("true"/"false" for a boolean input), a
+per-environment key that is not an input keeps its YAML type, and
+allow-failing-terraform-operations is the one JSON boolean. The comments name the bash behaviour
+each step reproduces where it is not obvious, because the goldens under tests/port pin all of it.
 """
+
+import json
 
 from . import values
 from .model import DocumentError
@@ -45,6 +48,14 @@ MERGE_FIELDS = (
     "pr-auto-merge-limits-yml",
 )
 
+# The workflow's boolean inputs. Forwarded, they arrive as "true"/"false", the strings the
+# workflow's gates compare (`== 'true'`); a per-environment value is normalised to the same, since
+# a JSON boolean would compare false against 'true' and the setting would be silently dropped.
+BOOLEAN_INPUTS = (
+    "add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
+    "format-check-in-root-dir", "pr-auto-merge-enabled", "verify-lock-file",
+)
+
 # Maps from goal name to variables, which must hold every goal key.
 PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 
@@ -72,6 +83,32 @@ NOT_EMPTY_FIELDS = (
 
 def _unsuffixed(field):
     return field[: -len("-yml")]
+
+
+def _shown(value):
+    """A caller's value as a message shows it: a string quoted with its escapes, else JSON."""
+    return repr(value) if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _boolean(name, field, value):
+    """true or false, as a boolean or its string; anything else is an error, never a silent false."""
+    if value is True or value == "true":
+        return True
+    if value is False or value == "false":
+        return False
+    raise ConfigError([f"The environment '{name}' sets '{field}' to {_shown(value)}; it must be true or false!"])
+
+
+def _typed_overrides(document, name, environment):
+    """The environment's own values for workflow inputs, in the types the forwarded ones have."""
+    typed = {}
+    for field, value in environment.items():
+        if field in BOOLEAN_INPUTS:
+            typed[field] = "true" if _boolean(name, field, value) else "false"
+        elif field in document["workflow_inputs"] and field not in YML_INPUTS and not isinstance(value, str):
+            raise ConfigError([f"The environment '{name}' sets '{field}' to {_shown(value)}, which is not a string; "
+                               "quote it!"])
+    return typed
 
 
 def parsed_inputs(document):
@@ -105,6 +142,7 @@ def build_row(document, globals_, index, environment):
         raise ConfigError(["Missing property 'environment' in environments-yml specification!"])
     name = values.get_val(environment["environment"])
     row = dict(environment)
+    row.update(_typed_overrides(document, name, environment))
 
     row.setdefault("project-dir", f"./envs/{name}")
 
@@ -117,7 +155,7 @@ def build_row(document, globals_, index, environment):
 
     # The one field the workflow reads with fromJSON(), so it must be a JSON boolean.
     flag = "allow-failing-terraform-operations"
-    row[flag] = flag in row and values.get_val(row[flag]) == "true"
+    row[flag] = flag in row and _boolean(name, flag, row[flag])
 
     row.setdefault("url", "")
 
