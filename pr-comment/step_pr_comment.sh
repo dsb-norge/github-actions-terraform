@@ -303,9 +303,13 @@ function do_delete {
 # ============================================================================
 
 function main {
-  # The inline body used to arrive through a heredoc capture, which stripped trailing newlines;
-  # through env: they arrive intact. Strip them, so a body renders byte for byte as before.
-  while [[ "${input_body:-}" == *$'\n' ]]; do input_body="${input_body%$'\n'}"; done
+  # The inline body arrives as JSON (the shim captures toJSON(inputs.body)). Decoded through
+  # command substitution, which strips trailing newlines as the old raw capture did, so a body
+  # renders byte for byte as before. Unexported at once: allexport would otherwise put up to
+  # 65536 multibyte characters into envp and fail the next fork (Action-implementation-guide.md,
+  # ARG_MAX).
+  input_body="$(jq -r '. // ""' <<<"${input_body_json:-\"\"}")"
+  export -n input_body
 
   log-info "Starting pr-comment..."
   log-info "Repo:         ${input_repo:-<unset>}"

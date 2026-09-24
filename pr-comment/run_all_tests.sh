@@ -122,7 +122,11 @@ run_step() {
   # Match production: action.yml shim sources step under 'bash -eo pipefail'.
   # Without -eo pipefail the harness silently tolerates bugs (failed
   # subcommand, broken pipeline) that would crash the step in CI.
+  # Mirror the shim: the body arrives as toJSON(inputs.body), shell-local and never exported.
+  # Tests set input_body as the caller's raw text; unset means the input's default, "".
   (
+    input_body_json="$(printf '%s' "${input_body-}" | jq -Rs .)"
+    unset input_body
     set -eo pipefail
     set -o allexport
     source "${_this_script_dir}/step_pr_comment.sh"
@@ -412,14 +416,35 @@ test_inline_body_is_verbatim_without_trailing_newlines() {
   return 0
 }
 
-# H0b: the action takes the inline body through env:, never pasted into its script.
-test_action_passes_body_through_env() {
+# H0b: the action captures the inline body only as toJSON, before allexport, never exported,
+# and keeps it out of env:.
+test_action_captures_body_as_json_shell_local() {
   local run_block
   run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
-  [[ "$(yq '.runs.steps[0].env.input_body' "${_this_script_dir}/action.yml")" == '${{ inputs.body }}' ]] \
-    || { echo "input_body is not taken from env:"; return 1; }
-  ! grep -q 'inputs\.' <<<"${run_block}" || { echo "the run block interpolates an input"; return 1; }
-  ! grep -q "<<'" <<<"${run_block}" || { echo "the run block still holds a heredoc"; return 1; }
+  [[ "$(yq '.runs.steps[0].env | has("input_body")' "${_this_script_dir}/action.yml")" == "false" ]] \
+    || { echo "the body is in env:"; return 1; }
+  grep -qx "input_body_json=\$(cat <<'PR_COMMENT_BODY_JSON'" <<<"${run_block}" || { echo "no quoted JSON capture"; return 1; }
+  grep -qx '${{ toJSON(inputs.body) }}' <<<"${run_block}" || { echo "the capture is not toJSON(inputs.body)"; return 1; }
+  [[ "$(grep -c '\${{' <<<"${run_block}")" == "2" ]] || { echo "the run block interpolates something else"; return 1; }
+  ! grep -qE '^[[:space:]]*export ' <<<"${run_block}" || { echo "the run block exports"; return 1; }
+  [[ "$(grep -n 'PR_COMMENT_BODY_JSON$' <<<"${run_block}" | tail -n1 | cut -d: -f1)" -lt \
+    "$(grep -n 'set -o allexport' <<<"${run_block}" | cut -d: -f1)" ]] || { echo "captured after allexport"; return 1; }
+  return 0
+}
+
+# H0c: a body past the 128 KiB one environment value may hold (50000 three-byte characters,
+# under the API's 65536-character cap) is posted intact: it never reaches envp, where the next
+# fork would fail with "Argument list too long".
+test_inline_body_past_the_envp_limit_posts_intact() {
+  # Shell-local, as the shim keeps it: exported, this fixture fails the suite's own forks.
+  input_body="$(printf '✅%.0s' $(seq 1 50000))"
+  export -n input_body
+  printf '%s' "${input_body}" > "${TEST_DIR}/body.bytes"
+  [[ "$(wc -c < "${TEST_DIR}/body.bytes")" -gt 131072 ]] || { echo "fixture too small"; return 1; }
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; tail -n 5 "${TEST_DIR}/step.log"; return 1; }
+  { printf '%s\n\n' "${input_marker}"; printf '%s' "${input_body}"; } > "${TEST_DIR}/expected.md"
+  cmp -s "${TEST_DIR}/expected.md" "${GH_FAKE_BODY_CAPTURE}" || { echo "posted body differs"; return 1; }
   return 0
 }
 
@@ -547,7 +572,8 @@ JSON
 # ============================================================================
 
 run_test "upsert: inline body verbatim, trailing newlines stripped"    test_inline_body_is_verbatim_without_trailing_newlines
-run_test "action: inline body through env:, not the script"             test_action_passes_body_through_env
+run_test "action: inline body captured as toJSON, shell-local"          test_action_captures_body_as_json_shell_local
+run_test "upsert: a body past the envp limit posts intact"               test_inline_body_past_the_envp_limit_posts_intact
 run_test "upsert: no match → POST fresh"                                test_upsert_no_match_posts_fresh
 run_test "upsert: match, different hash → PATCH"                        test_upsert_match_different_hash_patches
 run_test "upsert: match (any body shape) → PATCH"                       test_upsert_match_arbitrary_body_patches
