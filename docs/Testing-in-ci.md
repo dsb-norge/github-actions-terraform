@@ -23,14 +23,22 @@ Out of scope: the test suites themselves (their layout is described in [Action-i
 
 ## 2. Workflow shape
 
-Four jobs, in this order:
+Five jobs:
 
 ```mermaid
 flowchart LR
     discover --> test["test - matrix fan-out"]
+    discover --> python["engine-python - the engine on 3.12 and 3.x"]
     test --> summary["summary - PR comment"]
-    summary --> conclusion["tests-conclusion - required check"]
+    test --> conclusion["tests-conclusion - required check"]
+    python --> conclusion
 ```
+
+`engine-python` runs the decision engine's suite, both gates included, on the oldest Python it
+supports (3.12, [Decision-engine.md](Decision-engine.md) D1) and on the newest release, installed
+by `actions/setup-python` with the suite's pinned `coverage`. The discovered `engine` suite in the
+`test` matrix runs on the image's `python3`, which moves with `ubuntu-latest`; this job keeps the
+floor tested when it does. It is not part of the PR comment; its result gates `tests-conclusion`.
 
 ### 2.1 `discover`
 
@@ -76,13 +84,13 @@ Steps:
 
 ### 2.4 `tests-conclusion`
 
-Single, no-matrix terminal job. `needs: [discover, test]`, with the same fork guard as §7:
+Single, no-matrix terminal job. `needs: [discover, test, engine-python]`, with the same fork guard as §7:
 
 ```yaml
 if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
 ```
 
-Fails if `needs.discover.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection will be configured to require — independent of which suites exist at any given time.
+Fails if `needs.discover.result != success`, if `needs.engine-python.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection will be configured to require — independent of which suites exist at any given time.
 
 ## 3. Discovery rules and exclusions
 
@@ -246,7 +254,7 @@ Path filters: intentionally omitted. Suites are cheap (seconds each), and "did t
 | `.github/scripts/rewrite-internal-refs.sh` | Not part of this workflow — rewrites internal `uses:` refs for [`pr-preview.yml`](../.github/workflows/pr-preview.yml); spec [Preview-refs.md](Preview-refs.md). |
 | `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs as the first step of `pr-preview.yml`, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
-| `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1); it needs `pipx` for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). |
+| `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). |
 
 The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
 

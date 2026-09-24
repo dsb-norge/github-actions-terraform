@@ -14,7 +14,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | Step | What | Pull request | State | In `v1` |
 |---|---|---|---|---|
 | 0 | Concurrency `queue: max`; apply-reporting invariant, fixtures, contract tests | [#56](https://github.com/dsb-norge/github-actions-terraform/pull/56), [#57](https://github.com/dsb-norge/github-actions-terraform/pull/57) | merged, released in `v0.33` | inherited |
-| 1 | The decision engine: the port behind goldens, the shim, CI discovery; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | draft | no |
+| 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | draft | no |
 | 2 | Path relevance: rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | — | outstanding | no |
 | 3 | Terraform tests: the test stage, lanes, environments, provider sets, summary | — | outstanding | no |
 | 4 | Dispatch and trigger events; the `goals-granted` gate switch | — | outstanding | no |
@@ -81,6 +81,13 @@ table only says where.
   - `push` to the default branch (one validate-only environment): green,
     `caller-repo-is-on-default-branch` `"true"`.
   - On all three events the default branch came from the payload; no API call was made.
+- The bash shim replaced by the Python create-matrix adapter, after review asked whether the
+  heredoc capture was safe and whether driving Python from bash was the way: the adapter sits
+  under both gates (837 mutants at first; tests reading the module's own constants let 33
+  survive until they compared against literals; all killed, none equivalent), rebuilds all 73
+  input documents byte for byte, and runs isolated (`python3 -I`) after a caller's `json.py` was
+  shown to shadow the standard library. The floor is Python 3.12, by the maintainer's decision,
+  tested in CI on 3.12 and the newest 3.x. The test bed re-run through the adapter: see below.
 
 ## 5. Findings to carry
 
@@ -92,4 +99,7 @@ Recorded while building, not fixed in the step that found them, each waiting for
   false` per environment does not do what it says (Decision-engine.md P11). Retyping is its own
   change with a release note.
 - `ubuntu-latest` moving to ubuntu-26.04 brings Python 3.14 to `create-matrix`; the engine is
-  standard library only and the suite runs on whatever the image carries.
+  standard library only, and CI runs its suite on the newest 3.x as well as the 3.12 floor.
+- The relevance and tests specs describe their fact-gathering (`resolve-changed-files`,
+  `create-tftest-matrix`) as composite shims; under Decision-engine.md D13 they become adapter-side
+  modules unless something outweighs it. Decide when each step starts.

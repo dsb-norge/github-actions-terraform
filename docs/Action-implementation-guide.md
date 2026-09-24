@@ -2,6 +2,8 @@
 
 Guidelines for implementing new composite GitHub Actions and converting existing ones that have inline bash in `action.yml`.
 
+Follow this guide if there are no overweighing reasons not to. When an action departs from it, its `action.yml` and its spec say why. The one departure today is `create-tf-vars-matrix`: its logic is the decision engine's create-matrix adapter, in Python, so that it sits under the engine's 100 percent coverage and mutation gates ([Decision-engine.md](Decision-engine.md) D13); its `action.yml` is a two-command run block and its `run_all_tests.sh` runs that block end to end.
+
 ## Goals
 
 - All non-trivial bash logic lives in **dedicated `.sh` files**, not in YAML strings
@@ -15,7 +17,7 @@ Guidelines for implementing new composite GitHub Actions and converting existing
 
 Each action lives in its own directory under the repository root. The file layout depends on how many steps the action has.
 
-An action reads nothing outside its own directory, with one exception: the decision engine in `engine/` ([Decision-engine.md](Decision-engine.md)), which `create-tf-vars-matrix` runs as `PYTHONPATH="${GITHUB_ACTION_PATH}/../engine" python3 -B -m dsb_tf_engine …`. That is safe because GitHub downloads the whole repository at the ref an action is referenced by, and a preview ref publishes the whole tree at one commit, so an action and the engine are never at different versions. `-B` keeps `__pycache__` out of the downloaded tree. Nothing else reaches across directories; helpers are copied, not shared.
+An action reads nothing outside its own directory, with one exception: the decision engine in `engine/` ([Decision-engine.md](Decision-engine.md)), which `create-tf-vars-matrix` runs as `python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix …`. That is safe because GitHub downloads the whole repository at the ref an action is referenced by, and a preview ref publishes the whole tree at one commit, so an action and the engine are never at different versions. `-I` keeps the caller's checkout (the working directory) and the runner's `PYTHON*` variables off the import path, so a caller's own `json.py` cannot replace the standard library; `-B` keeps `__pycache__` out of the downloaded tree. Any Python an action runs is started this way. Nothing else reaches across directories; helpers are copied, not shared.
 
 ### Single-step action
 

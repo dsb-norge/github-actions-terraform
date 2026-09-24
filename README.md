@@ -12,7 +12,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── annotate-terraform-outcome    --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
 ├── create-run-summary            --> run-level table of every environment on the run page
 ├── create-test-report            --> renders the terraform test report body for the module-ci PR comment (body-file)
-├── create-tf-vars-matrix         --> creates common DSB terraform CI/CD variables (a shim around engine/)
+├── create-tf-vars-matrix         --> creates common DSB terraform CI/CD variables (runs the engine's create-matrix adapter)
 ├── create-tftest-matrix          --> creates matrix for running terraform module test
 ├── create-validation-summary     --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
 ├── export-env-vars               --> export environment variables for use in subsequent action steps
@@ -29,7 +29,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 └── terraform-test                --> run terraform test in directory
 ```
 
-The decision engine the matrix is built by lives in [engine](engine), a Python 3.10+ standard-library
+The decision engine the matrix is built by lives in [engine](engine), a Python 3.12+ standard-library
 package with its own test suite: [docs/Decision-engine.md](docs/Decision-engine.md).
 
 ## Workflows
