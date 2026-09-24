@@ -63,18 +63,18 @@ For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` �
 
 Every `run:` block in an `action.yml` **opens with a one-line `#` comment describing what the step does**. GitHub ignores a composite step's `name:` and titles the log group `Run <first line of the run block>` — without the comment every shim renders as an indistinguishable `Run set -o allexport`. Rationale and wording rules: `docs/Action-implementation-guide.md` → "Every `run:` block opens with a description comment".
 
-For JSON inputs in `action.yml` shims, use heredocs:
+**How a value reaches a step script** (`docs/Action-implementation-guide.md` → "Step shim pattern — JSON inputs"). GitHub pastes an expression's value into the `run:` script before bash parses it, so a heredoc capture of free text ends at a line equal to its delimiter and runs the rest as shell. Free text and small values go through `env:`. Only `toJSON(...)` output that is large or holds secrets is captured through a quoted heredoc, kept shell-local:
 ```yaml
 run: |
   # <What this step does>
-  input_json_data=$(cat <<'EOF'
+  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
   ${{ inputs.json-data }}
-  EOF
+  MY_ACTION_JSON_DATA_JSON
   )
-  export input_json_data
   set -o allexport
   source "${{ github.action_path }}/step_<name>.sh"
 ```
+The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository; every caller passes that input as `${{ toJSON(...) }}` or a JSON literal. The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces it.
 
 ### Watch for ARG_MAX in step scripts
 
@@ -85,7 +85,7 @@ Under `set -o allexport`, any shell variable holding large data (file contents, 
 - File tails — `tail -c 65000 "<path>"` directly into the capture, never via an intermediate var (`create-validation-summary/step_create_validation_summary.sh`).
 - `gh api` responses — write the response to `mktemp`, then `jq` reads it (`aggregate-validation-summaries/step_aggregate.sh`, both `_resolve_per_env_job_urls` and `list_pr_state`).
 - Large JSON merge — `jq --slurpfile` (not `--argjson`, which puts the JSON on argv) and dereference with `[0]` (`capture-matrix-job-meta/step_capture.sh`).
-- Large gh CLI inputs — heredoc the body into a tempfile, post via `gh api -F body=@<tempfile>` (`pr-comment/action.yml`).
+- Large gh CLI inputs — write the body to a tempfile and post via `gh api -F body=@<tempfile>` (`pr-comment/step_pr_comment.sh`); callers hand large bodies over as `body-file`, never inline.
 - Comment bodies — never a step output. `create-validation-summary` publishes every body as a **file path** (`head-summary-file`, `plan-extract-file`, …) and `pr-comment` takes `body-file`. A string output enters the steps context, from there the metadata artifact, and from there envp via `toJSON(steps)`. `capture-matrix-job-meta` additionally caps every captured output at 4 KiB so the next unexpectedly large one degrades the artifact instead of killing the job.
 
 Two related traps in step scripts, hit three times in one change: `$(…)` runs in a subshell, so a function that sets a global for its caller loses it, and the substitution strips trailing newlines. Redirect to a file instead when you need both. `docs/Action-implementation-guide.md` → "Command substitution traps".
