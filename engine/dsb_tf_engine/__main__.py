@@ -1,14 +1,21 @@
-"""Command line: python3 -B -m dsb_tf_engine decide --input <file> --output <file>.
+"""Command line of the engine.
 
-Exit codes: 0 decided, 2 the caller's configuration is invalid (messages on stderr and in the
-output document's `errors`), 1 anything else. Nothing is written to stdout.
+  decide --input <file> --output <file>   the pure decision: document in, document out; writes
+                                          nothing to stdout
+  create-matrix --inputs-file <file>      the create-tf-vars-matrix step: the adapter builds the
+                                          document from the workflow's inputs and the runner's
+                                          environment, decides and publishes the matrix
+
+Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for both: 0 success,
+2 the caller's configuration is invalid, 1 anything else.
 """
 
 import argparse
 import json
+import os
 import sys
 
-from . import decide, model
+from . import adapter, decide, model
 
 EXIT_OK, EXIT_CRASH, EXIT_INVALID = 0, 1, 2
 
@@ -32,12 +39,16 @@ def _parse(argv):
     decide_parser = commands.add_parser("decide", help="decide the run from an input document")
     decide_parser.add_argument("--input", required=True, help="path of the input document")
     decide_parser.add_argument("--output", required=True, help="path to write the output document to")
+    matrix_parser = commands.add_parser("create-matrix", help="the create-tf-vars-matrix step, on a runner")
+    matrix_parser.add_argument("--inputs-file", required=True, help="path of the file holding toJSON(inputs)")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     """Run the command line; argv defaults to sys.argv[1:], as argparse reads it."""
     args = _parse(argv)
+    if args.command == "create-matrix":
+        return adapter.run(args.inputs_file, os.environ, sys.stdout, adapter.Tools(), os.path.isdir)
     try:
         with open(args.input, encoding="utf-8") as handle:
             document = json.load(handle)

@@ -156,6 +156,17 @@ def build_row(document, globals_, index, environment):
     return row
 
 
+def project_dir_path(environment):
+    """The path the directory check reads for an environment, known before its row is built.
+
+    The adapter reports existence for exactly these paths, so the rule lives here once:
+    the rendered `project-dir` when the environment names one, else `./envs/<environment>`.
+    """
+    if "project-dir" in environment:
+        return values.render(environment["project-dir"])
+    return f"./envs/{values.get_val(environment['environment'])}"
+
+
 def validate_rows(document, rows):
     """The checks the workflow depends on, every failure of a group reported before stopping."""
     if not rows:
