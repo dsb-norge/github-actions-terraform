@@ -48,7 +48,7 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Terraform tests | not run by this workflow | every committed `*.tftest.hcl` runs on pull requests and pushes, one job per file, and a failing one blocks the merge | nothing for a repository without test files; `terraform-test-enabled: false` to opt out; test roots need Terraform 1.12 or later |
 | Schedule | a `schedule` on the calling workflow applied every environment | `schedule` is opt-in per environment through `trigger-events` | the two repositories that schedule the workflow add `trigger-events: [pull_request, push, workflow_dispatch, schedule]` to the scheduled environment, then fold the nightly file into the main workflow |
 | Dispatch inputs | ignored | `environment`, `goal` and `reason` are read from the calling workflow's `workflow_dispatch.inputs` | add the standard block; a caller whose dispatch block already uses `environment` or `goal` for something else renames its own |
-| Runner for `create-matrix` | bash | Python 3.10 or later | nothing on GitHub-hosted runners (no caller names a workflow-level `runs-on` today); a self-hosted pool named there must carry it |
+| Runner for `create-matrix` | bash, jq, yq | Python 3.12 or later, and yq | nothing on GitHub-hosted runners (no caller names a workflow-level `runs-on` today); a self-hosted pool named there must carry both |
 | Validation | a duplicated environment name passed | it is an error | fix the duplicate |
 | Default branch lookup | a failed lookup gave the string `null` and the run went on | read from the event payload; a failed API fallback stops the run | nothing |
 | Configuration errors | log lines, one of them lost in a command substitution | `::error` annotations, the step exits 2 | nothing |

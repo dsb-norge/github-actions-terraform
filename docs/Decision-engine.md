@@ -8,9 +8,9 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **the port (§9) is built** and is what `create-tf-vars-matrix` runs: rules 1 and 7 of §6,
-the input and output documents of §4 and §5 in the shape the port needs, the tests of §8 and the
-coverage gate. Rules 2 to 6, the test matrix, the comment manifest and the `validate` and
+Status: **the port (§9) is built** and is what `create-tf-vars-matrix` runs, through the
+create-matrix adapter (§3): rules 1 and 7 of §6, the input and output documents of §4 and §5 in
+the shape the port needs, the tests of §8 and both gates. Rules 2 to 6, the test matrix, the comment manifest and the `validate` and
 `render-summary` commands are specified here and are built with the features that need them:
 [Terraform-tests.md](Terraform-tests.md), [Path-relevance.md](Path-relevance.md),
 [Dispatch-and-triggers.md](Dispatch-and-triggers.md) and
@@ -37,8 +37,9 @@ fails the suite below 100 percent of lines and branches.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | The core is **Python 3.10 or later, standard library only**. No third-party runtime dependency. | Present on every GitHub-hosted image and on practically every Linux runner; no build step; nothing to install at run time. The alternatives were weighed: a TypeScript Node action needs no runtime at all but a committed bundle and Node deprecation churn; Go and Deno lose on distribution. |
-| D2 | **JSON in, JSON out.** YAML parsing stays in the composite shims (`yq`), API calls stay in adapters; the core never reads the network, the clock or the environment. | Purity is what makes every case a fixture. PyYAML is not guaranteed on self-hosted runners. |
+| D1 | The engine is **Python 3.12 or later, standard library only**. No third-party runtime dependency. | Present on every GitHub-hosted image (ubuntu-24.04 carries 3.12, ubuntu-26.04 3.14) and on practically every Linux runner; no build step; nothing to install at run time. The floor is the oldest Python the callers' runners carry, and CI runs the suite on it and on the newest release. The alternatives were weighed: a TypeScript Node action needs no runtime at all but a committed bundle and Node deprecation churn; Go and Deno lose on distribution. |
+| D2 | **JSON in, JSON out.** The core never reads YAML, the network, the filesystem, the clock or the environment; all of that is the adapter side's, which parses YAML with `yq` and calls APIs. | Purity is what makes every case a fixture. PyYAML is not guaranteed on self-hosted runners. |
+| D13 | **The glue is Python too.** What an action does around the core (reading inputs, running `yq` and `gh`, publishing outputs) lives in adapter-side modules of the package, not in bash step scripts. | The glue is where the last faults were found, and bash cannot be held to the core's gates; in Python the adapter sits under the same 100 percent coverage and mutation gates, and large values stay in memory instead of reaching envp. The repository's modern bash layout is followed where nothing outweighs it; here the gates do. |
 | D3 | **Port first.** The engine reproduces today's `create-tf-vars-matrix` output for every existing fixture and for the real input shapes of the calling repositories before any feature lands on it. | One reviewable migration with a hard safety net, instead of writing each feature's logic twice. |
 | D4 | **100 percent line and branch coverage**, enforced by the suite, from the first commit of the core. | The core is small and every branch is a production decision. A branch nobody tested is a branch nobody intended. |
 | D5 | **Invariants** are checked on every table case, every generated case and every random case. | Fixtures cover what someone thought of; invariants catch the rest. |
@@ -54,71 +55,93 @@ fails the suite below 100 percent of lines and branches.
 
 ```
 engine/
+├── run.py                    # the entry for actions: python3 -I -B engine/run.py <command> …
 ├── dsb_tf_engine/            # the package; stdlib only
-│   ├── __init__.py           # SCHEMA_VERSION
-│   ├── __main__.py           # python3 -m dsb_tf_engine decide --input <file> --output <file>
-│   ├── model.py              # the input document's shape, checked before anything is decided
-│   ├── decide.py             # the decide command: input document in, output document out
-│   ├── environments.py       # environment rows: rule 1 (the port's validation) and rule 7
-│   ├── values.py             # jq-compatible rendering, merge and per-goal normalisation
-│   └── record.py             # the decision record
+│   ├── __init__.py           # core: SCHEMA_VERSION
+│   ├── model.py              # core: the input document's shape, checked first
+│   ├── decide.py             # core: the decide command, input document in, output document out
+│   ├── environments.py       # core: environment rows, rule 1 (the port's validation) and rule 7
+│   ├── values.py             # core: jq-compatible rendering, merge and per-goal normalisation
+│   ├── record.py             # core: the decision record
+│   ├── __main__.py           # adapter side: the command line, decide and create-matrix
+│   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
+│   └── workflow.py           # adapter side: GitHub Actions I/O, groups, annotations, outputs
 ├── run_all_tests.sh          # the canonical suite entry (§8), at the depth discovery expects
 └── tests/
-    ├── run_tests.py          # coverage, the gate, the canonical summary lines, printed once
+    ├── run_tests.py          # coverage, the two gates, the canonical summary lines, printed once
     ├── unit_runner.py        # unittest discovery, run under coverage
-    ├── test_*.py             # unittest modules: port, generated and random cases, units
+    ├── mutation.py           # the mutation gate (D12); mutation_equivalents.json beside it
+    ├── test_*.py             # unittest modules: port, generated and random cases, units, adapter
     ├── port/cases/<name>/    # case.json, expected.json (the bash builder's output), input.json
     ├── support.py            # the port cases and a minimal valid document
     └── invariants.py         # the checks of §7, importable by every test
 ```
 
-The features add their modules beside these as their rules are built: `events.py` (event kind,
-branch facts, the fork and Dependabot rules), `globs.py` (the one glob matcher of
+**The core is pure**: its modules import nothing but `json` and each other, and nothing from the
+adapter side (`test_purity.py` checks the imports). **The adapter side** reads the environment,
+the filesystem and the network, runs programs and writes the log, so that the core does not have
+to; it sits under the same coverage and mutation gates.
+
+The features add their modules as their rules are built: on the core side `events.py` (event
+kind, branch facts, the fork and Dependabot rules), `globs.py` (the one glob matcher of
 Terraform-tests.md §4.4), `relevance.py` (Path-relevance.md §4-§5), `tests.py` (test roots,
 lanes, environments, provider sets) and `comments.py` (which heads and tags the seed job creates
 or purges); `environments.py` gains goals, trigger events, dispatch and stages, and `record.py`
-the rendering for the run summary.
+the rendering for the run summary. Their fact-gathering joins the adapter side (§3.1).
 
 Composite actions call it with the repository checked out at the action's ref, which is always the
 case for an action referenced as `dsb-norge/github-actions-terraform/<action>@<ref>`: GitHub
 downloads the whole repository at that ref, and a preview ref publishes the whole tree at one
-commit, so shim and engine are never at different versions.
+commit, so action and engine are never at different versions. `create-tf-vars-matrix` is one
+step:
 
 ```bash
-# Decide the environment and test matrices for this run
-PYTHONPATH="${{ github.action_path }}/../engine" \
-  python3 -B -m dsb_tf_engine decide --input "${input_file}" --output "${output_file}"
+# Resolve the terraform ci/cd variables of every environment into the job matrix
+inputs_file="$(mktemp)"
+cat >"${inputs_file}" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'
+${{ inputs.inputs-json }}
+CREATE_TF_VARS_MATRIX_INPUTS_JSON
+python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"
 ```
 
-`-B` keeps `__pycache__` out of the actions directory. The engine is the one thing in the tree that
-an action reaches outside its own directory; the implementation guide's self-containment rule gets
-a paragraph saying so.
+- **The inputs reach Python through a file**, never a variable or argv. GitHub pastes the
+  expression into the script before bash parses it. The heredoc is quoted, so bash expands
+  nothing in it, and `toJSON(inputs)` cannot contain the delimiter line, because JSON escapes a
+  string's newlines; the delimiter is still unique to this action, and the adapter refuses
+  anything that is not a JSON object (P22).
+- **`-I` (isolated mode)** keeps the runner's `PYTHON*` variables, the user's site-packages and
+  the working directory off the import path. The working directory is the caller's checkout:
+  without `-I`, a caller's own `json.py` would be imported in place of the standard library
+  (P21). `run.py` puts the engine's own directory on the path, checks the floor (D1) before
+  importing anything, and runs the command line. `-B` keeps `__pycache__` out of the downloaded
+  tree.
+- The engine is the one thing in the tree an action reaches outside its own directory; the
+  implementation guide says so.
 
-The shim's job is everything the core must not do: parse the `*-yml` inputs with `yq` into JSON,
-gather event facts from the `github` context, check that each `project-dir` exists, call adapters
-for the network (§3.1), write the input document to a temp file, run the engine, and turn the output
-document into `$GITHUB_OUTPUT` lines and artifacts. Large data, the changed-file list above all,
-travels as a file path inside the input document, never inline (P5 of the relevance spec). The
-shim never exports its input heredocs, and every value it handles goes through a file rather than
-a shell variable, because the step runs under `allexport`.
-
-The shim parses **every** `*-yml` workflow input and every `*-yml` key of every environment, and
-hands each over as a parse result `{"ok": <bool>, "value": <JSON>}`; the engine decides which of
-them it reads and reports a failed parse in its own words. It reads each value exactly as the bash
-builder did, because YAML parsing is sensitive to it: a workflow input through `jq -r` with null as
-the empty string, trailing newlines stripped and one added back (the builder's `echo`), an
-environment's field the same way but with none added back (the builder's `printf '%s'`), a non-string
-field as its JSON text. `project-dir` existence is reported for the directory each environment names
-or, when it names none, `./envs/<environment>`, spelled the way the engine renders it.
-
-The default branch comes from `github.event.repository.default_branch`, which the payload carries
-on every event this workflow runs on, `schedule` included; `gh api` through a temp file is the
-fallback, and a failed fallback stops the step with the API's answer instead of degrading to the
-string `null`.
+**The adapter's job** (`adapter.py`) is everything the core must not do. It probes `yq` on a known
+document, so a broken `yq` is reported as such and never as the caller's invalid YAML (P19). It
+reads the inputs file, parses **every** `*-yml` workflow input and every `*-yml` key of every
+environment with `yq`, and hands each over as a parse result `{"ok": <bool>, "value": <JSON>}`;
+the engine decides which of them it reads and reports a failed parse in its own words. It reads
+each value exactly as the bash builder did, because YAML parsing is sensitive to it: a workflow
+input with null and `false` as the empty string, trailing newlines stripped and one added back
+(the builder's `echo`); an environment's field with null as the empty string, trailing newlines
+stripped and none added back (the builder's `printf '%s'`), `false` and other non-strings as their
+JSON text. Several YAML documents in one value do not parse. It reports `project-dir` existence
+for exactly the paths the engine will check, asking the engine for them
+(`environments.project_dir_path`). It reads the default branch from the event payload file
+(`GITHUB_EVENT_PATH`), which carries it on every event this workflow runs on, `schedule`
+included, and falls back to `gh api`; a failed fallback stops the step with the API's answer
+instead of guessing. Then it decides in-process, logs the inputs, the input document, the
+decision record and the matrix in collapsed groups printed verbatim (P20), turns each validation
+error into one escaped `::error` annotation, and appends `matrix-json` to `$GITHUB_OUTPUT` under a
+random delimiter. Every external program sits behind one `Tools` object, so the tests stand in for
+`yq` and `gh`.
 
 ### 3.1 Adapters
 
-Two adapters fetch facts and report them raw; they decide nothing:
+Adapters fetch facts and report them raw; they decide nothing. `adapter.py` is the first; the
+features bring two more, as adapter-side modules under the same gates:
 
 - `resolve-changed-files` calls the pull request or compare endpoints and reports `{available,
   truncated, error, files_path}` plus the pull request's live head SHA; the engine turns that into a
@@ -135,15 +158,15 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 
 | Command | Input | Output | Used by |
 |---|---|---|---|
-| `decide` | the full input document | the full output document | `create-matrix` job |
+| `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
+| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, and the runner's environment | `matrix-json` in `$GITHUB_OUTPUT`, the log | the `create-tf-vars-matrix` action |
 | `validate` | the input document without the adapter sections | validation errors only, exit 2 when any | the same job, on a partial document built from the event and the inputs, before the adapters run, so a configuration error is reported before any API call |
 | `render-summary` | an output document | Markdown for the run summary | `create-matrix` and the conclusion |
 
-Exit codes: 0 success, 2 validation error (message on stderr, structured errors in the output
-document), 1 a malformed input document, an unreadable file or a crash; no output document is
-written then. The engine writes nothing to stdout except when asked to print; logs go to stderr.
-The shim turns each validation error into a `::error` annotation and fails the step with the
-engine's exit code.
+Exit codes: 0 success, 2 validation error, 1 anything that is not the caller's configuration: a
+malformed input document, an unreadable file, a broken `yq`, an unanswerable API, a usage error
+(P18) or a crash. `decide` writes its messages to stderr and the output document to `--output`,
+and nothing to stdout; `create-matrix` writes the step's log to stdout.
 
 ## 4. The input document
 
@@ -169,7 +192,7 @@ The document the port reads:
   entry of the parsed `environments-yml`, aligned by index, holding the parse result of every
   `*-yml` key of that entry (§3).
 - `model.py` rejects unknown and missing top-level keys, a `schema_version` other than 1, and any
-  section of the wrong shape, as a document error (exit 1): a malformed document is the shim's
+  section of the wrong shape, as a document error (exit 1): a malformed document is the adapter's
   fault, not the caller's configuration.
 
 The features extend it; the full document, as they specify it:
@@ -204,7 +227,7 @@ The features extend it; the full document, as they specify it:
 - Row variables are typed separately from `workflow_inputs` (D9).
 - `dispatch_inputs` are strings, as GitHub delivers them. When the caller declares no `inputs:`
   block the payload key is `null`, and a string input left empty is absent from the payload
-  rather than `""`; the shim passes all three keys, `""` for each that is missing.
+  rather than `""`; the adapter passes all three keys, `""` for each that is missing.
 - Only the sections a command needs must be present; an absent `tests` section means "no test
   stage", an absent `changed_files` means "relevance not computed".
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
@@ -332,7 +355,7 @@ environment.
 | I7 | When `errors` is empty, environments with verdict `run` plus verdict `skip` equal the environments declared, and no environment name appears twice. |
 | I8 | The union of the per-stage matrices contains exactly the environments with verdict `run`; within a stage, rows are in `environments-yml` order; no environment appears in more than one matrix. |
 | I9 | A test row's environment name matches `^tftest-[a-z0-9-]{1,40}$` and, compared case-insensitively, equals no environment's `github-environment`. |
-| I10 | `model.py` rejects unknown top-level keys, no schema field holds a secret value, and the shim test plants a sentinel in the process environment and in secret-shaped variables and asserts it never appears in the input file or any output. |
+| I10 | `model.py` rejects unknown top-level keys, no schema field holds a secret value, and the action's suite plants a sentinel in the process environment and in secret-shaped variables and asserts it never appears in the input file or any output. |
 | I11 | Every `skip` verdict and every `not_run` entry has a non-empty reason from the fixed vocabulary. |
 | I12 | The output is byte-identical across runs with `PYTHONHASHSEED=0` and `=1`, and invariant under a permutation of the input document's key order. |
 | I13 | With `path-relevance-enabled: false`, every environment's relevance reason is `all:disabled` and every environment that passed rules 2, 3 and 5 runs. |
@@ -361,7 +384,7 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
    booleans, which the old fixtures were not), seventeen anonymised shapes of the real callers, and
    one case per edge of the bash builder's code. `case.json` holds the inputs, the ref, the default
    branch and the directories that exist; `expected.json` is the bash builder's own output, pinned
-   while it still ran; `input.json` is the document the shim builds for the case. Each must decide
+   while it still ran; `input.json` is the document the adapter builds for the case. Each must decide
    the `matrix-json` of `expected.json`, compared as parsed JSON with row order (nothing downstream
    reads key order), or its errors in order. A case whose `engine_expected` records a deliberate
    deviation, with its reason, is held to that instead. The bash suite's helper cases migrated to
@@ -386,7 +409,7 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
 5. **Negative tests, one check at a time** (`test_validation.py`): every required field removed on
    its own, every not-empty field emptied on its own, each producing exactly its one message; the
    required fields deliberately allowed empty pinned as such; what counts as empty; the reporting
-   order; the directory check failing closed for a path the shim did not report; every forwarded
+   order; the directory check failing closed for a path the adapter did not report; every forwarded
    input missing or empty end to end; and a structural test that every `matrix.vars.*` key the
    workflow reads is guaranteed by the required list, except the two recorded in §9.
 6. **The checker checked** (`test_invariants.py`): each invariant fires on an output broken in
@@ -431,17 +454,30 @@ the list cannot go stale. The package has no equivalent mutants today: the first
 equivalents were redundant branches, and the code lost them instead. About twenty seconds on a
 developer machine, all cores.
 
-**The shim's suite**, `create-tf-vars-matrix/run_all_tests.sh`, runs every port case end to end
-through the real step (yq and the engine included) against its golden, and rebuilds every case's
-`input.json` and fails on any difference, so the engine is never tested against a document the
-shim would not build. It also covers the default-branch fallback and its failure, the Python
-floor, a missing or broken `yq` (reported as such, never as the caller's invalid YAML), an engine
-crash, a caller's value that tries to start a workflow command in the log or split an error
-annotation, and plants sentinels to prove that neither the inputs nor secret-shaped variables
-reach the engine's environment or its documents (I10).
+**The adapter** is tested like the core, under both gates: `test_adapter.py` stands in for `yq` and
+`gh` and covers how each value is read before parsing, parse results, the `yq` probe and every way
+it fails, the default branch from the payload and every way the payload and the API can fail,
+the directory facts, a non-JSON or non-object inputs file, missing runner variables, the exact log
+groups, escaped annotations, verbatim blocks and the published output; `test_workflow.py` covers
+escaping, verbatim blocks and step outputs; `test_entry.py` covers `run.py`'s floor, its isolation
+from the working directory and `PYTHON*` variables, and demonstrates the shadowing isolation
+prevents; `test_purity.py` holds the core to its imports. Tests compare against literal values,
+never the module's own constants: a test that reads the constant it checks passes whatever the
+constant says.
 
-**What tests cannot cover**: the shims on a real runner. They are kept thin enough to be reviewed
-by eye and covered by their own suites, the workflow's structural tests and the preview-ref run on
+**The action's suite**, `create-tf-vars-matrix/run_all_tests.sh`, runs the run block of
+`action.yml` itself, extracted with `yq` and its expressions substituted as the runner pastes
+them, with real `yq` underneath: every port case end to end against its golden, and every case's
+logged input document against its `input.json`, so the engine is never tested against a document
+the adapter would not build. It also covers the run block's shape, the default-branch fallback and
+its failure, a broken `yq`, inputs that are not a JSON object, a JSON value holding the delimiter
+line and shell syntax, caller values in the log, sentinels proving that neither the inputs nor
+secret-shaped variables reach the adapter's environment or its documents (I10), and a caller's
+`json.py` and `PYTHONPATH` failing to replace the standard library. CI also runs the engine suite
+on Python 3.12 and the newest 3.x (Testing-in-ci.md).
+
+**What tests cannot cover**: the action on a real runner. The run block is two commands, checked by
+its structural test, the workflow's structural tests and the preview-ref run on
 the test-bed repository.
 
 ## 9. The port
@@ -508,32 +544,35 @@ port case with its reason:
 The port was built in this order, each step reviewable on its own: the goldens pinned while the
 bash still ran and verified against it in CI; the engine and its suite; the discovery pass that
 enrols the suite; the shim, whose suite runs every golden end to end; the internal refs moved to
-`@v1`. A preview-ref run on the test-bed repository closes it (§13).
+`@v1`; then the bash shim was replaced by the adapter (D13) with every golden unchanged. A
+preview-ref run on the test-bed repository closes it (§13).
 
 ## 10. Pitfalls
 
 | # | Pitfall | Consequence | Rule |
 |---|---|---|---|
-| P1 | An old self-hosted runner may carry Python 3.8. | Syntax errors at start-up in the `create-matrix` job. | The shim checks `python3 --version` first and fails with a message naming the floor; `create-matrix` runs on the workflow's `runs-on`, which defaults to `ubuntu-latest`. |
-| P2 | PyYAML is not on every runner. | An import error on the one runner without it. | YAML never reaches the core; `yq` in the shim. |
+| P1 | An old self-hosted runner may carry an older Python. | Syntax or import errors at start-up in the `create-matrix` job. | `run.py` checks the version before importing anything and exits naming the floor; `create-matrix` runs on the workflow's `runs-on`, which defaults to `ubuntu-latest`. |
+| P2 | PyYAML is not on every runner. | An import error on the one runner without it. | YAML never reaches the core; the adapter runs `yq`. |
 | P3 | Dictionary and set iteration order leaks into output. | Non-deterministic outputs, flaky goldens, flapping comments. | Sorted where the input has no order; I12 checks it. |
 | P4 | `coverage` is not preinstalled, and `pip install --user` is refused on the hosted images (externally managed environment). | The suite cannot install its gate the obvious way. | `pipx run coverage==<pin>` (preinstalled pipx), `python3 -m coverage` as the fallback; the network access is accepted for CI; the gate is not optional. |
 | P5 | The changed-file list can be a quarter of a megabyte. | ARG_MAX through the steps context if it ever became an output. | Files by path in the input document; outputs carry counts. |
-| P6 | A step's `env:` and a dispatch payload hand every value over as a string. | `"false"` is truthy. | `workflow_inputs` is `toJSON(inputs)`, which keeps the declared types; the shim normalises dispatch inputs to strings with `""` for an absent key; the model validates types and rejects the rest. |
+| P6 | A step's `env:` and a dispatch payload hand every value over as a string. | `"false"` is truthy. | `workflow_inputs` is `toJSON(inputs)`, which keeps the declared types; the adapter normalises dispatch inputs to strings with `""` for an absent key; the model validates types and rejects the rest. |
 | P7 | A crash in the engine is a `create-matrix` failure, which the conclusion reports red for every caller on the release. | A fleet-wide red on a bad minor of `v1`. | The random-case tests assert "never a crash"; the port's goldens; the preview-ref run before release. |
 | P8 | The engine prints to stdout by habit. | Corrupts a command that expects the output document on stdout. | Output documents go to `--output` files; logging to stderr; a test asserts stdout is empty. |
 | P9 | `capture-matrix-job-meta` strips keys that look like secrets. | A row field a summary must read back from metadata disappears (`fork-safe` was named for this). Today's rows already carry `pr-auto-merge-app-private-key-secret` and the `extra-envs-from-secrets*` maps, which are stripped and must stay so. | Only fields a downstream summary reads from metadata are validated against the filter; the port does not rename existing keys. |
 | P10 | The decision record can grow long on a repository with many environments and files. | A run summary nobody reads. | One line per environment, one per test root, collapsed detail per file. |
 | P11 | A per-environment YAML boolean stays a JSON boolean in `vars`, and the workflow's gates compare with `== 'true'`; GitHub casts a boolean to a number and a string to NaN, so `true == 'true'` is false. | A per-environment `format-check-in-root-dir: false` does not do what the author expects today. | Pre-existing; the port pins it in the goldens and records it. Retyping per-environment booleans to strings is a separate commit with its own release note. |
-| P12 | The shim gathers adapter facts before the engine can validate the configuration. | A misconfigured caller pays for API calls before hearing about the typo. | `validate` on the partial document first (§3.2). |
+| P12 | The adapter gathers facts before the engine can validate the configuration. | A misconfigured caller pays for API calls before hearing about the typo. | `validate` on the partial document first (§3.2). |
 | P13 | `github.event.repository.default_branch` is documented for push, pull request and dispatch payloads, not for `schedule`. | An unknown default branch on a scheduled run. | Verified on the test bed: the `schedule` payload carries it too, inside a called workflow as well. The API fallback stays, and fails the step loudly. |
-| P14 | The runner sources a step script in `bash -e`. | `cmd; code=$?` never reaches the assignment when `cmd` fails: the step ends at the failing line. | Capture with `code=0; cmd \|\| code=$?`. The shim reads the engine's exit code that way. |
+| P14 | Retired: the runner's `bash -e` swallowing a step's exit code applied to the bash shim, which the adapter replaced. | | |
 | P15 | `jq -r` prints null as `null`, but the builder read most fields through `select(. != null)`, which prints nothing. | Two renderings of null; mixing them changes the not-empty and directory checks. | `values.render` (the check's view) and `values.get_val` (the read's view), each used where the builder used it. |
 | P16 | Command substitution strips trailing newlines, and a `log-error` inside `$(…)` writes into the captured value, not the log. | Forwarded strings lose trailing newlines; a per-environment YAML error failed with no message at all. | The port strips the same newlines and prints the message; the goldens pin both. |
 | P17 | `pipx run` does not hand `PYTHONPATH` to the interpreter it starts. | The suite's modules cannot import the package on the hosted runners, though they do locally. | The unit runner puts the engine on `sys.path` itself; coverage takes the package by path; subprocesses run from `engine/`, where `-m` finds it. |
-| P18 | argparse exits 2 on a usage error. | 2 is the engine's code for an invalid caller configuration: a shim misusing the command would read an output document that was never written and blame the caller. | The parser's usage errors exit 1; a test pins every usage error to 1. |
-| P19 | The shim treats any `yq` failure as a failed parse. | A missing or broken `yq` reports every input as the caller's invalid YAML. | The shim probes `yq` on a known document before parsing and fails naming `yq` and its own message. |
-| P20 | A caller's value reaches the log: an environment name in the decision record, an error message, the engine's stderr. | A newline followed by `::warning::…` or `::add-mask::…` becomes a workflow command; a newline in an error message splits its annotation. | Logged values are printed between `::stop-commands::` markers; annotation data is escaped (`%25`, `%0D`, `%0A`). Only the caller's own configuration can do this, so it is hygiene, not a boundary, and the bash builder logged names raw as well. |
+| P18 | argparse exits 2 on a usage error. | 2 is the engine's code for an invalid caller configuration: a caller misusing the command would read an output document that was never written and blame the caller. | The parser's usage errors exit 1; a test pins every usage error to 1. |
+| P19 | Treating any `yq` failure as a failed parse. | A missing or broken `yq` reports every input as the caller's invalid YAML. | The adapter probes `yq` on a known document before parsing and fails naming `yq` and its own message. |
+| P20 | A caller's value reaches the log: an environment name in the decision record, an error message, an API's answer. | A newline followed by `::warning::…` or `::add-mask::…` becomes a workflow command; a newline in an error message splits its annotation. | `workflow.py` prints logged values between `::stop-commands::` markers and escapes annotation data (`%25`, `%0D`, `%0A`; a title's `:` and `,` too). Only the caller's own configuration can do this, so it is hygiene, not a boundary, and the bash builder logged names raw as well. |
+| P21 | `python3 -m` puts the working directory first on the import path, and an action's working directory is the caller's checkout. | A caller repository with a `json.py` or `argparse.py` at its root has it imported in place of the standard library; `PYTHONPATH` in the job's environment does the same. | Isolated mode: `python3 -I -B engine/run.py`, which adds only the engine's own directory; a test demonstrates the shadowing and one proves the isolation. |
+| P22 | GitHub pastes an expression's value into the script text before bash parses it. | A value holding the heredoc's delimiter line ends it early and the rest runs as shell. | Only `toJSON` output is captured this way, which cannot hold a delimiter line; the delimiter is unique to the action; the adapter refuses anything that is not a JSON object. Free text never goes through a heredoc. |
 
 ## 11. Open questions
 
@@ -548,8 +587,8 @@ line, which the dispatch spec's record line prints as it comes.
 
 ## 12. How the engine grows
 
-Each feature lands as rules and table cases in the engine, a few lines in the shim and the
-workflow, and the invariants of §7 that constrain its rules, in the order the maintainer chooses:
+Each feature lands as rules and table cases in the engine, its fact-gathering on the adapter side,
+a few lines in the workflow, and the invariants of §7 that constrain its rules, in the order the maintainer chooses:
 relevance rules and cases; test rules and cases with the `create-tftest-matrix` adapter; dispatch
 and trigger-events rules and cases, with the `goals-granted` switch of the operation gates and its
 structural test; stage assignment. The port cases stay: a feature's default must leave every one
@@ -561,12 +600,13 @@ AI-assistant configuration files are never in these commits.
 
 - **The parse boundary.** The first draft had the shim hand over the `*-yml` fields already
   parsed and let the engine parse per-environment YAML text. The engine cannot parse YAML (D2), so
-  the shim parses every `*-yml` input and every environment's `*-yml` keys and passes parse results
+  the adapter parses every `*-yml` input and every environment's `*-yml` keys and passes parse results
   (§3, §4); the engine picks what it reads and reports a failed parse in the builder's words. How
   each value is read before parsing is part of the contract, because YAML is sensitive to it:
   `echo` added a newline where `printf '%s'` did not.
-- **`directories_exist` is spelled like the engine renders the path.** The shim reports the
-  directory each environment names, or `./envs/<environment>`, in `jq -r` rendering; a null
+- **`directories_exist` is spelled like the engine renders the path.** The bash shim re-derived the
+  rule in jq; the adapter asks the engine (`environments.project_dir_path`), so the two cannot
+  drift. It reports the directory each environment names, or `./envs/<environment>`; a null
   `project-dir` is the path `null`, which does not exist, as it never did.
 - **Rows travel once.** The draft had every row's `vars` in `environments[]` as well as in the
   matrix. The port keeps them in the matrix only (§5); the decision record is what a reader needs
@@ -587,6 +627,13 @@ AI-assistant configuration files are never in these commits.
   one by one, a path missing from `directories_exist` could be read as existing, and CLI usage
   errors could exit with the configuration code. Each got a test, the gate (D12) keeps it so, and
   the redundant branches that made equivalent mutants were removed from the code.
+- **The shim became Python, and the gates found what review had not.** The bash shim was the part
+  the gates could not reach, and the one where the last faults were found: a broken `yq` blamed on
+  the caller, caller values reaching the log as workflow commands, the working directory shadowing
+  the standard library. Rewritten as the adapter (D13), it rebuilt all 73 input documents byte for
+  byte. Its first mutation run, at full coverage, left 33 faults: most because the tests compared
+  against the module's own constants (the `yq` arguments, the exit codes, the required variables),
+  so a wrong constant passed. The tests now compare against literals.
 - **On the test bed the port is invisible.** Through a preview ref, a seven-environment
   configuration covering apply on pull request, destroy, outputs, allow-failing and a failing
   apply produced the same matrix as `@v0` on `workflow_dispatch`, apart from the calling branch;
