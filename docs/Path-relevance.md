@@ -47,6 +47,8 @@ was nothing to verify.
 | D9 | Callers remove `on.paths` and `on.paths-ignore` from their calling workflows. The user guide says so in bold with before and after. | It is the filter that leaves the check pending forever. |
 | D10 | A global input `path-relevance-enabled` (default `true`) switches relevance off for a caller. | A caller moving to v1 must be able to keep today's always-run behaviour in one line while it sorts out its paths. |
 | D11 | Tests (Terraform-tests.md) are not relevance-filtered in this spec. | Their `root` field is the hook for a later refinement. |
+| D12 | The changed files are fetched by the decision engine's create-matrix **adapter**, inside the `create-matrix` step, not by a separate action. | The adapter already runs there with `gh` behind its `Tools` object, so the fetching and every fail-open rule sit under the engine's coverage and mutation gates, and the file list never crosses a step boundary ([Decision-engine.md](Decision-engine.md) D13). |
+| D13 | A push that **creates a branch** is diffed against the default branch: `compare/<default-branch>...<after>`. | Everything the new branch carries that the default branch does not, which is what GitHub's own path filter approximates; one request instead of running every environment. Any failure of that request fails open. |
 
 ## 3. Caller-facing API
 
@@ -141,12 +143,13 @@ request that touches nothing relevant runs one short job and reports a green che
 
 ### 4.1 Events and sources
 
-Computed once per run, in the `create-matrix` job, by the new `resolve-changed-files` action.
+Computed once per run, in the `create-matrix` step, by the decision engine's adapter (D12).
 
 | Event | Source | Diff semantics |
 |---|---|---|
 | `pull_request` | `GET /repos/{owner}/{repo}/pulls/{n}` for `changed_files` and `head.sha`, then `GET …/pulls/{n}/files` paginated at 100 | The pull request's three-dot diff against its merge base: what the Files tab shows, regardless of how far the base has advanced. After "Update branch" the merge commit's conflict resolutions count, which is right, they are the pull request's changes now. |
 | `push` | `GET /repos/{owner}/{repo}/compare/{before}...{after}` | Everything the push carried. For any non-forced push `before` is an ancestor of `after`, so the three-dot diff equals the union of the pushed commits' changes: a rebase merge of N commits, a squash, a merge commit and a direct push are all covered. |
+| `push` creating a branch | `GET /repos/{owner}/{repo}/compare/{default-branch}...{after}` | Everything the new branch carries that the default branch does not (D13). |
 | `schedule`, `workflow_dispatch` | none | Mode `all`. A dispatch is the manual "run it all" button until the single-environment dispatch spec adds a filter. |
 
 The `github` context inside a reusable workflow describes the caller's event, which the workflow
@@ -160,7 +163,7 @@ Mode `all` with the reason recorded, in this order of evaluation:
 |---|---|
 | `disabled` | `path-relevance-enabled: false` |
 | `event` | `schedule` or `workflow_dispatch` |
-| `branch-created` | `push` with `github.event.created == true`, or `before` all zeros (the documented field first, the zero SHA as belt and braces). Improvement, not required: compare `<default-branch>...<after>` instead, which is what GitHub's own filter approximates. |
+| (not a fail-open) | `push` with `github.event.created == true`, or `before` all zeros (the documented field first, the zero SHA as belt and braces), is diffed against the default branch (D13); only a failure of that compare fails open, as `api-error` or `too-many-files`. |
 | `forced` | `push` with `github.event.forced == true`: the merge base is no longer `before`, reverted files would be invisible |
 | `branch-deleted` | `push` with `github.event.deleted == true` |
 | `pr-head-moved` | `pull_request` where the API's `head.sha` differs from `github.event.pull_request.head.sha`: a re-run of an older attempt, or an overlapping run; the file list is live but the run is pinned to its SHA, and a newer run governs the check anyway |
@@ -171,21 +174,17 @@ Mode `all` with the reason recorded, in this order of evaluation:
 The action **never exits non-zero**; fail-open is a result, not an error. Only `environments-yml`
 validation may redden `create-matrix`.
 
-### 4.3 The `resolve-changed-files` action
+### 4.3 Fetching in the adapter
 
-Inputs: `enabled`, `event-name`, `repository`, `pr-number`, `pr-head-sha`, `before`, `after`,
-`created`, `forced`, `deleted`, `github-token`.
-
-Outputs, all small: `available`, `truncated`, `error`, `api-head-sha`, `changed-count` and the
-file path. The action reports facts and decides nothing; the decision engine
-([Decision-engine.md](Decision-engine.md) §3.1) turns them, together with the event fields, into
-the mode and reason of §4.2. The file list is **not** an output: three thousand paths are a quarter
-of a megabyte and would enter envp through the steps context the first time a step interpolated them
-(P5). It is written to `$RUNNER_TEMP/changed-files.txt`, one path per line, and handed to the
-engine by path.
-
-All API responses go through `mktemp` files and `jq`, via `gh api` with the job token, never
-through the inline `curl` pattern (P6).
+The adapter reads the event facts from the event payload file (`GITHUB_EVENT_PATH`): the pull
+request number and head SHA, `before`, `after`, `created`, `forced`, `deleted`. It calls `gh api`
+with the job token for the pull request object, the paginated files list and the compare
+endpoints, reports the facts raw (`available`, `truncated`, `error`, the pull request's live head
+SHA, the count and the file list) in the input document, and decides nothing: the core turns them,
+together with the event, into the mode and reason of §4.2. The file list never becomes a step or job
+output: three thousand paths are a quarter of a megabyte and would enter envp through the steps
+context the first time a step interpolated them (P5). A renamed file is listed under both its old
+and its new path. A failed call is a fact, never an exception: the step does not fail for it.
 
 ### 4.4 Cost and permissions
 
@@ -508,10 +507,10 @@ environments-yml: |
 
 All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 
-- **`resolve-changed-files`** (new): §4.3. Fixtures: recorded API responses for a small pull
-  request, a renamed file, a 100-per-page pagination, a pull request at the cap, a compare at 300
-  files, a forced push payload, a created-branch payload, a moved head, an API error; every case
-  asserts the mode and reason and that the action exits zero.
+- **The create-matrix adapter**: §4.3. Tests with a fake `gh`: a small pull request, a renamed
+  file, a 100-per-page pagination, a pull request at the cap, a compare at 300 files, a forced push
+  payload, a created branch compared against the default branch, a moved head, an API error; every
+  case asserts the facts, and the core's tests the mode and reason.
 - **`create-tf-vars-matrix`**: §5. Fixtures: `auto` expansion with and without additional dirs,
   `project-dir` normalisation, `auto` plus extras, replacement lists, implied and explicit ignore,
   `paths-ignore: []`, renamed files, mode `all`, all-unaffected, `envs-json` shape, validation
@@ -556,10 +555,11 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 
 **Must**
 
-- `resolve-changed-files`: every fail-open reason of §4.2 from its fixture; pagination at 100;
+- The adapter's fetching: every fact behind the fail-open reasons of §4.2; pagination at 100;
   renamed files listed under both paths; `changed_files > 3000` short-circuits without paging; a
-  compare with 300 files is `too-many-files`; a non-2xx is `api-error`; the action exits zero in
-  every case; the file list is written to a file and never to `$GITHUB_OUTPUT`.
+  compare with 300 files is truncated; a failed call is an error fact, never a failed step; a
+  created branch is compared against the default branch; the file list never reaches
+  `$GITHUB_OUTPUT`.
 - `create-tf-vars-matrix`: the fixtures of §11; the environment job's matrix excludes unaffected
   rows; `affected-count` and `unaffected-count` sum to the environment count; `envs-json` carries
   every environment with its resolved rules; mode `all` reproduces today's matrix byte for byte.
@@ -594,17 +594,17 @@ and a force push reading `forced: true`.
 
 ## 14. Open questions
 
-1. **`changed_files` accuracy**: confirm the pull request object's count equals the number of
-   files the files endpoint pages out, including renames.
-2. **Which attempt's check run** branch protection reads after "Re-run failed jobs" (observed:
-   the latest).
-3. **The `created` improvement**: whether comparing `<default-branch>...<after>` on a new branch
-   is worth the extra request, or fail-open is enough.
+None open. The pull request object's `changed_files` equals the number of entries the files
+endpoint pages out: five pull requests of up to 283 files matched, and on the test bed a rename
+counted once, listed once with status `renamed` and the old path in `previous_filename`. Which
+attempt's check run branch protection reads after "Re-run failed jobs" is not documented, and the
+design does not depend on it: it holds for any re-run, with or without relevance. The `created`
+case is decided (D13).
 
 ## 15. Implementation order
 
 1. `docs:` this spec.
-2. `feat(resolve-changed-files):` the new action with fixtures.
+2. `feat(engine):` the adapter's fetching of the changed files (D12), with a fake `gh`.
 3. `feat(create-tf-vars-matrix):` `paths`, `paths-ignore`, `auto`, relevance inputs, `envs-json`
    and counts; fixtures. The glob helper is shared with `create-tftest-matrix`; whichever spec is
    implemented first lands it.
