@@ -400,6 +400,29 @@ JSON
 # these pin the file path and the exactly-one-of rule.
 # ============================================================================
 
+# H0: an inline body is posted verbatim, trailing newlines stripped as the old heredoc capture
+# stripped them, and shell syntax or the old delimiter line in it is text, never code.
+test_inline_body_is_verbatim_without_trailing_newlines() {
+  export input_body=$'### dev\nEOF_PR_COMMENT_BODY\n$(touch INJECTED) `touch INJECTED2`\n\n\n'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  { printf '%s\n\n' "${input_marker}"; printf '%s' $'### dev\nEOF_PR_COMMENT_BODY\n$(touch INJECTED) `touch INJECTED2`'; } > "${TEST_DIR}/expected.md"
+  cmp -s "${TEST_DIR}/expected.md" "${GH_FAKE_BODY_CAPTURE}" || { echo "posted body differs"; diff "${TEST_DIR}/expected.md" "${GH_FAKE_BODY_CAPTURE}" | sed 's/^/    /'; return 1; }
+  ! compgen -G "${TEST_DIR}/INJECTED*" >/dev/null || { echo "shell syntax in the body ran"; return 1; }
+  return 0
+}
+
+# H0b: the action takes the inline body through env:, never pasted into its script.
+test_action_passes_body_through_env() {
+  local run_block
+  run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
+  [[ "$(yq '.runs.steps[0].env.input_body' "${_this_script_dir}/action.yml")" == '${{ inputs.body }}' ]] \
+    || { echo "input_body is not taken from env:"; return 1; }
+  ! grep -q 'inputs\.' <<<"${run_block}" || { echo "the run block interpolates an input"; return 1; }
+  ! grep -q "<<'" <<<"${run_block}" || { echo "the run block still holds a heredoc"; return 1; }
+  return 0
+}
+
 # H1: body-file upsert posts <marker>\n\n<file content> verbatim.
 test_body_file_upsert_posts_file_content_verbatim() {
   unset input_body
@@ -523,6 +546,8 @@ JSON
 # Run all
 # ============================================================================
 
+run_test "upsert: inline body verbatim, trailing newlines stripped"    test_inline_body_is_verbatim_without_trailing_newlines
+run_test "action: inline body through env:, not the script"             test_action_passes_body_through_env
 run_test "upsert: no match → POST fresh"                                test_upsert_no_match_posts_fresh
 run_test "upsert: match, different hash → PATCH"                        test_upsert_match_different_hash_patches
 run_test "upsert: match (any body shape) → PATCH"                       test_upsert_match_arbitrary_body_patches
