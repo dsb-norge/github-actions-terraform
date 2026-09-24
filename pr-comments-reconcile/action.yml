@@ -85,21 +85,13 @@ runs:
       env:
         input_repo: ${{ inputs.repo }}
         input_issue_number: ${{ inputs.issue-number }}
+        # YAML text, so through env: (which keeps its newlines) and never pasted into the script,
+        # where a line holding a heredoc's delimiter would end the capture and run the rest.
+        input_heads_yml: ${{ inputs.heads-yml }}
+        input_gc_yml: ${{ inputs.gc-yml }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # Upsert the head comments, then garbage collect stale tag comments
-        #
-        # heads-yml + gc-yml are passed via heredoc so multi-line YAML is
-        # preserved verbatim (env-list interpolation would mangle newlines).
-        input_heads_yml=$(cat <<'EOF_RECONCILE_HEADS'
-        ${{ inputs.heads-yml }}
-        EOF_RECONCILE_HEADS
-        )
-        input_gc_yml=$(cat <<'EOF_RECONCILE_GC'
-        ${{ inputs.gc-yml }}
-        EOF_RECONCILE_GC
-        )
-        export input_heads_yml input_gc_yml
         set -o allexport
         source "${{ github.action_path }}/step_reconcile.sh"
         exit_code=$?
