@@ -96,11 +96,11 @@ runs:
       run: |
         # Audit the init directories and emit the module cache paths and key
         #
-        # JSON input via heredoc — keeps quotes and special characters intact
-        # and out of envp (the ARG_MAX guard pattern from CLAUDE.md).
-        input_additional_dirs_json=$(cat <<'EOF'
+        # toJSON output, captured through a quoted heredoc: JSON escapes a string's newlines, so no
+        # line of it can be the delimiter, which is unique to this input (Action-implementation-guide.md).
+        input_additional_dirs_json=$(cat <<'TERRAFORM_MODULE_CACHE_ADDITIONAL_DIRS_JSON'
         ${{ inputs.additional-dirs-json }}
-        EOF
+        TERRAFORM_MODULE_CACHE_ADDITIONAL_DIRS_JSON
         )
         export input_additional_dirs_json
         set -o allexport
@@ -111,13 +111,9 @@ runs:
       shell: bash
       env:
         input_cache_hit: ${{ inputs.cache-hit }}
+        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Copy the restored module manifests aside as a before-image
-        input_cache_paths=$(cat <<'EOF'
-        ${{ inputs.cache-paths }}
-        EOF
-        )
-        export input_cache_paths
         set -o allexport
         source "${{ github.action_path }}/step_snapshot.sh"
 
@@ -127,25 +123,18 @@ runs:
       env:
         input_cache_hit: ${{ inputs.cache-hit }}
         input_snapshot_dir: ${{ inputs.snapshot-dir }}
+        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Check the module cache digest for completeness and gate the save
-        input_cache_paths=$(cat <<'EOF'
-        ${{ inputs.cache-paths }}
-        EOF
-        )
-        export input_cache_paths
         set -o allexport
         source "${{ github.action_path }}/step_verify.sh"
 
     - id: prune
       if: inputs.phase == 'prune'
       shell: bash
+      env:
+        input_cache_paths: ${{ inputs.cache-paths }}
       run: |
         # Drop the git metadata terraform's module clones left behind
-        input_cache_paths=$(cat <<'EOF'
-        ${{ inputs.cache-paths }}
-        EOF
-        )
-        export input_cache_paths
         set -o allexport
         source "${{ github.action_path }}/step_prune.sh"
