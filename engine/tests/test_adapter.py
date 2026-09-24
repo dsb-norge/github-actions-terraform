@@ -88,7 +88,8 @@ class Runner:
         self.output_file = os.path.join(path, "output.txt")
         open(self.output_file, "w").close()
         self.environ = {"GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main",
-                        "GITHUB_EVENT_PATH": self.event_file, "GITHUB_OUTPUT": self.output_file}
+                        "GITHUB_EVENT_PATH": self.event_file, "GITHUB_OUTPUT": self.output_file,
+                        "GITHUB_RUN_ID": "4711", "GITHUB_RUN_ATTEMPT": "2"}
         self.environ.update(environ or {})
         self.log = io.StringIO()
 
@@ -285,7 +286,7 @@ class ReadInputsTest(unittest.TestCase):
 
 class BuildDocumentTest(unittest.TestCase):
     FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "workflow_dispatch", "ref_name": "feature/x",
-             "payload": {}}
+             "payload": {}, "run": {"id": 4711, "attempt": 1}}
 
     def test_the_document_is_complete_and_valid(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(), lambda path: True)
@@ -293,7 +294,7 @@ class BuildDocumentTest(unittest.TestCase):
                           "event": {"name": "workflow_dispatch", "ref_name": "feature/x"}, "workflow_inputs": DEFAULT_INPUTS,
                           "yaml": {"inputs": {"environments-yml": {"ok": True, "value": [{"environment": "env-a"}]}},
                                    "environments": [{}]},
-                          "directories_exist": {"./envs/env-a": True}}, document)
+                          "directories_exist": {"./envs/env-a": True}, "run": {"id": 4711, "attempt": 1}}, document)
         self.assertEqual([], decide.decide(document)["errors"])
 
     def test_unparsable_or_absent_environments_leave_no_field_results_or_directories(self):
@@ -351,9 +352,20 @@ class EventFactsTest(unittest.TestCase):
         self.assertEqual({"push": {"created": False, "forced": False, "deleted": False}},
                          adapter.event_facts("push", {"created": "true", "forced": 1, "deleted": None, "before": "0"}))
 
-    def test_a_pull_request_reports_its_number_and_head(self):
-        self.assertEqual({"pull_request": {"number": 87, "head_sha": "abc"}},
-                         adapter.event_facts("pull_request", {"pull_request": {"number": 87, "head": {"sha": "abc"}}}))
+    def test_a_pull_request_reports_its_action_number_head_and_fork(self):
+        self.assertEqual({"action": "opened", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
+                         adapter.event_facts("pull_request", {"action": "opened",
+                                                              "pull_request": {"number": 87, "head": {"sha": "abc"}}}))
+        head = {"sha": "abc", "repo": {"fork": True}}
+        self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": True}},
+                         adapter.event_facts("pull_request", {"pull_request": {"number": 87, "head": head}}))
+
+    def test_only_a_true_fork_is_a_fork(self):
+        for repo in (None, {}, {"fork": "true"}, {"fork": False}, []):
+            with self.subTest(repo=repo):
+                payload = {"action": 5, "pull_request": {"number": 87, "head": {"sha": "abc", "repo": repo}}}
+                self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
+                                 adapter.event_facts("pull_request", payload))
 
     def test_a_pull_request_payload_without_them_reports_nothing(self):
         for payload in ({}, {"pull_request": None}, {"pull_request": {"number": "87", "head": {"sha": "a"}}},
@@ -370,7 +382,7 @@ class EventFactsTest(unittest.TestCase):
 
 
 class PullRequestFilesTest(unittest.TestCase):
-    EVENT = {"name": "pull_request", "ref_name": "x", "pull_request": {"number": 87, "head_sha": "abc"}}
+    EVENT = {"name": "pull_request", "ref_name": "x", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}
 
     def fetch(self, api, event=None):
         tools = FakeTools(api=api)
@@ -549,13 +561,13 @@ class PushFilesTest(unittest.TestCase):
 
 class RelevanceDocumentTest(unittest.TestCase):
     FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x",
-             "payload": {"pull_request": {"number": 87, "head": {"sha": "abc"}}}}
+             "payload": {"pull_request": {"number": 87, "head": {"sha": "abc"}}}, "run": {"id": 4711, "attempt": 1}}
     API = {PULL: {"changed_files": 1, "head": {"sha": "abc"}}, page(1): [{"filename": "envs/env-a/main.tf"}]}
 
     def test_the_document_carries_the_event_facts_and_the_changed_files(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(api=self.API), lambda path: True)
-        self.assertEqual({"name": "pull_request", "ref_name": "x", "pull_request": {"number": 87, "head_sha": "abc"}},
-                         document["event"])
+        self.assertEqual({"name": "pull_request", "ref_name": "x", "action": "",
+                          "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}, document["event"])
         self.assertEqual({"available": True, "truncated": False, "error": None, "api_head_sha": "abc", "count": 1,
                           "files": ["envs/env-a/main.tf"]}, document["changed_files"])
         self.assertEqual({"mode": "diff", "reason": "diff", "changed_count": 1}, decide.decide(document)["relevance"])
@@ -568,7 +580,7 @@ class RelevanceDocumentTest(unittest.TestCase):
                                                   tools, lambda path: True)
                 self.assertNotIn("changed_files", document)
                 self.assertEqual([], tools.endpoints())
-                self.assertEqual({"number": 87, "head_sha": "abc"}, document["event"]["pull_request"])
+                self.assertEqual({"number": 87, "head_sha": "abc", "is_fork": False}, document["event"]["pull_request"])
 
     def test_an_event_without_changed_files_has_no_section(self):
         facts = {**self.FACTS, "event_name": "schedule", "payload": {}}
@@ -700,7 +712,8 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("::stop-commands::", runner.log.getvalue())
 
     def test_missing_runner_variables_are_named_before_anything_runs(self):
-        for name in ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT"):
+        for name in ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
+                     "GITHUB_RUN_ATTEMPT"):
             with self.subTest(name=name):
                 runner = Runner(self, environ={name: ""})
                 self.assertEqual(1, runner.run())
@@ -711,7 +724,23 @@ class RunTest(unittest.TestCase):
         runner = Runner(self)
         runner.environ = {"GITHUB_OUTPUT": runner.output_file}
         runner.run()
-        self.assertIn("the runner did not set GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF_NAME", runner.log.getvalue())
+        self.assertIn("the runner did not set GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF_NAME, GITHUB_RUN_ID, "
+                      "GITHUB_RUN_ATTEMPT", runner.log.getvalue())
+
+    def test_the_run_comes_from_the_runner(self):
+        runner = Runner(self)
+        self.assertEqual(0, runner.run())
+        self.assertEqual({"id": 4711, "attempt": 2},
+                         json.loads(_groups(runner.log.getvalue())["decision engine input document"])["run"])
+
+    def test_a_run_that_is_not_a_number_is_a_fault(self):
+        for name, value in (("GITHUB_RUN_ID", "x"), ("GITHUB_RUN_ATTEMPT", "-1"), ("GITHUB_RUN_ID", "1.5"),
+                            ("GITHUB_RUN_ID", "²")):
+            with self.subTest(name=name, value=value):
+                runner = Runner(self, environ={name: value})
+                self.assertEqual(1, runner.run())
+                self.assertIn(f"the runner set {name} to {value!r}, which is not a run number", runner.log.getvalue())
+                self.assertEqual([], runner.tools.calls)
 
     def test_yq_is_probed_before_the_inputs_are_read(self):
         runner = Runner(self, inputs="not json")

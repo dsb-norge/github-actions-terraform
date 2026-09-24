@@ -24,7 +24,8 @@ EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
 YQ = ("yq", "e", "-o=json")
 YQ_PROBE_TEXT = "probe: [1]\n"
 YQ_PROBE_JSON = '{"probe":[1]}'
-REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT")
+REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
+                        "GITHUB_RUN_ATTEMPT")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -150,7 +151,8 @@ def _is_count(value):
 
 def event_facts(event_name, payload):
     """What the payload says about the change: the three push booleans, or the pull request's
-    number and head commit. A pull request payload without them reports nothing."""
+    action, number, head commit and whether it comes from a fork. A pull request payload without
+    its number and head reports nothing."""
     if event_name == "push":
         return {"push": {
             "created": payload.get("created") is True or payload.get("before") == ZERO_SHA,
@@ -164,7 +166,11 @@ def event_facts(event_name, payload):
     head_sha = head.get("sha") if isinstance(head, dict) else None
     if not _is_count(pull_request.get("number")) or not isinstance(head_sha, str):
         return {}
-    return {"pull_request": {"number": pull_request["number"], "head_sha": head_sha}}
+    repo = head.get("repo")
+    action = payload.get("action")
+    return {"action": action if isinstance(action, str) else "",
+            "pull_request": {"number": pull_request["number"], "head_sha": head_sha,
+                             "is_fork": isinstance(repo, dict) and repo.get("fork") is True}}
 
 
 class _Unanswered(Exception):
@@ -260,6 +266,13 @@ def fetch_changed_files(tools, repository, default_branch_name, event, payload):
                 "api_head_sha": error.api_head_sha, "count": 0, "files": []}
 
 
+def run_number(environ, name):
+    value = environ[name]
+    if not (value.isascii() and value.isdigit()):
+        raise AdapterError(f"the runner set {name} to {value!r}, which is not a run number")
+    return int(value)
+
+
 def read_inputs(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -285,6 +298,7 @@ def build_document(inputs, facts, tools, isdir):
         "workflow_inputs": inputs,
         "yaml": {"inputs": yaml_inputs, "environments": parse_environments(tools, entries)},
         "directories_exist": check_directories(entries, isdir),
+        "run": facts["run"],
     }
     # Switched off, relevance needs no facts, so it makes no requests.
     if inputs.get(relevance.SWITCH) not in (False, "false"):
@@ -301,6 +315,7 @@ def run(inputs_file, environ, stream, tools, isdir):
         missing = [name for name in REQUIRED_ENVIRONMENT if not environ.get(name)]
         if missing:
             raise AdapterError(f"the runner did not set {', '.join(missing)}")
+        run_facts = {"id": run_number(environ, "GITHUB_RUN_ID"), "attempt": run_number(environ, "GITHUB_RUN_ATTEMPT")}
         require_yq(tools)
         inputs = read_inputs(inputs_file)
         log.group("input 'inputs-json'", json.dumps(inputs, indent=2, ensure_ascii=False))
@@ -311,6 +326,7 @@ def run(inputs_file, environ, stream, tools, isdir):
             "ref_name": environ["GITHUB_REF_NAME"],
             "default_branch": default_branch(payload, environ["GITHUB_REPOSITORY"], tools),
             "payload": payload,
+            "run": run_facts,
         }
         document = build_document(inputs, facts, tools, isdir)
     except AdapterError as error:

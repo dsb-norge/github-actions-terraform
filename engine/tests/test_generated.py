@@ -129,7 +129,10 @@ class GeneratedTest(unittest.TestCase):
             event = rng.choice(["pull_request", "push", "schedule", "workflow_dispatch"])
             document["event"]["name"] = event
             if event == "pull_request":
-                document["event"]["pull_request"] = {"number": 1, "head_sha": "abc"}
+                document["event"]["pull_request"] = {"number": 1, "head_sha": "abc", "is_fork": rng.random() < 0.1}
+                document["event"]["action"] = rng.choice(["opened", "synchronize", "closed", "converted_to_draft"])
+            if rng.random() > 0.2:
+                document["run"] = {"id": 7, "attempt": 1}
             if event == "push":
                 document["event"]["push"] = {key: rng.random() < 0.2 for key in ("created", "forced", "deleted")}
             if rng.random() > 0.1:

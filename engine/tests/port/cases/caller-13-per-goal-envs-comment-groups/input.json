@@ -13,6 +13,10 @@
     "name": "workflow_dispatch",
     "ref_name": "main"
   },
+  "run": {
+    "attempt": 1,
+    "id": 4711
+  },
   "schema_version": 1,
   "workflow_inputs": {
     "add-pr-comment": true,

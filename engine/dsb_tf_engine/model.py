@@ -14,7 +14,7 @@ class DocumentError(Exception):
 
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
 # Present only when the adapter fetched them; absent means "relevance not computed".
-OPTIONAL_KEYS = ("changed_files",)
+OPTIONAL_KEYS = ("changed_files", "run")
 CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
 PUSH_KEYS = ("created", "forced", "deleted")
 
@@ -69,8 +69,14 @@ def check(document):
     if "pull_request" in event:
         pull_request = event["pull_request"]
         _require(isinstance(pull_request, dict) and _is_count(pull_request.get("number"))
-                 and isinstance(pull_request.get("head_sha"), str),
-                 "input document: 'event.pull_request' needs the integer 'number' and the string 'head_sha'")
+                 and isinstance(pull_request.get("head_sha"), str) and isinstance(pull_request.get("is_fork"), bool),
+                 "input document: 'event.pull_request' needs the integer 'number', the string 'head_sha' and the "
+                 "boolean 'is_fork'")
+    _require(isinstance(event.get("action", ""), str), "input document: 'event.action' is not a string")
+    if "run" in document:
+        run = document["run"]
+        _require(isinstance(run, dict) and _is_count(run.get("id")) and _is_count(run.get("attempt")),
+                 "input document: 'run' needs the integers 'id' and 'attempt'")
     _require(isinstance(document["workflow_inputs"], dict), "input document: 'workflow_inputs' is not an object")
 
     yaml = document["yaml"]

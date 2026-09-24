@@ -129,6 +129,51 @@ class InvariantCheckerTest(unittest.TestCase):
         self.assertEqual(["I13: relevance switched off but the reason is not 'disabled'"],
                          invariants.check(document, output))
 
+    def seeded(self, files):
+        environments = [{"environment": "a"}, {"environment": "b", "pr-comment-group": "g"}]
+        document = support.document(environments=environments,
+                                    directories={"./envs/a": True, "./envs/b": True})
+        document["event"].update(name="pull_request", action="synchronize")
+        document["event"]["pull_request"] = {"number": 1, "head_sha": "x", "is_fork": False}
+        document["run"] = {"id": 1, "attempt": 1}
+        document["changed_files"] = {"available": True, "truncated": False, "error": None, "api_head_sha": "x",
+                                     "count": len(files), "files": files}
+        output = decide.decide(document)
+        self.assertEqual([], invariants.check(document, output))
+        return document, output
+
+    def test_a_manifest_where_the_seed_does_not_run(self):
+        document, output = self.seeded(["README.md"])
+        document["event"]["action"] = "closed"
+        self.assertEqual(["I14: a manifest where the seed does not run"], invariants.check(document, output))
+
+    def test_an_environment_head_for_a_grouped_environment(self):
+        document, output = self.seeded(["README.md"])
+        output["comments"]["heads"].append({**output["comments"]["heads"][-1], "key": "b"})
+        self.assertIn("I14: an environment head for 'b', which gets none", invariants.check(document, output))
+
+    def test_an_environment_head_for_an_unknown_environment(self):
+        document, output = self.seeded(["envs/a/x.tf"])
+        output["comments"]["heads"].append({**output["comments"]["heads"][-1], "key": "zzz"})
+        self.assertEqual(["I14: an environment head for 'zzz', which gets none"], invariants.check(document, output))
+
+    def test_a_not_affected_head_for_an_affected_environment(self):
+        document, output = self.seeded(["envs/a/x.tf"])
+        output["comments"]["heads"][-1]["state"] = "not-affected"
+        self.assertEqual(["I14: a 'not affected' head for 'a', which is affected"], invariants.check(document, output))
+
+    def test_a_purge_for_an_affected_environment(self):
+        document, output = self.seeded(["envs/a/x.tf"])
+        output["comments"]["purge_tags_for"].append("a")
+        output["comments"]["gc"] += output["comments"]["gc"][:4]
+        self.assertEqual(["I14: a tag purge for 'a', which is not an unaffected commenting environment"],
+                         invariants.check(document, output))
+
+    def test_purge_rules_that_do_not_match_the_purges(self):
+        document, output = self.seeded(["README.md"])
+        output["comments"]["gc"].pop()
+        self.assertEqual(["I14: not four purge rules per purged environment"], invariants.check(document, output))
+
     def test_an_error_output_with_a_relevance_block(self):
         document, output = decided()
         output.update(errors=["something"], environments=[], matrices={}, record=[],
