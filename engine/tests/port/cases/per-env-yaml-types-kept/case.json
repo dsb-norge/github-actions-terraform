@@ -27,5 +27,12 @@
   "default_branch": "main",
   "directories": [
     "envs/env-a"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "a per-environment value for a string input must be a string, since YAML reads an unquoted 1.10 as 1.1; per-environment booleans become the gates' strings (per-env-yaml-types-v1)",
+    "errors": [
+      "The environment 'env-a' sets 'terraform-version' to 1.5, which is not a string; quote it!"
+    ]
+  }
 }
