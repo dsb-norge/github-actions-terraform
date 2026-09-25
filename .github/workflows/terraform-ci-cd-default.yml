@@ -1940,6 +1940,8 @@ jobs:
           secrets-json: ${{ toJSON(secrets) }}
           # An environment lane's ARM_* and TF_VAR_* secrets under their own names; nothing for other lanes.
           export-secrets-with-prefixes-json: ${{ toJSON(matrix.test.github-environment != '' && fromJSON('["ARM_","TF_VAR_"]') || fromJSON('[]')) }}
+          # GitHub upper-cases secret names; the copy sets the snake_case variable a test declares.
+          lower-case-copies-for-prefixes-json: ${{ toJSON(matrix.test.github-environment != '' && fromJSON('["TF_VAR_"]') || fromJSON('[]')) }}
 
       - name: "🔐 Verify lane credentials"
         id: verify-credentials

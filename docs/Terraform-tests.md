@@ -228,11 +228,14 @@ select the lane's own environment secrets (P28). A job cannot tell which level a
 the rule is what makes the export safe, and the guide states it as a precondition.
 
 GitHub stores secret names upper-cased, so an environment secret created as `TF_VAR_tenant_id`
-is exported as `TF_VAR_TENANT_ID` and sets only a variable named `TENANT_ID`; Terraform variable
-names are case-sensitive (verified on the test bed: the lower-case declaration reported "Required
-variable not set", the upper-case one passed). A lane that needs a lower-case variable maps the
-secret explicitly, `extra-envs-from-secrets-yml: { TF_VAR_tenant_id: TF_VAR_TENANT_ID }`, which
-sets the exact name (P44). `ARM_*` names are upper case already.
+reaches the job as `TF_VAR_TENANT_ID`, which sets only a variable named `TENANT_ID`; Terraform
+variable names are case-sensitive (verified on the test bed: the lower-case declaration reported
+"Required variable not set", the upper-case one passed). The export therefore adds, for every
+`TF_VAR_*` secret, a copy with the name after the prefix lower-cased: `TF_VAR_TENANT_ID` is also
+exported as `TF_VAR_tenant_id`, so a test declaring either name gets the value, and Terraform
+ignores the one nobody declares (P44). A mixed-case variable name cannot be recovered; such a lane
+maps the secret explicitly, `extra-envs-from-secrets-yml: { TF_VAR_tenantId: TF_VAR_TENANTID }`.
+The maps override a copy as they override the original. `ARM_*` names are upper case already.
 
 **Credential check.** Before init, an environment lane verifies that `ARM_TENANT_ID` and
 `ARM_CLIENT_ID` are set. When they are not, the job fails with reason `no-credentials` and prints
@@ -593,7 +596,7 @@ groups need readable titles.
 | # | Step | Notes |
 |---|---|---|
 | 1 | `⬇ Checkout` | `actions/checkout@v6`, as in the environment job. |
-| 2 | `🔧 Export lane environment variables` | `export-env-vars@v1` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`, by the engine in the row's `extra-envs`. |
+| 2 | `🔧 Export lane environment variables` | `export-env-vars@v1` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` and `lower-case-copies-for-prefixes-json: '["TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` for both (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`, by the engine in the row's `extra-envs`. |
 | 3 | `🔐 Verify lane credentials` (id `verify-credentials`) | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init; the test step still runs and reports `no-credentials`. `continue-on-error: true`. |
 | 4 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the credential check did not fail and the three ARM variables are set (§3.3). `continue-on-error: true`: the providers log in on their own, and a failed login shows in the test. |
 | 5 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
@@ -1141,7 +1144,11 @@ every secret in `secrets-json` whose name starts with one of the prefixes is exp
 name, before the explicit mapping and the plain variables are applied, so those override it
 (§3.2). Existing callers see no change. The prefix export is the only new code path; its tests
 cover prefix selection, case, ordering and an empty list. An empty prefix is refused, since it
-would export the whole secret bag, the token included. The converted shim does not use
+would export the whole secret bag, the token included. A second optional input,
+`lower-case-copies-for-prefixes-json` (default `[]`), follows each prefix-exported secret whose name
+starts with a listed prefix with a copy whose name after the prefix is lower-cased (P44); no copy
+is made when a secret of the lower-cased name is itself exported, and the list is validated like the
+prefix list, before anything is exported. The converted shim does not use
 `allexport`: secret values pass through shell variables, and under it they would reach the
 environment of every process the step starts.
 
@@ -1221,7 +1228,7 @@ Indexed so implementation commits and future specs can cite them.
 | P38 | Thirty init runs per pull request multiply exposure to transient registry and network failures. | Red jobs unrelated to the code. | Provider and module caches, authenticated module downloads; re-running failed jobs re-runs only the failed files. |
 | P42 | `verify-terraform-lock` in its default mode runs `terraform providers lock` against the directory's initialised configuration. | Before init it refuses to run ("Expected '.terraform/' to exist"), and a copied lock does not describe the test root's configuration anyway: every test job reported `lock-platform`. | Lock-only mode checks the lock against a configuration built from the lock itself, in the directory where the lock is committed, after the plugin cache is restored (§5.2 step 7). |
 | P43 | The summary finds each job by its display name, and the engine suffixes a name with its provider set only for a file that runs in more than one set. | Rebuilding the name with a suffix whenever the run has several sets missed every job of a narrowed lane or an environment root: no job links, and an environment root's empty set counted as a set. | The summary matches on the row's own `name` and counts only non-empty sets. |
-| P44 | GitHub stores secret names upper-cased; Terraform variable names are case-sensitive. | An environment secret `TF_VAR_x` arrives as `TF_VAR_X` and sets only `X`; a test declaring `x` fails with "Required variable not set". | Upper-case variable names, or an explicit `extra-envs-from-secrets-yml` mapping to the lower-case name (§3.6). |
+| P44 | GitHub stores secret names upper-cased; Terraform variable names are case-sensitive. | An environment secret `TF_VAR_x` arrives as `TF_VAR_X` and sets only `X`; a test declaring `x` fails with "Required variable not set". | The export adds a lower-cased copy of every `TF_VAR_*` secret (`export-env-vars`' `lower-case-copies-for-prefixes-json`); a mixed-case name needs an explicit mapping (§3.6). |
 | P45 | Terraform 1.12 refuses a `variable` block in a test file, which 1.13 requires for `var.x` in the file. | Init fails for every test file of the root under 1.12, which read as `init` and hid the version. | A failed init defers to the version floor (§5.5 row 1); the authoring note says which versions accept the block (§3.2). |
 
 ## 11. Test coverage
