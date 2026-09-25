@@ -55,6 +55,7 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Environment names | any value | 1 to 255 of `A-Z a-z 0-9 . _ -`, starting with a letter or a digit, for `environment` and `github-environment`; no two environments share a github-environment, compared without case | nothing for any current caller; rename otherwise |
 | Default branch lookup | a failed lookup gave the string `null` and the run went on | read from the event payload; a failed API fallback stops the run | nothing |
 | Configuration errors | log lines, one of them lost in a command substitution | `::error` annotations, the step exits 2 | nothing |
+| Module CI test files outside `tests/` | a file `terraform test` would not find ran nothing and passed | it fails as `not-discovered`, and the test comment's summary line loses its quotes | move the file into the module's `tests/` directory |
 | Unsupported run events | ran with whatever the gates allowed | `merge_group`, `pull_request_target`, `release` and other events are a validation error | trigger only on pull request, push, dispatch and schedule |
 
 ## 4. New optional features and recommendations

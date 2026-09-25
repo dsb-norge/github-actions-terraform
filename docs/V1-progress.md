@@ -16,7 +16,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 0 | Concurrency `queue: max`; apply-reporting invariant, fixtures, contract tests | [#56](https://github.com/dsb-norge/github-actions-terraform/pull/56), [#57](https://github.com/dsb-norge/github-actions-terraform/pull/57) | merged, released in `v0.33` | inherited |
 | 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | merged 2026-09-24 | yes, `v1` created on it |
 | 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | merged 2026-09-25 | yes |
-| 3 | Terraform tests: the test stage, lanes, environments, provider sets, summary | — (branch `feat/terraform-tests`: the spec updated with the open-question probes) | paused before implementation, pending the Entra and Azure questions of §3 | no |
+| 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | draft | no |
 | 4 | Dispatch and trigger events; the `goals-granted` gate switch | — | outstanding | no |
 | 5 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
 | 6 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
@@ -36,7 +36,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 |---|---|---|---|---|
 | Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3, 5 and 6 come with steps 3-5 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
-| Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | no | probes only (see §3) | no |
+| Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
 | Dispatch-and-triggers.md | yes | no | dispatch inputs inside a called workflow, `schedule` actor | no |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
@@ -188,6 +188,42 @@ table only says where.
   test bed, a change to one environment's own `.tflint.hcl` ran that environment alone, and the
   others' "not affected" bodies list `/.tflint.hcl`.
 
+### Step 3, #64: Terraform tests
+
+- Test first for the engine side (`tests.py`, the adapter's test facts), gates at the last engine
+  commit: 100 percent of lines and branches, 2734 mutants all killed. Each converted action
+  (`export-env-vars`, `terraform-test`) had its behaviour pinned as goldens in the commit before
+  its conversion, goldens untouched by the conversion. `terraform-test`'s classifier replays JSON
+  logs captured from a real Terraform 1.16.2.
+- Test bed through `preview/pr-64`, pull request dsb-norge/azure-terraform-peder-tester#61, 17
+  test jobs in seven lanes over two provider sets (a new environment pins `random` older than
+  `outputs-kept-poc` and lacks `linux_amd64`). The first run reported `lock-platform` for every
+  job: `verify-terraform-lock` needs an initialised directory and checks the directory's
+  configuration, not the lock (Terraform-tests.md P42); it gained a lock-only mode. The same run
+  showed job links missing for every row but the two-set file (P43). The second run found an
+  environment secret `TF_VAR_needed` arriving as `TF_VAR_NEEDED` (P44), and Terraform 1.11 and
+  1.12 refusing a test file's `variable` block, which failed init under the version-floor lane
+  and hid the version (P45; 1.12 reproduced locally). The third run, on the fixes, matched
+  expectations on every row:
+  - pass; assertion failure (1/2); run error with a skipped follower (1/3); file errors from a
+    required variable and from an unknown provider;
+  - a parse error in one file failing init for its sibling too, both `init`, with the new detail
+    naming the sibling cause;
+  - `terraform-version` for the 1.11.4 lane although its init failed;
+  - `no-credentials` in `tftest-nocreds`, which the run itself created, with no protection rules;
+  - `lock-platform` on the `pinned-poc` set, a pass on the other set of the same file;
+  - a tolerated failure, green job, rendered as tolerated;
+  - a secret mapping plus a plain variable; an environment's upper-cased `TF_VAR_*` secret;
+    placeholder `ARM_*` secrets passing the credential check;
+  - an environment root's own `tests/` on its read-only lock, and an empty repository-root
+    `tests/` whose `null` provider floats;
+  - two misplaced files listed with warnings, an excluded file absent;
+  - job links, artifacts and inline annotations on every row; the lock check hashing offline
+    from the warm `-tftest` cache.
+- Not exercised on the test bed, covered by tests: a push run of the stage (the test bed runs on
+  pushes to `main` only), fork and Dependabot drops, the 256 cap, a real OIDC login in a lane
+  (probed with throwaway identities before implementation, §3).
+
 ## 5. Findings to carry
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
@@ -203,8 +239,9 @@ Recorded while building, not fixed in the step that found them, each waiting for
   (Decision-engine.md §9).
 - `ubuntu-latest` moving to ubuntu-26.04 brings Python 3.14 to `create-matrix`; the engine is
   standard library only, and CI runs its suite on the newest 3.x as well as the 3.12 floor.
-- The tests spec describes its fact-gathering (`create-tftest-matrix`) as a composite shim; under
-  Decision-engine.md D13 it becomes an adapter-side module unless something outweighs it, as
-  relevance's did (Path-relevance.md D12). Decide when step 3 starts.
 - `verify-terraform-lock`'s test 12 failed once when every suite ran in parallel on one machine and
-  passed alone; CI runs each suite in its own job. Worth a look if it recurs.
+  passed alone; CI runs each suite in its own job. `capture-matrix-job-meta` did the same in step 3.
+  Five suites (`capture-matrix-job-meta`, `create-validation-summary`,
+  `evaluate-automerge-eligibility`, `parse-terraform-plan`, `verify-terraform-lock`) write step
+  output to a fixed `/tmp/test_output.txt`, so two of them running at once overwrite each other's;
+  a per-suite `mktemp` would end it.
