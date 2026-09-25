@@ -574,8 +574,8 @@ groups need readable titles.
 | 4 | `🔐 Verify lane credentials` | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init and test; the reporting steps still run. |
 | 5 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the three ARM variables are set (§3.3). |
 | 6 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
-| 7 | `📋 Provide provider versions` | Non-environment roots only (`if: matrix.test.root-kind != 'environment'`). Copies `matrix.test.provider-set-lock` into the test root as `.terraform.lock.hcl` (§5.3). |
-| 8 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v0`, then `actions/cache` with key `terraform-provider-plugin-cache-<os>-<arch>-<hash of <root>/.terraform.lock.hcl>`: the effective lock, copied or the environment root's own, so every file of one set shares one entry (P13). `hashFiles()` resolves a path built from a matrix value, and hashes the lock step 7 wrote, but returns `''` when nothing matches: an environment root without a lock would share one key with every other, so the key carries a fallback or the cache is skipped when there is no lock (P40). |
+| 7 | `📋 Provide provider versions` | Non-environment roots only (`if: matrix.test.root-kind != 'environment'`). Copies `matrix.test.provider-set-lock` into the test root as `.terraform.lock.hcl` (§5.3). Then, for every root, `verify-terraform-lock` with `platforms:` set to the runner's own platform (`runner.os` and `runner.arch` as `linux_amd64`, `linux_arm64`, …) checks that the effective lock records an `h1:` checksum for it for every provider; a failure is reason `lock-platform`, and the summary names the environment lock and the `terraform providers lock -platform=<os>_<arch>` command that fixes it (P39). It skips init and test; the reporting steps still run. |
+| 8 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v0`, then `actions/cache` with key `terraform-provider-plugin-cache-<os>-<arch>-<hash of <root>/.terraform.lock.hcl>-tftest`, falling back through `restore-keys` to the environment job's key without the suffix: the effective lock, copied or the environment root's own, so every file of one set shares one entry that holds the test-only providers too, and a set's first test job starts from the environment job's warm cache (P13, P41). `hashFiles()` resolves a path built from a matrix value, and hashes the lock step 7 wrote, but returns `''` when nothing matches: an environment root without a lock would share one key with every other, so the key carries a fallback or the cache is skipped when there is no lock (P40). |
 | 9 | `🗄️ Resolve, restore and snapshot the module cache` | `terraform-module-cache@v0` phases `resolve` (fed the run-block module declarations of every test file in the root, §5.3, §9.9), `restore` and `snapshot`, gated on `matrix.test.cache-terraform-modules == 'true'`, each `continue-on-error: true`. |
 | 10 | `⚙️ Terraform init` | `terraform-init@v0`, `working-directory: matrix.test.root`, `additional-dirs-json: "[]"`, `github-token: github.token`, `backend: false`, `lockfile-mode:` `readonly-if-present` for an environment root, else `default` (§5.3). `continue-on-error: true`. |
 | 11 | `🔎 Verify, prune and save the module cache` | `terraform-module-cache@v0` phases `verify`, `prune` and `save`, with the environment job's gates (init succeeded, no cache hit, safe to save), each `continue-on-error: true`. Right after init, before the test writes into module directories. |
@@ -636,8 +636,14 @@ its schema from the installed provider, so mocks match the version the environme
   Terraform turns the setting on for any value other than empty or `0`, so `true` is right and even
   `false` would enable it. It has a cost: with it on, a cached package whose checksum the lock does
   not record for the runner's platform fails init ("doesn't match any of the checksums recorded in
-  the dependency lock file") instead of being downloaded again. A copied lock that lacks the
-  runner's platform, with a warm cache, therefore fails init (P39; §12).
+  the dependency lock file") instead of being downloaded again, and read-only init on such a lock
+  passes with a warning and leaves a package later commands refuse. So every lock a test job uses,
+  copied or an environment root's own, must record the runner's platform; the job checks it before
+  init and names the failure `lock-platform` (§5.2 step 7, P39). It is an operability requirement,
+  not a security one: a lock written by `terraform init` also records the registry's `zh:` zip
+  checksums for every platform, and Terraform refuses a download that matches none of them, so a
+  missing `h1:` never lets an unverified provider through. The verification step of the
+  environment job (`verify-lock-file`) already requires the same platforms on pull requests.
 
 **Caches mirror the environment job**, because thirty test jobs init what one environment job inits
 once, and every download is a chance for a transient registry or network failure (P38):
@@ -698,6 +704,7 @@ derives `status` and `reason` from the JSON stream, in this order:
 | # | Condition | `status` | `reason` |
 |---|---|---|---|
 | 0 | the credential check of an environment lane failed (init and test skipped) | `error` | `no-credentials` |
+| 0b | the effective lock records no checksum for the runner's platform (init and test skipped) | `error` | `lock-platform` |
 | 1 | init step did not succeed (the test step is skipped) | `error` | `init` |
 | 2 | Terraform below the floor (§3.5) | `error` | `terraform-version` |
 | 3 | no `test_abstract` message; diagnostics match "Module not installed", "there is no package for", "Inconsistent dependency lock file", "missing or corrupted provider plugins" (an environment lock that lacks the runner's platform, which read-only init only warns about) | `error` | `not-initialised` |
@@ -1127,8 +1134,9 @@ Indexed so implementation commits and future specs can cite them.
 | P35 | GitHub compares environment names case-insensitively; the credential expression's case behaviour is not documented. | A mixed-case explicit name matches the environment but not the credential. | The `tftest-` pattern is lowercase only; the builder lowercases before comparing. |
 | P36 | Environments whose lock files differ produce one test job per file per distinct set. | The test matrix doubles while two environments disagree. | By design: the disagreement is what the extra run verifies. `providers-from` narrows a lane; re-aligning the environments returns to one set. |
 | P37 | The module-cache classifier reads `module` blocks in `.tf` files; a test file's `run { module { source } }` is invisible to it. | Verified: a registry run-block source with a version range was keyed from the `.tf` files alone and judged safe to save, and a restored cache kept its old version after the range moved; a local run-block source reaching a registry module was not cached at all. | The resolve phase takes the run-block declarations of every test file in the root: a range keeps the root uncached, local sources are walked (§5.3, §9.9). |
-| P39 | With `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` on, a cached package whose checksum the lock does not record for the runner's platform fails init instead of being downloaded again. | A copied environment lock without the runner's platform fails every warm-cache init of that set with a checksum error. | Open (§12): strip the copied lock's hashes, or require the runner's platform in environment locks and name the error. |
+| P39 | With `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` on, a cached package whose checksum the lock does not record for the runner's platform fails init instead of being downloaded again; read-only init on such a lock leaves a package `terraform test` refuses. | A copied environment lock without the runner's platform fails every warm-cache init of that set with a checksum error. | Every lock a test job uses must record the runner's platform: step 7 checks it and fails with `lock-platform`, naming the fix (§5.2, §5.3). |
 | P40 | `hashFiles()` returns `''` when nothing matches. | Every environment root without a lock file shares one plugin-cache key. | The key carries a fallback, or the cache step is skipped without a lock (§5.2). |
+| P41 | `actions/cache` saves only the first entry for a key. With the environment job's key, the environment job saves first. | Test-only providers never reach the cache, and every test job downloads them. | The test job's key has its own `-tftest` suffix and falls back to the environment job's key through `restore-keys` (§5.2 step 8). |
 | P38 | Thirty init runs per pull request multiply exposure to transient registry and network failures. | Red jobs unrelated to the code. | Provider and module caches, authenticated module downloads; re-running failed jobs re-runs only the failed files. |
 
 ## 11. Test coverage
@@ -1164,6 +1172,7 @@ Indexed so implementation commits and future specs can cite them.
 - `export-env-vars`: goldens of the current behaviour before the conversion; the prefix export
   selects exactly the names with a listed prefix, is case-sensitive, is overridden by the explicit
   mapping and by plain variables, and does nothing for an empty list.
+- The lock check of step 7: a lock without the runner's platform fails with `lock-platform` and skips init; the runner's platform is derived from `runner.os` and `runner.arch` for both architectures.
 - `terraform-init`: `backend: false` adds the flag; `readonly-if-present` adds `-lockfile=readonly`
   with a lock and the may-break variable without; default unchanged.
 - `terraform-module-cache`: a registry run-block declaration with a range keeps the root uncached;
@@ -1214,14 +1223,6 @@ in the text above. What remains:
    missing environment creates it. The docs are silent on forks; the design never references one
    from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
    its private repositories into a personal account. Needs a public repository to fork.
-6. **The copied lock and the runner's platform** (P39): decide between stripping the hashes from
-   the copied lock (verified to work: versions kept, every provider from the cache, tests pass; the
-   cached package is then not checked against the environments' hashes) and requiring the runner's
-   platform in environment locks, naming the checksum error as an `init` failure.
-7. **The shared plugin-cache key**: the test job's plugin-cache key equals the environment job's
-   when the lock is copied byte for byte, and `actions/cache` saves only the first entry for a key,
-   so test-only providers may never reach the cache (P13's benefit). Decide whether the test job's
-   key gets its own component.
 ## 13. Implementation order
 
 One commit each, in this order, each green on its own:
