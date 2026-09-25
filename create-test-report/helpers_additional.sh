@@ -48,3 +48,42 @@ function line_anchored_tail {
   fi
   tail -c "${budget}" "${file}" | sed '1d'
 }
+
+# Environment variables whose values never go into a pull request comment.
+#
+# GitHub masks secrets in job logs, not in text posted through the API, and
+# terraform quotes some of these values in its error messages: every azurerm
+# provider error names the subscription as `Subscription: "<id>"`. The module
+# CI sets the first three from secrets at workflow level, so every step sees
+# them; the rest are the other credential inputs of the azurerm and azapi
+# providers and backend.
+REDACTED_ENV_VARS=(
+  ARM_SUBSCRIPTION_ID
+  ARM_TENANT_ID
+  ARM_CLIENT_ID
+  ARM_CLIENT_SECRET
+  ARM_CLIENT_CERTIFICATE_PASSWORD
+  ARM_OIDC_TOKEN
+  ARM_OIDC_REQUEST_TOKEN
+  ARM_ACCESS_KEY
+  ARM_SAS_TOKEN
+)
+
+# Replace, in place, every occurrence of a non-empty REDACTED_ENV_VARS value
+# with '***', which is what GitHub prints for a masked value in a log.
+#
+# The match is literal: the value is quoted in the pattern, so glob characters
+# in a secret match only themselves. The variable is passed by name (nameref),
+# so a body of up to 65k never goes through a subshell or onto argv.
+#
+# Arguments:
+#   $1 - name of the variable to redact
+function redact-known-values {
+  local -n _redact_target="${1}"
+  local _name _value
+  for _name in "${REDACTED_ENV_VARS[@]}"; do
+    _value="${!_name:-}"
+    [ -z "${_value}" ] && continue
+    _redact_target="${_redact_target//"${_value}"/***}"
+  done
+}

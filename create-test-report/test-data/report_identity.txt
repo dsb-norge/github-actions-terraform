@@ -1,0 +1,7 @@
+Test: "validate_private_endpoints_example" -----> "error" ❌
+See error details below:
+Error: creating Server (Subscription: "00000000-1111-2222-3333-444444444444"
+Resource Group Name: "rg-example-1-qu41"
+Server Name: "sql-example-1-qu41"): polling after CreateOrUpdate: polling failed
+Tenant: "55555555-6666-7777-8888-999999999999"
+secret-with-specials: a*b?[c]&d and a near miss that must stay: aXb?[c]&d

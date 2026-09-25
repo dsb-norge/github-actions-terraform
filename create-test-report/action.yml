@@ -4,6 +4,10 @@ description: |
   two-row validation table (init, tests), the test summary line, and the
   test report inside a collapser, capped at 65k characters.
 
+  Values of the job's Azure identity variables (`ARM_SUBSCRIPTION_ID`,
+  `ARM_TENANT_ID`, `ARM_CLIENT_ID` and the other `ARM_*` credentials) are
+  replaced with `***` in the body: GitHub masks secrets in logs, but not in
+  comments, and terraform errors quote the subscription ID.
   The body is written to a file and its path published as `body-file`,
   for posting with the `pr-comment` action's `body-file` input. The body
   never travels through a step output — see the ARG_MAX section of the

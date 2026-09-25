@@ -9,8 +9,10 @@
 #
 # The rendered body is byte-identical to the legacy inline-bash action's for
 # every report within the 65k budget — pinned by the golden fixtures in
-# test-data/. The one intentional divergence: a report over budget is cut on
-# a line boundary and never mid-codepoint (see line_anchored_tail).
+# test-data/. Two intentional divergences: a report over budget is cut on a
+# line boundary and never mid-codepoint (see line_anchored_tail), and the
+# values of the job's Azure identity variables are replaced with '***'
+# (see redact-known-values): GitHub masks them in logs, not in comments.
 #
 # Required environment variables:
 #   input_test_file     - File name of the test file (heading + body file name)
@@ -25,10 +27,14 @@
 #   GITHUB_ACTOR, GITHUB_EVENT_NAME, GITHUB_WORKFLOW - footer line
 #   RUNNER_TEMP                                      - body file location
 #
+# Other environment variables read:
+#   ARM_SUBSCRIPTION_ID, ARM_TENANT_ID, ARM_CLIENT_ID and the other names in
+#   REDACTED_ENV_VARS - their values are redacted from the body
+#
 
 set +o nounset # optional inputs are checked explicitly
 
-# Load helpers (provides format-status and line_anchored_tail)
+# Load helpers (provides format-status, line_anchored_tail and redact-known-values)
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 # GitHub's comment-body limit is 65536. The cap leaves headroom for the
@@ -97,6 +103,9 @@ Test report not available 🤷‍♀️"
   body="${body}
 
 *Pusher: @${GITHUB_ACTOR}, Action: \`${GITHUB_EVENT_NAME}\`, Workflow: \`${GITHUB_WORKFLOW}\`*"
+
+  # last, so nothing added above can bring a value back in
+  redact-known-values body
 
   printf '%s' "${body}"
 }

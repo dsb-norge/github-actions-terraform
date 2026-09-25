@@ -49,6 +49,12 @@ setup() {
   export input_status_test="success"
   export input_test_summary='"Success! 2 passed, 0 failed."'
   export input_test_report="${DATA_DIR}/report_success.txt"
+
+  # The step redacts these variables' values; a developer's own session must
+  # not leak into the goldens.
+  unset ARM_SUBSCRIPTION_ID ARM_TENANT_ID ARM_CLIENT_ID ARM_CLIENT_SECRET \
+    ARM_CLIENT_CERTIFICATE_PASSWORD ARM_OIDC_TOKEN ARM_OIDC_REQUEST_TOKEN \
+    ARM_ACCESS_KEY ARM_SAS_TOKEN
 }
 
 teardown() {
@@ -237,6 +243,43 @@ run_step
 assert "J6: 200k report → exit 0 (no E2BIG)" test "${LAST_EXIT}" -eq 0
 assert "J6: body-file stays under GitHub's comment limit" \
   test "$(wc -c < "$(rendered_body_file)")" -le 65536
+teardown
+
+# --------------------------------------------------------------------------
+# J8 — Azure identity values never reach the comment body
+# --------------------------------------------------------------------------
+# GitHub masks secrets in job logs, not in comments posted through the API.
+# terraform errors quote the subscription ID, so the step replaces the values
+# of the job's ARM_* identity variables with '***'.
+body_has() { grep -qF -- "${1}" "$(rendered_body_file)"; }
+body_lacks() { ! grep -qF -- "${1}" "$(rendered_body_file)"; }
+
+setup
+export ARM_SUBSCRIPTION_ID="00000000-1111-2222-3333-444444444444"
+export ARM_TENANT_ID="55555555-6666-7777-8888-999999999999"
+export ARM_CLIENT_SECRET='a*b?[c]&d'
+export ARM_CLIENT_ID=""
+export input_status_test="failure"
+export input_test_summary='"Failure! 0 passed, 1 failed."'
+export input_test_report="${DATA_DIR}/report_identity.txt"
+run_step
+assert "J8: exit 0" test "${LAST_EXIT}" -eq 0
+assert "J8: subscription ID is redacted" body_lacks "00000000-1111-2222-3333-444444444444"
+assert "J8: ... where terraform quoted it" body_has 'Subscription: "***"'
+assert "J8: tenant ID is redacted" body_has 'Tenant: "***"'
+assert "J8: a value with glob and & characters is matched literally" body_has 'secret-with-specials: *** and'
+assert "J8: ... and a near miss is left alone" body_has 'must stay: aXb?[c]&d'
+assert "J8: the rest of the report is intact" body_has 'Resource Group Name: "rg-example-1-qu41"'
+assert "J8: the step log is redacted too" bash -c "! grep -qF '00000000-1111-2222-3333-444444444444' '${OUT_FILE}'"
+teardown
+
+# An empty identity variable must not redact anything: an empty pattern would
+# otherwise match everywhere.
+setup
+export ARM_SUBSCRIPTION_ID=""
+export ARM_CLIENT_ID=""
+run_step
+assert "J8: empty identity variables leave the golden body unchanged" matches_golden success_with_report
 teardown
 
 # --------------------------------------------------------------------------

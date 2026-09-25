@@ -1034,7 +1034,8 @@ Untouched by this spec. `terraform-module-ci.yaml` keeps `create-tftest-matrix`'
 output, the old `terraform-test` behaviour behind the modernised action's compatibility (the
 workflow passes `working-directory: ${{ github.workspace }}` and `test-file: tests/<file>` after
 migration), and `create-test-report`. Migrating it to the summary job is a follow-up once this has
-run for a while.
+run for a while. `create-test-report` replaces the values of the job's Azure identity variables
+with `***` before it writes the comment body (P39).
 
 ### 9.8 `export-env-vars` (modernised)
 
@@ -1089,6 +1090,7 @@ Indexed so implementation commits and future specs can cite them.
 | P36 | Environments whose lock files differ produce one test job per file per distinct set. | The test matrix doubles while two environments disagree. | By design: the disagreement is what the extra run verifies. `providers-from` narrows a lane; re-aligning the environments returns to one set. |
 | P37 | The module-cache classifier reads `module` blocks in `.tf` files; a test file's `run { module { source } }` is invisible to it. | A remote source used only from a test file would be cached as if it were immutable. | The test job feeds run-block sources to the resolve phase; any source that is not immutably pinned keeps the cache off for that root (§5.3). |
 | P38 | Thirty init runs per pull request multiply exposure to transient registry and network failures. | Red jobs unrelated to the code. | Provider and module caches, authenticated module downloads; re-running failed jobs re-runs only the failed files. |
+| P39 | GitHub masks secrets in job logs, not in text posted through the API; terraform errors quote the subscription ID (`Subscription: "<id>"` in every azurerm error). | The test report comment on a public module repository publishes the test subscription's ID, while the job log shows `***`. | Before a comment body is written, replace the values of the job's `ARM_*` identity and credential variables with `***`: `create-test-report` does (`redact-known-values`), and so must the summary comment (§6.4), which quotes diagnostics. |
 
 ## 11. Test coverage
 
