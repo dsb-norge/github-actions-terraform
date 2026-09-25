@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?><testsuites>
+  <testsuite name="tests/unit-fail.tftest.hcl" tests="2" skipped="0" failures="1" errors="0">
+    <testcase name="prefix_is_wrong" classname="tests/unit-fail.tftest.hcl" time="0.41697199" timestamp="2026-09-25T17:07:38Z">
+      <failure message="1 of 1 assertions failed: group display name must start with tftest-"><![CDATA[
+Error: Test assertion failed
+
+  on tests/unit-fail.tftest.hcl line 4, in run "prefix_is_wrong":
+   4:     condition     = random_pet.this.prefix == "wrong"
+    ├────────────────
+    │ Diff:
+    │ --- actual
+    │ +++ expected
+    │ - "tftest"
+    │ + "wrong"
+
+
+group display name must start with tftest-
+]]></failure>
+    </testcase>
+    <testcase name="still_passes" classname="tests/unit-fail.tftest.hcl" time="0.209766747" timestamp="2026-09-25T17:07:38Z"></testcase>
+  </testsuite>
+</testsuites>
