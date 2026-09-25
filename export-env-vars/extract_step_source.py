@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Extract one step's `run:` block from action.yml into a runnable script.
 
-Used by run_all_tests.sh so the tests exercise the action's real inline bash
-rather than a copy of it. GitHub Actions expressions are substituted with
-literal text (no shell escaping involved, unlike a sed-based approach — the
-inputs are JSON blobs full of quotes and slashes).
+Used by run_all_tests.sh so the tests exercise the action's real run block (the
+shim, and through it the step script) rather than a copy of it. GitHub Actions
+expressions are substituted with literal text (no shell escaping involved,
+unlike a sed-based approach — the inputs are JSON blobs full of quotes and
+slashes).
 
 Usage:
   extract_step_source.py <action.yml> <step-id> <out-file> [KEY=path-or-value ...]
