@@ -49,9 +49,9 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertEqual([], output["environments"])
 
     def test_the_output_document_has_exactly_its_keys(self):
-        keys = {"schema_version", "errors", "notices", "environments", "matrices", "counts", "record"}
+        keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record"}
         output = decide.decide(support.document())
-        self.assertEqual(keys | {"relevance", "comments"}, set(output))
+        self.assertEqual(keys | {"relevance", "tests", "comments"}, set(output))
         self.assertEqual(1, output["schema_version"])
         self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])
         output = decide.decide(support.document(environments=[]))

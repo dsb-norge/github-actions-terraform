@@ -31,7 +31,8 @@ REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NA
 NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
-PUBLISHED = ("schema_version", "relevance", "counts", "environments", "comments", "notices", "record")
+PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
+             "record")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.

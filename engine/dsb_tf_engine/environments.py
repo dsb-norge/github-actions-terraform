@@ -36,6 +36,16 @@ YML_INPUTS = (
     "terraform-init-additional-dirs-yml",
 )
 
+# The test stage's inputs: read by tests.py for the test rows, never forwarded into an environment's.
+TEST_INPUTS = (
+    "allow-failing-terraform-tests",
+    "terraform-test-enabled",
+    "terraform-test-exclude-paths-yml",
+    "terraform-test-lanes-yml",
+    "terraform-test-runs-on",
+    "terraform-test-timeout-minutes",
+)
+
 # Replaced per environment: the environment's value, else the global one, else an empty list.
 REPLACE_FIELDS = ("goals-yml", "terraform-init-additional-dirs-yml")
 
@@ -166,7 +176,7 @@ def build_row(document, globals_, index, environment):
 
     # Generic forwarding: an input the environment does not set is copied in as a string.
     for input_name in sorted(document["workflow_inputs"]):
-        if input_name not in row and input_name not in YML_INPUTS:
+        if input_name not in row and input_name not in YML_INPUTS and input_name not in TEST_INPUTS:
             row[input_name] = values.get_val(document["workflow_inputs"][input_name])
 
     row.setdefault("github-environment", name)

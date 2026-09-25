@@ -664,8 +664,8 @@ class RunTest(unittest.TestCase):
         self.assertEqual("relevance.json", os.path.basename(path))
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
-        self.assertEqual({"schema_version", "relevance", "counts", "environments", "comments", "notices", "record"},
-                         set(published))
+        self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
+                          "warnings", "record"}, set(published))
         self.assertEqual((["env-a", "b"], ["run", "skip"], {"affected": 1, "unaffected": 1}),
                          ([e["environment"] for e in published["environments"]],
                           [e["verdict"] for e in published["environments"]], published["counts"]))

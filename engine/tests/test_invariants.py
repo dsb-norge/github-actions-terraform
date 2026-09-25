@@ -174,6 +174,37 @@ class InvariantCheckerTest(unittest.TestCase):
         output["comments"]["gc"].pop()
         self.assertEqual(["I14: not four purge rules per purged environment"], invariants.check(document, output))
 
+    def tested(self, **kwargs):
+        import test_tests
+        document = test_tests.document(["tests/a.tftest.hcl", "tests/b.tftest.hcl"], **kwargs)
+        output = decide.decide(document)
+        self.assertEqual([], invariants.check(document, output))
+        return document, output
+
+    def test_a_test_count_that_disagrees_with_the_rows(self):
+        document, output = self.tested()
+        output["tests"]["count"] = 5
+        self.assertEqual(["tests: the count, the active flag and the rows disagree"], invariants.check(document, output))
+
+    def test_a_test_slug_twice(self):
+        document, output = self.tested()
+        output["tests"]["matrix"]["include"][1]["slug"] = output["tests"]["matrix"]["include"][0]["slug"]
+        self.assertEqual(["tests: a slug appears twice"], invariants.check(document, output))
+
+    def test_a_credentialed_row_on_a_fork(self):
+        document, output = self.tested(is_fork=True)
+        output["tests"]["matrix"]["include"][0]["test"]["extra-envs-from-secrets"] = {"X": "S"}
+        self.assertEqual(["I4: a credentialed test row where secrets are unavailable"],
+                         invariants.check(document, output))
+
+    def test_a_row_outside_the_environment_pattern_or_taken(self):
+        for name in ("prod-tests", "tftest-UP", "prod"):
+            with self.subTest(name=name):
+                environments = [{"environment": "prod"}] if name != "prod" else [{"environment": "x", "github-environment": "PROD"}]
+                document, output = self.tested(environments=environments, locks={})
+                output["tests"]["matrix"]["include"][0]["test"]["github-environment"] = name
+                self.assertEqual([f"I9: the test row 'root--a' runs in '{name}'"], invariants.check(document, output))
+
     def test_an_error_output_with_a_relevance_block(self):
         document, output = decided()
         output.update(errors=["something"], environments=[], matrices={}, record=[],
