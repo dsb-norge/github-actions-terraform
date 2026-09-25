@@ -19,18 +19,30 @@ from dsb_tf_engine import adapter, decide, environments
 class FakeTools:
     """yq and gh as the adapter calls them; records every call."""
 
-    def __init__(self, yq_broken=None, gh=(0, '{"default_branch": "from-api"}', ""), missing=(), api=None):
+    def __init__(self, yq_broken=None, gh=(0, '{"default_branch": "from-api"}', ""), missing=(), api=None,
+                 git=None, files=None):
         self.calls = []
         self.yq_broken = yq_broken
         self.gh = gh
         self.missing = missing
         # The changed-file endpoints: {endpoint: (code, stdout, stderr) or a JSON-able answer}.
         self.api = api or {}
+        # git ls-files: {patterns: (code, stdout, stderr)}; unlisted patterns list nothing.
+        self.git = git or {}
+        # read_text: {path: text}; unlisted paths do not exist.
+        self.files = files or {}
+
+    def read_text(self, path):
+        self.calls.append((("read", path), ""))
+        return self.files.get(path)
 
     def run(self, argv, stdin=""):
         self.calls.append((tuple(argv), stdin))
         if argv[0] in self.missing:
             raise FileNotFoundError(2, "No such file or directory", argv[0])
+        if argv[0] == "git":
+            assert argv[:4] == ("git", "ls-files", "-z", "--"), argv
+            return self.git.get(tuple(argv[4:]), (0, "", ""))
         if argv[0] == "gh" and (len(argv) != 3 or argv[1] != "api"):
             return 1, "", f"unknown command {argv[1:]} for gh"
         if argv[0] == "gh" and argv[2] in self.api:
@@ -655,7 +667,10 @@ class RunTest(unittest.TestCase):
         self.assertEqual(0, runner.run())
         outputs = runner.outputs()
         self.assertEqual(["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason",
-                          "changed-count", "relevance-file"], list(outputs))
+                          "changed-count", "relevance-file", "tests-matrix-json", "tests-count", "tests-active"],
+                         list(outputs))
+        self.assertEqual(('{"include":[]}', "0", "false"),
+                         (outputs["tests-matrix-json"], outputs["tests-count"], outputs["tests-active"]))
         self.assertEqual(("1", "1", "diff", "diff", "1"),
                          (outputs["affected-count"], outputs["unaffected-count"], outputs["relevance-mode"],
                           outputs["relevance-reason"], outputs["changed-count"]))
@@ -681,6 +696,35 @@ class RunTest(unittest.TestCase):
         output = decide.decide(document)
         del output["matrices"], output["errors"]
         self.assertEqual(json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False) + "\n", text)
+
+    def test_the_test_stage_is_published_and_its_warnings_annotated(self):
+        tools = FakeTools(api={COMPARE: {"files": [{"filename": "tests/a.tftest.hcl"}]}},
+                          git={TEST_PATTERNS: (0, "tests/a.tftest.hcl\0docs/x.tftest.hcl\0", "")})
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "terraform-test-enabled": True},
+                        environ={"GITHUB_WORKFLOW": "CI build", "GITHUB_ACTOR": "octocat"})
+        self.assertEqual(0, runner.run(tools))
+        outputs = runner.outputs()
+        matrix = json.loads(outputs["tests-matrix-json"])
+        self.assertEqual((["root--a"], "1", "true"),
+                         ([row["slug"] for row in matrix["include"]], outputs["tests-count"], outputs["tests-active"]))
+        self.assertIn("::warning title=create-tf-vars-matrix::test file 'docs/x.tftest.hcl' is misplaced",
+                      runner.log.getvalue())
+        document = json.loads(_groups(runner.log.getvalue())["decision engine input document"])
+        self.assertEqual(("CI build", "octocat"), (document["caller"]["workflow_name"], document["event"]["actor"]))
+
+    def test_the_test_matrix_is_published_compact_sorted_and_unescaped(self):
+        tools = FakeTools(api={COMPARE: {"files": []}}, git={TEST_PATTERNS: (0, "tests/å.tftest.hcl\0", "")})
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "terraform-test-enabled": True})
+        self.assertEqual(0, runner.run(tools))
+        line = runner.outputs()["tests-matrix-json"]
+        self.assertEqual(json.dumps(json.loads(line), sort_keys=True, ensure_ascii=False, separators=(",", ":")), line)
+        self.assertIn('"file":"tests/å.tftest.hcl"', line)
+
+    def test_an_unset_workflow_name_and_actor_stay_out_of_the_document(self):
+        runner = Runner(self)
+        runner.run()
+        document = json.loads(_groups(runner.log.getvalue())["decision engine input document"])
+        self.assertEqual((False, False), ("workflow_name" in document["caller"], "actor" in document["event"]))
 
     def test_the_decision_is_announced_once(self):
         runner = Runner(self)
@@ -832,7 +876,85 @@ def _outside_verbatim(log):
     return lines
 
 
+LOCK = '# This file is maintained automatically by "terraform init".\n# Manual edits may be lost in future updates.\n\nprovider "registry.terraform.io/hashicorp/azurerm" {\n  version     = "4.30.0"\n  constraints = "~> 4.0"\n  hashes = [\n    "h1:abc=",\n    "zh:0123",\n  ]\n}\n\nprovider "registry.terraform.io/hashicorp/random" {\n  version = "3.7.2"\n  hashes = [\n    "h1:def=",\n  ]\n}\n'
+TESTS_ON = {**DEFAULT_INPUTS, "terraform-test-enabled": True}
+TEST_PATTERNS = ("*.tftest.hcl", "*.tftest.json")
+TF_PATTERNS = ("*.tf", "*.tf.json")
+
+
+class TestFactsTest(unittest.TestCase):
+    """The committed test files, the directories holding .tf files and the environments' locks."""
+
+    def gather(self, tools, inputs=TESTS_ON):
+        facts = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x",
+                  "payload": {}, "run": {"id": 1, "attempt": 1}}
+        return adapter.build_document(inputs, facts, tools, lambda path: True)
+
+    def test_a_lock_is_read_as_provider_versions(self):
+        self.assertEqual({"registry.terraform.io/hashicorp/azurerm": "4.30.0",
+                          "registry.terraform.io/hashicorp/random": "3.7.2"}, adapter.parse_lock(LOCK))
+        self.assertEqual({}, adapter.parse_lock("# nothing here\n"))
+        self.assertEqual({"b": "2"}, adapter.parse_lock('provider "a" {\n  constraints = "~> 1.0"\n}\n\n'
+                                                       'provider "b" {\n  version = "2"\n}\n'))
+
+    def test_the_facts_are_listed_from_git_and_the_locks(self):
+        tools = FakeTools(git={TEST_PATTERNS: (0, "tests/a.tftest.hcl\0modules/n/tests/b.tftest.hcl\0", ""),
+                                TF_PATTERNS: (0, "main.tf\0modules/n/main.tf\0modules/n/v.tf\0envs/env-a/x.tf.json\0", "")},
+                          files={"envs/env-a/.terraform.lock.hcl": LOCK})
+        document = self.gather(tools)
+        self.assertEqual({"files": ["tests/a.tftest.hcl", "modules/n/tests/b.tftest.hcl"],
+                          "directories_with_tf": [".", "envs/env-a", "modules/n"],
+                          "environment_locks": {"envs/env-a": {"registry.terraform.io/hashicorp/azurerm": "4.30.0",
+                                                               "registry.terraform.io/hashicorp/random": "3.7.2"}}},
+                         document["tests"])
+        self.assertIn((("read", "envs/env-a/.terraform.lock.hcl"), ""), tools.calls)
+
+    def test_an_environment_without_a_lock_reports_none_keyed_as_the_engine_compares(self):
+        inputs = {**TESTS_ON, "environments-yml": '[{"environment": "a", "project-dir": "./envs/a/"}, {"environment": "r", "project-dir": "."}]'}
+        tools = FakeTools(files={".terraform.lock.hcl": LOCK})
+        locks = self.gather(tools, inputs)["tests"]["environment_locks"]
+        self.assertEqual({"envs/a": None, ".": adapter.parse_lock(LOCK)}, locks)
+
+    def test_only_named_environments_have_locks_read(self):
+        for environments_yml in ('[{"environment": "a"}, "not a mapping", {"project-dir": "x"}]', '"not a list"',
+                                 'bad: [', '{"environment": "a"}'):
+            with self.subTest(environments_yml=environments_yml):
+                tools = FakeTools(files={"envs/a/.terraform.lock.hcl": LOCK})
+                inputs = {**TESTS_ON, "environments-yml": environments_yml}
+                locks = self.gather(tools, inputs)["tests"]["environment_locks"]
+                expected = {"envs/a": adapter.parse_lock(LOCK)} if environments_yml.startswith("[") else {}
+                self.assertEqual(expected, locks)
+
+    def test_nothing_is_gathered_when_the_stage_is_off_or_unknown(self):
+        for inputs in ({**TESTS_ON, "terraform-test-enabled": False}, {**TESTS_ON, "terraform-test-enabled": "false"},
+                       DEFAULT_INPUTS):
+            with self.subTest(inputs=inputs.get("terraform-test-enabled")):
+                tools = FakeTools()
+                self.assertNotIn("tests", self.gather(tools, inputs))
+                self.assertEqual([], [argv for argv, _ in tools.calls if argv[0] in ("git", "read")])
+
+    def test_git_that_cannot_list_is_a_fault(self):
+        tools = FakeTools(git={TEST_PATTERNS: (128, "", "fatal: not a git repository")})
+        with self.assertRaises(adapter.AdapterError) as raised:
+            self.gather(tools)
+        self.assertEqual(("git cannot list the repository's committed files", "fatal: not a git repository"),
+                         (raised.exception.message, raised.exception.detail))
+
+    def test_a_missing_git_is_named(self):
+        with self.assertRaises(adapter.AdapterError) as raised:
+            self.gather(FakeTools(missing=("git",)))
+        self.assertIn("'git' cannot be run", raised.exception.message)
+
+
 class ToolsTest(unittest.TestCase):
+    def test_read_text_reads_a_file_or_reports_none(self):
+        with tempfile.TemporaryDirectory() as work:
+            path = os.path.join(work, "f")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("å\n")
+            self.assertEqual("å\n", adapter.Tools().read_text(path))
+            self.assertIsNone(adapter.Tools().read_text(os.path.join(work, "missing")))
+
     def test_tools_run_a_program_with_stdin_and_capture_both_streams(self):
         code, stdout, stderr = adapter.Tools().run(
             [sys.executable, "-c", "import sys; print(sys.stdin.read().upper()); print('e', file=sys.stderr); sys.exit(3)"], "hi")

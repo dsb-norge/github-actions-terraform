@@ -29,6 +29,15 @@ outputs:
   changed-count:
     description: "How many files the change touched, as the API counted them; '0' when not fetched"
     value: ${{ steps.create-matrix.outputs.changed-count }}
+  tests-matrix-json:
+    description: "The test stage's matrix, one row per test file and provider set (docs/Terraform-tests.md §4.5); may be empty"
+    value: ${{ steps.create-matrix.outputs.tests-matrix-json }}
+  tests-count:
+    description: "How many test jobs run, as a string"
+    value: ${{ steps.create-matrix.outputs.tests-count }}
+  tests-active:
+    description: "'true' when the stage is on, the event runs tests and there is at least one row"
+    value: ${{ steps.create-matrix.outputs.tests-active }}
   relevance-file:
     description: |
       Path of relevance.json on the runner: every environment's verdict and resolved path rules, the
