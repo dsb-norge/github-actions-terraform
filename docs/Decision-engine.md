@@ -267,7 +267,7 @@ What it emits as built, the port with relevance and the comment manifest:
     { "environment": "prod", "verdict": "run", "reasons": ["relevance: envs/prod/**"],
       "github-environment": "prod", "add-pr-comment": "true", "pr-comment-group": "", "mutates-on-pr": [],
       "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": [], "pr-auto-merge-limits": { … },
-      "paths": ["envs/prod/**", "main/**", "modules/**", ".tflint.hcl"], "paths-ignore": ["**/*.md"] },
+      "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"] },
     { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], … }
   ],
   "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },

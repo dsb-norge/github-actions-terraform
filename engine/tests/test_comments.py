@@ -114,7 +114,7 @@ class NotAffectedTest(unittest.TestCase):
                 "➖ Not affected by this pull request: no changed file matches this environment's paths "
                 "(run #4711 attempt #2).\n\n"
                 "<details><summary>Path rules</summary>\n\n"
-                "Included: `envs/prod/**` · `main/**` · `modules/**` · `.tflint.hcl`\n"
+                "Included: `envs/prod/**` · `main/**` · `modules/**` · `/.tflint.hcl`\n"
                 "Ignored: `**/*.md`\n"
                 "Relevance: `diff`, pull request #87, 3 changed files\n\n"
                 "</details>")

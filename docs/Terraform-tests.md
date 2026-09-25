@@ -376,7 +376,9 @@ matching would silently do something else (P6):
   character.
 - `**` matches any number of whole segments, including none: `**/unit-*.tftest.hcl` matches
   `unit-a.tftest.hcl` at the root and `modules/x/tests/unit-a.tftest.hcl`.
-- A pattern containing no `/` is matched against the basename alone.
+- A pattern containing no `/` is matched against the basename alone, unless a leading `/` or `./`
+  anchors it at the repository root: `/.tflint.hcl` matches the root's file only. On a pattern
+  that has another `/`, the anchor changes nothing.
 - No negation, no character classes, no braces. A pattern that uses them is a validation error.
 
 Implementation: translate each pattern to an anchored extended regex (`**/` → `(.*/)?`, `**` →
