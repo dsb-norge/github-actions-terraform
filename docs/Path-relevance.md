@@ -436,8 +436,8 @@ blocks merging, which is right: the work was not verified).
 | `needs.terraform-ci-cd.result == 'skipped'` and `affected-count == '0'` | ok: nothing to verify, with a notice |
 | `needs.terraform-ci-cd.result == 'skipped'` and `affected-count > 0` | red: the matrix should have run and something upstream prevented it |
 | `needs.terraform-ci-cd.result` is `failure` or `cancelled` | red |
-| test jobs: `success`, or `skipped` while the builder's `tests-active` / `tests-env-active` is not `'true'` | ok |
-| test jobs: `skipped` while active, `failure`, `cancelled` | red |
+| the test job: `success`, or `skipped` while the builder's `tests-active` is not `'true'` | ok |
+| the test job: `skipped` while active, `failure`, `cancelled` | red |
 | run cancelled | red |
 | seed, aggregator, run summary or test summary failed | ignored; not in `needs` |
 
@@ -574,7 +574,7 @@ environments-yml: |
 
 | Concern | Relationship |
 |---|---|
-| Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test jobs' `if:` drop their `seed-pr-comments` result clause for the same reason as §5.3. |
+| Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test job's `if:` drops its `seed-pr-comments` result clause for the same reason as §5.3. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | Conditionality comes for free: a dependency on an environment that is not in the run is satisfied trivially, and is recorded. `relevance.json` carries what the stage builder needs. The conclusion rule for a stage skipped while its row count is non-zero is shared with that spec. |
 | Single-environment dispatch (later) | `workflow_dispatch` is mode `all` until that spec adds a filter; a dispatched environment is always affected. |
 | Test-root lock files (later) | Unchanged. |
@@ -600,7 +600,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 - **`evaluate-automerge-eligibility`**: §8, `relevance-file` input, goldens for zero affected with
   an allowed and a disallowed actor, a missing affected environment, and the no-file case unchanged.
 - **Workflow**: `create-matrix` steps and outputs, `seed-pr-comments` manifest, the environment
-  job's `if:`, the test jobs' `if:`, `conclusion`, `automerge`; structural tests for the `needs`
+  job's `if:`, the test job's `if:`, `conclusion`, `automerge`; structural tests for the `needs`
   lists and the named-results form.
 
 ## 12. Pitfalls

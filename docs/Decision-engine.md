@@ -158,10 +158,11 @@ features bring two more, as adapter-side modules under the same gates:
   (Path-relevance.md §4.2-§4.3). Nothing is fetched when relevance is switched off, for an event
   other than a push or a pull request, or for a forced or deleting push, whose files the core
   would not read.
-- `create-tftest-matrix` lists committed test files, the directories that hold `.tf` files, and the
-  environments' lock files by `project-dir`; the engine derives roots, lanes, environments and
-  provider sets and validates them. Its existing `all-tests` output stays for the module CI
-  workflow until that migrates.
+- gathering the test facts (in `adapter.py`, Terraform-tests.md D20) lists committed test files,
+  the directories that hold `.tf` files, and the environments' lock files by `project-dir`, in the
+  same step; the engine derives roots, lanes, environments and provider sets and validates them.
+  `create-tftest-matrix` stays as it is, with its `all-tests` output, for the module CI workflow
+  until that migrates.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -308,8 +309,8 @@ for it whether or not it runs: the row's `github-environment`, `add-pr-comment`,
   "counts": { "affected": 2, "unaffected": 1, "by_stage": { "1": 1, "2": 1, "3": 0 } },
   "ordering": { "enabled": true, "stages_used": 2, "cap": 3, "bypass": null },
   "tests": {
-    "matrix": { "include": [ … ] }, "env_matrix": { "include": [ … ] },
-    "count": 12, "active": true, "env_active": false,
+    "matrix": { "include": [ … ] },
+    "count": 12, "active": true,
     "not_run": [ { "file": "…", "lane": "…", "reason": "secrets unavailable" } ],
     "provider_sets": [ { "id": "a1b2c3", "environments": ["prod","staging"], "lock": "envs/prod/.terraform.lock.hcl" } ]
   },
@@ -350,7 +351,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §5.2 | the environments of `relevance.json` | `environments[]`: `verdict` `run` is affected, the `relevance:` reason names the matched rule, the resolved `paths` and `paths-ignore` on the entry |
 | Path-relevance.md §5.2 | `affected-count`, `unaffected-count` | `counts.affected`, `counts.unaffected` |
 | Path-relevance.md §4.3 | `relevance-mode`, `relevance-reason`, `changed-count` | `relevance.mode`, `relevance.reason`, `relevance.changed_count` |
-| Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-env-matrix-json`, `tests-count`, `tests-active`, `tests-env-active`, `tests-not-run-json` | `tests.matrix`, `tests.env_matrix`, `tests.count`, `tests.active`, `tests.env_active`, `tests.not_run`; a row is exactly the §4.5 row schema |
+| Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-count`, `tests-active`, the not-run list | `tests.matrix`, `tests.count`, `tests.active`, `tests.not_run` (in `relevance.json`, not a job output); a row is exactly the §4.5 row schema |
 | Terraform-tests.md §5.3 | provider sets | `tests.provider_sets` |
 | Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder` or `not-affected`, `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`, one per decision kind, in the relevance spec's format |
@@ -648,7 +649,7 @@ line, which the dispatch spec's record line prints as it comes.
 
 Each feature lands as rules and table cases in the engine, its fact-gathering on the adapter side,
 a few lines in the workflow, and the invariants of §7 that constrain its rules, in the order the maintainer chooses:
-relevance rules and cases; test rules and cases with the `create-tftest-matrix` adapter; dispatch
+relevance rules and cases; test rules and cases with the adapter's test facts; dispatch
 and trigger-events rules and cases, with the `goals-granted` switch of the operation gates and its
 structural test; stage assignment. The port cases stay: a feature's default must leave every one
 of them deciding as before, or say in its spec why not.
