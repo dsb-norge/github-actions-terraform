@@ -12,10 +12,11 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── annotate-terraform-outcome    --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
 ├── create-run-summary            --> run-level table of every environment on the run page
 ├── create-test-report            --> renders the terraform test report body for the module-ci PR comment (body-file)
+├── create-test-summary           --> one structured summary of the default workflow's terraform test stage (PR comment and run summary)
 ├── create-tf-vars-matrix         --> creates the environment matrix and decides which environments a change is relevant to (runs the engine's create-matrix adapter)
 ├── create-tftest-matrix          --> creates matrix for running terraform module test
 ├── create-validation-summary     --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
-├── export-env-vars               --> export environment variables for use in subsequent action steps
+├── export-env-vars               --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
 ├── lint-with-tflint              --> run linting of terraform code with TFLint
 ├── parse-terraform-apply         --> parses apply/destroy console output: counts, completed flag, tick-free copy
 ├── pr-comment                    --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
@@ -26,7 +27,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── terraform-fmt                 --> checks if terraform code is formatted
 ├── terraform-plan                --> run terraform plan in directory
 ├── terraform-apply               --> run terraform apply in directory
-└── terraform-test                --> run terraform test in directory
+└── terraform-test                --> run and classify one terraform test file (default workflow's test stage, module CI)
 ```
 
 The decision engine the matrix is built by lives in [engine](engine), a Python 3.12+ standard-library

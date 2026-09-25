@@ -21,6 +21,7 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 |---|---|---|---|
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
 | `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
+| `<!-- tf:head:tests:<caller> -->` | Head | One per calling workflow, when it has test files | Seed job (initial), `terraform-test-summary` job via [`create-test-summary`](../create-test-summary/) (final, or deleted when the last test file is gone) |
 | `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt | Matrix job for that env |
 | `<!-- tf:tag:apply:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt **that ran apply** | Matrix job for that env (phase 2) |
 | `<!-- tf:tag:destroy-plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt that ran destroy-plan | Matrix job for that env (phase 2) |
@@ -32,7 +33,7 @@ The three operation tags follow the plan tag's lifecycle exactly (purged at the 
 
 Marker name conventions:
 
-- Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env`.
+- Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env` / `tests`. The tests head's name is the calling workflow's name reduced to `[A-Za-z0-9_-]`, because a repository may call this workflow from two workflows and both would otherwise fight over one head ([Terraform-tests.md §6.3](Terraform-tests.md)); its closing ` -->` keeps `…tests:ci -->` from matching `…tests:ci-x -->`.
 - Tags: `tf:tag:<kind>:<scope-key>:run-id-<run-id>:attempt-<run-attempt>`. The run-id distinguishes workflow runs; the attempt token distinguishes re-runs of the same run (`run-id` is stable across attempts, only `run-attempt` increments). Both are needed so re-runs — including "Re-run failed jobs" — get fresh tags without colliding with the prior attempt's.
 
 Markers are treated as opaque substrings by the underlying actions: matching is `body.contains(marker)`. The exact format is enforced by convention in this doc, not by the actions themselves — any unique-enough string works.
@@ -58,7 +59,7 @@ The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflo
 1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value among commenting envs, affected or not, sorted by name; always the `⏳ Awaiting results…` placeholder.
 2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**, in `environments-yml` order. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table. An affected env gets the placeholder; an env the change does not touch gets its final "not affected" body (§5.1), since no matrix job will run to finalise it.
 
-Heads are processed in declared order — group heads first, env heads after. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
+Heads are processed in declared order — group heads first, env heads after, and the tests head last, when the run has test files. Reviewers read plans first. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
 
 The seed job GCs only the tags of **unaffected** envs with `add-pr-comment: true`: four rules each, one per tag kind, so an earlier run's plan does not stay visible under a head that says "not affected". Affected envs' tags are purged per env in the matrix (§3.2). This is what makes "Re-run failed jobs" behave correctly: when a previous attempt's seed already succeeded, GitHub skips it on the re-run, so any cleanup of affected envs hooked into the seed phase wouldn't fire, while an unaffected env is unaffected on every attempt and its purge is already done. Each matrix job purges its own env's plan tags as its first commenting step, which works whether the seed re-ran or not. The seed is `terraform-ci-cd`'s `needs:` dependency so matrix jobs still can't race ahead of head seeding; its result is not tested, so a broken seed never skips the matrix.
 
@@ -99,6 +100,8 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 2. The matrix job then runs the validation pipeline (init → fmt → validate → lint → plan), and after that POSTs a fresh plan tag carrying the current `run-id` + `attempt` tokens.
 3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
 4. Envs the change does not touch have their tags purged by the seed (§3.1); their matrix job does not run at all.
+
+The tests head is PATCHed by the `terraform-test-summary` job on every pull-request run, and deleted by it when the run has no test files left (the last one removed, or the stage switched off, on an open pull request); a pull request that never had tests has nothing to delete.
 
 The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing, and the prior attempt's plan tags disappear from the conversation within seconds of each matrix job starting. Envs that aren't being re-run keep their existing tags showing the right state.
 

@@ -212,7 +212,7 @@ The workflow does an explicit **restore → init → save**, with no `restore-ke
 ```mermaid
 flowchart TD
     setup["📥 Setup Terraform<br>(terraform on PATH)"]
-    resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, additional-dirs-json, environment<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
+    resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, additional-dirs-json, environment, test-directory<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
     restore["🚀 actions/cache/restore@v5<br>path = cache-paths, key = cache-key, no restore-keys"]
     snap["📸 terraform-module-cache (phase - snapshot)<br>copies each included dir's modules.json to RUNNER_TEMP"]
     init["⚙️ terraform-init<br>(unchanged)"]
@@ -522,6 +522,25 @@ Two properties are deliberate:
   resolves inside `$GITHUB_WORKSPACE` before deleting anything. Invariant 8.9.
   The repository's own `.git` sits outside every cache path and is therefore
   never in scope — asserted by `t38` and `t45`.
+
+### 4.7 Test files' run-block modules
+
+`terraform init` in a directory also installs the modules that the `run` blocks of its test files
+name, `<dir>/*.tftest.hcl` and `<dir>/tests/*.tftest.hcl`, whatever `-filter` a later `terraform
+test` gets, under the directory's own `.terraform/modules` with keys `test.tests.<file>.<run>`.
+Terraform accepts only local and registry sources in run blocks. The `resolve` phase reads these
+declarations itself when `test-directory` is set (normally `tests`; empty, the default, reads
+nothing): a registry declaration goes through §4.5's classifier, so a version range keeps the
+directory uncached; a local one is walked like a local module source, relative to the directory,
+not the test file; every declaration enters the digest under Terraform's own key, so the key moves
+when a pin or a run changes; and a declaration it cannot read (no literal source) or any
+`.tftest.json` file keeps the directory uncached. Only the `module {}` sub-block of a run is read,
+bounded by brace depth with quoted strings stripped, so a `source` or `version` in a run's
+`variables` block is never taken for the module's. `verify`, `snapshot` and `prune` need nothing
+new: they classify by source, and the run-block modules sit under the same cache path. The
+environment job passes `test-directory: tests` too, since an environment with a `tests/` directory
+installs those modules on every init. Tests: `rb01`-`rb21` in `run_tests_step_resolve.sh`,
+`v06`-`v08` in `run_tests_step_verify.sh`, `t46` in `run_tests_step_prune.sh`.
 
 ## 5. Workflow wiring
 
