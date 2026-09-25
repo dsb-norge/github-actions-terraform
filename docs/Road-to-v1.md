@@ -45,7 +45,7 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Change | v0 | v1 | Action |
 |---|---|---|---|
 | Relevance per environment | every environment runs on every event | absent `paths` means the standard layout, with `**/*.md` ignored; unaffected environments are skipped and shown as such | remove `on.paths` and `on.paths-ignore` from the calling workflow; review `paths` for an environment that reads files outside `<project-dir>/**`, `main/**`, `modules/**`, the additional init dirs and the root's `.tflint.hcl`; `paths: ["**"]` or `path-relevance-enabled: false` keeps the old behaviour |
-| Terraform tests | not run by this workflow | every committed `*.tftest.hcl` runs on pull requests and pushes, one job per file, and a failing one blocks the merge | nothing for a repository without test files; `terraform-test-enabled: false` to opt out; test roots need Terraform 1.12 or later |
+| Terraform tests | not run by this workflow | every committed `*.tftest.hcl` runs on pull requests and pushes, one job per file, and a failing one blocks the merge | nothing for a repository without test files; `terraform-test-enabled: false` to opt out; test roots need Terraform 1.13 or later |
 | Schedule | a `schedule` on the calling workflow applied every environment | `schedule` is opt-in per environment through `trigger-events` | the two repositories that schedule the workflow add `trigger-events: [pull_request, push, workflow_dispatch, schedule]` to the scheduled environment, then fold the nightly file into the main workflow |
 | Dispatch inputs | ignored | `environment`, `goal` and `reason` are read from the calling workflow's `workflow_dispatch.inputs` | add the standard block; a caller whose dispatch block already uses `environment` or `goal` for something else renames its own |
 | Runner for `create-matrix` | bash, jq, yq | Python 3.12 or later, and yq | nothing on GitHub-hosted runners (no caller names a workflow-level `runs-on` today); a self-hosted pool named there must carry both |
@@ -109,7 +109,7 @@ early.
 | 3 | Terraform-tests.md §13: the test stage, lanes, environments, provider sets, summary | Depends on the conclusion table and the engine. |
 | 4 | Dispatch-and-triggers.md §11: trigger events, dispatch, the `goals-granted` gate switch | Depends on the engine; the smallest of the four. |
 | 5 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`relevance.json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
-| 6 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8). |
+| 6 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8), including a real OIDC login in a Terraform test lane on the test bed, which step 3 did not gate on ([V1-progress.md](V1-progress.md) §3). |
 
 ## 7. Release mechanics
 
