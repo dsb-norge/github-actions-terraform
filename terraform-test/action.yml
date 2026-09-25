@@ -120,6 +120,9 @@ outputs:
   terraform-version:
     description: The Terraform version that ran; empty when unknown.
     value: ${{ steps.run-tests.outputs.terraform-version }}
+  terraform-version-floor:
+    description: The lowest Terraform version the action runs tests with from a working directory. Always set.
+    value: ${{ steps.run-tests.outputs.terraform-version-floor }}
   runner-platform:
     description: The runner's platform as Terraform names it (linux_amd64, linux_arm64, …). Always set.
     value: ${{ steps.run-tests.outputs.runner-platform }}

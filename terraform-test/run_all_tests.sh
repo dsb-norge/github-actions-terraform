@@ -288,7 +288,7 @@ read_outputs = set(re.findall(r"steps\.test\.outputs\.([a-z-]+)", module_ci_text
 
 expected_outputs = {
     "status", "reason", "passed", "failed", "errored", "skipped", "total", "elapsed-ms",
-    "summary", "exit-code", "terraform-version", "runner-platform", "test-file-path",
+    "summary", "exit-code", "terraform-version", "terraform-version-floor", "runner-platform", "test-file-path",
     "json-file", "report-file", "junit-file", "runs-json-file", "diagnostics-json-file",
     "providers-json-file", "providers-summary", "providers-floating-count",
     "failed-runs-json", "failed-runs-omitted", "json", "report",
@@ -462,7 +462,8 @@ fake_version "1.11.4"
 run_step
 assert "V 1.11.4 with a working directory: error (terraform-version)" outputs_are "status=error" "reason=terraform-version" "terraform-version=1.11.4"
 assert "V 1.11.4: terraform test not run" terraform_test_not_run
-assert "V 1.11.4: the message names the floor" log_contains "below the floor 1.12.0"
+assert "V 1.11.4: the message names the floor" log_contains "below the floor 1.13.0"
+assert "V 1.11.4: the floor is published" output_is terraform-version-floor "1.13.0"
 teardown
 
 # A failed init defers to the floor: an old version is the likelier cause.
@@ -477,10 +478,19 @@ teardown
 
 setup
 fixture pass.json
-fake_version "1.12.0"
+fake_version "1.13.0"
 export input_status_init="failure"
 run_step
-assert "V 1.12.0 after a failed init: error (init)" outputs_are "status=error" "reason=init" "terraform-version=1.12.0"
+assert "V 1.13.0 after a failed init: error (init)" outputs_are "status=error" "reason=init" "terraform-version=1.13.0"
+teardown
+
+# 1.12 initialises an empty root but refuses a test file's variable blocks: below the floor.
+setup
+fixture pass.json
+fake_version "1.12.2"
+run_step
+assert "V 1.12.2: error (terraform-version)" outputs_are "status=error" "reason=terraform-version" "terraform-version=1.12.2"
+assert "V 1.12.2: terraform test not run" terraform_test_not_run
 teardown
 
 setup
@@ -493,16 +503,16 @@ teardown
 
 setup
 fixture pass.json
-fake_version "1.12.0"
+fake_version "1.13.0"
 run_step
-assert "V 1.12.0: runs" outputs_are "status=pass" "terraform-version=1.12.0"
+assert "V 1.13.0: runs" outputs_are "status=pass" "terraform-version=1.13.0"
 teardown
 
 setup
 fixture pass.json
-fake_version "1.12.0-rc1"
+fake_version "1.13.0-rc1"
 run_step
-assert "V 1.12.0-rc1: counts as 1.12.0" output_is status pass
+assert "V 1.13.0-rc1: counts as 1.13.0" output_is status pass
 teardown
 
 setup
