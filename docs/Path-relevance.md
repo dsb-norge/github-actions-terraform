@@ -648,6 +648,13 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
   `if:` contains `!cancelled()` and the affected-count clause, the conclusion's `needs`, and the
   absence of `contains(needs.*.result`.
 - `create-run-summary`: goldens of §11.
+- The contract: each reader's suite also runs on the `relevance.json` the engine publishes, written
+  by the engine's `relevance_fixture.py` through the adapter's own writer, so a renamed key fails
+  there and not in production. Structural test F11 runs the seed job's script on that file and on a
+  missing one, and checks `create-matrix`'s outputs, permissions and upload and every reader's
+  download path. The `create-tf-vars-matrix` suite runs the adapter with a stub `gh` for a pull
+  request over two pages, a documentation-only push, a new branch, a forced push and relevance
+  switched off (the last two with no request at all), and an API that cannot answer.
 
 **Should**
 

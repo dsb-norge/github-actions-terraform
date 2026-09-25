@@ -336,11 +336,14 @@ fi
 # ======================================================================
 
 # A gh answering the changed-file endpoints of the example repository from files in ${SANDBOX}/api,
-# named after the endpoint with '/' as '_'; any other request fails as the API would.
+# named after the endpoint with '/' as '_'; any other request fails as the API would. Every call is
+# logged to ${SANDBOX}/gh-calls, one line of arguments each.
 make_gh() {
   mkdir -p "${SANDBOX}/api"
+  : >"${SANDBOX}/gh-calls"
   cat >"${SANDBOX}/bin/gh" <<'GH'
 #!/usr/bin/env bash
+echo "$*" >>"$(dirname "$0")/../gh-calls"
 answer="$(dirname "$0")/../api/${2//\//_}"
 [[ "$1" == "api" && -f "${answer}" ]] && cat "${answer}" && exit 0
 echo "gh: Not Found (HTTP 404) for $2" >&2
@@ -384,12 +387,15 @@ make_sandbox "${baseline}"
 make_gh
 echo '{"repository": {"default_branch": "main"}, "pull_request": {"number": 87, "head": {"sha": "abc"}}}' \
   >"${SANDBOX}/event.json"
-echo '{"changed_files": 1, "head": {"sha": "abc"}}' >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87"
-echo '[{"filename": "envs/env-a/main.tf", "status": "modified"}]' \
+echo '{"changed_files": 101, "head": {"sha": "abc"}}' >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87"
+jq -n '[range(100) | {filename: "docs/page-\(.).md", status: "added"}]' \
   >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87_files?per_page=100&page=1"
+echo '[{"filename": "envs/env-a/main.tf", "status": "modified"}]' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87_files?per_page=100&page=2"
 run_step GITHUB_EVENT_NAME=pull_request
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]] \
-  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]]; then
+  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]] \
+  && [[ "$(wc -l <"${SANDBOX}/gh-calls")" -eq 3 ]] && [[ "$(step_output changed-count)" == "101" ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the pull request's own change did not run env-a"
@@ -406,6 +412,48 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["
   pass
 else
   fail "exit ${STEP_EXIT}, or a failed fetch did not fail open"
+fi
+
+begin "relevance: a push that creates a branch is compared against the default branch"
+make_sandbox "${baseline}"
+make_gh
+zero="$(printf '0%.0s' {1..40})"
+jq -n --arg b "${zero}" --arg a "${after}" '{repository: {default_branch: "main"}, created: true, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+echo '{"files": [{"filename": "envs/env-a/main.tf"}]}' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_compare_main...${after}"
+run_step GITHUB_EVENT_NAME=push GITHUB_REF_NAME=feature/new
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(cat "${SANDBOX}/gh-calls")" == "api repos/example-org/example-repo/compare/main...${after}" ]] \
+  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the new branch was not compared against the default branch: $(cat "${SANDBOX}/gh-calls")"
+fi
+
+begin "relevance: switched off, nothing is fetched and every environment runs"
+make_sandbox "${baseline}"
+make_gh
+jq '.["path-relevance-enabled"] = false' "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.off" && mv "${SANDBOX}/inputs.off" "${SANDBOX}/inputs.json"
+jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+run_step GITHUB_EVENT_NAME=push
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] && [[ "$(step_output relevance-reason)" == "disabled" ]] \
+  && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or relevance switched off still called gh: $(cat "${SANDBOX}/gh-calls")"
+fi
+
+begin "relevance: a forced push fetches nothing and runs every environment"
+make_sandbox "${baseline}"
+make_gh
+jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, forced: true, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+run_step GITHUB_EVENT_NAME=push
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] && [[ "$(logged_record)" == "env-a: run — relevance: all:forced" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or a forced push was fetched: $(cat "${SANDBOX}/gh-calls")"
 fi
 
 echo ""
