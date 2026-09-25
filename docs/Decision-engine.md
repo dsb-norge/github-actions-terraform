@@ -456,6 +456,12 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
    workflow reads is guaranteed by the required list, except the two recorded in §9.
 6. **The checker checked** (`test_invariants.py`): each invariant fires on an output broken in
    exactly one way, so a checker that let everything through would fail.
+7. **The contract with the readers** (`test_contract.py`, `relevance_fixture.py`): the
+   aggregator, the run summary and the auto-merge evaluator test against hand-written
+   `relevance.json` files, which a renamed key in the engine would leave green. The helper writes
+   the file through the adapter's own `write_relevance_file` for three scenarios, each reader's
+   suite runs its step on it, and `test_contract.py` pins the keys those readers read as literals
+   and keeps the helper deciding.
 
 Every table, port, generated and random case also asserts that `decide` leaves its input document
 unchanged: the engine is a pure function of it.

@@ -476,6 +476,48 @@ assert "R7: headline N/A/U from the file; its failure still counts" \
 unset input_relevance_file
 teardown
 
+# R8 — the contract: the relevance.json the engine publishes, not a hand-written one. A key the
+# engine renames fails here, where the hand-written files above would stay green.
+engine_relevance() {
+  python3 -I -B "${_this_script_dir}/../engine/tests/relevance_fixture.py" "${1}" "${RUNNER_TEMP}/relevance.json"
+}
+setup
+engine_relevance docs-only
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R8: exits 0 on the engine's docs-only file" test "${LAST_EXIT}" -eq 0
+assert "R8: headline counts the engine's verdicts" \
+  grep -qxF '**3 environments · 0 affected · 3 not affected · 0 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "R8: rows labelled by github-environment, in environments-yml order" \
+  test "$(env_order)" = "prod-gh staging sandbox "
+assert "R8: relevance line from the engine's block" grep -qxF 'Relevance: `diff`, 2 changed files' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+setup
+engine_relevance one-environment
+write_meta "staging" success "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R8: one affected environment with its metadata" \
+  grep -qxF '**3 environments · 1 affected · 2 not affected · 0 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+staging_row="$(row staging)"
+assert "R8: the affected row is rendered from its metadata, not dashed" \
+  test -n "${staging_row}" -a "${staging_row%"${DASH_ROW_TAIL}"}" = "${staging_row}"
+unset input_relevance_file
+teardown
+
+setup
+engine_relevance workflow-changed
+write_meta "prod-gh" success "0:0:0" "0:10"
+write_meta "staging" success "0:0:0" "0:10"
+write_meta "sandbox" success "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R8: mode all names the engine's reason" grep -qxF 'Relevance: `all` (workflow-changed)' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------

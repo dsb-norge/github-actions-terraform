@@ -230,7 +230,7 @@ write_relevance() {
         "add-pr-comment": $c, "pr-comment-group": $g,
         "mutates-on-pr": ($m | split(",") | map(select(. != ""))),
         "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": null, "pr-auto-merge-limits": null,
-        "paths": ["envs/\($e)/**", "main/**", "modules/**", ".tflint.hcl"], "paths-ignore": ["**/*.md"]
+        "paths": ["envs/\($e)/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"]
       }]' <<<"${entries}")
   done
   jq -n --argjson envs "${entries}" '{
@@ -1959,6 +1959,42 @@ test_rel_malformed_file_is_no_file() {
 
 # Mode all (every environment affected) with environments-yml in alphabetical
 # order renders byte for byte what the no-file path renders.
+# The contract: the relevance.json the engine publishes, not one written by write_relevance. A key
+# the engine renames or drops fails here, where the hand-written files would stay green.
+engine_relevance() {
+  python3 -I -B "${_this_script_dir}/../engine/tests/relevance_fixture.py" "${1}" "${TEST_DIR}/relevance.json" || return 1
+  export input_relevance_file="relevance.json"
+}
+
+test_contract_engine_docs_only_renders_the_group() {
+  engine_relevance docs-only || { echo "the engine's fixture failed"; return 1; }
+  cat > "${GH_FAKE_LIST_RESPONSE_FILE}" <<'JSON'
+[{"id": 7101, "created_at": "2026-01-30T10:00:00Z", "body": "<!-- tf:head:group:platform -->\n\n### Terraform summary for group: `platform`\n\n⏳ Awaiting results (run #4711 attempt #1)…"}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7101' "${GH_FAKE_CALL_LOG}" || { echo "expected PATCH of the platform placeholder"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  grep -qE 'DELETE|POST' "${GH_FAKE_CALL_LOG}" && { echo "expected only a PATCH"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  local got; got="$(group_body platform)"
+  # sandbox's apply-on-pr, read from the engine's mutates-on-pr, sets the title as the seed's did.
+  [[ "${got}" == *'### Terraform summary for group: `platform`'* ]] || { echo "expected the mutating title"; echo "${got}"; return 1; }
+  [[ "${got}" == *'|  | Step | staging | sandbox |'* ]] || { echo "expected staging and sandbox columns in environments-yml order"; echo "${got}"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `staging`, `sandbox`'* ]] || { echo "footer must name both"; echo "${got}"; return 1; }
+  [[ "${got}" != *'prod'* ]] || { echo "the ungrouped prod has no column"; echo "${got}"; return 1; }
+  return 0
+}
+
+test_contract_engine_one_environment_mixes_a_column_and_dashes() {
+  write_meta "staging" "platform"
+  engine_relevance one-environment || { echo "the engine's fixture failed"; return 1; }
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body platform)"
+  [[ "${got}" == *'|  | Step | staging | sandbox |'* ]] || { echo "expected staging and sandbox columns"; echo "${got}"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `sandbox`'* ]] || { echo "footer must name sandbox only"; echo "${got}"; return 1; }
+  return 0
+}
+
 test_rel_mode_all_matches_no_file() {
   _rel_baseline_fixture
   _capture_run "${TEST_DIR}/no-file.out" || return 1
@@ -2050,6 +2086,8 @@ run_test "relevance: metadata wins over a skip verdict"                     test
 run_test "relevance: file given but missing on disk behaves as no file"     test_rel_file_missing_on_disk_is_no_file
 run_test "relevance: malformed file behaves as no file"                     test_rel_malformed_file_is_no_file
 run_test "relevance: mode all renders byte-identical to the no-file path"   test_rel_mode_all_matches_no_file
+run_test "contract: the engine's docs-only file renders the all-unaffected group" test_contract_engine_docs_only_renders_the_group
+run_test "contract: the engine's one-environment file mixes a column and dashes" test_contract_engine_one_environment_mixes_a_column_and_dashes
 
 # ============================================================================
 echo ""
