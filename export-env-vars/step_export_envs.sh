@@ -5,7 +5,9 @@
 # Makes environment variables available to the subsequent steps of the job by
 # appending them to $GITHUB_ENV, in this order:
 #   1. every secret whose name starts with a prefix listed in
-#      'export-secrets-with-prefixes-json', under its own name;
+#      'export-secrets-with-prefixes-json', under its own name, each followed
+#      by a copy whose name after the prefix is lower-cased when that prefix
+#      is also listed in 'lower-case-copies-for-prefixes-json';
 #   2. the plain values of 'extra-envs';
 #   3. the secret-sourced values of 'extra-envs-from-secrets'.
 # $GITHUB_ENV is last-wins, so a later source overrides an earlier one: both
@@ -17,6 +19,11 @@
 # it stays appended, the step is not transactional. An invalid prefix list
 # fails the step before anything is appended.
 #
+# The lower-case copy exists because GitHub stores secret names upper-cased:
+# an environment secret created as TF_VAR_tenant_id reaches the job as
+# TF_VAR_TENANT_ID, and Terraform variable names are case-sensitive, so only
+# the copy sets a variable named tenant_id.
+#
 # Required variables (shell-locals set by the action.yml shim, NOT exported):
 #   input_extra_envs               - JSON object, env name -> value
 #   input_extra_envs_from_secrets  - JSON object, env name -> secret name
@@ -26,6 +33,10 @@
 #   input_export_secrets_with_prefixes_json - JSON array of non-empty name
 #                                             prefixes; empty or '[]' exports
 #                                             nothing and logs nothing
+#   input_lower_case_copies_for_prefixes_json - JSON array of non-empty name
+#                                             prefixes whose prefix-exported
+#                                             secrets also get a lower-cased
+#                                             copy; empty or '[]' adds none
 #
 # Every failure below returns explicitly instead of relying on 'set -e', so the
 # step fails the same way under the runner's 'bash -eo pipefail' and in the
@@ -42,26 +53,39 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # Main Logic
 # ============================================================================
 
-function export-prefixed-secrets {
-  local prefixes_json="${input_export_secrets_with_prefixes_json}"
-
+# Prints what is wrong with the prefix list $2 of input $1, or nothing when it
+# is a valid list. Slurped, so that two JSON values in a row are rejected
+# rather than validated one by one. An empty prefix would select every secret
+# in the bag, the workflow's own token included, so it is an error, not a
+# wildcard.
+function prefix-list-problem {
+  local name="${1}" list="${2}" problem
   # A caller's expression that evaluates to the empty string arrives as '',
   # not as the declared default: treat it as the default.
-  [ -n "${prefixes_json//[[:space:]]/}" ] || return 0
-
-  # Slurped, so that two JSON values in a row are rejected rather than
-  # validated one by one. An empty prefix would select every secret in the
-  # bag, the workflow's own token included, so it is an error, not a wildcard.
-  local problem
-  problem=$(echo "${prefixes_json}" | jq -rs '
+  [ -n "${list//[[:space:]]/}" ] || return 0
+  problem=$(echo "${list}" | jq -rs '
     if length != 1 then "must hold exactly one JSON array"
     elif (.[0] | type) != "array" then "must be a JSON array of prefixes, not \(.[0] | type)"
     elif any(.[0][]; type != "string" or . == "") then "must hold non-empty strings only"
     else empty end' 2>/dev/null) || problem="is not valid JSON"
-  if [ -n "${problem}" ]; then
-    log-error "input 'export-secrets-with-prefixes-json' ${problem}: ${prefixes_json}"
-    return 1
-  fi
+  [ -z "${problem}" ] || echo "input '${name}' ${problem}: ${list}"
+}
+
+function export-prefixed-secrets {
+  local prefixes_json="${input_export_secrets_with_prefixes_json}"
+  local lower_json="${input_lower_case_copies_for_prefixes_json:-}"
+
+  local problem
+  for problem in "$(prefix-list-problem export-secrets-with-prefixes-json "${prefixes_json}")" \
+    "$(prefix-list-problem lower-case-copies-for-prefixes-json "${lower_json}")"; do
+    if [ -n "${problem}" ]; then
+      log-error "${problem}"
+      return 1
+    fi
+  done
+  [ -n "${lower_json//[[:space:]]/}" ] || lower_json='[]'
+
+  [ -n "${prefixes_json//[[:space:]]/}" ] || return 0
 
   # The default: nothing to export, and nothing logged, so a caller that does
   # not use prefixes sees the same log as before the input existed.
@@ -74,7 +98,10 @@ function export-prefixed-secrets {
     return 1
   fi
 
-  local secret_names secret_name secret_value
+  [ "$(echo "${lower_json}" | jq 'length')" == '0' ] ||
+    log-multiline "input 'lower-case-copies-for-prefixes-json'" "${lower_json}"
+
+  local secret_names secret_name secret_value lower_prefix lower_name
   start-group "Making secrets with a listed name prefix available to subsequent actions"
   # Names only, one per line, in 'keys' order. startswith is case-sensitive.
   secret_names=$(echo "${input_secrets_json}" | jq -r --argjson prefixes "$(echo "${prefixes_json}" | jq -c '.')" \
@@ -87,6 +114,14 @@ function export-prefixed-secrets {
     log-info "Secret '${secret_name}' has a listed name prefix, reading value ..."
     secret_value=$(echo "${input_secrets_json}" | jq --arg key "${secret_name}" -r '.[$key]') || return $?
     export-secret-environment-variable "${secret_name}" "${secret_value}" || return $?
+    lower_prefix=$(echo "${lower_json}" | jq -r --arg name "${secret_name}"       'first(.[] | select(. as $prefix | $name | startswith($prefix))) // empty') || return $?
+    [ -n "${lower_prefix}" ] || continue
+    lower_name="${lower_prefix}$(printf '%s' "${secret_name#"${lower_prefix}"}" | tr '[:upper:]' '[:lower:]')"
+    # A name that is already lower case, or a secret of the lower-cased name,
+    # is exported under its own name: no copy.
+    ! grep -qxF -- "${lower_name}" <<<"${secret_names}" || continue
+    log-info "Exporting a lower-case copy of '${secret_name}' as '${lower_name}' ..."
+    export-secret-environment-variable "${lower_name}" "${secret_value}" || return $?
   done <<<"${secret_names}"
   end-group
 }

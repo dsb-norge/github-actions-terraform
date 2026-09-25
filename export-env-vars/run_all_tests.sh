@@ -53,6 +53,7 @@ setup() {
   # What GitHub substitutes for an input the caller does not pass: its
   # declared default. Every golden runs with it.
   PREFIXES='[]'
+  LOWER='[]'
 }
 
 # run_step — extract the action's step source with the current inputs
@@ -62,6 +63,7 @@ run_step() {
   printf '%s' "${EXTRA_SECRETS}" >"${WORK_DIR}/extra-envs-from-secrets.json"
   printf '%s' "${SECRETS}" >"${WORK_DIR}/secrets.json"
   printf '%s' "${PREFIXES}" >"${WORK_DIR}/prefixes.json"
+  printf '%s' "${LOWER}" >"${WORK_DIR}/lower.json"
 
   python3 "${_this_script_dir}/extract_step_source.py" \
     "${_this_script_dir}/action.yml" export-envs "${WORK_DIR}/step.sh" \
@@ -69,6 +71,7 @@ run_step() {
     "inputs.extra-envs-from-secrets=@${WORK_DIR}/extra-envs-from-secrets.json" \
     "inputs.secrets-json=@${WORK_DIR}/secrets.json" \
     "inputs.export-secrets-with-prefixes-json=@${WORK_DIR}/prefixes.json" \
+    "inputs.lower-case-copies-for-prefixes-json=@${WORK_DIR}/lower.json" \
     "github.action_path=${_this_script_dir}"
 
   bash --noprofile --norc -eo pipefail "${WORK_DIR}/step.sh" >"${OUT_FILE}" 2>&1
@@ -639,6 +642,97 @@ assert "empty string: treated as the default" env_file_names_are PLAIN
 assert "empty string: same log as the empty list" \
   cmp -s "${OUT_FILE}" "${_empty_list_log}"
 rm -f "${_empty_list_log}"
+
+# ======================================================================
+# lower-case-copies-for-prefixes-json — GitHub upper-cases secret names, so
+# an environment's TF_VAR_tenant_id arrives as TF_VAR_TENANT_ID.
+# ======================================================================
+UPPER_BAG='{
+  "ARM_CLIENT_ID": "secret-arm-client-id",
+  "TF_VAR_TENANT_ID": "secret-tenant",
+  "TF_VAR_admin_password": "secret-tf-var-password",
+  "TF_VAR_Mixed_Name": "secret-mixed"
+}'
+
+setup
+SECRETS="${UPPER_BAG}"
+PREFIXES='["ARM_", "TF_VAR_"]'
+LOWER='["TF_VAR_"]'
+run_step
+assert "lower: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "lower: each copy follows its original; lower-case and ARM_ names get none" \
+  env_file_names_are ARM_CLIENT_ID TF_VAR_Mixed_Name TF_VAR_mixed_name TF_VAR_TENANT_ID TF_VAR_tenant_id TF_VAR_admin_password
+assert "lower: the copy carries the original's value" env_file_eq TF_VAR_tenant_id 'secret-tenant'
+assert "lower: the original is kept" env_file_eq TF_VAR_TENANT_ID 'secret-tenant'
+assert "lower: only the part after the prefix is lower-cased" env_file_eq TF_VAR_mixed_name 'secret-mixed'
+assert "lower: the copy is logged by name" \
+  grep -qF "Exporting a lower-case copy of 'TF_VAR_TENANT_ID' as 'TF_VAR_tenant_id'" "${OUT_FILE}"
+assert "lower: the input is logged" grep -qF "input 'lower-case-copies-for-prefixes-json'" "${OUT_FILE}"
+assert "lower: no secret value is logged" no_secret_value_logged
+
+# A secret that already has the lower-cased name is exported as itself, once.
+setup
+SECRETS='{"TF_VAR_X": "secret-upper", "TF_VAR_x": "secret-lower"}'
+PREFIXES='["TF_VAR_"]'
+LOWER='["TF_VAR_"]'
+run_step
+assert "lower: an existing lower-case secret is not overwritten by a copy" \
+  env_file_names_are TF_VAR_X TF_VAR_x
+assert "lower: the existing lower-case secret keeps its own value" env_file_eq TF_VAR_x 'secret-lower'
+
+# Copies only of what the prefix export selected.
+setup
+SECRETS="${UPPER_BAG}"
+PREFIXES='["ARM_"]'
+LOWER='["TF_VAR_"]'
+run_step
+assert "lower: no copy of a secret the prefix export did not select" env_file_names_are ARM_CLIENT_ID
+
+# The maps override a copy as they override the original.
+setup
+SECRETS="${UPPER_BAG}"
+PREFIXES='["TF_VAR_"]'
+LOWER='["TF_VAR_"]'
+EXTRA_ENVS='{"TF_VAR_tenant_id":"plain-tenant"}'
+run_step
+assert "lower: a plain variable overrides the copy" env_file_last_eq TF_VAR_tenant_id 'plain-tenant'
+
+# The default and '' add no copies and log nothing about them.
+for lower_value in '[]' ''; do
+  setup
+  SECRETS="${UPPER_BAG}"
+  PREFIXES='["TF_VAR_"]'
+  LOWER="${lower_value}"
+  run_step
+  assert "lower '${lower_value}': no copies" env_file_names_are TF_VAR_Mixed_Name TF_VAR_TENANT_ID TF_VAR_admin_password
+  assert "lower '${lower_value}': the input is not logged" \
+    bash -c "! grep -q 'lower-case' '${OUT_FILE}'"
+done
+
+# An invalid copy list fails the step before anything is exported.
+lower_error_case() {
+  local label="${1}" value="${2}" message="${3}"
+  setup
+  SECRETS="${UPPER_BAG}"
+  EXTRA_ENVS='{"PLAIN":"p"}'
+  PREFIXES='["TF_VAR_"]'
+  LOWER="${value}"
+  run_step
+  assert "invalid copies (${label}): the step fails" test "${LAST_EXIT}" -ne 0
+  assert "invalid copies (${label}): nothing is written to GITHUB_ENV" test ! -s "${GITHUB_ENV}"
+  assert "invalid copies (${label}): the error names the input and the problem" \
+    grep -qF "ERROR: export-env-vars: input 'lower-case-copies-for-prefixes-json' ${message}" "${OUT_FILE}"
+}
+lower_error_case "string" '"TF_VAR_"' "must be a JSON array of prefixes, not string"
+lower_error_case "empty prefix" '[""]' "must hold non-empty strings only"
+lower_error_case "not JSON" 'TF_VAR_' "is not valid JSON"
+
+# ... even when no prefix export is asked for.
+setup
+SECRETS="${UPPER_BAG}"
+LOWER='[1]'
+run_step
+assert "invalid copies without prefixes: the step still fails" test "${LAST_EXIT}" -ne 0
 
 # Invalid prefix lists fail the step before ANYTHING is exported, the plain
 # variables included.
