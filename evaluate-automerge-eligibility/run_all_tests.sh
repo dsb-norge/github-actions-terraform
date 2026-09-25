@@ -1751,6 +1751,121 @@ else
 fi
 
 # ============================================================================
+# F11 — the relevance decision travels from create-matrix to its readers intact
+# (docs/Path-relevance.md §5.2, §6.3).
+#
+# create-matrix exposes the small values as job outputs and uploads the file;
+# every reader downloads it to one place and is handed that path. The seed
+# job's script, the one piece of bash in the workflow that reads it, is run on
+# the engine's own relevance.json and on a missing one: the heads and purge
+# rules it hands to pr-comments-reconcile must be the engine's, byte for byte,
+# after the JSON-to-YAML round trip.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F11 - the relevance decision reaches the seed and the readers intact${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f11_out=$(python3 - "${_workflow}" "${_this_script_dir}/../engine/tests/relevance_fixture.py" <<'PYEOF'
+import json, os, subprocess, sys, tempfile, yaml
+
+workflow, fixture = sys.argv[1], sys.argv[2]
+jobs = yaml.safe_load(open(workflow, encoding="utf-8"))["jobs"]
+problems = []
+
+create = jobs["create-matrix"]
+names = ["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason", "changed-count"]
+if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
+    problems.append(f"create-matrix's outputs are {create.get('outputs')}")
+if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
+    problems.append(f"create-matrix's permissions are {create.get('permissions')}")
+uploads = [s for s in create["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact")]
+if len(uploads) != 1 or uploads[0].get("with") != {"name": "relevance",
+                                                   "path": "${{ steps.create-matrix.outputs.relevance-file }}"}:
+    problems.append(f"create-matrix does not upload relevance-file as 'relevance': {uploads}")
+
+readers = {"pr-comment-aggregator": "aggregate-validation-summaries", "run-summary": "create-run-summary",
+           "automerge": "evaluate-automerge-eligibility"}
+for name, job in jobs.items():
+    for step in job.get("steps", []):
+        with_ = step.get("with") or {}
+        if str(step.get("uses", "")).startswith("actions/download-artifact") and with_.get("name") == "relevance":
+            if with_.get("path") != "${{ runner.temp }}/relevance":
+                problems.append(f"{name} downloads the relevance artifact to {with_.get('path')}")
+        if "relevance-file" in with_ and with_["relevance-file"] != "${{ runner.temp }}/relevance/relevance.json":
+            problems.append(f"{name} passes relevance-file {with_['relevance-file']}")
+for job, action in readers.items():
+    passed = [s for s in jobs[job]["steps"] if action in str(s.get("uses", "")) and "relevance-file" in (s.get("with") or {})]
+    if len(passed) != 1:
+        problems.append(f"{job} does not pass relevance-file to {action}")
+
+seed = jobs["seed-pr-comments"]["steps"]
+compose = [s for s in seed if s.get("id") == "compose"]
+reconcile = [s for s in seed if "pr-comments-reconcile" in str(s.get("uses", ""))]
+if len(compose) != 1 or len(reconcile) != 1:
+    problems.append("the seed job lacks its compose step or its reconcile step")
+else:
+    with_ = reconcile[0].get("with") or {}
+    for name in ("heads-yml", "gc-yml"):
+        if with_.get(name) != f"${{{{ steps.compose.outputs.{name} }}}}":
+            problems.append(f"the seed's reconcile gets {name}: {with_.get(name)!r}")
+
+    def outputs(path):
+        lines, result, index = open(path, encoding="utf-8").read().split("\n"), {}, 0
+        while index < len(lines) and lines[index]:
+            name, delimiter = lines[index].split("<<", 1)
+            end = lines.index(delimiter, index + 1)
+            result[name] = "\n".join(lines[index + 1:end])
+            index = end + 1
+        return result
+
+    for scenario in ("one-environment", "docs-only", None):
+        with tempfile.TemporaryDirectory() as temp:
+            os.mkdir(os.path.join(temp, "relevance"))
+            manifest = os.path.join(temp, "relevance", "relevance.json")
+            if scenario:
+                subprocess.run([sys.executable, "-I", "-B", fixture, scenario, manifest], check=True)
+            out = os.path.join(temp, "output")
+            open(out, "w").close()
+            done = subprocess.run(["bash", "-e", "-c", compose[0]["run"]], capture_output=True, text=True,
+                                  env=dict(os.environ, RUNNER_TEMP=temp, GITHUB_OUTPUT=out))
+            label = scenario or "a missing manifest"
+            if done.returncode != 0:
+                problems.append(f"the compose script exits {done.returncode} on {label}: {done.stderr.strip()[:300]}")
+                continue
+            got = outputs(out)
+            heads, gc = yaml.safe_load(got.get("heads-yml", "")), yaml.safe_load(got.get("gc-yml", ""))
+            if scenario:
+                published = json.load(open(manifest, encoding="utf-8"))["comments"]
+                if heads != [{"marker": h["marker"], "body": h["body"]} for h in published["heads"]]:
+                    problems.append(f"heads-yml on {label} is not the engine's heads: {heads}")
+                if gc != published["gc"]:
+                    problems.append(f"gc-yml on {label} is not the engine's purge rules: {gc}")
+                if not published["heads"] or (scenario == "docs-only" and not published["gc"]):
+                    problems.append(f"the {label} fixture no longer exercises heads and purges")
+            else:
+                if (heads, gc) != ([], []):
+                    problems.append(f"a missing manifest seeds {heads} and purges {gc}")
+                if "::warning title=Seed PR comment heads::" not in done.stdout:
+                    problems.append("a missing manifest is not warned about")
+
+print("checked create-matrix's outputs, permissions and upload, the readers' paths, and the seed script on 3 manifests")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f11_rc=0 || _f11_rc=$?
+if [[ "${_f11_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f11_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f11_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  echo "${_f11_out}" | grep -v '^PROBLEM ' | tail -5
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
