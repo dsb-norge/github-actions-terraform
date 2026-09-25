@@ -27,9 +27,48 @@ inputs:
       Optional: path to the terraform providers plugin cache directory.
       When set, exported as TF_PLUGIN_CACHE_DIR (with
       TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true) during the
-      additional-dirs init loop so providers are reused across envs.
+      additional-dirs init loop so providers are reused across envs. The
+      project init gets the same two variables only when
+      'plugin-cache-may-break-lock-file' asks for it.
     required: false
     default: ""
+  backend:
+    description: |
+      Optional: 'false' adds '-backend=false' to the project init in
+      working-directory, so init never reaches for the backend's storage.
+      For 'terraform test', which keeps all state in memory. The
+      additional-dirs inits are unaffected.
+    required: false
+    default: "true"
+  lockfile-mode:
+    description: |
+      Optional: how the project init in working-directory treats its
+      '.terraform.lock.hcl'. The additional-dirs inits are unaffected.
+        default             - no '-lockfile' flag: init may add, update and
+                              prune lock entries.
+        readonly            - always adds '-lockfile=readonly'.
+        readonly-if-present - adds '-lockfile=readonly' only when
+                              '<working-directory>/.terraform.lock.hcl'
+                              exists; otherwise as 'default'.
+      Any other value fails the step.
+    required: false
+    default: "default"
+  plugin-cache-may-break-lock-file:
+    description: |
+      Optional: 'true' runs the project init with TF_PLUGIN_CACHE_DIR set to
+      'plugin-cache-directory' and TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true,
+      so the cache also serves providers whose checksums the lock does not
+      record. Takes effect only when 'plugin-cache-directory' is set and
+      'lockfile-mode' leaves the lock writable; a read-only lock ignores it.
+
+      Only for a lock that is a throwaway, such as one copied into a test
+      root: with it on, a provider served from the cache is recorded with
+      the checksum of the runner's platform alone, and a cached package whose
+      checksum the lock does not record for the runner's platform fails init
+      instead of being downloaded again. A committed lock keeps the default,
+      'false'.
+    required: false
+    default: "false"
   github-token:
     description: |
       Optional: token used to authenticate the 'git clone' calls terraform makes
@@ -114,6 +153,9 @@ runs:
         input_working_directory: ${{ inputs.working-directory }}
         input_environment_name: ${{ inputs.environment-name }}
         input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
+        input_backend: ${{ inputs.backend }}
+        input_lockfile_mode: ${{ inputs.lockfile-mode }}
+        input_plugin_cache_may_break_lock_file: ${{ inputs.plugin-cache-may-break-lock-file }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
         input_github_token: ${{ inputs.github-token }}
       run: |
