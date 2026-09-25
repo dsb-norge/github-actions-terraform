@@ -1,0 +1,55 @@
+exit: 0
+--- GITHUB_ENV ---
+BACKSLASH<<"<DELIM-1>"
+C:\path\to
+"<DELIM-1>"
+DOLLAR<<"<DELIM-2>"
+$HOME ${HOME} $(id) `id`
+"<DELIM-2>"
+EQUALS<<"<DELIM-3>"
+a=b=c
+"<DELIM-3>"
+GLOB<<"<DELIM-4>"
+0 * * * *
+"<DELIM-4>"
+HASH<<"<DELIM-5>"
+# not a comment
+"<DELIM-5>"
+LITERAL_BACKSLASH_N<<"<DELIM-6>"
+a\nb
+"<DELIM-6>"
+QUOTES<<"<DELIM-7>"
+it's "quoted"
+"<DELIM-7>"
+SPACES<<"<DELIM-8>"
+  padded  
+"<DELIM-8>"
+TAB<<"<DELIM-9>"
+a	b
+"<DELIM-9>"
+UNICODE<<"<DELIM-10>"
+blåbærsyltetøy ✓
+"<DELIM-10>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"DOLLAR":"$HOME ${HOME} $(id) `id`","QUOTES":"it's \"quoted\"","BACKSLASH":"C:\\path\\to","LITERAL_BACKSLASH_N":"a\\nb","GLOB":"0 * * * *","EQUALS":"a=b=c","HASH":"# not a comment","UNICODE":"blåbærsyltetøy ✓","SPACES":"  padded  ","TAB":"a\tb"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'BACKSLASH' -> 'C:\path\to'
+export-env-vars: Exporting environment variable 'DOLLAR' -> '$HOME ${HOME} $(id) `id`'
+export-env-vars: Exporting environment variable 'EQUALS' -> 'a=b=c'
+export-env-vars: Exporting environment variable 'GLOB' -> '0 * * * *'
+export-env-vars: Exporting environment variable 'HASH' -> '# not a comment'
+export-env-vars: Exporting environment variable 'LITERAL_BACKSLASH_N' -> 'a\nb'
+export-env-vars: Exporting environment variable 'QUOTES' -> 'it's "quoted"'
+export-env-vars: Exporting environment variable 'SPACES' -> '  padded  '
+export-env-vars: Exporting environment variable 'TAB' -> 'a	b'
+export-env-vars: Exporting environment variable 'UNICODE' -> 'blåbærsyltetøy ✓'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::

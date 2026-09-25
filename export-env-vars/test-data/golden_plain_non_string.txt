@@ -1,0 +1,55 @@
+exit: 0
+--- GITHUB_ENV ---
+ARRAY<<"<DELIM-1>"
+[
+  1,
+  "two"
+]
+"<DELIM-1>"
+BOOL<<"<DELIM-2>"
+true
+"<DELIM-2>"
+FLOAT<<"<DELIM-3>"
+1.5
+"<DELIM-3>"
+INT<<"<DELIM-4>"
+1
+"<DELIM-4>"
+NULL<<"<DELIM-5>"
+null
+"<DELIM-5>"
+OBJECT<<"<DELIM-6>"
+{
+  "a": 1,
+  "b": [
+    true
+  ]
+}
+"<DELIM-6>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"BOOL":true,"INT":1,"FLOAT":1.5,"NULL":null,"OBJECT":{"a":1,"b":[true]},"ARRAY":[1,"two"]}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'ARRAY' -> '[
+  1,
+  "two"
+]'
+export-env-vars: Exporting environment variable 'BOOL' -> 'true'
+export-env-vars: Exporting environment variable 'FLOAT' -> '1.5'
+export-env-vars: Exporting environment variable 'INT' -> '1'
+export-env-vars: Exporting environment variable 'NULL' -> 'null'
+export-env-vars: Exporting environment variable 'OBJECT' -> '{
+  "a": 1,
+  "b": [
+    true
+  ]
+}'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::
