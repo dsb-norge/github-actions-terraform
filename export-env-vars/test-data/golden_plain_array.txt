@@ -1,0 +1,13 @@
+exit: 5
+--- GITHUB_ENV ---
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+["A","B"]
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+jq: <error text elided>

@@ -1,0 +1,19 @@
+exit: 0
+--- GITHUB_ENV ---
+PLAIN<<"<DELIM-1>"
+ok
+"<DELIM-1>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"PLAIN":"ok"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'PLAIN' -> 'ok'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::

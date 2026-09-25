@@ -2,11 +2,24 @@
 #
 # Tests for the export-env-vars action.
 #
-# The action's logic is still inline bash in action.yml, so the step's 'run:'
-# block is extracted by extract_step_source.py (literal expression
-# substitution, no shell escaping — the inputs are JSON blobs full of quotes)
-# and executed with the same shell flags the runner uses. Assertions are on the
-# resulting $GITHUB_ENV file, which is the action's only real output.
+# The step's 'run:' block is extracted from action.yml by
+# extract_step_source.py (literal expression substitution, as GitHub does it,
+# no shell escaping — the inputs are JSON blobs full of quotes) and executed
+# with the same shell flags the runner uses. Assertions are on the resulting
+# $GITHUB_ENV file, which is the action's only real output, and on the log.
+#
+# Two layers:
+#   - targeted assertions, one behaviour each;
+#   - goldens: test-data/golden_<scenario>.txt holds the exit code, the
+#     $GITHUB_ENV file and the log the LEGACY inline-bash action produced for
+#     each scenario, byte for byte after normalisation (random heredoc
+#     delimiters numbered in order of appearance; jq's own error text, which
+#     varies between jq releases, elided). Quirks are pinned as they are, not
+#     as they should be: a golden that changes is a behaviour change, and the
+#     diff is the review.
+#
+# UPDATE_GOLDENS=1 rewrites the goldens from the current action instead of
+# comparing. Never in the same commit as a refactor of the action.
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -22,6 +35,7 @@ TESTS_FAILED=0
 TESTS_RUN=0
 
 OUT_FILE=/tmp/test_output_export_env_vars.txt
+GOLDEN_DIR="${_this_script_dir}/test-data"
 
 # --------------------------------------------------------------------------
 # Test helpers
@@ -82,6 +96,54 @@ env_file_eq() {
   env_file_has "${var}" || return 1
   actual="$(env_file_value "${var}"; printf 'x')"
   [[ "${actual}" == "${expected}x" ]]
+}
+
+# Normalised transcript of the last run: exit code, $GITHUB_ENV, log.
+# Each random heredoc delimiter becomes <DELIM-n>, numbered in order of first
+# appearance, so the pairing of opening and closing lines stays visible.
+transcript() {
+  python3 - "${LAST_EXIT}" "${GITHUB_ENV}" "${OUT_FILE}" <<'PY'
+import re
+import sys
+
+exit_code, env_path, log_path = sys.argv[1:4]
+with open(env_path, encoding="utf-8") as handle:
+    env = handle.read()
+with open(log_path, encoding="utf-8") as handle:
+    log = handle.read()
+
+labels = {}
+for delimiter in re.findall(r'<<"([0-9a-f]{20})"', env):
+    labels.setdefault(delimiter, f"<DELIM-{len(labels) + 1}>")
+for delimiter, label in labels.items():
+    env = env.replace(delimiter, label)
+
+log = re.sub(r"(?m)^jq: .*$", "jq: <error text elided>", log)
+
+sys.stdout.write(f"exit: {exit_code}\n")
+sys.stdout.write("--- GITHUB_ENV ---\n")
+sys.stdout.write(env)
+sys.stdout.write("--- log ---\n")
+sys.stdout.write(log)
+PY
+}
+
+# Byte-exact comparison of the last run against its golden, with a diff on
+# failure. Under UPDATE_GOLDENS=1 the golden is (re)written instead.
+matches_golden() {
+  local golden="${GOLDEN_DIR}/golden_${1}.txt"
+  local actual="${WORK_DIR}/transcript.txt"
+  transcript >"${actual}"
+  if [[ "${UPDATE_GOLDENS:-}" == "1" ]]; then
+    cp "${actual}" "${golden}"
+    return 0
+  fi
+  if cmp -s "${golden}" "${actual}"; then
+    return 0
+  fi
+  echo "  transcript differs from ${golden##*/}:"
+  diff "${golden}" "${actual}" | sed 's/^/    /'
+  return 1
 }
 
 assert() {
@@ -231,6 +293,175 @@ run_step
 assert "negative: the step still fails" test "${LAST_EXIT}" -ne 0
 assert "negative: plain variables written before the failure are kept" \
   env_file_eq GOOD_PLAIN 'written'
+
+# ======================================================================
+# Goldens — the legacy action's full behaviour per scenario
+# ======================================================================
+
+# Both maps empty, as toJSON delivers an empty map.
+setup
+run_step
+assert "golden: empty maps" matches_golden empty_maps
+
+# Every input the empty string: both export blocks are skipped entirely.
+setup
+EXTRA_ENVS=''
+EXTRA_SECRETS=''
+SECRETS=''
+run_step
+assert "golden: empty strings" matches_golden empty_strings
+
+# The shape toJSON actually delivers: pretty-printed over several lines.
+setup
+EXTRA_ENVS='{
+  "ARM_USE_OIDC": "true",
+  "TF_IN_AUTOMATION": "1"
+}'
+EXTRA_SECRETS='{
+  "ARM_CLIENT_ID": "AZURE_CLIENT_ID",
+  "ARM_TENANT_ID": "AZURE_TENANT_ID"
+}'
+SECRETS='{
+  "AZURE_CLIENT_ID": "client-id-value",
+  "AZURE_TENANT_ID": "tenant-id-value",
+  "github_token": "ghs_unused"
+}'
+run_step
+assert "golden: toJSON shape" matches_golden tojson_shape
+
+# Keys are exported in jq 'keys' order (codepoint-sorted), not input order.
+setup
+EXTRA_ENVS='{"b_lower":"1","A_UPPER":"2","a_lower":"3","B_UPPER":"4"}'
+EXTRA_SECRETS='{"Z_S":"S1","A_S":"S2"}'
+SECRETS='{"S1":"one","S2":"two"}'
+run_step
+assert "golden: key order" matches_golden key_order
+
+# Shell metacharacters, quotes, backslashes, unicode: exported verbatim,
+# plain values logged verbatim.
+setup
+EXTRA_ENVS=$(cat <<'JSON'
+{"DOLLAR":"$HOME ${HOME} $(id) `id`","QUOTES":"it's \"quoted\"","BACKSLASH":"C:\\path\\to","LITERAL_BACKSLASH_N":"a\\nb","GLOB":"0 * * * *","EQUALS":"a=b=c","HASH":"# not a comment","UNICODE":"blåbærsyltetøy ✓","SPACES":"  padded  ","TAB":"a\tb"}
+JSON
+)
+run_step
+assert "golden: plain special characters" matches_golden plain_special_chars
+
+# Multi-line values: embedded and leading newlines survive; TRAILING newlines
+# are stripped (the value passes through a command substitution).
+setup
+EXTRA_ENVS='{"EMBEDDED":"line1\nline2\nline3","LEADING":"\nafter-newline","TRAILING":"before-newlines\n\n","ONLY_NEWLINES":"\n\n"}'
+run_step
+assert "golden: plain multi-line values" matches_golden plain_multiline
+
+# Non-string values go through 'jq -r': booleans and numbers as their JSON
+# text, null as the four characters 'null', objects and arrays pretty-printed.
+setup
+EXTRA_ENVS='{"BOOL":true,"INT":1,"FLOAT":1.5,"NULL":null,"OBJECT":{"a":1,"b":[true]},"ARRAY":[1,"two"]}'
+run_step
+assert "golden: plain non-string values" matches_golden plain_non_string
+
+# Legacy quirk: the value is written with 'echo', so a value that is exactly
+# an echo option ('-n', '-e', '-E', '-neE') is swallowed and exported empty.
+setup
+EXTRA_ENVS='{"OPT_N":"-n","OPT_E":"-e","OPT_BIG_E":"-E","OPT_COMBO":"-neE","NOT_AN_OPTION":"-x"}'
+run_step
+assert "golden: plain values that are echo options (quirk)" matches_golden plain_echo_options
+
+# Legacy quirk: keys are word-split, so a key with a space becomes two
+# variables, each holding the lookup of a key that does not exist: 'null'.
+setup
+EXTRA_ENVS='{"TWO WORDS":"value"}'
+run_step
+assert "golden: plain key containing a space (quirk)" matches_golden plain_key_with_space
+
+# Secret-sourced values: names logged, values never; secrets in the bag that
+# nothing maps to are not exported.
+setup
+EXTRA_SECRETS='{"ARM_CLIENT_ID":"AZURE_CLIENT_ID","ARM_SUBSCRIPTION_ID":"AZURE_SUBSCRIPTION_ID"}'
+SECRETS='{"AZURE_CLIENT_ID":"secret-client-id","AZURE_SUBSCRIPTION_ID":"secret-subscription-id","ARM_UNMAPPED":"secret-unmapped","TF_VAR_unmapped":"secret-tf-var"}'
+run_step
+assert "golden: secrets mapping" matches_golden secrets_mapping
+
+# One secret mapped to two variables.
+setup
+EXTRA_SECRETS='{"FIRST":"SHARED","SECOND":"SHARED"}'
+SECRETS='{"SHARED":"shared-secret-value"}'
+run_step
+assert "golden: one secret mapped twice" matches_golden secrets_mapped_twice
+
+# Multi-line and special-character secret values.
+setup
+EXTRA_SECRETS='{"PEM":"PEM_SECRET","SPECIAL":"SPECIAL_SECRET","TRAILING":"TRAILING_SECRET"}'
+SECRETS=$(cat <<'JSON'
+{"PEM_SECRET":"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----","SPECIAL_SECRET":"p@$$w0rd `id` $(id) \"q\" 'q' \\","TRAILING_SECRET":"value\n\n"}
+JSON
+)
+run_step
+assert "golden: secret values, multi-line and special characters" matches_golden secrets_special_values
+
+# Existing secrets whose value is 'null' or empty are exported as such.
+setup
+EXTRA_SECRETS='{"IS_NULL_STRING":"NULL_STRING","IS_EMPTY":"EMPTY"}'
+SECRETS='{"NULL_STRING":"null","EMPTY":""}'
+run_step
+assert "golden: secret values 'null' and empty" matches_golden secrets_null_and_empty
+
+# The same key in both maps: both are appended, plain first, so the
+# secret-sourced value wins ($GITHUB_ENV is last-wins).
+setup
+EXTRA_ENVS='{"SHARED_KEY":"from-plain","PLAIN_ONLY":"p"}'
+EXTRA_SECRETS='{"SHARED_KEY":"THE_SECRET"}'
+SECRETS='{"THE_SECRET":"from-secret"}'
+run_step
+assert "golden: key in both maps, secret appended last" matches_golden precedence_plain_then_secret
+
+# A mapped secret missing from the bag fails the step; everything processed
+# before it (all plain variables, earlier mapped secrets) is already written.
+setup
+EXTRA_ENVS='{"PLAIN":"written"}'
+EXTRA_SECRETS='{"A_FIRST":"PRESENT","B_MISSING":"ABSENT","C_NEVER_REACHED":"PRESENT"}'
+SECRETS='{"PRESENT":"present-value"}'
+run_step
+assert "golden: missing secret, partial export before the failure" matches_golden missing_secret_partial
+
+# A mapping onto a 'null' bag: every lookup fails as "not available".
+setup
+EXTRA_SECRETS='{"X":"ANY"}'
+SECRETS='null'
+run_step
+assert "golden: secrets bag is null" matches_golden secrets_bag_null
+
+# An empty mapping never reads the bag, so even an unparsable bag passes.
+setup
+EXTRA_ENVS='{"PLAIN":"ok"}'
+SECRETS='not json at all'
+run_step
+assert "golden: empty mapping ignores an unparsable bag" matches_golden empty_mapping_bad_bag
+
+# 'null' for either map fails the step in jq ('null has no keys').
+setup
+EXTRA_ENVS='null'
+run_step
+assert "golden: extra-envs is null" matches_golden plain_null
+
+setup
+EXTRA_SECRETS='null'
+run_step
+assert "golden: extra-envs-from-secrets is null" matches_golden secrets_map_null
+
+# Invalid JSON fails the step in jq.
+setup
+EXTRA_ENVS='{"A":'
+run_step
+assert "golden: extra-envs is invalid JSON" matches_golden plain_invalid_json
+
+# A JSON array instead of an object: 'keys' of an array are its indices, and
+# indexing an array by a string fails the step.
+setup
+EXTRA_ENVS='["A","B"]'
+run_step
+assert "golden: extra-envs is an array" matches_golden plain_array
 
 # ----------------------------------------------------------------------
 # Summary

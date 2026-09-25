@@ -1,0 +1,37 @@
+exit: 0
+--- GITHUB_ENV ---
+EMBEDDED<<"<DELIM-1>"
+line1
+line2
+line3
+"<DELIM-1>"
+LEADING<<"<DELIM-2>"
+
+after-newline
+"<DELIM-2>"
+ONLY_NEWLINES<<"<DELIM-3>"
+
+"<DELIM-3>"
+TRAILING<<"<DELIM-4>"
+before-newlines
+"<DELIM-4>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"EMBEDDED":"line1\nline2\nline3","LEADING":"\nafter-newline","TRAILING":"before-newlines\n\n","ONLY_NEWLINES":"\n\n"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'EMBEDDED' -> 'line1
+line2
+line3'
+export-env-vars: Exporting environment variable 'LEADING' -> '
+after-newline'
+export-env-vars: Exporting environment variable 'ONLY_NEWLINES' -> ''
+export-env-vars: Exporting environment variable 'TRAILING' -> 'before-newlines'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::

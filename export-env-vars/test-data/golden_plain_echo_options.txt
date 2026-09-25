@@ -1,0 +1,33 @@
+exit: 0
+--- GITHUB_ENV ---
+NOT_AN_OPTION<<"<DELIM-1>"
+-x
+"<DELIM-1>"
+OPT_BIG_E<<"<DELIM-2>"
+
+"<DELIM-2>"
+OPT_COMBO<<"<DELIM-3>"
+"<DELIM-3>"
+OPT_E<<"<DELIM-4>"
+
+"<DELIM-4>"
+OPT_N<<"<DELIM-5>"
+"<DELIM-5>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"OPT_N":"-n","OPT_E":"-e","OPT_BIG_E":"-E","OPT_COMBO":"-neE","NOT_AN_OPTION":"-x"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'NOT_AN_OPTION' -> '-x'
+export-env-vars: Exporting environment variable 'OPT_BIG_E' -> '-E'
+export-env-vars: Exporting environment variable 'OPT_COMBO' -> '-neE'
+export-env-vars: Exporting environment variable 'OPT_E' -> '-e'
+export-env-vars: Exporting environment variable 'OPT_N' -> '-n'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::
