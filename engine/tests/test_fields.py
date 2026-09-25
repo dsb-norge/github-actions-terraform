@@ -46,7 +46,10 @@ class BooleanInputsTest(unittest.TestCase):
         with open(WORKFLOW, encoding="utf-8") as handle:
             text = handle.read()
         declared = set(re.findall(r"^      ([a-z0-9-]+):\n(?:        [^\n]*\n)*?        type: boolean$", text, re.M))
-        self.assertEqual(set(BOOLEAN_INPUTS), declared)
+        # The test stage's booleans are read by tests.py and never reach an environment's row.
+        test_stage = {"allow-failing-terraform-tests", "terraform-test-enabled"}
+        self.assertEqual(test_stage, test_stage & set(environments.TEST_INPUTS))
+        self.assertEqual(set(BOOLEAN_INPUTS), declared - test_stage)
         self.assertEqual(set(BOOLEAN_INPUTS), set(environments.BOOLEAN_INPUTS))
 
     def test_a_per_environment_boolean_takes_the_forwarded_type(self):
