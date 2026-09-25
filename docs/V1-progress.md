@@ -58,7 +58,7 @@ table only says where.
 | Path-relevance.md | `changed_files` accuracy | closed: equals the paged count; a rename is one `renamed` entry with `previous_filename` (test-bed probe pull request) |
 | Path-relevance.md | which attempt's check branch protection reads after a re-run | closed: undocumented, and the design holds for any attempt (Path-relevance.md §14) |
 | Path-relevance.md | a push that creates a branch | closed: compared against the default branch (Path-relevance.md D13) |
-| Path-relevance.md | the root `.tflint.hcl` of `auto` matches every `.tflint.hcl` (basename rule) | **for the maintainer**: accept the over-run as built, or give the grammar a root anchor |
+| Path-relevance.md | the root `.tflint.hcl` of `auto` matched every `.tflint.hcl` (basename rule) | closed: the maintainer chose a root anchor in the grammar (a leading `/` or `./`); `auto` uses `/.tflint.hcl` |
 | Dispatch-and-triggers.md | `github.event.inputs` inside a called workflow | closed: the caller's inputs; `null` without a block; empty strings absent (test-bed probe) |
 | Dispatch-and-triggers.md | `github.actor` on `schedule` | closed, as above |
 | Dispatch-and-triggers.md | callers with dispatch inputs named `environment`, `goal`, `reason` | closed: none (survey of the callers) |
@@ -174,6 +174,13 @@ table only says where.
 - Not exercised on the test bed, covered by tests: auto-merge (the test bed has no merge app), a
   force push, a push that creates a branch (the test bed's workflow runs on pushes to `main`
   only), a pull request whose head moved, the API caps.
+- After the hand-off, at the maintainer's request: a root anchor in the glob grammar (`auto` uses
+  `/.tflint.hcl`, so one environment's own tflint configuration no longer runs every environment),
+  and a coverage pass that closed the gaps it found. The readers are now tested against the
+  `relevance.json` the engine publishes, not only hand-written files. Structural test F11 runs
+  the seed job's script and pins how the file travels to every reader. The action suite covers
+  every fetch path end to end: two pages, a new branch, a forced push and relevance switched off,
+  the last two asserting no request at all. Engine gates: 307 tests, 1900 mutants all killed.
 
 ## 5. Findings to carry
 
