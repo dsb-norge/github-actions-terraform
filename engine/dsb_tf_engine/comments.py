@@ -8,11 +8,15 @@ no matrix job will finalise it, so it is written here, final. In mode `all` the 
 the seed job composed from the matrix before relevance.
 """
 
+import re
+
 # The matrix job purges its own environment's tags; an unaffected environment's job does not run.
 TAG_KINDS = ("plan", "apply", "destroy-plan", "destroy")
 # The seed job does not run for these, and a seed would reopen what they closed.
 UNSEEDED_ACTIONS = ("closed", "converted_to_draft")
 MODE_LINES = {"apply-on-pr": "🐙 applies on PR", "destroy-on-pr": "☠ destroys on PR"}
+# Byte-identical to the summary's final title, so the head never renames itself mid-run.
+TESTS_TITLE = "Terraform tests summary"
 
 
 def _commenting(entry):
@@ -43,7 +47,17 @@ def _not_affected(entry, block, run, number):
             "</details>")
 
 
-def manifest(document, block, entries):
+def _tests_head(document, tests_block, waiting):
+    """The tests head, after the environment heads: scoped per calling workflow, because a repository
+    may call this workflow from two and both would discover the same files (docs/Terraform-tests.md §6.3)."""
+    caller = re.sub(r"[^A-Za-z0-9_-]", "", document["caller"].get("workflow_name", ""))
+    if not tests_block["count"] or document["workflow_inputs"].get("add-pr-comment") not in (True, "true"):
+        return []
+    return [{"kind": "tests", "key": caller, "state": "placeholder", "title": TESTS_TITLE,
+             "marker": f"<!-- tf:head:tests:{caller} -->", "body": f"### {TESTS_TITLE}\n\n{waiting}"}]
+
+
+def manifest(document, block, entries, tests_block):
     """The heads and tag purges for this run, empty where the seed job does not run."""
     event = document["event"]
     pull_request = event.get("pull_request")
@@ -70,6 +84,8 @@ def manifest(document, block, entries):
         else:
             heads.append(_head("env", entry["github-environment"], "not-affected", mutates,
                                _not_affected(entry, block, run, pull_request["number"])))
+
+    heads += _tests_head(document, tests_block, waiting)
 
     purge = [entry["github-environment"] for entry in entries if _commenting(entry) and entry["verdict"] == "skip"]
     gc = [{"marker-prefix": f"<!-- tf:tag:{kind}:{name}:", "keep-marker-substring": ""}
