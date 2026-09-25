@@ -11,14 +11,42 @@ description: |
   - Designed to run with if: always() to capture data even on job failure
   - Excludes secret values from output
   - Automatically captures all steps from the steps context (future-proof)
+  - Names the uploaded artifact and the JSON file from 'artifact-name',
+    default 'matrix-job-meta-<entity>'
 
 author: "Peder Schmedling"
 inputs:
+  entity-name:
+    description: |
+      Name of what this matrix job ran for: a deployment environment
+      (e.g., "sandbox", "production") or any other matrix entity, such as a
+      test file's slug. Recorded as 'metadata.environment' in the JSON and
+      used in the default 'artifact-name'.
+
+      Give this or 'environment-name'. When both are given and differ,
+      'entity-name' wins and the step logs a warning. When neither is given,
+      a random 'unknown-XXXXXX' name keeps the file name unique.
+    required: false
+    default: ""
+
   environment-name:
     description: |
-      Name of the current deployment environment (e.g., "sandbox", "production").
-      Used for naming the output JSON file.
-    required: true
+      Alias of 'entity-name', kept for existing callers: the name of the
+      current deployment environment (e.g., "sandbox", "production").
+    required: false
+    default: ""
+
+  artifact-name:
+    description: |
+      Optional: the name of the uploaded artifact AND the basename of the JSON
+      file inside it ('<artifact-name>.json'). Defaults to
+      'matrix-job-meta-<entity>', which is what the environment aggregator,
+      the run summary and the auto-merge evaluator glob for; a job whose
+      metadata must stay out of their input sets a name outside that
+      pattern. May not contain '/', ':', '"', '<', '>', '|', '*', '?', '\'
+      or a line break; such a name fails the step.
+    required: false
+    default: ""
 
   matrix-context-json:
     description: |
@@ -45,6 +73,12 @@ outputs:
       Absolute path to the JSON file containing all captured metadata.
       Use this path with actions/upload-artifact to save the result.
     value: ${{ steps.capture.outputs.result-json-file }}
+  artifact-name:
+    description: |
+      The name the metadata artifact was uploaded under: 'artifact-name' when
+      given, else 'matrix-job-meta-<entity>'. Also the JSON file's basename
+      without '.json'.
+    value: ${{ steps.capture.outputs.artifact-name }}
 
 runs:
   using: "composite"
@@ -52,7 +86,9 @@ runs:
     - id: capture
       shell: bash
       env:
+        input_entity_name: ${{ inputs.entity-name }}
         input_environment_name: ${{ inputs.environment-name }}
+        input_artifact_name: ${{ inputs.artifact-name }}
       run: |
         # Capture step outcomes, outputs and matrix context to a JSON file
         #
@@ -93,6 +129,6 @@ runs:
       if: steps.capture.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
-        name: matrix-job-meta-${{ inputs.environment-name }}
+        name: ${{ steps.capture.outputs.artifact-name }}
         path: ${{ steps.capture.outputs.result-json-file }}
       continue-on-error: true # never fail the job due to metadata upload
