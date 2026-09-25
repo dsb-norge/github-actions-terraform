@@ -289,6 +289,52 @@ on:
           Set this to 'false' to disable lock file verification. For per environment control specify this directly in the environment specification.
         required: false
         default: true
+      terraform-test-enabled:
+        type: boolean
+        description: |
+          Whether to run the 'terraform test' stage: one job per committed test file (*.tftest.hcl, *.tftest.json), in
+          parallel with the environments, on pull requests and pushes only. A repository without test files is
+          unaffected. See docs/Terraform-tests.md.
+        required: false
+        default: true
+      allow-failing-terraform-tests:
+        type: boolean
+        description: |
+          Whether a failing or erroring test job is tolerated instead of failing the check. Rendered as tolerated.
+          Per-lane override with the same key in 'terraform-test-lanes-yml'.
+        required: false
+        default: false
+      terraform-test-runs-on:
+        type: string
+        description: |
+          The runner for test jobs. Deliberately not 'runs-on': test jobs are many and short. Per-lane override
+          'runs-on'.
+        required: false
+        default: "ubuntu-latest"
+      terraform-test-timeout-minutes:
+        type: number
+        description: |
+          'timeout-minutes' of each test job. A job killed mid-apply leaves objects no state file knows about, so keep
+          it short. Per-lane override 'timeout-minutes'.
+        required: false
+        default: 30
+      terraform-test-lanes-yml:
+        type: string
+        description: |
+          YAML list of lanes: which test files a lane covers ('match', globs; first match wins, a lane without 'match'
+          is the fallback) and what they run with ('extra-envs-yml', 'extra-envs-from-secrets-yml',
+          'github-environment: auto' for a GitHub Environment 'tftest-<lane>', 'runs-on', 'terraform-version',
+          'timeout-minutes', 'allow-failing-terraform-tests', 'providers-from', 'cache-terraform-modules').
+          The workflow's own 'extra-envs-*' inputs never reach a test job. See docs/Terraform-tests.md §3.2.
+        required: false
+        default: ""
+      terraform-test-exclude-paths-yml:
+        type: string
+        description: |
+          YAML list of glob patterns of test files the stage ignores, beside the built-in exclusion of any path with a
+          segment starting with '.'.
+        required: false
+        default: ""
       path-relevance-enabled:
         type: boolean
         description: |
@@ -468,6 +514,9 @@ jobs:
       relevance-mode: ${{ steps.create-matrix.outputs.relevance-mode }}
       relevance-reason: ${{ steps.create-matrix.outputs.relevance-reason }}
       changed-count: ${{ steps.create-matrix.outputs.changed-count }}
+      tests-matrix-json: ${{ steps.create-matrix.outputs.tests-matrix-json }}
+      tests-count: ${{ steps.create-matrix.outputs.tests-count }}
+      tests-active: ${{ steps.create-matrix.outputs.tests-active }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
@@ -764,6 +813,9 @@ jobs:
           project-dir: ${{ matrix.vars.project-dir }}
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           environment: ${{ matrix.vars.environment }}
+          # 'terraform init' installs the run-block modules of test files in a tests/ directory beside the
+          # environment too, so the cache must audit them (docs/Terraform-tests.md P37).
+          test-directory: tests
         continue-on-error: true # caching is an optimisation, never a reason to fail a run
 
       # Puts previously downloaded modules back on disk, but only on an exact
@@ -1846,6 +1898,354 @@ jobs:
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
         continue-on-error: true # never fail the workflow over run-page reporting
 
+  # One job per test file (and provider set), in parallel with the environments; nothing waits for
+  # them (docs/Terraform-tests.md §5). The row's github-environment is the job's environment: an empty
+  # name means none, so lanes without one get no environment and a unit lane can never read an
+  # environment's secrets.
+  terraform-test:
+    name: ${{ matrix.test.name }}
+    # seed-pr-comments for ordering only, as the environment job: its result is deliberately not tested.
+    needs: [create-matrix, seed-pr-comments]
+    if: |
+      !cancelled()
+      && needs.create-matrix.result == 'success'
+      && needs.create-matrix.outputs.tests-active == 'true'
+    runs-on: ${{ matrix.test.runs-on }}
+    timeout-minutes: ${{ matrix.test.timeout-minutes }}
+    permissions:
+      contents: read
+      id-token: write # the azurerm and azuread providers mint their own OIDC tokens
+    environment:
+      name: ${{ matrix.test.github-environment }}
+      deployment: false # keeps the secrets, records no deployment
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.tests-matrix-json) }}
+    # Per file, not per lane: a per-lane group would cancel the rest of this run's own matrix.
+    concurrency:
+      group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "⬇ Checkout"
+        uses: actions/checkout@v6
+
+      - name: "🎰 Export lane environment variables"
+        uses: dsb-norge/github-actions-terraform/export-env-vars@v1
+        with:
+          extra-envs: ${{ toJSON(matrix.test.extra-envs) }}
+          extra-envs-from-secrets: ${{ toJSON(matrix.test.extra-envs-from-secrets) }}
+          secrets-json: ${{ toJSON(secrets) }}
+          # An environment lane's ARM_* and TF_VAR_* secrets under their own names; nothing for other lanes.
+          export-secrets-with-prefixes-json: ${{ toJSON(matrix.test.github-environment != '' && fromJSON('["ARM_","TF_VAR_"]') || fromJSON('[]')) }}
+
+      - name: "🔐 Verify lane credentials"
+        id: verify-credentials
+        if: matrix.test.github-environment != ''
+        env:
+          LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
+          if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
+            echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
+            exit 0
+          fi
+          echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
+          echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
+          echo "  gh secret set ARM_TENANT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
+          echo "  gh secret set ARM_CLIENT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
+          exit 1
+        continue-on-error: true # reported by the test step and gated below
+
+      - name: "🔑 Login to Azure"
+        uses: azure/login@v3
+        if: |
+          steps.verify-credentials.outcome != 'failure'
+          && env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
+        with:
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+          client-id: ${{ env.ARM_CLIENT_ID }}
+        continue-on-error: true # the providers log in on their own; a failed login shows in the test
+
+      - name: "📥 Setup Terraform"
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ matrix.test.terraform-version }}
+          # the wrapper mangles the -json stream and the exit code
+          terraform_wrapper: false
+
+      - name: "📋 Provide provider versions"
+        id: copy-lock
+        env:
+          ROOT: ${{ matrix.test.root }}
+          ROOT_KIND: ${{ matrix.test.root-kind }}
+          SET_LOCK: ${{ matrix.test.provider-set-lock }}
+        run: |
+          # Copy the provider set's environment lock into a non-environment test root; name the runner's platform
+          if [ "${ROOT_KIND}" != 'environment' ] && [ -n "${SET_LOCK}" ]; then
+            cp "${SET_LOCK}" "${ROOT}/.terraform.lock.hcl"
+            echo "Copied '${SET_LOCK}' into '${ROOT}'."
+          fi
+          case "${RUNNER_OS}" in Linux) os=linux ;; macOS) os=darwin ;; Windows) os=windows ;; *) os="${RUNNER_OS,,}" ;; esac
+          case "${RUNNER_ARCH}" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; X86) arch=386 ;; ARM) arch=arm ;; *) arch="${RUNNER_ARCH,,}" ;; esac
+          lock="${ROOT}/.terraform.lock.hcl"
+          {
+            echo "platform=${os}_${arch}"
+            echo "lock-present=$([ -f "${lock}" ] && echo true || echo false)"
+          } >>"${GITHUB_OUTPUT}"
+
+      # Every lock a test job uses must record the runner's platform: without it the plugin cache fails
+      # a warm init, and a read-only init leaves a package terraform test refuses (P39).
+      - name: "🔏 Verify the lock covers this runner"
+        id: provider-versions
+        if: steps.copy-lock.outputs.lock-present == 'true'
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v1
+        with:
+          working-directory: ${{ matrix.test.root }}
+          platforms: ${{ steps.copy-lock.outputs.platform }}
+        continue-on-error: true # reported by the test step and gated below
+
+      - name: "🗄️ Setup Terraform provider plugin cache"
+        id: setup-terraform-cache
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v1
+
+      # Its own key, falling back to the environment job's: actions/cache saves only the first entry
+      # for a key, so with the environment job's key the test-only providers would never be cached (P41).
+      - name: "🚀 Cache Terraform provider plugins"
+        if: steps.copy-lock.outputs.lock-present == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.test.root)) }}-tftest"
+          restore-keys: |
+            terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.test.root)) }}
+
+      - name: "🗄️ Resolve terraform module cache"
+        id: module-cache
+        if: matrix.test.cache-terraform-modules == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: resolve
+          project-dir: ${{ matrix.test.root }}
+          additional-dirs-json: "[]"
+          # one entry per root: init installs the run-block modules of every test file in it
+          environment: tftest-${{ matrix.test.root }}
+          test-directory: tests
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
+
+      - name: "🚀 Restore terraform module cache"
+        id: restore-module-cache
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.module-cache.outputs.cache-paths }}
+          key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
+
+      - name: "📸 Snapshot restored module manifests"
+        id: snapshot-module-cache
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: snapshot
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+          cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
+        continue-on-error: true # only feeds a warning; must never block init
+
+      - name: "⚙️ Terraform Init"
+        id: init
+        if: steps.verify-credentials.outcome != 'failure' && steps.provider-versions.outcome != 'failure'
+        uses: dsb-norge/github-actions-terraform/terraform-init@v1
+        with:
+          working-directory: ${{ matrix.test.root }}
+          environment-name: ${{ matrix.slug }}
+          additional-dirs-json: "[]"
+          # terraform test keeps state in memory; a backend block must not make init reach for storage
+          backend: false
+          lockfile-mode: ${{ matrix.test.root-kind == 'environment' && 'readonly-if-present' || 'default' }}
+          plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          plugin-cache-may-break-lock-file: true
+          github-token: ${{ github.token }}
+        continue-on-error: true # reported by the test step and gated below
+
+      - name: "🔍 Check terraform module cache"
+        id: post-init-check
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: verify
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+          cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
+          snapshot-dir: ${{ steps.snapshot-module-cache.outputs.snapshot-dir }}
+        continue-on-error: true # if this cannot run, safe-to-save stays unset and nothing is saved
+
+      - name: "🧹 Prune git metadata from the module cache"
+        id: prune-module-cache
+        if: |
+          steps.module-cache.outputs.cache-enabled == 'true'
+          && steps.init.outcome == 'success'
+          && steps.restore-module-cache.outputs.cache-hit != 'true'
+          && steps.post-init-check.outputs.safe-to-save == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: prune
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+        continue-on-error: true # a prune that cannot run must not stop the save
+
+      # Right after init, before the test writes into module directories.
+      - name: "💾 Save terraform module cache"
+        if: |
+          steps.module-cache.outputs.cache-enabled == 'true'
+          && steps.init.outcome == 'success'
+          && steps.restore-module-cache.outputs.cache-hit != 'true'
+          && steps.post-init-check.outputs.safe-to-save == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.module-cache.outputs.cache-paths }}
+          key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # a lost cache write must not fail the run
+
+      # Runs whatever happened before: the earlier steps' outcomes are how it reports no credentials,
+      # a lock without the runner's platform or a failed init.
+      - name: "🧪 Terraform test"
+        id: test
+        if: "!cancelled()"
+        uses: dsb-norge/github-actions-terraform/terraform-test@v1
+        with:
+          working-directory: ${{ matrix.test.root }}
+          test-file: ${{ matrix.test.rel }}
+          slug: ${{ matrix.slug }}
+          status-credentials: ${{ steps.verify-credentials.outcome }}
+          status-lock: ${{ steps.provider-versions.outcome }}
+          status-init: ${{ steps.init.outcome }}
+          environments-lock-file: ${{ matrix.test.root-kind == 'environment' && format('{0}/.terraform.lock.hcl', matrix.test.root) || matrix.test.provider-set-lock }}
+        continue-on-error: true # gated below, after every reporting step
+
+      - name: "📤 Upload test output"
+        id: upload-test-output
+        if: always() && steps.test.outputs.report-file != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-test-log-${{ matrix.slug }}
+          path: |
+            ${{ steps.test.outputs.json-file }}
+            ${{ steps.test.outputs.report-file }}
+            ${{ steps.test.outputs.junit-file }}
+          if-no-files-found: ignore
+        continue-on-error: true # never fail the job over an upload
+
+      # Uploads the artifact terraform-test-meta-<slug> itself; the summary job reads it.
+      - name: "📦 Capture and upload test job metadata"
+        id: capture-metadata
+        if: always()
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
+        with:
+          entity-name: ${{ matrix.slug }}
+          artifact-name: terraform-test-meta-${{ matrix.slug }}
+          matrix-context-json: ${{ toJSON(matrix) }}
+          github-context-json: ${{ toJSON(github) }}
+          steps-context-json: ${{ toJSON(steps) }}
+        continue-on-error: true # never fail the job due to metadata capture
+
+      # The gates come after every reporting step: a gate exits 1 and would otherwise skip the upload
+      # that explains the failure.
+      - name: "🧐 Validation outcome: 🔐 Credentials"
+        if: steps.verify-credentials.outcome == 'failure'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        if: steps.init.outcome != 'success'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+      - name: "🧐 Validation outcome: 🧪 Test"
+        if: steps.test.outputs.status != 'pass'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+  # One PR comment and one run-summary block for the whole stage (docs/Terraform-tests.md §6). Never in
+  # the conclusion's needs: a reporting job must never redden a run.
+  terraform-test-summary:
+    name: "Terraform tests summary"
+    needs: [create-matrix, terraform-test]
+    if: |
+      always()
+      && needs.create-matrix.result == 'success'
+      && inputs.terraform-test-enabled == true
+      && (github.event_name == 'pull_request' || github.event_name == 'push')
+      && (needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request')
+    runs-on: ${{ inputs.runs-on }} # global setting
+    permissions:
+      pull-requests: write # the tests head
+      actions: read        # the Jobs API, for the job links
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download test job metadata"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: terraform-test-meta-*
+          merge-multiple: true
+        continue-on-error: true # zero matches is a valid input
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v4
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the summary then has no
+        # not-run rows.
+        continue-on-error: true
+      - name: "🧾 Summarise the tests"
+        id: summary
+        uses: dsb-norge/github-actions-terraform/create-test-summary@v1
+        with:
+          tests-matrix-json: ${{ needs.create-matrix.outputs.tests-matrix-json }}
+          not-run-file: ${{ runner.temp }}/relevance/relevance.json
+          github-token: ${{ github.token }}
+        continue-on-error: true # never fail the workflow over reporting
+      - name: "💬 Post the tests summary"
+        if: |
+          steps.summary.outcome == 'success'
+          && needs.create-matrix.outputs.tests-count != '0'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+          && inputs.add-pr-comment == true
+        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: upsert
+          marker: ${{ steps.summary.outputs.head-marker }}
+          body-file: ${{ steps.summary.outputs.body-file }}
+        continue-on-error: true # never fail the workflow over PR comments
+      # The last test file removed, or the stage switched off, on an open pull request: the head
+      # would otherwise show a stale result.
+      - name: "🧹 Remove the tests summary"
+        if: |
+          steps.summary.outcome == 'success'
+          && needs.create-matrix.outputs.tests-count == '0'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: ${{ steps.summary.outputs.head-marker }}
+        continue-on-error: true # never fail the workflow over PR comments
+
   # The one check branch protection requires. Green means everything that should have run, ran
   # and succeeded, including when nothing should have run: a pull request that touches no
   # environment reports green instead of leaving the check pending (docs/Path-relevance.md §7).
@@ -1855,7 +2255,7 @@ jobs:
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [create-matrix, terraform-ci-cd]
+    needs: [create-matrix, terraform-ci-cd, terraform-test]
     runs-on: ${{ inputs.runs-on }} # global setting
     permissions: {}
     defaults:
@@ -1870,8 +2270,11 @@ jobs:
           RELEVANCE_MODE: ${{ needs.create-matrix.outputs.relevance-mode }}
           RELEVANCE_REASON: ${{ needs.create-matrix.outputs.relevance-reason }}
           ENVIRONMENTS_RESULT: ${{ needs.terraform-ci-cd.result }}
+          TESTS_ACTIVE: ${{ needs.create-matrix.outputs.tests-active }}
+          TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
+          TESTS_RESULT: ${{ needs.terraform-test.result }}
         run: |
-          # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2)
+          # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2, docs/Terraform-tests.md §7)
           set -euo pipefail
           environments="environments: ${AFFECTED_COUNT:-?} affected, ${UNAFFECTED_COUNT:-?} not affected (${RELEVANCE_MODE:-?}: ${RELEVANCE_REASON:-?})"
           verdict=red
@@ -1889,6 +2292,18 @@ jobs:
                 ;;
               *) why="the environments' result is ${ENVIRONMENTS_RESULT}; ${environments}" ;;
             esac
+            # The tests are judged independently of the environments: skipped is fine only while the
+            # stage is inactive (switched off, no test files, an event tests do not run on).
+            case "${TESTS_RESULT}" in
+              success) ;;
+              skipped)
+                if [ "${TESTS_ACTIVE}" = "true" ]; then
+                  verdict=red why="the tests should have run but were skipped; ${why}"
+                fi
+                ;;
+              *) verdict=red why="the tests' result is ${TESTS_RESULT}; ${why}" ;;
+            esac
+            why="${why}; tests: ${TESTS_COUNT:-0}"
           fi
           line="conclusion: ${verdict} — ${why}"
           echo "${line}"

@@ -15,8 +15,16 @@
     "id": 4711
   },
   "schema_version": 1,
+  "tests": {
+    "directories_with_tf": [],
+    "environment_locks": {
+      ".": null
+    },
+    "files": []
+  },
   "workflow_inputs": {
     "add-pr-comment": "true",
+    "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": "false",
     "cache-terraform-modules": "true",
     "environments-yml": "- environment: \"my-first-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  format-check-in-root-dir: false\n  pr-comment-group: \"dev\"\n  terraform-init-additional-dirs-yml:\n    - \"./main\"\n    - \"./modules\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-plan-on-pr, destroy-on-pr]\n- environment: \"my-second-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  pr-comment-group: \"dev\"\n  extra-envs-per-goal-yml:\n    plan:\n      GOMEMLIMIT: 24GiB\n  extra-envs-from-secrets-per-goal-yml:\n    apply:\n      TF_VAR_my_custom: more\n  pr-auto-merge-from-actors-yml:\n    - \"env-actor\"\n  pr-auto-merge-limits-yml:\n    plan-max-count-add: 5\n- environment: \"also an env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  goals-yml: [init, format, validate, lint]\n",
@@ -32,6 +40,11 @@
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
     "pr-comment-group": "",
     "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./module/1\"\n- \"./module/2\"\n",
+    "terraform-test-enabled": true,
+    "terraform-test-exclude-paths-yml": "",
+    "terraform-test-lanes-yml": "",
+    "terraform-test-runs-on": "ubuntu-latest",
+    "terraform-test-timeout-minutes": 30,
     "terraform-version": "1.4.4",
     "tflint-version": "v0.46.1",
     "verify-lock-file": "true"
@@ -230,6 +243,14 @@
           "./module/1",
           "./module/2"
         ]
+      },
+      "terraform-test-exclude-paths-yml": {
+        "ok": true,
+        "value": null
+      },
+      "terraform-test-lanes-yml": {
+        "ok": true,
+        "value": null
       }
     }
   }
