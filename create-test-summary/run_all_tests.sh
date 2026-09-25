@@ -517,6 +517,23 @@ assert "provider-sets: the per-root line names its set" body_has '— 1 file · 
 teardown
 
 # ----------------------------------------------------------------------
+# version-floor — the floor comes from the test action's outputs, never a
+# copy kept here
+# ----------------------------------------------------------------------
+setup
+mrow "modules-net--unit-net" "modules/net/tests/unit-net.tftest.hcl" "modules/net" "unit"
+meta "modules-net--unit-net" error terraform-version 0 0 0 0 "" "[]" 0 "" \
+  '.steps.test.outputs["terraform-version"] = "1.12.2" | .steps.test.outputs["terraform-version-floor"] = "1.13.0"'
+mrow "modules-net--unit-old" "modules/net/tests/unit-old.tftest.hcl" "modules/net" "unit"
+meta "modules-net--unit-old" error terraform-version 0 0 0 0
+run_step
+assert "version-floor: names the version that ran and the published floor" \
+  body_has '<code>modules/net/tests/unit-net.tftest.hcl</code> — Terraform 1.12.2 is below the 1.13.0 floor</summary>'
+assert "version-floor: without the outputs, says so without a number" \
+  body_has '<code>modules/net/tests/unit-old.tftest.hcl</code> — Terraform is missing or below the version floor</summary>'
+teardown
+
+# ----------------------------------------------------------------------
 # narrowed-sets — two sets in the run, but a lane narrowed to one and an
 # environment root with none: the engine names those jobs without a suffix,
 # and the environment root's empty set is not a third set

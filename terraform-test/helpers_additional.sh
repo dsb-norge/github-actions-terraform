@@ -4,8 +4,9 @@
 #
 
 # The Terraform version below which the action refuses to run tests
-# (docs/Terraform-tests.md §3.5). -junit-xml exists from 1.11.
-TT_VERSION_FLOOR="1.12.0"
+# (docs/Terraform-tests.md §3.5): 1.13 accepts the variable blocks a test file
+# needs for lane variables, which 1.12 refuses. -junit-xml exists from 1.11.
+TT_VERSION_FLOOR="1.13.0"
 TT_JUNIT_FROM="1.11.0"
 
 # GitHub caps error annotations at ten per step (P17).
@@ -23,7 +24,7 @@ function tt-jq {
 }
 
 # 0 when version $1 >= version $2. Pre-release and build suffixes are
-# ignored, so 1.12.0-rc1 counts as 1.12.0.
+# ignored, so 1.13.0-rc1 counts as 1.13.0.
 function tt-version-ge {
   local have="${1%%[-+]*}" need="${2%%[-+]*}"
   local -a h n

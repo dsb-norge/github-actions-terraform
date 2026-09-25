@@ -272,6 +272,8 @@ def ts: if type == "string" and . != "" then (sub("\\.[0-9]+Z$"; "Z") | try from
         floating: (($o["providers-floating-count"] | num)
                    // (($o["providers-summary"] // "") | tostring | split(" · ") | map(select(test(" floating$"))) | length)),
         platform: (($o["runner-platform"] // "") | tostring),
+        terraform_version: (($o["terraform-version"] // "") | tostring),
+        version_floor: (($o["terraform-version-floor"] // "") | tostring),
         job_url: (if $job == null or (($job.html_url // "") == "") then ""
                   else ($job.html_url | tostring) as $u
                   | (first(($job.steps // [])[] | select(.name == $step_name) | .number) // null) as $n
@@ -353,7 +355,10 @@ def dirname: split("/") | .[:-1] | join("/") | if . == "" then "." else . end;
       (if .github_environment != "" then "no credentials in <code>\(.github_environment | html)</code>" else "no credentials" end)
     elif .reason == "lock-platform" then "the provider lock records no checksum for the runner's platform"
     elif .reason == "init" then "terraform init failed"
-    elif .reason == "terraform-version" then "Terraform is below the 1.12.0 floor"
+    elif .reason == "terraform-version" then
+      (if .version_floor != "" then "the \(.version_floor | html) floor" else "the version floor" end) as $floor
+      | if .terraform_version != "" then "Terraform \(.terraform_version | html) is below \($floor)"
+        else "Terraform is missing or below \($floor)" end
     elif .reason == "not-initialised" then "the test root is not initialised"
     elif .reason == "invalid" then "a configuration or test file is invalid"
     elif .reason == "not-discovered" then "Terraform did not discover the file"

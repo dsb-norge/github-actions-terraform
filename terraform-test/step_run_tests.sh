@@ -326,6 +326,8 @@ function main {
   # lock-platform fix even when this step ran nothing.
   TT_RUNNER_PLATFORM="$(tt-runner-platform)"
   set-output "runner-platform" "${TT_RUNNER_PLATFORM}"
+  # Published so a summary names the floor without keeping a copy of it.
+  set-output "terraform-version-floor" "${TT_VERSION_FLOOR}"
 
   # Root and filter. The legacy call shape (no working directory) is what
   # terraform-module-ci.yaml passes: a bare file name under tests/, run from
@@ -361,8 +363,8 @@ function main {
 
   classify_earlier_steps
   # A failed init still reads the version: below the floor, the version is the
-  # likelier cause (1.12 refuses a test file's variable blocks, which fails init
-  # for the whole root), and the floor names the fix.
+  # likelier cause (1.12 and older refuse a test file's variable blocks, which
+  # fails init for the whole root), and the floor names the fix.
   if [ -z "${TT_STATUS}" ] || [ "${TT_REASON}" == "init" ]; then
     check_terraform_version
   fi

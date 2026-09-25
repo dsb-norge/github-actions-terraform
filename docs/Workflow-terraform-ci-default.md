@@ -113,7 +113,7 @@ Three things to know:
 
 Every committed `*.tftest.hcl` and `*.tftest.json` file runs as its own job, in parallel with the environments, on pull requests and pushes (not on `schedule` or `workflow_dispatch`). A repository without test files is unaffected; `terraform-test-enabled: false` switches the stage off. One pull-request comment summarises every file, failed ones first, and a failing test blocks the merge unless it is tolerated with `allow-failing-terraform-tests`. The full design is [Terraform-tests.md](./Terraform-tests.md).
 
-**Where test files go.** Terraform finds a test file only beside a root module's `.tf` files or in the `tests/` directory directly under it. Supported layouts: a repository-root `tests/` with no `.tf` at the root (each `run` block names its module, `module { source = "./modules/net" }`, relative to the root), and `tests/` beside any module, `main/` or environment directory. A file anywhere else is reported as misplaced and does not run. Terraform 1.12 or later.
+**Where test files go.** Terraform finds a test file only beside a root module's `.tf` files or in the `tests/` directory directly under it. Supported layouts: a repository-root `tests/` with no `.tf` at the root (each `run` block names its module, `module { source = "./modules/net" }`, relative to the root), and `tests/` beside any module, `main/` or environment directory. A file anywhere else is reported as misplaced and does not run. Terraform 1.13 or later.
 
 A `tests/` directory inside an environment works, but is rarely what you want: the environment's own init and validate load those files too, so a broken test file blocks its plan, and its real provider blocks apply. Prefer a repository-root `tests/` with mocks, or `tests/` beside a module.
 
@@ -131,7 +131,7 @@ terraform-test-lanes-yml: |
     timeout-minutes: 60
 ```
 
-The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_tenant_id` secret arrives as `TF_VAR_TENANT_ID`; the lane exports it under both that name and `TF_VAR_tenant_id`, so a snake_case or an upper-case declaration works. A mixed-case variable name needs an explicit mapping in `extra-envs-from-secrets-yml`. A test file that uses `var.x` itself declares `variable "x" {}`, which Terraform 1.13 requires and 1.12 refuses.
+The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_tenant_id` secret arrives as `TF_VAR_TENANT_ID`; the lane exports it under both that name and `TF_VAR_tenant_id`, so a snake_case or an upper-case declaration works. A mixed-case variable name needs an explicit mapping in `extra-envs-from-secrets-yml`. A test file that uses `var.x` itself declares `variable "x" {}`.
 
 **Bringing up an environment lane:**
 

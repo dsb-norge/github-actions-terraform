@@ -56,7 +56,7 @@ trade-offs written out; the rationale is kept short.
 | D8 | Test jobs run **in parallel with** the environment jobs; nothing waits for them. | The required check and auto-merge already block on a failed test. Waiting would delay every plan by the slowest test and would skip every environment when a test fails. |
 | D9 | Test jobs default to `ubuntu-latest`, overridable per lane. | Many short jobs; a unit lane needs registry access only. Lanes that must reach a restricted network set `runs-on` themselves. |
 | D10 | **One PR comment** for all tests, shape A (§6.4): headline, failed files first with their failed run blocks, everything else collapsed per test root. Job logs and output artifacts are linked, never inlined. | A comment per file is noise at 30 files; a 65 k body cannot hold logs. |
-| D11 | Terraform **1.12.0 is the floor**, enforced at runtime. | The empty-root layout needs 1.12 (§4.2). |
+| D11 | Terraform **1.13.0 is the floor**, enforced at runtime. | The empty-root layout needs 1.12 (§4.2), and a test file's `variable` blocks, which carry lane variables into run-block modules, need 1.13 (§3.2); one floor keeps one authoring rule. |
 | D12 | Credentials reach a lane in two ways, both supported: explicit secret-name mapping from the caller's secrets, and a **GitHub Environment per lane** (§3.6). | The mapping is the environments' existing model; the environment adds lane-scoped secrets, a lane-specific OIDC subject and a place collaborators can fill without admin rights. |
 | D13 | Environment names are computed: `github-environment: auto` means `tftest-<lane>`. An explicit name must carry the same prefix. | Predictable names make the federated-credential wildcard and the bring-up steps identical in every repository. The prefix is one nobody uses for a real environment and matches the prefix test objects carry. |
 | D14 | Only lanes that opt in run inside an environment, and they run with `deployment: false`. | A unit lane has nothing to keep secret. `deployment: false` keeps the secrets and drops the deployment record, so nothing reaches the pull request timeline. |
@@ -156,11 +156,10 @@ Rules:
   lane can always pin a value explicitly. The mapping coming last is `export-env-vars`' own order,
   kept for its existing callers; it matters only for a name a lane sets in both maps.
 
-Authoring note for lane variables: `TF_VAR_x` sets a variable `x` that the root module declares on
-every supported version. A test file that references `var.x` itself, to pass it to a run block's
-module say, must declare `variable "x" {}` from Terraform 1.13, and Terraform 1.12 refuses that
-block: "Unsupported block type", which fails init for every test file of the root (P10, P45).
-Verified with 1.12.2 and 1.16.2.
+Authoring note for lane variables: `TF_VAR_x` sets a variable `x` that the root module declares. A
+test file that references `var.x` itself, to pass it to a run block's module say, declares
+`variable "x" {}`; Terraform requires the block from 1.13, the floor (§3.5), and 1.12 refuses it
+(P45). Verified with 1.12.2 and 1.16.2.
 
 ### 3.3 Login
 
@@ -187,9 +186,14 @@ The rule is fixed in the job's `if:` (`github.event_name == 'pull_request' || gi
 ### 3.5 Version floor
 
 The `terraform-test` action reads `terraform version -json` before running and fails with status
-`error`, reason `terraform-version`, when the version is below **1.12.0**. Below that version the
-empty-root layout does not initialise ("Module not installed"), `-parallelism` is unknown and run
-blocks cannot declare `parallel`. The message names the floor and points here.
+`error`, reason `terraform-version`, when the version is below **1.13.0**. Terraform 1.12 refuses
+a `variable` block in a test file ("Unsupported block type"), which fails init for every test file
+of the root, and a test file needs that block from 1.13 to use a lane variable itself (§3.2, P45).
+Below 1.12 the empty-root layout does not initialise either ("Module not installed"),
+`-parallelism` is unknown and run blocks cannot declare `parallel`. The version is read even when
+init failed, and wins over `init` (§5.5), since an old version is the likelier cause. The message
+names the floor and points here; the action publishes the floor as `terraform-version-floor`, and
+the summary names it from there rather than keeping a copy.
 
 Provider versions are not a version-floor concern: tests take them from the environments' lock
 files (§5.3), so nothing in the test lane runs `terraform providers lock`.
@@ -1229,7 +1233,7 @@ Indexed so implementation commits and future specs can cite them.
 | P42 | `verify-terraform-lock` in its default mode runs `terraform providers lock` against the directory's initialised configuration. | Before init it refuses to run ("Expected '.terraform/' to exist"), and a copied lock does not describe the test root's configuration anyway: every test job reported `lock-platform`. | Lock-only mode checks the lock against a configuration built from the lock itself, in the directory where the lock is committed, after the plugin cache is restored (§5.2 step 7). |
 | P43 | The summary finds each job by its display name, and the engine suffixes a name with its provider set only for a file that runs in more than one set. | Rebuilding the name with a suffix whenever the run has several sets missed every job of a narrowed lane or an environment root: no job links, and an environment root's empty set counted as a set. | The summary matches on the row's own `name` and counts only non-empty sets. |
 | P44 | GitHub stores secret names upper-cased; Terraform variable names are case-sensitive. | An environment secret `TF_VAR_x` arrives as `TF_VAR_X` and sets only `X`; a test declaring `x` fails with "Required variable not set". | The export adds a lower-cased copy of every `TF_VAR_*` secret (`export-env-vars`' `lower-case-copies-for-prefixes-json`); a mixed-case name needs an explicit mapping (§3.6). |
-| P45 | Terraform 1.12 refuses a `variable` block in a test file, which 1.13 requires for `var.x` in the file. | Init fails for every test file of the root under 1.12, which read as `init` and hid the version. | A failed init defers to the version floor (§5.5 row 1); the authoring note says which versions accept the block (§3.2). |
+| P45 | Terraform 1.12 refuses a `variable` block in a test file, which 1.13 requires for `var.x` in the file. | Init fails for every test file of the root under 1.12, which read as `init` and hid the version. | The floor is 1.13 (§3.5), and a failed init defers to it (§5.5 row 1). |
 
 ## 11. Test coverage
 
