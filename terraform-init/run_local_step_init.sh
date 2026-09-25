@@ -36,6 +36,12 @@ export input_environment_name="sandbox"
 export input_additional_dirs_json="[\"${EXTRA_DIR_REL}\"]"
 export input_plugin_cache_directory=""
 
+# Every input at its default. Try 'false', 'readonly-if-present' and 'true'
+# (with a plugin cache directory) to see the flags and the variables change.
+export input_backend="true"
+export input_lockfile_mode="default"
+export input_plugin_cache_may_break_lock_file="false"
+
 # A stand-in for '${{ github.token }}'. Any non-empty value exercises the
 # injection; the stub terraform never clones anything, so it need not be real.
 export input_github_token="ghs_localsandboxtoken"

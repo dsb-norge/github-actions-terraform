@@ -41,6 +41,8 @@ setup_workdir() {
   unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_ARGV_FILE MOCK_ENV_FILE
   unset input_extra_envs_file
   unset input_github_token
+  unset input_backend input_lockfile_mode input_plugin_cache_may_break_lock_file
+  unset TF_PLUGIN_CACHE_DIR TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
 
   # Hermetic git configuration: the credential guard in
@@ -683,6 +685,167 @@ run_step
 assert "refused clone: every distinct host is listed once" \
   grep -q "credentials for 'https://github.com https://gitlab.com'" \
   '/tmp/test_output_init.txt'
+
+# ======================================================================
+# Backend, lock-file mode and the plugin cache's lock rules for the
+# project init (the 'backend', 'lockfile-mode' and
+# 'plugin-cache-may-break-lock-file' inputs)
+# ======================================================================
+
+# The argv the stub recorded for its N-th invocation, without the pwd prefix.
+argv_of() { sed -n "${1}p" "${MOCK_TF_ARGV_FILE}" | sed 's/^pwd=[^ ]* argv=//'; }
+argv_eq() { [[ "$(argv_of "${1}")" == "${2}" ]]; }
+
+# A stand-in for the lock file a test root may or may not carry.
+write_lock() { printf '# lock\n' >"${WORK_DIR}/.terraform.lock.hcl"; }
+
+record_argv() {
+  export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
+  : >"${MOCK_TF_ARGV_FILE}"
+}
+
+# Golden for every existing caller: none of the three inputs given.
+setup_workdir
+install_stub_terraform
+record_argv
+record_env
+write_lock
+mkdir -p "${RUNNER_TEMP}/plugin-cache"
+export input_plugin_cache_directory="${RUNNER_TEMP}/plugin-cache"
+run_step
+assert "lock modes: defaults, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "lock modes: defaults, the project init argv is unchanged (golden)" \
+  argv_eq 1 'init -input=false -reconfigure'
+assert "lock modes: defaults, the project init gets no may-break variable" \
+  env_is_unset TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
+assert "lock modes: defaults, the project init gets no TF_PLUGIN_CACHE_DIR" \
+  env_is_unset TF_PLUGIN_CACHE_DIR
+
+# The same, with every input spelled out at its default value.
+setup_workdir
+install_stub_terraform
+record_argv
+record_env
+write_lock
+mkdir -p "${RUNNER_TEMP}/plugin-cache"
+export input_plugin_cache_directory="${RUNNER_TEMP}/plugin-cache"
+export input_backend='true' input_lockfile_mode='default' input_plugin_cache_may_break_lock_file='false'
+run_step
+assert "lock modes: explicit defaults, step exits 0" test "${LAST_EXIT}" -eq 0
+assert "lock modes: explicit defaults, the project init argv is unchanged" \
+  argv_eq 1 'init -input=false -reconfigure'
+assert "lock modes: explicit defaults, the project init gets no may-break variable" \
+  env_is_unset TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
+
+# backend: false
+setup_workdir
+install_stub_terraform
+record_argv
+mkdir -p "${GITHUB_WORKSPACE}/extra-dir"
+export input_additional_dirs_json='["extra-dir"]'
+export input_backend='false'
+run_step
+assert "backend false: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "backend false: the project init gets -backend=false" \
+  argv_eq 1 'init -input=false -reconfigure -backend=false'
+assert "backend false: an additional-dirs init is unaffected" \
+  argv_eq 2 "-chdir=${GITHUB_WORKSPACE}/extra-dir init -input=false -reconfigure"
+
+# Every lock-file mode, with and without a lock file.
+for _case in \
+  'default|with|init -input=false -reconfigure' \
+  'default|without|init -input=false -reconfigure' \
+  'readonly|with|init -input=false -reconfigure -lockfile=readonly' \
+  'readonly|without|init -input=false -reconfigure -lockfile=readonly' \
+  'readonly-if-present|with|init -input=false -reconfigure -lockfile=readonly' \
+  'readonly-if-present|without|init -input=false -reconfigure'; do
+  IFS='|' read -r _mode _lock _expected <<<"${_case}"
+  setup_workdir
+  install_stub_terraform
+  record_argv
+  [ "${_lock}" == 'with' ] && write_lock
+  export input_lockfile_mode="${_mode}"
+  run_step
+  assert "lockfile-mode ${_mode}, ${_lock} a lock: step exits 0" test "${LAST_EXIT}" -eq 0
+  assert "lockfile-mode ${_mode}, ${_lock} a lock: argv is '${_expected}'" argv_eq 1 "${_expected}"
+done
+
+# Both new flags together, in a fixed order.
+setup_workdir
+install_stub_terraform
+record_argv
+write_lock
+export input_backend='false' input_lockfile_mode='readonly-if-present'
+run_step
+assert "backend false + readonly-if-present with a lock: both flags" \
+  argv_eq 1 'init -input=false -reconfigure -backend=false -lockfile=readonly'
+
+# The lock that counts is the working directory's, not one elsewhere.
+setup_workdir
+install_stub_terraform
+record_argv
+printf '# lock\n' >"${GITHUB_WORKSPACE}/.terraform.lock.hcl"
+export input_lockfile_mode='readonly-if-present'
+run_step
+assert "readonly-if-present: a lock outside the working directory does not count" \
+  argv_eq 1 'init -input=false -reconfigure'
+
+# Invalid values fail before terraform runs.
+for _bad in \
+  'input_lockfile_mode|read-only|lockfile-mode' \
+  'input_lockfile_mode|READONLY|lockfile-mode' \
+  'input_backend|no|backend' \
+  'input_plugin_cache_may_break_lock_file|yes|plugin-cache-may-break-lock-file'; do
+  IFS='|' read -r _var _value _input <<<"${_bad}"
+  setup_workdir
+  install_stub_terraform
+  record_argv
+  export "${_var}=${_value}"
+  run_step
+  assert "invalid ${_input} '${_value}': step exits non-zero" test "${LAST_EXIT}" -ne 0
+  assert "invalid ${_input} '${_value}': the error names the input and the value" \
+    grep -qF "input '${_input}' must be" '/tmp/test_output_init.txt'
+  assert "invalid ${_input} '${_value}': the error quotes the value" \
+    grep -qF "got '${_value}'" '/tmp/test_output_init.txt'
+  assert "invalid ${_input} '${_value}': terraform was never invoked" \
+    bash -c "[ ! -s '${MOCK_TF_ARGV_FILE}' ]"
+done
+
+# The may-break variable for the project init: exported only when asked for,
+# with a plugin cache directory, and with a writable lock.
+for _case in \
+  'true|set|default|with|exported' \
+  'true|set|default|without|exported' \
+  'true|set|readonly-if-present|without|exported' \
+  'true|set|readonly-if-present|with|not exported' \
+  'true|set|readonly|without|not exported' \
+  'true|unset|default|without|not exported' \
+  'false|set|default|without|not exported'; do
+  IFS='|' read -r _ask _cache _mode _lock _expected <<<"${_case}"
+  _label="may-break ${_ask}, cache ${_cache}, ${_mode}, ${_lock} a lock"
+  setup_workdir
+  install_stub_terraform
+  record_env
+  [ "${_lock}" == 'with' ] && write_lock
+  if [ "${_cache}" == 'set' ]; then
+    mkdir -p "${RUNNER_TEMP}/plugin-cache"
+    export input_plugin_cache_directory="${RUNNER_TEMP}/plugin-cache"
+  fi
+  export input_plugin_cache_may_break_lock_file="${_ask}" input_lockfile_mode="${_mode}"
+  run_step
+  assert "${_label}: step exits 0" test "${LAST_EXIT}" -eq 0
+  if [ "${_expected}" == 'exported' ]; then
+    assert "${_label}: may-break is 'true' for the project init" \
+      env_eq TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE 'true'
+    assert "${_label}: TF_PLUGIN_CACHE_DIR is the input" \
+      env_eq TF_PLUGIN_CACHE_DIR "${RUNNER_TEMP}/plugin-cache"
+  else
+    assert "${_label}: may-break is not exported" \
+      env_is_unset TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
+    assert "${_label}: TF_PLUGIN_CACHE_DIR is not exported" \
+      env_is_unset TF_PLUGIN_CACHE_DIR
+  fi
+done
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"

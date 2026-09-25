@@ -262,5 +262,14 @@ function annotate-refused-clones {
   return 0
 }
 
+# Whether a 'lockfile-mode' input value is one this action knows
+# ==============================================================
+function is-valid-lockfile-mode {
+  case "${1}" in
+    default | readonly | readonly-if-present) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ==========================================================
 log-info "'$(basename ${BASH_SOURCE[0]})' loaded."
