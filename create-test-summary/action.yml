@@ -1,0 +1,127 @@
+name: "Create the Terraform tests summary"
+description: |
+  Renders the one summary of every Terraform test file of the run: the body of
+  the pull request's tests head comment and the same body, without the
+  workflow link, appended to $GITHUB_STEP_SUMMARY. Emits one headline
+  annotation. See docs/Terraform-tests.md §6.
+
+  Rows come from the test matrix (every row appears, P33), the per-job
+  metadata files the test jobs uploaded (terraform-test-meta-*.json, from
+  capture-matrix-job-meta) and the not-run list (misplaced and
+  secrets-unavailable files). Job links, the conclusion of a job that left no
+  metadata, and the wall-clock time come from the Jobs API.
+
+  The metadata is read under these step ids of the test job: 'test' (the
+  terraform-test step, whose outputs carry status, reason, counts,
+  elapsed-ms, failed-runs-json, failed-runs-omitted, providers-summary, providers-floating-count and
+  runner-platform), 'upload-test-output' (its artifact-url is the output
+  link), and, for a job whose test step left no status, the outcomes of
+  'verify-credentials', 'provider-versions' and 'init'. The job link anchors
+  at the step named '🧪 Terraform test'.
+
+  Never fails: a reporting job must never redden a run. Missing or malformed
+  inputs degrade the body; they do not fail the step.
+author: "Peder Schmedling"
+inputs:
+  metadata-files-pattern:
+    description: |
+      Glob matched against files in the working directory. Each match is a
+      JSON file with the structure capture-matrix-job-meta produces. A file
+      whose metadata schema major is not 2 is skipped with a warning.
+    required: false
+    default: "terraform-test-meta-*.json"
+  tests-matrix-json:
+    description: |
+      The test matrix the matrix builder published (its tests-matrix-json
+      output, {"include": [row, ...]}), passed as it is. Every row gets a line
+      in the body; a row with no metadata is rendered from its job's
+      conclusion. Empty: rows come from the metadata alone.
+    required: false
+    default: ""
+  not-run-file:
+    description: |
+      Path of the matrix builder's relevance.json, whose tests.not_run lists
+      the files that get no job ({file, lane, reason}), or of a file holding
+      that array. Empty or missing on disk (a failed download): no not-run
+      rows.
+    required: false
+    default: ""
+  jobs-json-file:
+    description: |
+      Path of a file holding the run's jobs as the Jobs API returns them (one
+      array per page, or page objects with a jobs array). Empty: the action
+      lists the jobs itself with github-token. Tests pass a fixture here.
+    required: false
+    default: ""
+  github-token:
+    description: |
+      Token for the Jobs API; needs actions: read. The caller's own workflow
+      token is enough. Empty with no jobs-json-file: no job links, and the
+      body says so in one line.
+    required: false
+    default: ""
+  run-url:
+    description: |
+      Target of the body's '[Workflow log]' footer. Default: the run's page.
+    required: false
+    default: ""
+  output-file-suffix:
+    description: |
+      Appended to the directory the output files are written to, so two
+      invocations in one job do not overwrite each other. Reduced to
+      [A-Za-z0-9._-].
+    required: false
+    default: ""
+outputs:
+  body-file:
+    description: |
+      Absolute path of the head comment's body (markdown, at most 65 000
+      characters). Pass it to pr-comment's body-file with head-marker.
+    value: ${{ steps.summary.outputs.body-file }}
+  step-summary-file:
+    description: |
+      Absolute path of the same body without the '[Workflow log]' footer. The
+      action has already appended it to $GITHUB_STEP_SUMMARY.
+    value: ${{ steps.summary.outputs.step-summary-file }}
+  head-marker:
+    description: |
+      The head comment's marker, '<!-- tf:head:tests:<caller> -->', with the
+      calling workflow's name reduced to [A-Za-z0-9_-].
+    value: ${{ steps.summary.outputs.head-marker }}
+  failed-count:
+    description: Test jobs whose status is fail or error and not tolerated, jobs that did not run included.
+    value: ${{ steps.summary.outputs.failed-count }}
+  tolerated-count:
+    description: Test jobs whose status is fail or error under allow-failing-terraform-tests.
+    value: ${{ steps.summary.outputs.tolerated-count }}
+  passed-count:
+    description: Test jobs that passed.
+    value: ${{ steps.summary.outputs.passed-count }}
+  not-run-count:
+    description: Misplaced and secrets-unavailable files.
+    value: ${{ steps.summary.outputs.not-run-count }}
+runs:
+  using: "composite"
+  steps:
+    - id: summary
+      shell: bash
+      env:
+        input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
+        input_not_run_file: ${{ inputs.not-run-file }}
+        input_jobs_json_file: ${{ inputs.jobs-json-file }}
+        input_run_url: ${{ inputs.run-url }}
+        input_output_file_suffix: ${{ inputs.output-file-suffix }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # Render the Terraform tests summary body and step summary
+        #
+        # toJSON of the matrix through a quoted heredoc: one line, so no line of
+        # it can be the delimiter. Intentionally NOT exported: 256 rows exceed
+        # the per-string envp limit. step_summary.sh writes it to a file.
+        input_tests_matrix_json=$(cat <<'CREATE_TEST_SUMMARY_TESTS_MATRIX_JSON_JSON'
+        ${{ toJSON(inputs.tests-matrix-json) }}
+        CREATE_TEST_SUMMARY_TESTS_MATRIX_JSON_JSON
+        )
+
+        set -o allexport
+        source "${{ github.action_path }}/step_summary.sh"
