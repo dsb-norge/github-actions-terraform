@@ -14,11 +14,12 @@ the value's own trailing newlines.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import urllib.parse
 
-from . import SCHEMA_VERSION, decide, environments, relevance, workflow
+from . import SCHEMA_VERSION, decide, environments, relevance, tests, workflow
 
 TITLE = "create-tf-vars-matrix"
 EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
@@ -43,6 +44,14 @@ COMPARE_CAP = 300
 ZERO_SHA = "0" * 40
 ERROR_CAP = 500
 
+# Committed files only: registry modules ship their own tests/, and nothing ignored or built belongs
+# in the matrix (docs/Terraform-tests.md §4.1).
+TEST_FILE_PATTERNS = ("*.tftest.hcl", "*.tftest.json")
+TF_FILE_PATTERNS = ("*.tf", "*.tf.json")
+# A provider block of a lock file, which `terraform init` writes with the closing brace at column 0.
+LOCK_PROVIDER = re.compile(r'^provider\s+"([^"]+)"\s*\{(.*?)^\}', re.M | re.S)
+LOCK_VERSION = re.compile(r'^\s*version\s*=\s*"([^"]+)"', re.M)
+
 
 class AdapterError(Exception):
     """A fault that is not the caller's configuration: a message, and detail shown verbatim."""
@@ -59,6 +68,14 @@ class Tools:
     def run(self, argv, stdin=""):
         completed = subprocess.run(argv, input=stdin, capture_output=True, text=True, check=False)
         return completed.returncode, completed.stdout, completed.stderr
+
+    def read_text(self, path):
+        """A file's text, or None when there is none to read."""
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return None
 
 
 def _run(tools, argv, stdin=""):
@@ -292,6 +309,36 @@ def write_relevance_file(runner_temp, output):
     return path
 
 
+def parse_lock(text):
+    """A lock file's providers and the versions it records."""
+    versions = {}
+    for provider, block in LOCK_PROVIDER.findall(text):
+        version = LOCK_VERSION.search(block)
+        if version is not None:
+            versions[provider] = version.group(1)
+    return versions
+
+
+def list_committed(tools, patterns):
+    code, stdout, stderr = _run(tools, ("git", "ls-files", "-z", "--", *patterns))
+    if code != 0:
+        raise AdapterError("git cannot list the repository's committed files", (stderr or stdout).strip()[:ERROR_CAP])
+    return [path for path in stdout.split("\0") if path]
+
+
+def gather_tests(tools, entries):
+    """The test stage's facts (docs/Terraform-tests.md §9.1): reported raw, the engine decides."""
+    files = list_committed(tools, TEST_FILE_PATTERNS)
+    directories = sorted({path.rpartition("/")[0] or "." for path in list_committed(tools, TF_FILE_PATTERNS)})
+    locks = {}
+    for entry in entries or []:
+        if isinstance(entry, dict) and "environment" in entry:
+            directory = tests.normalise_dir(environments.project_dir_path(entry))
+            text = tools.read_text(".terraform.lock.hcl" if directory == "." else f"{directory}/.terraform.lock.hcl")
+            locks[directory] = None if text is None else parse_lock(text)
+    return {"files": files, "directories_with_tf": directories, "environment_locks": locks}
+
+
 def read_inputs(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -310,9 +357,12 @@ def build_document(inputs, facts, tools, isdir):
     entries = yaml_inputs.get("environments-yml", {}).get("value")
     event = {"name": facts["event_name"], "ref_name": facts["ref_name"],
              **event_facts(facts["event_name"], facts["payload"])}
+    if facts.get("actor"):
+        event["actor"] = facts["actor"]
     document = {
         "schema_version": SCHEMA_VERSION,
-        "caller": {"repository": facts["repository"], "default_branch": facts["default_branch"]},
+        "caller": {"repository": facts["repository"], "default_branch": facts["default_branch"],
+                   **({"workflow_name": facts["workflow_name"]} if facts.get("workflow_name") else {})},
         "event": event,
         "workflow_inputs": inputs,
         "yaml": {"inputs": yaml_inputs, "environments": parse_environments(tools, entries)},
@@ -324,6 +374,9 @@ def build_document(inputs, facts, tools, isdir):
         changed = fetch_changed_files(tools, facts["repository"], facts["default_branch"], event, facts["payload"])
         if changed is not None:
             document["changed_files"] = changed
+    # A caller without the test stage's inputs has no test stage; one that switched it off lists nothing.
+    if "terraform-test-enabled" in inputs and inputs["terraform-test-enabled"] not in (False, "false"):
+        document["tests"] = gather_tests(tools, entries)
     return document
 
 
@@ -346,6 +399,8 @@ def run(inputs_file, environ, stream, tools, isdir):
             "default_branch": default_branch(payload, environ["GITHUB_REPOSITORY"], tools),
             "payload": payload,
             "run": run_facts,
+            "workflow_name": environ.get("GITHUB_WORKFLOW", ""),
+            "actor": environ.get("GITHUB_ACTOR", ""),
         }
         document = build_document(inputs, facts, tools, isdir)
     except AdapterError as error:
@@ -377,6 +432,8 @@ def run(inputs_file, environ, stream, tools, isdir):
     log.group("decision record", "\n".join(output["record"]))
     for notice in output["notices"]:
         log.notice(NOTICE_TITLE, notice)
+    for warning in output["warnings"]:
+        log.warning(warning)
     matrix = output["matrices"]["1"]
     log.group("matrix-json", json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
     outputs = {
@@ -387,6 +444,10 @@ def run(inputs_file, environ, stream, tools, isdir):
         "relevance-reason": output["relevance"]["reason"],
         "changed-count": str(output["relevance"]["changed_count"]),
         "relevance-file": relevance_file,
+        "tests-matrix-json": json.dumps(output["tests"]["matrix"], sort_keys=True, ensure_ascii=False,
+                                        separators=(",", ":")),
+        "tests-count": str(output["tests"]["count"]),
+        "tests-active": "true" if output["tests"]["active"] else "false",
     }
     for name, value in outputs.items():
         workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
