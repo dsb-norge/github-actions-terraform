@@ -2,8 +2,9 @@
 
 Paths are repository-relative and `/`-separated, without a leading `./`. `*` matches any run of
 characters within one segment, `?` one such character, `**` any number of whole segments including
-none; a pattern without a `/` matches the basename. No negation, character classes or braces: bash
-and fnmatch would each do something different with them, so they are refused rather than guessed.
+none; a pattern without a `/` matches the basename, unless a leading `/` or `./` anchors it at the
+root, as a leading `/` does in `.gitignore`. No negation, character classes or braces: bash and
+fnmatch would each do something different with them, so they are refused rather than guessed.
 """
 
 import re
@@ -35,12 +36,10 @@ def compile_glob(pattern):
     if not isinstance(pattern, str):
         raise GlobError(f"the pattern {pattern!r} is not a string")
     original = pattern
-    if pattern.startswith("./"):
-        pattern = pattern[2:]
+    anchored = pattern.startswith(("/", "./"))
+    pattern = pattern.removeprefix(".").removeprefix("/") if anchored else pattern
     if not pattern:
         _refuse(original, "it is empty")
-    if pattern.startswith("/"):
-        _refuse(original, "an absolute path; patterns are relative to the repository root")
     if pattern.startswith("!"):
         _refuse(original, "negation; use paths-ignore")
     if "[" in pattern or "]" in pattern:
@@ -65,7 +64,12 @@ def compile_glob(pattern):
         parts.append("".join("[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c) for c in segment))
         if not last:
             parts.append("/")
-    return Glob(pattern, re.compile("".join(parts)), basename=len(segments) == 1)
+    # The anchor only matters where the basename rule would apply; elsewhere a pattern is anchored
+    # already, and dropping the prefix lets equal patterns compare equal. `**` alone matches every
+    # path either way.
+    root_only = anchored and len(segments) == 1 and pattern != "**"
+    return Glob(f"/{pattern}" if root_only else pattern, re.compile("".join(parts)),
+                basename=len(segments) == 1 and not anchored)
 
 
 def first_match(globs, path):

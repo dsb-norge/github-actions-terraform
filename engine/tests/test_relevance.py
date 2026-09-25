@@ -142,7 +142,7 @@ class AutoTest(unittest.TestCase):
         return entry["paths"], entry["paths-ignore"]
 
     def test_auto_is_the_standard_layout_relative_to_the_project_dir(self):
-        self.assertEqual((["envs/prod/**", "main/**", "modules/**", ".tflint.hcl"], ["**/*.md"]),
+        self.assertEqual((["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], ["**/*.md"]),
                          self.rules({"environment": "prod"}))
 
     def test_the_project_dir_is_normalised(self):
@@ -155,21 +155,27 @@ class AutoTest(unittest.TestCase):
     def test_additional_init_dirs_join_auto(self):
         environment = {"environment": "prod", "terraform-init-additional-dirs-yml": ["./shared", "lib/", "."]}
         paths, _ = self.rules(environment)
-        self.assertEqual(["envs/prod/**", "main/**", "modules/**", ".tflint.hcl", "shared/**", "lib/**", "**"], paths)
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl", "shared/**", "lib/**", "**"], paths)
 
     def test_the_global_additional_dirs_count_too(self):
         doc = document(files=[])
         doc["yaml"]["inputs"]["terraform-init-additional-dirs-yml"] = support.parsed(["common"])
         paths = decide.decide(doc)["environments"][0]["paths"]
-        self.assertEqual(["envs/prod/**", "main/**", "modules/**", ".tflint.hcl", "common/**"], paths)
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl", "common/**"], paths)
 
     def test_auto_with_extras_and_a_replacement_list(self):
-        self.assertEqual(["scripts/**", "envs/prod/**", "main/**", "modules/**", ".tflint.hcl"],
+        self.assertEqual(["scripts/**", "envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
                          self.rules({"environment": "prod", "paths": ["scripts/**", "auto"]})[0])
         self.assertEqual((["**"], []), self.rules({"environment": "prod", "paths": ["**"]}))
 
+    def test_an_anchored_pattern_of_the_caller_equals_autos(self):
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
+                         self.rules({"environment": "prod", "paths": ["auto", "./.tflint.hcl", "/main/**"]})[0])
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl", ".tflint.hcl"],
+                         self.rules({"environment": "prod", "paths": ["auto", ".tflint.hcl"]})[0])
+
     def test_duplicates_are_dropped_keeping_the_first(self):
-        self.assertEqual(["envs/prod/**", "main/**", "modules/**", ".tflint.hcl"],
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
                          self.rules({"environment": "prod", "paths": ["auto", "auto", "./main/**"]})[0])
         self.assertEqual(["**/*.md"], self.rules({"environment": "prod", "paths-ignore": ["**/*.md", "./**/*.md"]})[1])
 
@@ -191,9 +197,10 @@ class MatchingTest(unittest.TestCase):
             (["modules/net/main.tf"], {"prod": "run", "staging": "run", "sandbox": "run"}),
             (["envs/prod/README.md"], {"prod": "skip", "staging": "skip", "sandbox": "skip"}),
             ([".tflint.hcl"], {"prod": "run", "staging": "run", "sandbox": "run"}),
-            # A pattern without a slash matches the basename, so auto's `.tflint.hcl` matches every one:
-            # an over-run, the safe direction.
-            (["envs/staging/.tflint.hcl"], {"prod": "run", "staging": "run", "sandbox": "run"}),
+            # auto's root `.tflint.hcl` is anchored: another environment's own config is not this one's.
+            (["envs/staging/.tflint.hcl"], {"prod": "skip", "staging": "run", "sandbox": "skip"}),
+            (["modules/net/.tflint.hcl"], {"prod": "run", "staging": "run", "sandbox": "run"}),
+            (["docs/.tflint.hcl"], {"prod": "skip", "staging": "skip", "sandbox": "skip"}),
             (["envs/stagingx/main.tf"], {"prod": "skip", "staging": "skip", "sandbox": "skip"}),
             ([], {"prod": "skip", "staging": "skip", "sandbox": "skip"}),
         ]
@@ -257,7 +264,7 @@ class MatchingTest(unittest.TestCase):
                           "github-environment": "gh-prod", "add-pr-comment": "true", "pr-comment-group": "g",
                           "mutates-on-pr": ["apply-on-pr"], "pr-auto-merge-enabled": "true",
                           "pr-auto-merge-from-actors": ["bot"], "pr-auto-merge-limits": None,
-                          "paths": ["envs/prod/**", "main/**", "modules/**", ".tflint.hcl"],
+                          "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
                           "paths-ignore": ["**/*.md"]}, entry)
 
     def test_mutates_on_pr_lists_the_on_pr_goals_in_a_fixed_order(self):
@@ -318,9 +325,13 @@ class ValidationTest(unittest.TestCase):
                           "pattern '../x/**' is not supported: '.' or '..' segments; set its 'paths' explicitly!"],
                          self.errors({"environment": "prod", "project-dir": "../x"}, directories={"../x": True}))
         self.assertEqual(["The environment 'prod' uses auto, but its terraform-init-additional-dirs entry '/abs' "
-                          "cannot be matched: the pattern '/abs/**' is not supported: an absolute path; patterns are "
-                          "relative to the repository root; set its 'paths' explicitly!"],
+                          "cannot be matched: the directory '/abs' is an absolute path; directories are relative "
+                          "to the repository root; set its 'paths' explicitly!"],
                          self.errors({"environment": "prod", "terraform-init-additional-dirs-yml": ["/abs"]}))
+        self.assertEqual(["The environment 'prod' uses auto, but its project-dir '/srv/x' cannot be matched: the "
+                          "directory '/srv/x' is an absolute path; directories are relative to the repository root; "
+                          "set its 'paths' explicitly!"],
+                         self.errors({"environment": "prod", "project-dir": "/srv/x"}, directories={"/srv/x": True}))
         self.assertEqual(["The environment 'prod' uses auto, but its terraform-init-additional-dirs entry 5 cannot "
                           "be matched: the pattern 5 is not a string; set its 'paths' explicitly!"],
                          self.errors({"environment": "prod", "terraform-init-additional-dirs-yml": [5]}))

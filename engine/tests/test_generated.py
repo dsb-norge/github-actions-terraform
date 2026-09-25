@@ -108,10 +108,11 @@ class GeneratedTest(unittest.TestCase):
 
     def test_random_relevance_never_crashes(self):
         rng = random.Random(20260924)
-        pool = ["README.md", "envs/env-a/main.tf", "envs/env-b/x.md", "modules/m/main.tf", ".tflint.hcl",
+        pool = ["README.md", "envs/env-a/main.tf", "envs/env-b/x.md", "modules/m/main.tf", ".tflint.hcl", "envs/env-b/.tflint.hcl",
                 ".github/workflows/ci.yml", "main/a.tf", "shared/x.tf", "docs/a.md"]
         rule_shapes = SHAPES[1:] + (["auto"], ["**"], ["auto", "shared/**"], ["envs/*/main.tf"], ["[x]"], ["auto", 5],
-                                    ["**/*.md"], ["auto", "auto"], ["./main/**", "main/**"])
+                                    ["**/*.md"], ["auto", "auto"], ["./main/**", "main/**"], ["/.tflint.hcl"],
+                                    ["auto", "/*.md", "./x"], ["/"], ["//x"])
         verdicts = set()
         for _ in range(3000):
             environments_ = []

@@ -11,8 +11,9 @@ from .environments import ConfigError, shown
 AUTO = "auto"
 # Nothing in the workflow reads Markdown; a configuration that does sets `paths-ignore: []`.
 IMPLIED_IGNORE = "**/*.md"
-# The standard layout beside the environment's own directories.
-AUTO_SHARED = ("main/**", "modules/**", ".tflint.hcl")
+# The standard layout beside the environment's own directories. The root's `.tflint.hcl` is
+# anchored: the lint reads it only for an environment without its own, which its directory covers.
+AUTO_SHARED = ("main/**", "modules/**", "/.tflint.hcl")
 SWITCH = "path-relevance-enabled"
 DIFF_EVENTS = ("pull_request", "push")
 # The calling workflow carries the `uses:` ref and every input, and may route through a local one.
@@ -64,6 +65,11 @@ def fail_open_reason(document, enabled):
 
 def _directory(path):
     """A directory as the rule for everything under it."""
+    if isinstance(path, str) and path.startswith("/"):
+        # A leading '/' anchors a pattern at the root, but in a directory it is the runner's
+        # filesystem root, which no changed file lies under.
+        raise globs.GlobError(f"the directory {path!r} is an absolute path; directories are relative to the "
+                              "repository root")
     if isinstance(path, str):
         path = path.rstrip("/") + "/**"
     return globs.compile_glob(path)

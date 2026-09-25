@@ -83,14 +83,14 @@ expands to:
 - `main/**`
 - `modules/**`
 - `<dir>/**` for each entry of the environment's resolved `terraform-init-additional-dirs-yml`
-- `.tflint.hcl`: meant for the repository root's; the environment's own is inside `envs/prod/**`
-  anyway. By the grammar's basename rule (§3.3) a pattern without `/` matches that name in any
-  directory, so a change to another environment's `.tflint.hcl` also makes this one relevant: an
-  over-run, the safe direction of D4.
+- `/.tflint.hcl`: the repository root's only, anchored (§3.3). The lint step reads the
+  environment's own `.tflint.hcl` when it has one, which `envs/prod/**` covers, and the root's
+  otherwise; another environment's `.tflint.hcl` is never this one's.
 
 with the implied ignore `**/*.md`. `project-dir` and each additional dir are normalised by
 dropping trailing slashes and a leading `./`; `.` becomes `**`. A directory the grammar cannot
-express (`../x`, an absolute path) is a validation error naming it, and only for an environment
+express (`../x`) or an absolute one (`/srv/x`, a path on the runner no changed file lies under) is
+a validation error naming it, and only for an environment
 whose `paths` use `auto`: one that lists its paths explicitly needs no matchable directory.
 Patterns are deduplicated by their normalised text, keeping the first. Nothing in this workflow reads Markdown; a configuration that
 does through `file()` or `templatefile()` sets `paths-ignore: []`.
@@ -106,9 +106,11 @@ or `-backend-config` target passed through `TF_CLI_ARGS_*`, or a local module so
 ### 3.3 Grammar and matching
 
 The grammar is the one Terraform-tests.md §4.4 defines: `*` matches within one segment, `**` any
-number of segments including none, `?` one character, a pattern without `/` matches the basename,
-no negation, no character classes, no braces. Patterns are matched against repository-relative
-paths without a leading `./`.
+number of segments including none, `?` one character, a pattern without `/` matches the basename
+unless a leading `/` or `./` anchors it at the root (`/.tflint.hcl`, `/*.md`), no negation, no
+character classes, no braces. Patterns are matched against repository-relative paths without a
+leading `./`. A pattern's shown and compared text drops an anchor that changes nothing
+(`./envs/**` is `envs/**`) and writes one that does as `/` (`./.tflint.hcl` is `/.tflint.hcl`).
 
 A file is relevant to an environment when it matches at least one `paths` entry and no
 `paths-ignore` entry. An environment is affected when at least one changed file is relevant to it.
@@ -290,7 +292,7 @@ No Mode line, no table.
 
 <details><summary>Path rules</summary>
 
-Included: `envs/staging/**` · `main/**` · `modules/**` · `.tflint.hcl`
+Included: `envs/staging/**` · `main/**` · `modules/**` · `/.tflint.hcl`
 Ignored: `**/*.md`
 Relevance: `diff`, pull request #87, 3 changed files
 
@@ -725,9 +727,12 @@ AI-assistant configuration files are never in these commits.
   `relevance.json`, uploaded once; only the counts, the mode, the reason and the changed count are
   job outputs. The entries carry `mutates-on-pr`, which the seed and the aggregator need for the
   title of a head whose environment did not run.
-- **The `.tflint.hcl` of `auto` matches every `.tflint.hcl`.** The grammar's basename rule gives
-  no way to anchor a bare name at the root, so another environment's tflint configuration makes an
-  `auto` environment relevant too: an over-run, which D4 accepts.
+- **The grammar gained a root anchor.** `auto` meant the root's `.tflint.hcl`, but the basename
+  rule gave no way to say so: `.tflint.hcl` matched every environment's own configuration, and a
+  change to one ran every environment on `auto`. A leading `/` or `./` now anchors a pattern at the
+  root, as a leading `/` does in `.gitignore`; `./.tflint.hcl`, which used to lose its `./` and match
+  everywhere, now means what it says. An absolute directory stays an error, since there `/` is the
+  runner's filesystem root.
 - **The count gate is a string comparison.** `needs.create-matrix.outputs.affected-count != '0'`
   cannot throw on an empty output the way `fromJSON('')` can.
 - **Port cases are dispatches.** They fetch nothing and run everything, so the goldens changed
