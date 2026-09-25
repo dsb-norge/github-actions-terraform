@@ -291,6 +291,14 @@ from azuread provider 3.7.0; `repository_id` is mandatory for GitHub):
 }
 ```
 
+Verified in Entra with a throwaway identity: created through the Graph beta API exactly as above, it
+granted a token to a job in `tftest-probe` and refused one to a job with no environment, a job in
+another environment, and a job in `TfTest-Case`. The last refusal settles the case question:
+GitHub puts the environment's stored name, case and all, into the subject, and `matches` compares
+case-sensitively (P35). A lane using it logged in through `ARM_USE_OIDC`, ran a `command = apply`
+test that created and asserted on a user-assigned identity in a resource group where the identity
+holds Contributor, and `terraform test` destroyed it again; nothing was left.
+
 The `*` after the owner and repository names absorbs the optional `@<id>` of the immutable format,
 so the credential survives the repository opting in; `repository_id` is what binds it. Appending
 `and claims['job_workflow_ref'] matches 'dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@*'`
@@ -302,7 +310,10 @@ repository-level `pull_request` or `ref:refs/heads/main` credential on the test 
 longer needed and should be removed.
 
 **Isolation.** A test job can neither read nor use a plan or apply identity when two preconditions
-hold, and the guide states both:
+hold, and the guide states both. Verified in Entra: an identity whose only credential trusts one
+Terraform environment's subject refused a token to a job with no environment and to a job in a
+`tftest-*` environment, and granted one to a job in its own environment; the refusals are
+`AADSTS700213` for a classic credential and `AADSTS7002131` for a flexible one.
 
 1. Plan and apply credentials are environment secrets of the Terraform environments, never
    repository or organisation secrets. Only a job that declares that environment sees them; test
@@ -1131,7 +1142,7 @@ Indexed so implementation commits and future specs can cite them.
 | P32 | A plan or apply identity that still trusts `pull_request` or a branch subject. | A no-environment test job on the same event can mint its token; client IDs are not secret. | Isolation precondition 2 (§3.6): apply identities carry `environment:` credentials only. |
 | P33 | A job refused by a protection rule, cancelled before its first step, or waiting for approval produces no metadata artifact. | The summary would lose the file while the conclusion counts it. | The summary reconciles matrix rows against metadata and renders the rest from the Jobs API (§6.2). |
 | P34 | A collaborator with write access can set environment secrets through the REST API and `gh`, but not through the settings UI, and cannot create, configure or delete an environment; the environment must exist first. | A collaborator who goes through the UI is refused; one who runs `gh secret set --env` before the first run gets `failed to fetch public key: HTTP 404`. | Bring-up order in §3.6: the first run creates the environment, then `gh secret set --env`. Verified with a write-role account. |
-| P35 | GitHub compares environment names case-insensitively; the credential expression's case behaviour is not documented. | A mixed-case explicit name matches the environment but not the credential. | The `tftest-` pattern is lowercase only; the builder lowercases before comparing. |
+| P35 | GitHub compares environment names case-insensitively but puts the stored name, case and all, into the token subject, and a flexible credential's `matches` compares case-sensitively (verified in Entra; undocumented). | A mixed-case environment name matches the environment but not the credential: `AADSTS7002131`. | The `tftest-` pattern is lowercase only; the builder lowercases and rejects an explicit name with upper case. |
 | P36 | Environments whose lock files differ produce one test job per file per distinct set. | The test matrix doubles while two environments disagree. | By design: the disagreement is what the extra run verifies. `providers-from` narrows a lane; re-aligning the environments returns to one set. |
 | P37 | The module-cache classifier reads `module` blocks in `.tf` files; a test file's `run { module { source } }` is invisible to it. | Verified: a registry run-block source with a version range was keyed from the `.tf` files alone and judged safe to save, and a restored cache kept its old version after the range moved; a local run-block source reaching a registry module was not cached at all. | The resolve phase takes the run-block declarations of every test file in the root: a range keeps the root uncached, local sources are walked (§5.3, §9.9). |
 | P39 | With `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` on, a cached package whose checksum the lock does not record for the runner's platform fails init instead of being downloaded again; read-only init on such a lock leaves a package `terraform test` refuses. | A copied environment lock without the runner's platform fails every warm-cache init of that set with a checksum error. | Every lock a test job uses must record the runner's platform: step 7 checks it and fails with `lock-platform`, naming the fix (§5.2, §5.3). |
@@ -1201,28 +1212,19 @@ through a preview ref on a test-bed calling repository and recorded in §15.
 
 ## 12. Open questions
 
-What probes on the test bed, a local Terraform 1.16 and the documentation could answer is answered
-in the text above. What remains:
+What probes on the test bed, in Entra and a sandbox subscription, with a local Terraform 1.16 and in
+the documentation could answer is answered in the text above. What remains:
 
-1. **Isolation, end to end** (D17): from a job without an environment, request a token and attempt
-   `azure/login` with the client ID of an identity that trusts only `environment:` subjects; expect
-   the token exchange to be refused. Needs Entra.
-2. **A real environment lane**: a flexible federated credential of the form in §3.6 and a lane that
-   logs in with it and runs a `command = apply` test against a sandbox subscription. Needs Entra and
-   Azure.
-3. **Case in flexible credential expressions**: neither Microsoft nor GitHub documents whether
-   `matches` compares case-sensitively (classic subjects are documented case-sensitive). The design
-   lowercases both sides regardless (P35); an Entra probe would settle it, with an environment named
-   in mixed case.
-4. **Dependabot runs and OIDC**: whether `id-token: write` is honoured on a Dependabot-triggered pull
+1. **Dependabot runs and OIDC**: whether `id-token: write` is honoured on a Dependabot-triggered pull
    request run, and what `github.actor` and `github.triggering_actor` read on it and on a human
    re-run. The docs contradict each other on raising a Dependabot run's token permissions. The
    design drops credentialed rows on Dependabot runs either way (§4.7), so this is for the pitfalls
    table; it needs a real Dependabot pull request.
-5. **Fork runs and environment creation**: whether a fork pull request's run that references a
+2. **Fork runs and environment creation**: whether a fork pull request's run that references a
    missing environment creates it. The docs are silent on forks; the design never references one
    from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
    its private repositories into a personal account. Needs a public repository to fork.
+
 ## 13. Implementation order
 
 One commit each, in this order, each green on its own:
