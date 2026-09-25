@@ -1,0 +1,10 @@
+Test result for file: unit-pass.tftest.hcl
+overall result: failure
+exit code: -1
+ 
+output: 
+
+
+Test summary for file: 
+====================================================================================================
+

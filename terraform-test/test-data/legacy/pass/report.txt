@@ -1,0 +1,12 @@
+Test result for file: unit-pass.tftest.hcl
+overall result: success
+exit code: 0
+ 
+output: 
+Test: "plans_with_default_prefix" -----> "pass" ✅ 
+Test: "applies_with_custom_prefix" -----> "pass" ✅ 
+
+
+Test summary for file: "Success! 2 passed, 0 failed."
+====================================================================================================
+
