@@ -68,6 +68,8 @@ make_sandbox() {
     mkdir -p "${SANDBOX}/ws/${directory}"
   done < <(jq -r '.directories[]?' "${case_file}")
   jq '.inputs_json' "${case_file}" >"${SANDBOX}/inputs.json"
+  # The adapter lists the committed test files with git, as it does in the caller's checkout.
+  git -C "${SANDBOX}/ws" init -q
   jq -n --arg branch "$(jq -r '.default_branch' "${case_file}")" '{repository: {default_branch: $branch}}' \
     >"${SANDBOX}/event.json"
   CASE_REF_NAME="$(jq -r '.ref_name' "${case_file}")"
@@ -454,6 +456,39 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] && [[ "$(logged_
   pass
 else
   fail "exit ${STEP_EXIT}, or a forced push was fetched: $(cat "${SANDBOX}/gh-calls")"
+fi
+
+begin "tests: committed test files and an environment's lock become the test matrix"
+make_sandbox "${baseline}"
+make_gh
+jq '. + {"terraform-test-enabled": true}' "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.on" && mv "${SANDBOX}/inputs.on" "${SANDBOX}/inputs.json"
+mkdir -p "${SANDBOX}/ws/modules/net/tests" "${SANDBOX}/ws/docs"
+echo 'variable "x" {}' >"${SANDBOX}/ws/modules/net/main.tf"
+echo 'run "a" {}' >"${SANDBOX}/ws/modules/net/tests/unit.tftest.hcl"
+echo 'run "b" {}' >"${SANDBOX}/ws/docs/stray.tftest.hcl"
+echo 'run "c" {}' >"${SANDBOX}/ws/modules/net/tests/untracked.tftest.hcl"
+cat >"${SANDBOX}/ws/envs/env-a/.terraform.lock.hcl" <<'LOCK'
+provider "registry.terraform.io/hashicorp/null" {
+  version = "3.2.4"
+  hashes = [
+    "h1:x=",
+  ]
+}
+LOCK
+git -C "${SANDBOX}/ws" add modules/net/main.tf modules/net/tests/unit.tftest.hcl docs/stray.tftest.hcl
+jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, before: $b, after: $a}' \
+  >"${SANDBOX}/event.json"
+echo '{"files": [{"filename": "README.md"}]}' >"${SANDBOX}/api/repos_example-org_example-repo_compare_${before}...${after}"
+run_step GITHUB_EVENT_NAME=push
+tests_matrix="$(step_output tests-matrix-json)"
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output tests-count) $(step_output tests-active)" == "1 true" ]] \
+  && [[ "$(jq -r '.include[0].slug' <<<"${tests_matrix}")" == "modules-net--unit" ]] \
+  && [[ "$(jq -r '.include[0].test["provider-set-lock"]' <<<"${tests_matrix}")" == "envs/env-a/.terraform.lock.hcl" ]] \
+  && grep -q "^::warning title=create-tf-vars-matrix::test file 'docs/stray.tftest.hcl' is misplaced" "${OUT_FILE}" \
+  && [[ "$(jq -r '.tests.not_run[0].reason' "$(step_output relevance-file)")" == "misplaced" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the committed test files did not become the test matrix: ${tests_matrix}"
 fi
 
 echo ""
