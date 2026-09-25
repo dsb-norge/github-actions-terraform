@@ -44,6 +44,23 @@ inputs:
       exports nothing.
     required: false
     default: "[]"
+  lower-case-copies-for-prefixes-json:
+    description: |
+      JSON array of secret name prefixes, for example '["TF_VAR_"]'.
+
+      A secret exported by 'export-secrets-with-prefixes-json' whose name
+      starts with one of these prefixes is also exported under the same name
+      with everything after the prefix lower-cased: TF_VAR_TENANT_ID also as
+      TF_VAR_tenant_id. GitHub stores secret names upper-cased, and Terraform
+      variable names are case-sensitive. No copy is made when the name is
+      already lower case after the prefix, or when a secret of the lower-cased
+      name is itself exported by prefix. Both maps override a copy as they
+      override the original.
+
+      Validated like 'export-secrets-with-prefixes-json'. The default, '[]',
+      adds no copies.
+    required: false
+    default: "[]"
 runs:
   using: "composite"
   steps:
@@ -74,6 +91,10 @@ runs:
         input_export_secrets_with_prefixes_json=$(cat <<'EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON'
         ${{ inputs.export-secrets-with-prefixes-json }}
         EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON
+        )
+        input_lower_case_copies_for_prefixes_json=$(cat <<'EXPORT_ENV_VARS_LOWER_CASE_COPIES_FOR_PREFIXES_JSON'
+        ${{ inputs.lower-case-copies-for-prefixes-json }}
+        EXPORT_ENV_VARS_LOWER_CASE_COPIES_FOR_PREFIXES_JSON
         )
 
         source "${{ github.action_path }}/step_export_envs.sh"
