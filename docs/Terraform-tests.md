@@ -232,9 +232,13 @@ is what the first run on a fresh repository looks like, by design.
 **Bring-up.** Environments are created by admins, or by any workflow that references one: GitHub
 documents that running a workflow which references an environment that does not exist creates it,
 with no protection rules and no secrets. Environment secrets are set through the REST API by anyone
-with write access to the repository, by the REST reference; the Actions how-to says an organisation
-repository needs admin (P34, §12). `gh secret set --env` against an environment that does not exist
-yet fails with `failed to fetch public key: HTTP 404` and creates nothing. So:
+with write access to the repository: verified on an organisation repository with a write-role
+account, which set, updated, listed and deleted an environment's secrets and variables with `gh`,
+and the job read the secret. The Actions how-to's "admin" is the settings UI and the environment's
+own configuration: the write role cannot create, configure or delete an environment through the API
+(404), only a workflow run that references it creates one. `gh secret set --env` against an
+environment that does not exist yet fails with `failed to fetch public key: HTTP 404` and creates
+nothing. So:
 
 1. Add the lane with `github-environment: auto` and open a pull request. The first run creates
    `tftest-<lane>`, and the lane's jobs fail with `no-credentials`. Set
@@ -801,7 +805,7 @@ a head from an earlier push that had tests (§6.3).
    `endswith("Terraform test (<file>)")` so the caller's `<job> / ` prefix does not matter (the API
    returns the full name however long; verified at 223 characters), take
    `html_url`, and find the step named `🧪 Terraform test` in `steps[]` for the `#step:<number>:1`
-   anchor. `<number>` is the step's `number` from the API, never its position: skipped steps keep
+   anchor (verified in the web view). `<number>` is the step's `number` from the API, never its position: skipped steps keep
    their number and post steps jump ahead. A re-run keeps the step numbers but gives **every** job of
    the run, re-run or not, a new id, so links come from the current attempt's Jobs API; links posted
    by an earlier attempt stay valid. When the step is not found, link `html_url#logs`. When the API call fails, the Links
@@ -1119,7 +1123,7 @@ Indexed so implementation commits and future specs can cite them.
 | P31 | Repositories created, renamed or transferred after 15 July 2026 emit the immutable subject; opting an existing repository in is repository-wide. | A name-based classic credential stops matching; opting in also changes the plan and apply jobs' subjects. | Read a real token before writing a credential; prefer the flexible form of §3.6; migrate every credential of the repository together. |
 | P32 | A plan or apply identity that still trusts `pull_request` or a branch subject. | A no-environment test job on the same event can mint its token; client IDs are not secret. | Isolation precondition 2 (§3.6): apply identities carry `environment:` credentials only. |
 | P33 | A job refused by a protection rule, cancelled before its first step, or waiting for approval produces no metadata artifact. | The summary would lose the file while the conclusion counts it. | The summary reconciles matrix rows against metadata and renders the rest from the Jobs API (§6.2). |
-| P34 | GitHub's REST reference lets a collaborator with write access set environment secrets; its Actions how-to says an organisation repository needs admin. The environment must exist either way. | A collaborator may be refused; one who runs `gh secret set --env` before the first run gets `failed to fetch public key: HTTP 404`. | Bring-up order in §3.6: first run creates the environment, then the secrets. Which role suffices is open (§12). |
+| P34 | A collaborator with write access can set environment secrets through the REST API and `gh`, but not through the settings UI, and cannot create, configure or delete an environment; the environment must exist first. | A collaborator who goes through the UI is refused; one who runs `gh secret set --env` before the first run gets `failed to fetch public key: HTTP 404`. | Bring-up order in §3.6: the first run creates the environment, then `gh secret set --env`. Verified with a write-role account. |
 | P35 | GitHub compares environment names case-insensitively; the credential expression's case behaviour is not documented. | A mixed-case explicit name matches the environment but not the credential. | The `tftest-` pattern is lowercase only; the builder lowercases before comparing. |
 | P36 | Environments whose lock files differ produce one test job per file per distinct set. | The test matrix doubles while two environments disagree. | By design: the disagreement is what the extra run verifies. `providers-from` narrows a lane; re-aligning the environments returns to one set. |
 | P37 | The module-cache classifier reads `module` blocks in `.tf` files; a test file's `run { module { source } }` is invisible to it. | Verified: a registry run-block source with a version range was keyed from the `.tf` files alone and judged safe to save, and a restored cache kept its old version after the range moved; a local run-block source reaching a registry module was not cached at all. | The resolve phase takes the run-block declarations of every test file in the root: a range keeps the root uncached, local sources are walked (§5.3, §9.9). |
@@ -1201,29 +1205,23 @@ in the text above. What remains:
    `matches` compares case-sensitively (classic subjects are documented case-sensitive). The design
    lowercases both sides regardless (P35); an Entra probe would settle it, with an environment named
    in mixed case.
-4. **Which role sets environment secrets** (P34): the REST reference says write access, the Actions
-   how-to says admin for an organisation repository. Needs a write-role, non-admin account or token
-   on an organisation repository.
-5. **Dependabot runs and OIDC**: whether `id-token: write` is honoured on a Dependabot-triggered pull
+4. **Dependabot runs and OIDC**: whether `id-token: write` is honoured on a Dependabot-triggered pull
    request run, and what `github.actor` and `github.triggering_actor` read on it and on a human
    re-run. The docs contradict each other on raising a Dependabot run's token permissions. The
    design drops credentialed rows on Dependabot runs either way (§4.7), so this is for the pitfalls
    table; it needs a real Dependabot pull request.
-6. **Fork runs and environment creation**: whether a fork pull request's run that references a
+5. **Fork runs and environment creation**: whether a fork pull request's run that references a
    missing environment creates it. The docs are silent on forks; the design never references one
-   from a fork (§4.7). Needs a fork.
-7. **The copied lock and the runner's platform** (P39): decide between stripping the hashes from
+   from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
+   its private repositories into a personal account. Needs a public repository to fork.
+6. **The copied lock and the runner's platform** (P39): decide between stripping the hashes from
    the copied lock (verified to work: versions kept, every provider from the cache, tests pass; the
    cached package is then not checked against the environments' hashes) and requiring the runner's
    platform in environment locks, naming the checksum error as an `init` failure.
-8. **The shared plugin-cache key**: the test job's plugin-cache key equals the environment job's
+7. **The shared plugin-cache key**: the test job's plugin-cache key equals the environment job's
    when the lock is copied byte for byte, and `actions/cache` saves only the first entry for a key,
    so test-only providers may never reach the cache (P13's benefit). Decide whether the test job's
    key gets its own component.
-9. **The step anchor in the web view**: the API's step numbers match the log archive's and survive
-   a re-run; that `<html_url>#step:<n>:1` opens the right step is the web UI's own link format and
-   needs a browser to confirm.
-
 ## 13. Implementation order
 
 One commit each, in this order, each green on its own:
