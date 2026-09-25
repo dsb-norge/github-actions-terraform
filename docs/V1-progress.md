@@ -229,7 +229,9 @@ table only says where.
 - After the hand-off, on the maintainer's decisions: environment lanes also export a lower-cased
   copy of every `TF_VAR_*` secret (`export-env-vars` gained `lower-case-copies-for-prefixes-json`),
   and the version floor moved to 1.13, which `terraform-test` now publishes so the summary no longer
-  keeps its own copy.
+  keeps its own copy. A fourth test-bed run showed both: the test declaring the lower-case `needed`
+  passed from the environment's `TF_VAR_NEEDED` beside the upper-case one, and the version lane at
+  1.12.2 reported "Terraform 1.12.2 is below the 1.13.0 floor"; every other row as in the third run.
 
 ## 5. Findings to carry
 
