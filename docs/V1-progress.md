@@ -68,6 +68,8 @@ table only says where.
 | Terraform-tests.md | the role that sets environment secrets; the step anchor in the web view | closed 2026-09-25: a write-role account set, updated, listed and deleted environment secrets with `gh`, but could not create, configure or delete the environment; the maintainer confirmed the anchor opens the right step |
 | Terraform-tests.md | isolation end to end; a real environment lane; case in flexible credential `matches` | closed 2026-09-25 in a session with the maintainer, with throwaway identities and a resource group in a sandbox subscription: an environment-only credential refused tokens to jobs outside its environment, the flexible credential granted one only to `tftest-*` jobs, a lane ran a `command = apply` test and cleaned up, and `matches` is case-sensitive |
 | Terraform-tests.md | Dependabot runs and OIDC; fork runs and environment creation | open (spec §12): the first needs a Dependabot pull request, fork creation is blocked by the organisation's fork policy for private repositories; neither changes the design |
+| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 6) |
+| Terraform-tests.md | lower-case `TF_VAR_` names from environment secrets; the version floor | decided 2026-09-25 by the maintainer after the test bed showed GitHub upper-casing secret names and 1.12 refusing a test file's `variable` block: environment lanes export a lower-cased copy of every `TF_VAR_*` secret, and the floor is 1.13 |
 | Terraform-tests.md | the copied lock and the runner's platform; the shared plugin-cache key | decided 2026-09-25 by the maintainer: every lock a test job uses must record the runner's platform, checked before init as `lock-platform`; the test job's cache key gets a `-tftest` suffix and falls back to the environment job's |
 | Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 5 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
@@ -221,8 +223,13 @@ table only says where.
   - job links, artifacts and inline annotations on every row; the lock check hashing offline
     from the warm `-tftest` cache.
 - Not exercised on the test bed, covered by tests: a push run of the stage (the test bed runs on
-  pushes to `main` only), fork and Dependabot drops, the 256 cap, a real OIDC login in a lane
-  (probed with throwaway identities before implementation, §3).
+  pushes to `main` only), fork and Dependabot drops, the 256 cap. A real OIDC login in a lane was
+  probed with throwaway identities before implementation and is due on the test bed before v1 is
+  tagged (§3).
+- After the hand-off, on the maintainer's decisions: environment lanes also export a lower-cased
+  copy of every `TF_VAR_*` secret (`export-env-vars` gained `lower-case-copies-for-prefixes-json`),
+  and the version floor moved to 1.13, which `terraform-test` now publishes so the summary no longer
+  keeps its own copy.
 
 ## 5. Findings to carry
 
@@ -244,4 +251,5 @@ Recorded while building, not fixed in the step that found them, each waiting for
   Five suites (`capture-matrix-job-meta`, `create-validation-summary`,
   `evaluate-automerge-eligibility`, `parse-terraform-plan`, `verify-terraform-lock`) write step
   output to a fixed `/tmp/test_output.txt`, so two of them running at once overwrite each other's;
-  a per-suite `mktemp` would end it.
+  a per-suite `mktemp` would end it. `export-env-vars` failed one test once in step 3 and passed on
+  every re-run; its output file is fixed too, though named for the suite.
