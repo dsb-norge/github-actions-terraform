@@ -180,7 +180,9 @@ table only says where.
   `relevance.json` the engine publishes, not only hand-written files. Structural test F11 runs
   the seed job's script and pins how the file travels to every reader. The action suite covers
   every fetch path end to end: two pages, a new branch, a forced push and relevance switched off,
-  the last two asserting no request at all. Engine gates: 307 tests, 1900 mutants all killed.
+  the last two asserting no request at all. Engine gates: 307 tests, 1900 mutants all killed. On the
+  test bed, a change to one environment's own `.tflint.hcl` ran that environment alone, and the
+  others' "not affected" bodies list `/.tflint.hcl`.
 
 ## 5. Findings to carry
 
