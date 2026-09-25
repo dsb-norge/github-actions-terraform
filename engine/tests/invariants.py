@@ -4,6 +4,8 @@
 even when its expected output matches.
 """
 
+import re
+
 from dsb_tf_engine import values
 
 VERDICTS = ("run", "skip")
@@ -93,4 +95,23 @@ def check(document, output):
                 violations.append(f"I14: a tag purge for '{name}', which is not an unaffected commenting environment")
         if len(manifest["gc"]) != 4 * len(manifest["purge_tags_for"]):
             violations.append("I14: not four purge rules per purged environment")
+
+    tests = output.get("tests")
+    if tests is not None:
+        rows = tests["matrix"]["include"]
+        if tests["count"] != len(rows) or tests["active"] != bool(rows) or len(rows) > 256:
+            violations.append("tests: the count, the active flag and the rows disagree")
+        if len({row["slug"] for row in rows}) != len(rows):
+            violations.append("tests: a slug appears twice")
+        event = document["event"]
+        # I4: where secrets are unavailable, no row asks for them.
+        if event.get("pull_request", {}).get("is_fork", False) or event.get("actor") == "dependabot[bot]":
+            if any(row["test"]["github-environment"] or row["test"]["extra-envs-from-secrets"] for row in rows):
+                violations.append("I4: a credentialed test row where secrets are unavailable")
+        # I9: a test row's environment is a tftest- name and no Terraform environment's.
+        taken = {entry["github-environment"].casefold() for entry in environments}
+        for row in rows:
+            name = row["test"]["github-environment"]
+            if name and (re.fullmatch(r"tftest-[a-z0-9-]{1,40}", name) is None or name.casefold() in taken):
+                violations.append(f"I9: the test row '{row['slug']}' runs in '{name}'")
     return violations

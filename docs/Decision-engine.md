@@ -8,11 +8,11 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **the port (§9), relevance and the comment manifest are built** and are what
-`create-tf-vars-matrix` runs, through the create-matrix adapter (§3): rules 1, 4 and 7 of §6, the
-input and output documents of §4 and §5 in the shape they need, the tests of §8 and both gates.
-Rules 2, 3, 5 and 6, the test matrix and the `validate` and `render-summary` commands are
-specified here and are built with the features that need them:
+Status: **the port (§9), relevance, the test matrix and the comment manifest are built** and are
+what `create-tf-vars-matrix` runs, through the create-matrix adapter (§3): rules 1, 4 and 7 of §6,
+the test rows of `tests.py`, the input and output documents of §4 and §5 in the shape they need,
+the tests of §8 and both gates. Rules 2, 3, 5 and 6 and the `validate` and `render-summary`
+commands are specified here and are built with the features that need them:
 [Terraform-tests.md](Terraform-tests.md), [Path-relevance.md](Path-relevance.md),
 [Dispatch-and-triggers.md](Dispatch-and-triggers.md) and
 [Environment-ordering.md](Environment-ordering.md). §13 holds what implementation taught the spec.
@@ -67,6 +67,7 @@ engine/
 │   ├── globs.py              # core: the one glob matcher (Terraform-tests.md §4.4)
 │   ├── relevance.py          # core: rule 4, path relevance (Path-relevance.md §3-§5)
 │   ├── comments.py           # core: the seed manifest, heads and tag purges (Path-relevance.md §6.3)
+│   ├── tests.py              # core: the test rows: roots, lanes, environments, provider sets (Terraform-tests.md §3-§4)
 │   ├── record.py             # core: the decision record
 │   ├── __main__.py           # adapter side: the command line, decide and create-matrix
 │   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
@@ -82,15 +83,14 @@ engine/
     └── invariants.py         # the checks of §7, importable by every test
 ```
 
-**The core is pure**: its modules import nothing but `json`, `re` and each other, and nothing from the
+**The core is pure**: its modules import nothing but `json`, `re`, `hashlib` and each other, and nothing from the
 adapter side (`test_purity.py` checks the imports). **The adapter side** reads the environment,
 the filesystem and the network, runs programs and writes the log, so that the core does not have
 to; it sits under the same coverage and mutation gates.
 
 The remaining features add their modules as their rules are built: on the core side `events.py`
-(event kind, branch facts, the fork and Dependabot rules) and `tests.py` (test roots, lanes,
-environments, provider sets); `environments.py` gains goals, trigger events, dispatch and stages,
-`comments.py` the tests head, and `record.py` the rendering for the run summary. Their
+(event kind, branch facts, the fork and Dependabot rules); `environments.py` gains goals, trigger
+events, dispatch and stages, and `record.py` the rendering for the run summary. Their
 fact-gathering joins the adapter side (§3.1).
 
 Composite actions call it with the repository checked out at the action's ref, which is always the
@@ -158,10 +158,11 @@ features bring two more, as adapter-side modules under the same gates:
   (Path-relevance.md §4.2-§4.3). Nothing is fetched when relevance is switched off, for an event
   other than a push or a pull request, or for a forced or deleting push, whose files the core
   would not read.
-- `create-tftest-matrix` lists committed test files, the directories that hold `.tf` files, and the
-  environments' lock files by `project-dir`; the engine derives roots, lanes, environments and
-  provider sets and validates them. Its existing `all-tests` output stays for the module CI
-  workflow until that migrates.
+- gathering the test facts (in `adapter.py`, Terraform-tests.md D20) lists committed test files,
+  the directories that hold `.tf` files, and the environments' lock files by `project-dir`, in the
+  same step; the engine derives roots, lanes, environments and provider sets and validates them.
+  `create-tftest-matrix` stays as it is, with its `all-tests` output, for the module CI workflow
+  until that migrates.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -251,7 +252,14 @@ The features extend it; the full document, as they specify it:
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
   `is_fork` and `actor == 'dependabot[bot]'`, one rule in one place; secret names appear only as
   names inside lane definitions.
-- `environment_locks` is keyed by `project-dir`, because two environments may share one.
+- `environment_locks` is keyed by `project-dir`, normalised without a leading `./` or a trailing `/`
+  (`.` for the repository root), because two environments may share one. Each value is the lock's
+  providers and the versions it records, or null when the environment has no lock. The adapter
+  lists the files with `git ls-files`, so only committed files count, and reads the locks from the
+  checkout; the section is present only when the caller's `terraform-test-enabled` is on.
+- `caller.workflow_name` (`GITHUB_WORKFLOW`) scopes the tests head per calling workflow, and
+  `event.actor` (`GITHUB_ACTOR`) is how Dependabot runs are recognised; both are present only when
+  the runner sets them.
 
 ## 5. The output document
 
@@ -308,11 +316,12 @@ for it whether or not it runs: the row's `github-environment`, `add-pr-comment`,
   "counts": { "affected": 2, "unaffected": 1, "by_stage": { "1": 1, "2": 1, "3": 0 } },
   "ordering": { "enabled": true, "stages_used": 2, "cap": 3, "bypass": null },
   "tests": {
-    "matrix": { "include": [ … ] }, "env_matrix": { "include": [ … ] },
-    "count": 12, "active": true, "env_active": false,
+    "matrix": { "include": [ … ] },
+    "count": 12, "active": true,
     "not_run": [ { "file": "…", "lane": "…", "reason": "secrets unavailable" } ],
     "provider_sets": [ { "id": "a1b2c3", "environments": ["prod","staging"], "lock": "envs/prod/.terraform.lock.hcl" } ]
   },
+  "warnings": [ "test file 'docs/x.tftest.hcl' is misplaced: …" ],
   "comments": {
     "heads": [ { "kind": "env", "key": "prod", "state": "placeholder", "title": "Terraform validation summary" },
                { "kind": "env", "key": "staging", "state": "not-affected", "title": "Terraform validation summary" } ],
@@ -350,7 +359,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §5.2 | the environments of `relevance.json` | `environments[]`: `verdict` `run` is affected, the `relevance:` reason names the matched rule, the resolved `paths` and `paths-ignore` on the entry |
 | Path-relevance.md §5.2 | `affected-count`, `unaffected-count` | `counts.affected`, `counts.unaffected` |
 | Path-relevance.md §4.3 | `relevance-mode`, `relevance-reason`, `changed-count` | `relevance.mode`, `relevance.reason`, `relevance.changed_count` |
-| Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-env-matrix-json`, `tests-count`, `tests-active`, `tests-env-active`, `tests-not-run-json` | `tests.matrix`, `tests.env_matrix`, `tests.count`, `tests.active`, `tests.env_active`, `tests.not_run`; a row is exactly the §4.5 row schema |
+| Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-count`, `tests-active`, the not-run list | `tests.matrix`, `tests.count`, `tests.active`, `tests.not_run` (in `relevance.json`, not a job output); a row is exactly the §4.5 row schema |
 | Terraform-tests.md §5.3 | provider sets | `tests.provider_sets` |
 | Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder` or `not-affected`, `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`, one per decision kind, in the relevance spec's format |
@@ -380,10 +389,11 @@ environments' verdicts and the event.
 
 Checked by `invariants.py` on every case of every kind (§8). A violated invariant fails the suite
 even when the case's expected output matches. An invariant is checked from the commit that builds
-the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, and
-properties of their own: an output with errors carries no environments, no matrices and no
-relevance block, the record has one line per environment, and the affected and unaffected counts
-sum to the environments decided.
+the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, the test
+stage I4 and I9, and properties of their own: an output with errors carries no environments, no
+matrices and no relevance block, the record has one line per environment, the affected and
+unaffected counts sum to the environments decided, and the test count, the active flag and the
+test rows agree, with every slug unique.
 
 | # | Invariant |
 |---|---|
@@ -648,7 +658,7 @@ line, which the dispatch spec's record line prints as it comes.
 
 Each feature lands as rules and table cases in the engine, its fact-gathering on the adapter side,
 a few lines in the workflow, and the invariants of §7 that constrain its rules, in the order the maintainer chooses:
-relevance rules and cases; test rules and cases with the `create-tftest-matrix` adapter; dispatch
+relevance rules and cases; test rules and cases with the adapter's test facts; dispatch
 and trigger-events rules and cases, with the `goals-granted` switch of the operation gates and its
 structural test; stage assignment. The port cases stay: a feature's default must leave every one
 of them deciding as before, or say in its spec why not.

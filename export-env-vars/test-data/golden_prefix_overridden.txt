@@ -1,0 +1,40 @@
+exit: 0
+--- GITHUB_ENV ---
+ARM_CLIENT_ID<<"<DELIM-1>"
+secret-arm-client-id
+"<DELIM-1>"
+ARM_TENANT_ID<<"<DELIM-2>"
+secret-arm-tenant-id
+"<DELIM-2>"
+ARM_TENANT_ID<<"<DELIM-3>"
+plain-tenant
+"<DELIM-3>"
+ARM_TENANT_ID<<"<DELIM-4>"
+secret-azure-client-id
+"<DELIM-4>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"ARM_TENANT_ID":"plain-tenant"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{"ARM_TENANT_ID":"AZURE_CLIENT_ID"}
+::endgroup::
+::group::export-env-vars: input 'export-secrets-with-prefixes-json'
+["ARM_"]
+::endgroup::
+::group::export-env-vars: Making secrets with a listed name prefix available to subsequent actions
+export-env-vars: Secret 'ARM_CLIENT_ID' has a listed name prefix, reading value ...
+export-env-vars: Exporting environment variable 'ARM_CLIENT_ID'
+export-env-vars: Secret 'ARM_TENANT_ID' has a listed name prefix, reading value ...
+export-env-vars: Exporting environment variable 'ARM_TENANT_ID'
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'ARM_TENANT_ID' -> 'plain-tenant'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+export-env-vars: Get secret name for 'ARM_TENANT_ID' ...
+export-env-vars: Secret is named 'AZURE_CLIENT_ID', reading value ...
+export-env-vars: Exporting environment variable 'ARM_TENANT_ID'
+::endgroup::

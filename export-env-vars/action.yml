@@ -30,6 +30,37 @@ inputs:
             secrets-json: ?{{ toJSON(secrets) }}
             ...
     required: true
+  export-secrets-with-prefixes-json:
+    description: |
+      JSON array of secret name prefixes, for example '["ARM_", "TF_VAR_"]'.
+
+      Every secret in 'secrets-json' whose name starts with one of the prefixes
+      (case-sensitive) is exported as an environment variable of the same name.
+      This happens before 'extra-envs' and 'extra-envs-from-secrets' are
+      applied, so both of those override a variable exported this way.
+
+      An empty prefix, a non-string element or a value that is not a JSON
+      array fails the step before anything is exported. The default, '[]',
+      exports nothing.
+    required: false
+    default: "[]"
+  lower-case-copies-for-prefixes-json:
+    description: |
+      JSON array of secret name prefixes, for example '["TF_VAR_"]'.
+
+      A secret exported by 'export-secrets-with-prefixes-json' whose name
+      starts with one of these prefixes is also exported under the same name
+      with everything after the prefix lower-cased: TF_VAR_TENANT_ID also as
+      TF_VAR_tenant_id. GitHub stores secret names upper-cased, and Terraform
+      variable names are case-sensitive. No copy is made when the name is
+      already lower case after the prefix, or when a secret of the lower-cased
+      name is itself exported by prefix. Both maps override a copy as they
+      override the original.
+
+      Validated like 'export-secrets-with-prefixes-json'. The default, '[]',
+      adds no copies.
+    required: false
+    default: "[]"
 runs:
   using: "composite"
   steps:
@@ -37,59 +68,33 @@ runs:
       shell: bash
       run: |
         # Make env vars and secrets available to subsequent actions
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        # Read inputs
-        EXTRA_ENVS_JSON=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_JSON'
+        #
+        # JSON-contract inputs, captured through quoted heredocs as shell-locals:
+        # step_export_envs.sh reads them via 'source'. No 'set -o allexport' on
+        # purpose: secret values pass through shell variables on their way to
+        # $GITHUB_ENV, and under allexport each of them would be exported into
+        # the environment of every process the step forks; 'secrets-json' is
+        # also large enough to matter for ARG_MAX. Nothing here needs envp, the
+        # step's only output is the $GITHUB_ENV file.
+        input_extra_envs=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_JSON'
         ${{ inputs.extra-envs }}
         EXPORT_ENV_VARS_EXTRA_ENVS_JSON
         )
-        log-multiline "input 'extra-envs'" "${EXTRA_ENVS_JSON}"
-
-        EXTRA_SECRETS_JSON=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_FROM_SECRETS_JSON'
+        input_extra_envs_from_secrets=$(cat <<'EXPORT_ENV_VARS_EXTRA_ENVS_FROM_SECRETS_JSON'
         ${{ inputs.extra-envs-from-secrets }}
         EXPORT_ENV_VARS_EXTRA_ENVS_FROM_SECRETS_JSON
         )
-        log-multiline "input 'extra-envs-from-secrets'" "${EXTRA_SECRETS_JSON}"
-
-        SECRETS_JSON=$(cat <<'EXPORT_ENV_VARS_SECRETS_JSON'
+        input_secrets_json=$(cat <<'EXPORT_ENV_VARS_SECRETS_JSON'
         ${{ inputs.secrets-json }}
         EXPORT_ENV_VARS_SECRETS_JSON
         )
+        input_export_secrets_with_prefixes_json=$(cat <<'EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON'
+        ${{ inputs.export-secrets-with-prefixes-json }}
+        EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON
+        )
+        input_lower_case_copies_for_prefixes_json=$(cat <<'EXPORT_ENV_VARS_LOWER_CASE_COPIES_FOR_PREFIXES_JSON'
+        ${{ inputs.lower-case-copies-for-prefixes-json }}
+        EXPORT_ENV_VARS_LOWER_CASE_COPIES_FOR_PREFIXES_JSON
+        )
 
-        # regular env vars
-        if [ ! -z "$EXTRA_ENVS_JSON" ]; then
-          start-group "Making environment variables available to subsequent actions"
-          REGULAR_ENVS=$(echo ${EXTRA_ENVS_JSON} | jq -r '[keys[]] | join(" ")')
-          for ENV_KEY in ${REGULAR_ENVS}; do
-              ENV_VALUE=$(echo "${EXTRA_ENVS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
-              export-environment-variable "${ENV_KEY}" "${ENV_VALUE}"
-          done
-          end-group
-        fi
-
-        # env vars from secrets
-        if [ ! -z "$EXTRA_SECRETS_JSON" ]; then
-          start-group "Making environment variables with secrets available to subsequent actions"
-          ENVS_FROM_SECRETS=$(echo ${EXTRA_SECRETS_JSON} | jq -r '[keys[]] | join(" ")')
-          for ENV_KEY in ${ENVS_FROM_SECRETS}; do
-              log-info "Get secret name for '${ENV_KEY}' ..."
-              ENV_SECRET_NAME=$(echo "${EXTRA_SECRETS_JSON}" | jq --arg key "${ENV_KEY}" -r '.[$key]')
-
-              # A secret name that is not available to the workflow used to
-              # resolve to the literal four characters 'null' and get exported
-              # as if it were a value, with no warning. That surfaced far from
-              # its cause — typically as an opaque Azure login failure.
-              if [ ! "$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" 'has($key)')" == 'true' ]; then
-                log-error "the secret '${ENV_SECRET_NAME}', configured for environment variable '${ENV_KEY}', is not available to this workflow!"
-                log-error "check the spelling, and that the calling workflow passes secrets down with 'secrets: inherit'."
-                exit 1
-              fi
-
-              log-info "Secret is named '${ENV_SECRET_NAME}', reading value ..."
-              ENV_SECRET_VALUE=$(echo "${SECRETS_JSON}" | jq --arg key "${ENV_SECRET_NAME}" -r '.[$key]')
-              export-secret-environment-variable "${ENV_KEY}" "${ENV_SECRET_VALUE}"
-          done
-          end-group
-        fi
+        source "${{ github.action_path }}/step_export_envs.sh"

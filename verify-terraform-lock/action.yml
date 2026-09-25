@@ -22,13 +22,34 @@ description: |
   The original lock file is always restored before the action exits,
   so subsequent steps see the committed file unchanged.
 
+  Lock-only mode ('lock-only: true') needs no init: it checks the lock
+  file on its own, against a throwaway configuration that requires
+  exactly the providers the lock records at their locked versions, and
+  never touches the committed file. With 'plugin-cache-directory' it
+  hashes the cached packages instead of downloading them when the cache
+  holds every one.
+
 author: "Peder Schmedling"
 inputs:
   working-directory:
     description: |
       Directory containing .terraform.lock.hcl. Must already have had
-      'terraform init' run in it (so '.terraform/' is populated).
+      'terraform init' run in it (so '.terraform/' is populated), unless
+      'lock-only' is 'true'.
     required: true
+  lock-only:
+    description: |
+      'true' verifies the lock file on its own, before any init, instead of
+      against the directory's initialised configuration.
+    required: false
+    default: "false"
+  plugin-cache-directory:
+    description: |
+      Lock-only mode: a Terraform plugin cache to hash the providers from
+      when it holds every locked provider for every required platform.
+      Otherwise the packages are downloaded.
+    required: false
+    default: ""
   platforms:
     description: |
       Newline-separated list of os_arch platforms to require hashes for.
@@ -53,6 +74,8 @@ runs:
       env:
         input_working_directory: ${{ inputs.working-directory }}
         input_platforms: ${{ inputs.platforms }}
+        input_lock_only: ${{ inputs.lock-only }}
+        input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
       run: |
         # Verify .terraform.lock.hcl covers all required platforms
         set -o allexport

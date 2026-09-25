@@ -93,6 +93,7 @@ run_test() {
 # Function to reset all variables to defaults
 reset_defaults() {
   export input_environment_name="test-env"
+  unset input_entity_name input_artifact_name
   # Plain assignments, not exports — see run_test.
   input_matrix_context_json='{
     "environment": "test-env",
@@ -300,6 +301,185 @@ run_test "I3: every output oversize (3 × 200k) → result parses, outcomes inta
 reset_defaults
 input_steps_context_json='{"s": {"outputs": {"n": 42, "b": true, "nul": null}, "outcome": "success", "conclusion": "success"}}'
 run_test "cap leaves non-string output values alone" '[.steps.s.outputs.n, .steps.s.outputs.b, .steps.s.outputs.nul] | @json' '[42,true,null]'
+
+# ============================================================================
+# Entity and artifact names (the 'entity-name' and 'artifact-name' inputs)
+#
+# The file basename is what the aggregator, the run summary and the auto-merge
+# evaluator glob ('matrix-job-meta-*.json'), and the artifact name is what their
+# download steps match; a caller that must stay out of their input sets both
+# through 'artifact-name'.
+# ============================================================================
+
+# Runs the step and checks exit code, the result file's basename, the
+# 'artifact-name' output, and '.metadata.environment'. An expected basename of
+# '-' means the step must fail and publish neither output.
+run_naming_test() {
+  local test_name="${1}" expected_basename="${2}" expected_artifact="${3}" expected_entity="${4}"
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  echo ""
+  echo -e "${BLUE}========================================${NC}"
+  echo -e "${BLUE}TEST ${TESTS_RUN}: ${test_name}${NC}"
+  echo -e "${BLUE}========================================${NC}"
+
+  export GITHUB_OUTPUT=$(mktemp)
+  export RUNNER_TEMP=$(mktemp -d)
+  export GITHUB_ACTION_PATH="${_this_script_dir}"
+
+  (
+    source "${_this_script_dir}/step_capture.sh"
+  ) > /tmp/test_output.txt 2>&1
+  local exit_code=$?
+
+  local result_file artifact_output actual_entity="" ok="false"
+  result_file=$(grep "^result-json-file=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
+  artifact_output=$(grep "^artifact-name=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
+  if [[ -f "${result_file}" ]]; then
+    actual_entity=$(jq -r '.metadata.environment' "${result_file}" 2>/dev/null)
+  fi
+
+  if [[ "${expected_basename}" == "-" ]]; then
+    [[ "${exit_code}" -ne 0 && -z "${result_file}" && -z "${artifact_output}" ]] && ok="true"
+  else
+    [[ "${exit_code}" -eq 0 && -f "${result_file}" &&
+      "$(dirname "${result_file}")" == "${RUNNER_TEMP}" &&
+      "$(basename "${result_file}")" == "${expected_basename}" &&
+      "${artifact_output}" == "${expected_artifact}" &&
+      "${actual_entity}" == "${expected_entity}" ]] && ok="true"
+  fi
+
+  if [[ "${ok}" == "true" ]]; then
+    echo -e "${GREEN}✓ PASSED${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+  else
+    echo -e "${RED}✗ FAILED${NC}: exit=${exit_code} file='${result_file}' artifact='${artifact_output}' entity='${actual_entity}'"
+    echo "Expected: basename='${expected_basename}' artifact='${expected_artifact}' entity='${expected_entity}'"
+    echo ""
+    echo "Test output:"
+    cat /tmp/test_output.txt
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+  fi
+
+  rm -f "${GITHUB_OUTPUT}"
+  rm -rf "${RUNNER_TEMP}"
+}
+
+# A log line the last naming test's step printed.
+assert_last_log() {
+  local test_name="${1}" pattern="${2}" want="${3:-present}"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  echo ""
+  echo -e "${BLUE}TEST ${TESTS_RUN}: ${test_name}${NC}"
+  local found="absent"
+  grep -qF -- "${pattern}" /tmp/test_output.txt && found="present"
+  if [[ "${found}" == "${want}" ]]; then
+    echo -e "${GREEN}✓ PASSED${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+  else
+    echo -e "${RED}✗ FAILED${NC}: expected '${pattern}' ${want} in the step output"
+    cat /tmp/test_output.txt
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+  fi
+}
+
+# Golden for every existing caller: only 'environment-name'.
+reset_defaults
+export input_environment_name="production"
+run_naming_test "names: environment-name alone keeps today's file and artifact name (golden)" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+assert_last_log "names: environment-name alone logs no disagreement" "differ; using 'entity-name'" absent
+
+reset_defaults
+unset input_environment_name
+export input_entity_name="production"
+run_naming_test "names: entity-name alone names the file like environment-name did" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+
+reset_defaults
+export input_environment_name="production" input_entity_name="production"
+run_naming_test "names: both given and equal" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+assert_last_log "names: both equal logs no disagreement" "differ; using 'entity-name'" absent
+
+reset_defaults
+export input_environment_name="sandbox" input_entity_name="production"
+run_naming_test "names: both given and different, entity-name wins" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+assert_last_log "names: the disagreement is logged as a warning" \
+  "inputs 'entity-name' ('production') and 'environment-name' ('sandbox') differ; using 'entity-name'."
+
+reset_defaults
+export input_environment_name="" input_entity_name="production"
+run_naming_test "names: an empty environment-name does not shadow entity-name" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+
+reset_defaults
+unset input_environment_name
+export input_entity_name="tests-unit-net" input_artifact_name="terraform-test-meta-tests-unit-net"
+run_naming_test "names: artifact-name sets both the file basename and the artifact name" \
+  "terraform-test-meta-tests-unit-net.json" "terraform-test-meta-tests-unit-net" "tests-unit-net"
+
+reset_defaults
+export input_environment_name="production" input_artifact_name="custom-meta"
+run_naming_test "names: artifact-name works with the environment-name alias too" \
+  "custom-meta.json" "custom-meta" "production"
+
+reset_defaults
+export input_environment_name="production" input_artifact_name=""
+run_naming_test "names: an empty artifact-name falls back to the default" \
+  "matrix-job-meta-production.json" "matrix-job-meta-production" "production"
+
+# Neither name: the random fallback, and the artifact name follows it.
+reset_defaults
+unset input_environment_name
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}TEST ${TESTS_RUN}: names: neither name gives matching unknown-XXXXXX file and artifact names${NC}"
+export GITHUB_OUTPUT=$(mktemp) RUNNER_TEMP=$(mktemp -d) GITHUB_ACTION_PATH="${_this_script_dir}"
+( source "${_this_script_dir}/step_capture.sh" ) > /tmp/test_output.txt 2>&1
+_rc=$?
+_file=$(grep "^result-json-file=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
+_art=$(grep "^artifact-name=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
+if [[ "${_rc}" -eq 0 && "${_art}" =~ ^matrix-job-meta-unknown-[a-zA-Z0-9]{6}$ && "$(basename "${_file}")" == "${_art}.json" ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}: exit=${_rc} file='${_file}' artifact='${_art}'"; cat /tmp/test_output.txt
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+rm -f "${GITHUB_OUTPUT}"; rm -rf "${RUNNER_TEMP}"
+
+# Names upload-artifact refuses fail the step with the reason, whether the
+# caller spelled them out or they came from the entity name.
+for _bad in 'meta/tests' 'meta:x' 'meta"x' 'meta<x' 'meta>x' 'meta|x' 'meta*x' 'meta?x' 'meta\x' $'meta\nx' $'meta\rx'; do
+  reset_defaults
+  export input_artifact_name="${_bad}"
+  run_naming_test "names: artifact-name '$(printf '%q' "${_bad}")' fails the step" "-" "" ""
+done
+assert_last_log "names: the failure names the offending artifact name" "contains a character artifact names may not contain"
+reset_defaults
+export input_entity_name="tests/unit"
+run_naming_test "names: a default artifact name built from an unusable entity fails the step" "-" "" ""
+
+# The upload must use the step's resolved name, or the artifact and the file
+# inside it drift apart.
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}TEST ${TESTS_RUN}: names: the upload step names the artifact from the capture step's output${NC}"
+if python3 - "${_this_script_dir}/action.yml" <<'PYEOF'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["runs"]["steps"]
+upload = [s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+ok = len(upload) == 1 and upload[0]["with"]["name"] == "${{ steps.capture.outputs.artifact-name }}"
+out = yaml.safe_load(open(sys.argv[1]))["outputs"]["artifact-name"]["value"]
+ok = ok and out == "${{ steps.capture.outputs.artifact-name }}"
+sys.exit(0 if ok else 1)
+PYEOF
+then
+  echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}"; TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
 
 # ============================================================================
 # Summary

@@ -1,0 +1,11 @@
+exit: 0
+--- GITHUB_ENV ---
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+
+::endgroup::

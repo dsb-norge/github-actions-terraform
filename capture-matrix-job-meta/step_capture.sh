@@ -8,6 +8,13 @@
 # Uses the steps context directly from GitHub Actions, making it future-proof
 # for any new steps added to the workflow.
 #
+# Optional environment variables:
+#   input_entity_name      - What the matrix job ran for. Wins over
+#                            input_environment_name when both are set.
+#   input_environment_name - Alias of input_entity_name for existing callers.
+#   input_artifact_name    - Artifact name and JSON basename. Default
+#                            'matrix-job-meta-<entity>'.
+#
 
 # Do not fail on unset variables - we need to handle missing data gracefully
 set +o nounset
@@ -127,15 +134,36 @@ function normalize_steps_context {
 # ============================================================================
 
 function main {
+  # A warning, not a failure: this step is best-effort and runs under
+  # if: always(), and the name the caller spelled out most explicitly is the
+  # one to trust.
+  if [[ -n "${input_entity_name:-}" && -n "${input_environment_name:-}" &&
+    "${input_entity_name}" != "${input_environment_name}" ]]; then
+    log-warn "inputs 'entity-name' ('${input_entity_name}') and 'environment-name' ('${input_environment_name}') differ; using 'entity-name'."
+  fi
+
   # Generate a random fallback for environment name to ensure unique filenames
   local env_fallback
   env_fallback="unknown-$(head -c 100 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 6)"
-  local environment_name="${input_environment_name:-${env_fallback}}"
+  local environment_name="${input_entity_name:-${input_environment_name:-${env_fallback}}}"
 
   log-info "Starting metadata capture for environment '${environment_name}'..."
 
+  local artifact_name="${input_artifact_name:-matrix-job-meta-${environment_name}}"
+
+  # Unlike missing data, a name that cannot work is a caller bug: upload-artifact
+  # refuses these characters, and a '/' would also point the file into a
+  # directory that does not exist. Failing here names the cause; otherwise the
+  # metadata goes missing downstream with no trace of why.
+  case "${artifact_name}" in
+    *[/:\"\<\>\|\*\?\\]* | *$'\n'* | *$'\r'*)
+      log-error "artifact name '${artifact_name}' contains a character artifact names may not contain: / : \" < > | * ? \\ or a line break!"
+      return 1
+      ;;
+  esac
+
   local result_file
-  result_file="${RUNNER_TEMP:-/tmp}/matrix-job-meta-${environment_name}.json"
+  result_file="${RUNNER_TEMP:-/tmp}/${artifact_name}.json"
 
   # Start building the metadata structure
   local capture_timestamp
@@ -242,6 +270,7 @@ function main {
 
   # Set outputs
   set-output "result-json-file" "${result_file}"
+  set-output "artifact-name" "${artifact_name}"
 
   log-info "Metadata capture completed successfully"
   return 0

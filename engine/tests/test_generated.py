@@ -148,5 +148,38 @@ class GeneratedTest(unittest.TestCase):
         self.assertEqual({"run", "skip"}, verdicts)
 
 
+class GeneratedTestsTest(unittest.TestCase):
+    """The test stage's random walk: rules, lanes, events and facts; the invariants hold, nothing crashes."""
+
+    def test_random_tests_never_crash(self):
+        import test_tests
+        rng = random.Random(20260925)
+        pool = ["tests/unit-a.tftest.hcl", "modules/net/tests/int-b.tftest.hcl", "main/main.tftest.hcl",
+                "envs/prod/tests/smoke.tftest.hcl", "tests/sub/x.tftest.hcl", ".github/t.tftest.hcl", "docs/d.tftest.json",
+                "modules/net/tests/unit-c.tftest.hcl"]
+        lane_shapes = [{"name": "unit", "match": ["**/unit-*.tftest.hcl"]}, {"name": "rest"},
+                       {"name": "env", "match": ["**/int-*"], "github-environment": "auto"},
+                       {"name": "map", "match": ["main/**"], "extra-envs-from-secrets-yml": {"X": "S"}},
+                       {"name": "narrow", "match": ["modules/**"], "providers-from": ["staging"]},
+                       {"name": "Bad"}, "not a lane", {"name": "x", "match": "**"}, {"name": "y", "timeout-minutes": 0}]
+        locks = [test_tests.LOCK_A, test_tests.LOCK_B, None]
+        outcomes = set()
+        for _ in range(1500):
+            lanes = rng.sample(lane_shapes, rng.randint(0, 3))
+            doc = test_tests.document(rng.sample(pool, rng.randint(0, len(pool))), lanes=lanes,
+                                      event=rng.choice(["pull_request", "push", "schedule"]),
+                                      actor=rng.choice(["octocat", "dependabot[bot]"]), is_fork=rng.random() < 0.2,
+                                      exclude=rng.choice([None, ["**/unit-c.tftest.hcl"], "x"]),
+                                      locks={"envs/prod": rng.choice(locks), "envs/staging": rng.choice(locks)},
+                                      inputs={"terraform-test-enabled": rng.choice([True, True, False])})
+            with self.subTest(document=doc):
+                original = copy.deepcopy(doc)
+                output = decide.decide(doc)
+                self.assertEqual(original, doc)
+                self.assertEqual([], invariants.check(doc, output))
+                outcomes.add("error" if output["errors"] else ("active" if output["tests"]["active"] else "inactive"))
+        self.assertEqual({"error", "active", "inactive"}, outcomes)
+
+
 if __name__ == "__main__":
     unittest.main()

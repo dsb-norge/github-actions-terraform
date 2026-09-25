@@ -34,8 +34,8 @@ class ContractTest(unittest.TestCase):
         for scenario in relevance_fixture.SCENARIOS:
             with self.subTest(scenario=scenario):
                 published = written(scenario)
-                self.assertEqual({"schema_version", "relevance", "counts", "environments", "comments", "notices",
-                                  "record"}, set(published))
+                self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments",
+                                  "notices", "warnings", "record"}, set(published))
                 self.assertEqual({"mode", "reason", "changed_count"}, set(published["relevance"]))
                 for entry in published["environments"]:
                     self.assertEqual(READ_BY_THE_ACTIONS, set(entry))

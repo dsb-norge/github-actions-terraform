@@ -51,6 +51,10 @@ class Log:
         self.line(f"::error title={escape_property(self.title)}::{escape_data(message)}")
 
 
+    def warning(self, message):
+        """One warning annotation, escaped like an error."""
+        self.line(f"::warning title={escape_property(self.title)}::{escape_data(message)}")
+
     def notice(self, title, message):
         """One notice annotation under its own title."""
         self.line(f"::notice title={escape_property(title)}::{escape_data(message)}")

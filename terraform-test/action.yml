@@ -1,148 +1,222 @@
 name: "Run terraform test"
 description: |
-  Terraform test for modules.
-author: "Artjoms Laivins"
+  Runs 'terraform test' for one test file from its test root and classifies
+  the outcome from the JSON stream: a status and reason, counts, per-run and
+  per-diagnostic files, the provider versions the root resolved, error
+  annotations and a block in the job's step summary. Files are written under
+  RUNNER_TEMP/<slug>/; outputs carry paths, counts and short strings only.
+
+  Spec: docs/Terraform-tests.md §5.4-§5.8 and §9.2.
+
+  The legacy call shape, test-file alone (a file name under tests/, run from
+  the workspace), is what terraform-module-ci.yaml passes. It keeps that
+  workflow's behaviour: the embedded azure/login and artifact upload run by
+  default only for that shape (inputs azure-login and upload-artifact), and
+  the Terraform version floor does not apply to it (§9.7).
+author: "Artjoms Laivins, Peder Schmedling"
 
 inputs:
   test-file:
-    description: Test file to run.
+    description: |
+      Test file to run, relative to working-directory (e.g.
+      'tests/unit-net.tftest.hcl'); used verbatim as the -filter value. When
+      working-directory is empty: a file name under tests/ of the workspace,
+      as terraform-module-ci.yaml passes it.
     required: true
+  working-directory:
+    description: |
+      The test root to run from, relative to the workspace or absolute. Empty
+      selects the legacy call shape: the workspace, '-filter=tests/<test-file>',
+      no version floor.
+    required: false
+    default: ""
+  junit:
+    description: Write a JUnit XML report (takes effect from Terraform 1.11).
+    required: false
+    default: "true"
+  slug:
+    description: |
+      Directory name under RUNNER_TEMP for this file's output. Default:
+      derived from the root and the file as the matrix builder derives slugs.
+    required: false
+    default: ""
+  status-credentials:
+    description: |
+      Outcome of the job's credential check step, or empty. 'failure' or
+      'cancelled' skips terraform and reports status 'error', reason
+      'no-credentials'.
+    required: false
+    default: ""
+  status-lock:
+    description: |
+      Outcome of the job's lock platform check, or empty. 'failure' or
+      'cancelled' skips terraform and reports reason 'lock-platform'.
+    required: false
+    default: ""
+  status-init:
+    description: |
+      Outcome of the job's init step, or empty. Anything but 'success' skips
+      terraform and reports reason 'init'. Empty means not supplied (the test
+      runs).
+    required: false
+    default: ""
+  environments-lock-file:
+    description: |
+      The environment lock file the test root's lock was copied from before
+      init, or an environment root's own lock; relative to the workspace or
+      absolute. Each provider in the lock Terraform wrote is 'environments'
+      when this lock records the same version, else 'floating'. Empty: no
+      comparison, every provider's origin is 'root'.
+    required: false
+    default: ""
+  azure-login:
+    description: |
+      Run azure/login with the ARM_TENANT_ID, ARM_SUBSCRIPTION_ID and
+      ARM_CLIENT_ID environment variables before the test. 'auto' logs in only
+      for the legacy call shape (no working-directory); 'true' / 'false' force it.
+    required: false
+    default: "auto"
+  upload-artifact:
+    description: |
+      Upload the JSON log as artifact 'test-results-output-<test-file>'.
+      'auto' uploads only for the legacy call shape; 'true' / 'false' force it.
+    required: false
+    default: "auto"
 
 outputs:
-  exit-code:
-    description: The exit code from the terraform test command.
-    value: ${{ steps.run-tests.outputs.exit-code }}
+  status:
+    description: "'pass', 'fail' or 'error' (docs/Terraform-tests.md §5.5)."
+    value: ${{ steps.run-tests.outputs.status }}
+  reason:
+    description: |
+      Empty for 'pass'; 'assertion' for 'fail'; for 'error' one of
+      no-credentials, lock-platform, init, terraform-version, not-initialised,
+      invalid, not-discovered, file, run.
+    value: ${{ steps.run-tests.outputs.reason }}
+  passed:
+    description: Run blocks passed (test_summary).
+    value: ${{ steps.run-tests.outputs.passed }}
+  failed:
+    description: Run blocks failed (test_summary).
+    value: ${{ steps.run-tests.outputs.failed }}
+  errored:
+    description: Run blocks errored (test_summary).
+    value: ${{ steps.run-tests.outputs.errored }}
+  skipped:
+    description: Run blocks skipped (test_summary).
+    value: ${{ steps.run-tests.outputs.skipped }}
+  total:
+    description: Sum of passed, failed, errored and skipped.
+    value: ${{ steps.run-tests.outputs.total }}
+  elapsed-ms:
+    description: Milliseconds from the test file's start to its completion; empty when unknown.
+    value: ${{ steps.run-tests.outputs.elapsed-ms }}
   summary:
-    description: Summary of the test run.
+    description: The test_summary message, e.g. 'Success! 8 passed, 0 failed.'; empty when Terraform wrote none.
     value: ${{ steps.run-tests.outputs.summary }}
-  report:
-    description: Report file of the test run.
-    value: ${{ steps.run-tests.outputs.report }}
+  exit-code:
+    description: The exit code of 'terraform test'; empty when it did not run.
+    value: ${{ steps.run-tests.outputs.exit-code }}
+  terraform-version:
+    description: The Terraform version that ran; empty when unknown.
+    value: ${{ steps.run-tests.outputs.terraform-version }}
+  terraform-version-floor:
+    description: The lowest Terraform version the action runs tests with from a working directory. Always set.
+    value: ${{ steps.run-tests.outputs.terraform-version-floor }}
+  runner-platform:
+    description: The runner's platform as Terraform names it (linux_amd64, linux_arm64, …). Always set.
+    value: ${{ steps.run-tests.outputs.runner-platform }}
+  test-file-path:
+    description: The test file, relative to the workspace.
+    value: ${{ steps.run-tests.outputs.test-file-path }}
+  json-file:
+    description: Path of the 'terraform test -json' log (stdout and stderr); empty when terraform did not run.
+    value: ${{ steps.run-tests.outputs.json-file }}
+  report-file:
+    description: Path of the human-readable report (at most 65 000 bytes).
+    value: ${{ steps.run-tests.outputs.report-file }}
+  junit-file:
+    description: Path of the JUnit XML report; empty when Terraform wrote none.
+    value: ${{ steps.run-tests.outputs.junit-file }}
+  runs-json-file:
+    description: "Path of a JSON array, one object per run block: {run, status, elapsed-ms}."
+    value: ${{ steps.run-tests.outputs.runs-json-file }}
+  diagnostics-json-file:
+    description: "Path of a JSON array, one object per error diagnostic: {run, file, line, summary, detail}; file is relative to the workspace."
+    value: ${{ steps.run-tests.outputs.diagnostics-json-file }}
+  providers-json-file:
+    description: "Path of a JSON array, one object per provider in the lock Terraform wrote: {name, version, origin, environments-version}; origin 'environments', 'floating' or 'root'."
+    value: ${{ steps.run-tests.outputs.providers-json-file }}
+  providers-summary:
+    description: "One line, e.g. 'null 3.2.3 environments · random 3.9.1 floating'; empty when no lock was read."
+    value: ${{ steps.run-tests.outputs.providers-summary }}
+  providers-floating-count:
+    description: Number of providers whose origin is 'floating'.
+    value: ${{ steps.run-tests.outputs.providers-floating-count }}
+  failed-runs-json:
+    description: |
+      Compact JSON array of at most 3000 bytes: the file-level diagnostics,
+      then each failed or errored run block with its diagnostics and each
+      skipped run block, as {run, status, file, line, summary, detail}
+      (summary at most 120 and detail 200 characters). Whole elements are
+      dropped from the tail to fit.
+    value: ${{ steps.run-tests.outputs.failed-runs-json }}
+  failed-runs-omitted:
+    description: Number of elements dropped from failed-runs-json.
+    value: ${{ steps.run-tests.outputs.failed-runs-omitted }}
   json:
-    description: JSON output of the test run.
+    description: Same as json-file (the legacy name).
     value: ${{ steps.run-tests.outputs.json }}
-
+  report:
+    description: Same as report-file (the legacy name).
+    value: ${{ steps.run-tests.outputs.report }}
 
 runs:
   using: "composite"
   steps:
-    - id: check-prereqs
-      shell: bash
-      run: |
-        # Make sure terraform is available
-
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        start-group "check prerequisite: terraform binary"
-        if ! command -v terraform version &>/dev/null; then
-          log-error "terraform is not available on path, please install using the 'setup-terraform' action!"
-          exit 1
-        else
-          log-info "using $(terraform version)"
-        fi
-        end-group
-
     - id: azure-login
+      name: Login to Azure (legacy call shape)
+      if: inputs.azure-login == 'true' || (inputs.azure-login == 'auto' && inputs.working-directory == '')
       uses: azure/login@v3
       with:
         tenant-id: ${{ env.ARM_TENANT_ID }}
         subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
-        client-id: ${{ env.ARM_CLIENT_ID }}   
+        client-id: ${{ env.ARM_CLIENT_ID }}
 
+    # Runs whenever the job got this far, also after a failed credential,
+    # lock or init step: the step classifies those from its status-* inputs.
+    # '!cancelled()' because inside a composite action success() may reflect
+    # the job's failed steps, not only this action's.
     - id: run-tests
-      working-directory: ${{ github.workspace }}
+      if: "!cancelled() && steps.azure-login.outcome != 'failure'"
       shell: bash
       continue-on-error: true
       env:
         TF_IN_AUTOMATION: true
+        input_test_file: ${{ inputs.test-file }}
+        input_working_directory: ${{ inputs.working-directory }}
+        input_junit: ${{ inputs.junit }}
+        input_slug: ${{ inputs.slug }}
+        input_status_credentials: ${{ inputs.status-credentials }}
+        input_status_lock: ${{ inputs.status-lock }}
+        input_status_init: ${{ inputs.status-init }}
+        input_environments_lock_file: ${{ inputs.environments-lock-file }}
       run: |
-        # Run 'terraform test' for one test file and build a test report
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        TEST_RESULT_JSON="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-results.json"
-        TEST_REPORT_FILE="${GITHUB_WORKSPACE}/${{ github.run_id }}-${{ inputs.test-file }}-$(date +%Y%m%d%H%M%S)-test-report.txt"
-        TEST_CMD="terraform test -filter=tests/${{ inputs.test-file}} -json"
-
-        log-info "Running test command: ${TEST_CMD}"
-        start-group "'terraform test' "
-        #Run test
-        set -o pipefail
-          
-        set +e
-        ${TEST_CMD} | tee ${TEST_RESULT_JSON}
-        TEST_EXIT_CODE=${?}
-
-        log-multiline "Final JSON output" "$TEST_RESULT_JSON"
-        set-output "exit-code" "${TEST_EXIT_CODE}"
-        set-multiline-output 'json' "${TEST_RESULT_JSON}"
-        
-
-        TEST_SUMMARY=$(jq '. | select(.type == "test_summary") | .["@message"]' ${TEST_RESULT_JSON})
-
-        log-info "Test summary: "${TEST_SUMMARY}""
-        set-output "summary" "${TEST_SUMMARY}"
-
-        if [ "${TEST_EXIT_CODE}" == "0" ]; then
-          log-info 'All tests passed! 🎉'
-          TEST_RUN_RESULT="success"
-        else
-          log-error "One or more tests failed, exit code: ${TEST_EXIT_CODE}"
-          TEST_RUN_RESULT="failure"
-          TEST_EXIT_CODE=-1
-        fi
-
-        # Creating report data. 
-        declare -a  TESTS_RUNNED=()
-
-        readarray -t TESTS_RUNNED < <(jq '. | select(.type == "test_run") | select(.test_run.progress == "complete" ) | .test_run.run' ${TEST_RESULT_JSON})
-
-        echo "Test result for file: ${{ inputs.test-file }}" > ${TEST_REPORT_FILE}
-        echo "overall result: "${TEST_RUN_RESULT}"" >> ${TEST_REPORT_FILE}
-        echo "exit code: "${TEST_EXIT_CODE}"" >> ${TEST_REPORT_FILE}
-        echo " " >> ${TEST_REPORT_FILE}
-
-        echo "output: " >> ${TEST_REPORT_FILE}
-
-        for test in "${TESTS_RUNNED[@]}"; do
-          test=$(sed 's/\"//g' <<< "$test")
-          RUN_STATUS=$(queryStatus $test ${TEST_RESULT_JSON})
-          #RUN_STATUS=$(jq --arg test_run "$test" '. | select(.type == "test_run") | select(.test_run.run == $test_run) | select(.test_run.progress == "complete") | .test_run.status' $TEST_RESULT_JSON)
-          if [ ${RUN_STATUS} == "\"error\"" ]; then
-            printf 'Test: "'%s'" -----> '%s' \u274c \n' "${test}" "${RUN_STATUS}" >> ${TEST_REPORT_FILE}
-            echo "See error details below: " >> ${TEST_REPORT_FILE}
-            echo "  " >> ${TEST_REPORT_FILE}
-            FILE=$(jq '. | select(.type == "diagnostic")| .diagnostic.range["filename"]' $TEST_RESULT_JSON)
-            RESOURCE=$(jq '. | select(.type == "diagnostic")| .diagnostic["address"]' $TEST_RESULT_JSON)
-            MESSAGE=$(jq '. | select(.type == "diagnostic")| .diagnostic["summary"]' $TEST_RESULT_JSON)
-            echo "  | File: ${FILE}" >> ${TEST_REPORT_FILE}
-            echo "  | Resource: ${RESOURCE}" >> ${TEST_REPORT_FILE}
-            echo "  | Message: ${MESSAGE}" >> ${TEST_REPORT_FILE}
-            echo "  " >> ${TEST_REPORT_FILE}
-          elif 
-            [ ${RUN_STATUS} == "\"skip\"" ]; then
-            printf 'Test: "'%s'" -----> '%s' \u26a0 \n' "${test}" "${RUN_STATUS}" >> ${TEST_REPORT_FILE}
-          else
-            printf 'Test: "'%s'" -----> '%s' \u2705 \n' "${test}" "${RUN_STATUS}" >> ${TEST_REPORT_FILE}
-          fi
-        done
-
-        printSection "Test summary for file: ${TEST_SUMMARY}" >> ${TEST_REPORT_FILE}
-
-        set-multiline-output 'report' "${TEST_REPORT_FILE}"
-          
-        end-group
-    
-        exit ${TEST_EXIT_CODE}
+        # Run 'terraform test' for one test file and classify the outcome
+        set -o allexport
+        source "${{ github.action_path }}/step_run_tests.sh"
 
     - id: upload-test-results
+      name: Upload the JSON log (legacy call shape)
+      if: "!cancelled() && (inputs.upload-artifact == 'true' || (inputs.upload-artifact == 'auto' && inputs.working-directory == '')) && steps.run-tests.outputs.json-file != ''"
       uses: actions/upload-artifact@v7
       with:
         name: test-results-output-${{ inputs.test-file }}
-        path: ${{ steps.run-tests.outputs.json }}
+        path: ${{ steps.run-tests.outputs.json-file }}
 
     - id: test-status
-      if: ( steps.run-tests.outcome == 'failure' || steps.run-tests.outcome == 'cancelled' )
+      if: always() && (steps.run-tests.outcome == 'failure' || steps.run-tests.outcome == 'cancelled' || steps.run-tests.outputs.status != 'pass')
       shell: bash
       run: |
-        # Fail the action because 'terraform test' failed
+        # Fail the action because the test did not pass
         exit 1

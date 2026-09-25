@@ -31,6 +31,17 @@
 #   input_plugin_cache_directory - When set, exported as TF_PLUGIN_CACHE_DIR
 #                                  during the additional-dirs loop so
 #                                  providers are reused across envs.
+#   input_backend                - 'false' adds '-backend=false' to the
+#                                  project init. Default 'true'.
+#   input_lockfile_mode          - 'default' (the default), 'readonly' or
+#                                  'readonly-if-present'; decides whether the
+#                                  project init gets '-lockfile=readonly'.
+#   input_plugin_cache_may_break_lock_file
+#                                - 'true' exports TF_PLUGIN_CACHE_DIR and
+#                                  TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
+#                                  for the project init too, when a plugin
+#                                  cache directory is set and the lock stays
+#                                  writable. Default 'false'.
 #   input_github_token    - When set, terraform's github.com module clones are
 #                           authenticated with it. Empty or unset leaves them
 #                           anonymous, which is what they were before this
@@ -47,6 +58,25 @@ set +o nounset
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
+  # Validated before anything runs: a typo in a mode must not silently fall
+  # back to a writable lock, which is exactly what read-only mode exists to
+  # prevent.
+  local backend="${input_backend:-true}"
+  if [ ! "${backend}" == 'true' ] && [ ! "${backend}" == 'false' ]; then
+    log-error "input 'backend' must be 'true' or 'false', got '${backend}'!"
+    return 1
+  fi
+  local lockfile_mode="${input_lockfile_mode:-default}"
+  if ! is-valid-lockfile-mode "${lockfile_mode}"; then
+    log-error "input 'lockfile-mode' must be one of 'default', 'readonly' or 'readonly-if-present', got '${lockfile_mode}'!"
+    return 1
+  fi
+  local may_break="${input_plugin_cache_may_break_lock_file:-false}"
+  if [ ! "${may_break}" == 'true' ] && [ ! "${may_break}" == 'false' ]; then
+    log-error "input 'plugin-cache-may-break-lock-file' must be 'true' or 'false', got '${may_break}'!"
+    return 1
+  fi
+
   # Applied first, before this action's own exports — see
   # docs/Per-goal-environment-variables.md §6.3.
   apply-extra-envs "${input_extra_envs_file}" || return 1
@@ -75,12 +105,47 @@ function main {
     return 1
   fi
 
+  # The project init's arguments. With every input at its default this is
+  # exactly the command the action ran before the inputs existed.
+  local -a init_args=(init -input=false -reconfigure)
+  if [ "${backend}" == 'false' ]; then
+    init_args+=(-backend=false)
+  fi
+  local lock_readonly='false'
+  if [ "${lockfile_mode}" == 'readonly' ]; then
+    lock_readonly='true'
+  elif [ "${lockfile_mode}" == 'readonly-if-present' ] && [ -f '.terraform.lock.hcl' ]; then
+    lock_readonly='true'
+  fi
+  if [ "${lock_readonly}" == 'true' ]; then
+    init_args+=(-lockfile=readonly)
+  fi
+
+  # Opt-in rather than implied by a writable lock: the environment job inits
+  # against a committed lock with the plugin cache set, and there the variable
+  # would record new providers with one platform's checksum only and turn a
+  # cached package the lock has no checksum for into an init failure. Never
+  # with a read-only lock, where init cannot write the checksums it needs and
+  # passes with a package later commands refuse.
+  if [ "${may_break}" == 'true' ]; then
+    if [ "${lock_readonly}" == 'true' ]; then
+      log-info "the lock is read-only, so the project init leaves the plugin cache's lock rules alone."
+    elif [ -z "${input_plugin_cache_directory:-}" ]; then
+      log-info "no plugin cache directory configured, so the project init leaves the plugin cache's lock rules alone."
+    else
+      log-info "the project init may let the plugin cache break the dependency lock file."
+      export TF_PLUGIN_CACHE_DIR="${input_plugin_cache_directory}"
+      # ref. https://developer.hashicorp.com/terraform/cli/config/config-file#allowing-the-provider-plugin-cache-to-break-the-dependency-lock-file
+      export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="true"
+    fi
+  fi
+
   # Project init — tee with overwrite ('>' under tee) so re-runs of the
   # step in the same workspace start fresh.
   start-group "running 'terraform init' in 'project-dir' '$(ws-path "$(pwd)")' ..."
   set -o pipefail
   set +e
-  "${tf_bin}" init -input=false -reconfigure 2>&1 | tee "${console_file}"
+  "${tf_bin}" "${init_args[@]}" 2>&1 | tee "${console_file}"
   local init_exit=${?}
   set +o pipefail
   TF_INIT_RESULTS["$(pwd)"]="${init_exit}"

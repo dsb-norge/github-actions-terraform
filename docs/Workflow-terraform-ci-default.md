@@ -109,6 +109,48 @@ Three things to know:
 - A pull request with a merge conflict gets no run at all, so its check stays "Expected" until the conflict is resolved. That is GitHub's behaviour, not relevance.
 - The repository's Environments view shows the last deployment of each environment, which may be from an older change than the latest run when later changes did not touch it.
 
+#### Terraform tests
+
+Every committed `*.tftest.hcl` and `*.tftest.json` file runs as its own job, in parallel with the environments, on pull requests and pushes (not on `schedule` or `workflow_dispatch`). A repository without test files is unaffected; `terraform-test-enabled: false` switches the stage off. One pull-request comment summarises every file, failed ones first, and a failing test blocks the merge unless it is tolerated with `allow-failing-terraform-tests`. The full design is [Terraform-tests.md](./Terraform-tests.md).
+
+**Where test files go.** Terraform finds a test file only beside a root module's `.tf` files or in the `tests/` directory directly under it. Supported layouts: a repository-root `tests/` with no `.tf` at the root (each `run` block names its module, `module { source = "./modules/net" }`, relative to the root), and `tests/` beside any module, `main/` or environment directory. A file anywhere else is reported as misplaced and does not run. Terraform 1.13 or later.
+
+A `tests/` directory inside an environment works, but is rarely what you want: the environment's own init and validate load those files too, so a broken test file blocks its plan, and its real provider blocks apply. Prefer a repository-root `tests/` with mocks, or `tests/` beside a module.
+
+**Provider versions** come from the environments: each file runs once per distinct set of provider versions in the environments' lock files, normally once. Every lock must record a checksum for the runner's platform (the 🔒 lock check already requires `linux_amd64`); a test job whose lock does not reports `lock-platform` with the command that fixes it.
+
+**Lanes** say which files run with which credentials. Without lanes every file runs with no credentials, which is right for unit tests with `mock_provider`:
+
+```yaml
+terraform-test-lanes-yml: |
+  - name: unit
+    match: ["**/unit-*.tftest.hcl"]
+  - name: integration
+    match: ["**/integration-*.tftest.hcl"]
+    github-environment: auto          # runs in the GitHub Environment tftest-integration
+    timeout-minutes: 60
+```
+
+The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_tenant_id` secret arrives as `TF_VAR_TENANT_ID`; the lane exports it under both that name and `TF_VAR_tenant_id`, so a snake_case or an upper-case declaration works. A mixed-case variable name needs an explicit mapping in `extra-envs-from-secrets-yml`. A test file that uses `var.x` itself declares `variable "x" {}`.
+
+**Bringing up an environment lane:**
+
+1. Add the lane with `github-environment: auto` and open a pull request. The first run creates `tftest-<lane>`, and its jobs fail with `no-credentials`, printing the commands below.
+2. Someone with write access sets the secrets (the environment must exist first; the settings page needs admin, `gh` does not):
+   ```bash
+   gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<tenant-id>'
+   gh secret set ARM_CLIENT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<client-id>'
+   gh secret set ARM_SUBSCRIPTION_ID --repo <owner>/<repo> --env tftest-<lane> --body '<subscription-id>'   # subscription lanes only
+   ```
+3. The identity's owner adds a federated credential for the subject `repo:<owner>/<repo>:environment:tftest-<lane>`, or one flexible credential for every lane of the repository ([Terraform-tests.md §3.6](./Terraform-tests.md)). Environment names are lowercase: the credential compares case-sensitively.
+4. Re-run the failed jobs.
+
+Never add protection rules to a `tftest-*` environment.
+
+**Keeping plan and apply identities out of reach** of a test job takes two things: plan and apply credentials are environment secrets of the Terraform environments, never repository or organisation secrets; and a plan or apply identity trusts only its environments' subjects, never `pull_request` or a branch. Client IDs are not secret; only the subject an identity trusts keeps a test job from minting its token.
+
+**Two callers.** When a repository calls this workflow from two workflows on the same pull request, both would run the same tests: set `terraform-test-enabled: false` in all but one. Environment secrets reach the test jobs only with `secrets: inherit` on the caller, as everything else does.
+
 #### Variables and secrets
 
 Normally you'll have the need to pass some variables or secrets to terraform in order to perform authentication or otherwise configure the terraform operations. This can be achieved by specifying them in `extra-envs-yml` and/or `extra-envs-from-secrets-yml`.

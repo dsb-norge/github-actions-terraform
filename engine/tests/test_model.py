@@ -148,5 +148,41 @@ class RelevanceFactsTest(unittest.TestCase):
                 self.assertDocumentError(document, "input document: 'run' needs the integers 'id' and 'attempt'")
 
 
+TESTS = {"files": ["tests/a.tftest.hcl"], "directories_with_tf": ["main"], "environment_locks": {"envs/a": {"p": "1"}, "envs/b": None}}
+TESTS_MESSAGE = ("input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "
+                 "'environment_locks' (a map of lock maps or null)")
+
+
+class TestFactsTest(unittest.TestCase):
+    """The test stage's facts, the actor and the workflow name: absent is fine, present must be whole."""
+
+    assertDocumentError = ModelTest.assertDocumentError
+
+    def test_whole_facts_pass(self):
+        document = support.document()
+        document["tests"] = dict(TESTS)
+        document["event"]["actor"] = "octocat"
+        document["caller"]["workflow_name"] = "CI"
+        model.check(document)
+
+    def test_the_tests_facts_need_every_part_with_its_type(self):
+        for bad in ({**TESTS, "files": "a"}, {**TESTS, "files": [1]}, {**TESTS, "directories_with_tf": None},
+                    {**TESTS, "directories_with_tf": [5]}, {**TESTS, "environment_locks": []},
+                    {**TESTS, "environment_locks": {"envs/a": "1"}}, {**TESTS, "environment_locks": {"envs/a": {"p": 1}}},
+                    {"files": [], "directories_with_tf": []}, {**TESTS, "extra": 1}, []):
+            with self.subTest(bad=bad):
+                document = support.document()
+                document["tests"] = bad
+                self.assertDocumentError(document, TESTS_MESSAGE)
+
+    def test_the_actor_and_the_workflow_name_are_strings(self):
+        for section, key, message in (("event", "actor", "input document: 'event.actor' is not a string"),
+                                      ("caller", "workflow_name", "input document: 'caller.workflow_name' is not a string")):
+            with self.subTest(key=key):
+                document = support.document()
+                document[section][key] = None
+                self.assertDocumentError(document, message)
+
+
 if __name__ == "__main__":
     unittest.main()

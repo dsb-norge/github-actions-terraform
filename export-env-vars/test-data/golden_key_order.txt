@@ -1,0 +1,43 @@
+exit: 0
+--- GITHUB_ENV ---
+A_UPPER<<"<DELIM-1>"
+2
+"<DELIM-1>"
+B_UPPER<<"<DELIM-2>"
+4
+"<DELIM-2>"
+a_lower<<"<DELIM-3>"
+3
+"<DELIM-3>"
+b_lower<<"<DELIM-4>"
+1
+"<DELIM-4>"
+A_S<<"<DELIM-5>"
+two
+"<DELIM-5>"
+Z_S<<"<DELIM-6>"
+one
+"<DELIM-6>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{"b_lower":"1","A_UPPER":"2","a_lower":"3","B_UPPER":"4"}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{"Z_S":"S1","A_S":"S2"}
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+export-env-vars: Exporting environment variable 'A_UPPER' -> '2'
+export-env-vars: Exporting environment variable 'B_UPPER' -> '4'
+export-env-vars: Exporting environment variable 'a_lower' -> '3'
+export-env-vars: Exporting environment variable 'b_lower' -> '1'
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+export-env-vars: Get secret name for 'A_S' ...
+export-env-vars: Secret is named 'S2', reading value ...
+export-env-vars: Exporting environment variable 'A_S'
+export-env-vars: Get secret name for 'Z_S' ...
+export-env-vars: Secret is named 'S1', reading value ...
+export-env-vars: Exporting environment variable 'Z_S'
+::endgroup::
