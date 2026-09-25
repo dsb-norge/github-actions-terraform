@@ -152,8 +152,9 @@ Rules:
 - A lane with `github-environment`, or with a non-empty `extra-envs-from-secrets-yml`, is a
   **credentialed lane**; its files are not runnable where secrets are unavailable (§4.7).
 - In an environment lane, the exported variables are, in order: the prefix export of §3.6, then
-  `extra-envs-from-secrets-yml`, then `extra-envs-yml`; a later source overrides an earlier one, so a
-  lane can always pin a value explicitly.
+  `extra-envs-yml`, then `extra-envs-from-secrets-yml`; a later source overrides an earlier one, so a
+  lane can always pin a value explicitly. The mapping coming last is `export-env-vars`' own order,
+  kept for its existing callers; it matters only for a name a lane sets in both maps.
 
 Authoring note for lane variables: from Terraform 1.13 a test file must declare a
 `variable "x" {}` block for every `var.x` it references, so a lane that sets `TF_VAR_x` only helps
@@ -216,8 +217,8 @@ names this reusable workflow and the ref it was called at.
 
 **Secret export.** Every secret in the bag whose name starts with `ARM_` or `TF_VAR_` is exported
 as an environment variable of the same name, before `azure/login`. The explicit
-`extra-envs-from-secrets-yml` mapping still works for any other name, and `extra-envs-yml`
-overrides both (§3.2). Lanes without an environment get no prefix export, so a unit lane can never
+`extra-envs-from-secrets-yml` mapping still works for any other name, and both maps override the
+prefix export (§3.2). Lanes without an environment get no prefix export, so a unit lane can never
 pick up a repository-level `ARM_*` secret by accident. The convention relies on a naming rule of the
 calling organisations: organisation secrets are named `ORG_*` and repository secrets `REPO_*`, so
 no `ARM_*` or `TF_VAR_*` secret exists above environment level and the prefix export can only ever
@@ -421,6 +422,7 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
   "slug": "modules-net--unit-net",
   "test": {
     "file": "modules/net/tests/unit-net.tftest.hcl",
+    "name": "Terraform test (modules/net/tests/unit-net.tftest.hcl)",
     "root": "modules/net",
     "rel": "tests/unit-net.tftest.hcl",
     "lane": "unit",
@@ -441,6 +443,8 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
 }
 ```
 
+- `name` is the job's display name (§4.6), with the provider-set suffix already applied, because a
+  job's `name:` expression cannot count the sets.
 - `extra-envs` holds the lane's verbatim variables; `extra-envs-from-secrets` holds env-name to
   secret-name pairs. **Names only, never values.** The matrix JSON is printed in every job's setup
   log, as the environment matrix already is.
@@ -532,7 +536,7 @@ than an `environment:` one, and nothing created, in a called workflow as in a ca
 
 ```yaml
 terraform-test:
-  name: "Terraform test (${{ matrix.test.file }})"
+  name: ${{ matrix.test.name }}
   needs: [create-matrix, seed-pr-comments]
   if: |
     !cancelled()
@@ -579,24 +583,22 @@ groups need readable titles.
 
 | # | Step | Notes |
 |---|---|---|
-| 1 | `🧹 Clean workspace` | `dsb-norge/directory-recreate@v1`. `runs-on` is caller-overridable to self-hosted groups where a stale `.terraform/` survives checkout. |
-| 2 | `⬇ Checkout` | `actions/checkout@v6`. |
-| 3 | `🔧 Export lane environment variables` | `export-env-vars@v0` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`. |
-| 4 | `🔐 Verify lane credentials` | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init and test; the reporting steps still run. |
-| 5 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the three ARM variables are set (§3.3). |
-| 6 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
-| 7 | `📋 Provide provider versions` | Non-environment roots only (`if: matrix.test.root-kind != 'environment'`). Copies `matrix.test.provider-set-lock` into the test root as `.terraform.lock.hcl` (§5.3). Then, for every root, `verify-terraform-lock` with `platforms:` set to the runner's own platform (`runner.os` and `runner.arch` as `linux_amd64`, `linux_arm64`, …) checks that the effective lock records an `h1:` checksum for it for every provider; a failure is reason `lock-platform`, and the summary names the environment lock and the `terraform providers lock -platform=<os>_<arch>` command that fixes it (P39). It skips init and test; the reporting steps still run. |
-| 8 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v0`, then `actions/cache` with key `terraform-provider-plugin-cache-<os>-<arch>-<hash of <root>/.terraform.lock.hcl>-tftest`, falling back through `restore-keys` to the environment job's key without the suffix: the effective lock, copied or the environment root's own, so every file of one set shares one entry that holds the test-only providers too, and a set's first test job starts from the environment job's warm cache (P13, P41). `hashFiles()` resolves a path built from a matrix value, and hashes the lock step 7 wrote, but returns `''` when nothing matches: an environment root without a lock would share one key with every other, so the key carries a fallback or the cache is skipped when there is no lock (P40). |
-| 9 | `🗄️ Resolve, restore and snapshot the module cache` | `terraform-module-cache@v0` phases `resolve` (fed the run-block module declarations of every test file in the root, §5.3, §9.9), `restore` and `snapshot`, gated on `matrix.test.cache-terraform-modules == 'true'`, each `continue-on-error: true`. |
-| 10 | `⚙️ Terraform init` | `terraform-init@v0`, `working-directory: matrix.test.root`, `additional-dirs-json: "[]"`, `github-token: github.token`, `backend: false`, `lockfile-mode:` `readonly-if-present` for an environment root, else `default` (§5.3). `continue-on-error: true`. |
-| 11 | `🔎 Verify, prune and save the module cache` | `terraform-module-cache@v0` phases `verify`, `prune` and `save`, with the environment job's gates (init succeeded, no cache hit, safe to save), each `continue-on-error: true`. Right after init, before the test writes into module directories. |
-| 12 | `🧪 Terraform test` | `terraform-test@v0`, `if: steps.init.outcome == 'success'`, `working-directory: matrix.test.root`, `test-file: matrix.test.rel`. `continue-on-error: true`. Records the resolved provider versions and writes its own per-job step summary block (§5.6, §5.8). |
-| 13 | `📤 Upload test output` | `actions/upload-artifact`, name `terraform-test-log-<slug>`, paths: the JSON log, the text report, the JUnit file when present. `if: always()`, `continue-on-error: true`. Its `artifact-url` output is what the summary links as "output". |
-| 14 | `📦 Capture test job metadata` | `capture-matrix-job-meta@v0` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>` (§9.4). `if: always()`. |
-| 15 | `📤 Upload test job metadata` | `if: always()`, `continue-on-error: true`. |
-| 16 | `🧐 Validation outcome: 🔐 Credentials` | `exit 1` when step 4 ran and failed. `continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}`. |
-| 17 | `🧐 Validation outcome: ⚙️ Init` | `exit 1` unless init succeeded. Same `continue-on-error`. |
-| 18 | `🧐 Validation outcome: 🧪 Test` | `exit 1` unless the test status is `pass`. Same `continue-on-error`. |
+| 1 | `⬇ Checkout` | `actions/checkout@v6`, as in the environment job. |
+| 2 | `🔧 Export lane environment variables` | `export-env-vars@v1` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`, by the engine in the row's `extra-envs`. |
+| 3 | `🔐 Verify lane credentials` (id `verify-credentials`) | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init; the test step still runs and reports `no-credentials`. `continue-on-error: true`. |
+| 4 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the credential check did not fail and the three ARM variables are set (§3.3). `continue-on-error: true`: the providers log in on their own, and a failed login shows in the test. |
+| 5 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
+| 6 | `📋 Provide provider versions` (id `copy-lock`), then `🔏 Verify the lock covers this runner` (id `provider-versions`) | For a non-environment root with a provider set, copies `matrix.test.provider-set-lock` into the root as `.terraform.lock.hcl` (§5.3), and names the runner's platform (`runner.os` and `runner.arch` as `linux_amd64`, `linux_arm64`, …). When the root then has a lock, `verify-terraform-lock` with `platforms:` set to that platform checks that the lock records an `h1:` checksum for it for every provider; a failure is reason `lock-platform`, and the summary names the environment lock and the `terraform providers lock -platform=<os>_<arch>` command that fixes it (P39). A failure skips init; the test step still runs and reports it. `continue-on-error: true`. |
+| 7 | `🗄️ Setup Terraform provider plugin cache` | `setup-terraform-plugin-cache@v1`, then, when the root has a lock, `actions/cache` with key `terraform-provider-plugin-cache-<os>-<arch>-<hash of <root>/.terraform.lock.hcl>-tftest`, falling back through `restore-keys` to the environment job's key without the suffix: the effective lock, copied or the environment root's own, so every file of one set shares one entry that holds the test-only providers too, and a set's first test job starts from the environment job's warm cache (P13, P41). `hashFiles()` resolves a path built from a matrix value, and hashes the lock step 6 wrote, but returns `''` when nothing matches: an environment root without a lock would share one key with every other, so the key carries a fallback or the cache is skipped when there is no lock (P40). |
+| 8 | `🗄️ Resolve, restore and snapshot the module cache` | `terraform-module-cache@v1` phases `resolve` (with `test-directory: tests`, so it reads the run-block module declarations of every test file in the root, §5.3, §9.9), `restore` and `snapshot`, gated on `matrix.test.cache-terraform-modules == 'true'`, each `continue-on-error: true`. |
+| 9 | `⚙️ Terraform init` | `terraform-init@v1` (id `init`), `if:` neither the credential check nor the lock check failed, `working-directory: matrix.test.root`, `additional-dirs-json: "[]"`, `github-token: github.token`, `backend: false`, `lockfile-mode:` `readonly-if-present` for an environment root, else `default`, `plugin-cache-directory:` step 7's directory and `plugin-cache-may-break-lock-file: true`, which exports the may-break variable only when the lock stays writable (§5.3). `continue-on-error: true`. |
+| 10 | `🔎 Verify, prune and save the module cache` | `terraform-module-cache@v1` phases `verify`, `prune` and `save`, with the environment job's gates (init succeeded, no cache hit, safe to save), each `continue-on-error: true`. Right after init, before the test writes into module directories. |
+| 11 | `🧪 Terraform test` (id `test`) | `terraform-test@v1`, `if: !cancelled()`, `working-directory: matrix.test.root`, `test-file: matrix.test.rel`, `slug: matrix.slug`, `status-credentials`, `status-lock` and `status-init` from the outcomes of steps 3, 6 and 9, so a failed earlier step is reported as `no-credentials`, `lock-platform` or `init` without running terraform, and `environments-lock-file:` the provider set's lock, or the environment root's own. `continue-on-error: true`. Records the resolved provider versions and writes its own per-job step summary block (§5.6, §5.8). |
+| 12 | `📤 Upload test output` (id `upload-test-output`) | `actions/upload-artifact@v7`, name `terraform-test-log-<slug>`, the test step's JSON log, report and JUnit files, `if-no-files-found: ignore`. `if:` always, once the test step reported. `continue-on-error: true`. Its `artifact-url` output is what the summary links as "output". |
+| 13 | `📦 Capture and upload test job metadata` (id `capture-metadata`) | `capture-matrix-job-meta@v1` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>` (§9.4); the action uploads the artifact itself, so no separate upload step, which a second artifact of the same name would fail. `if: always()`, `continue-on-error: true`. |
+| 14 | `🧐 Validation outcome: 🔐 Credentials` | `exit 1` when step 3 ran and failed. `continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}`. |
+| 15 | `🧐 Validation outcome: ⚙️ Init` | `exit 1` unless init succeeded. Same `continue-on-error`. |
+| 16 | `🧐 Validation outcome: 🧪 Test` | `exit 1` unless the test status is `pass`. Same `continue-on-error`. |
 
 The gates come **after** every reporting step, as in the environment job: a gate exits 1 and would
 otherwise skip the very upload that explains the failure. Nothing needs shredding here; there is no
@@ -648,9 +650,10 @@ its schema from the installed provider, so mocks match the version the environme
   `false` would enable it. It has a cost: with it on, a cached package whose checksum the lock does
   not record for the runner's platform fails init ("doesn't match any of the checksums recorded in
   the dependency lock file") instead of being downloaded again, and read-only init on such a lock
-  passes with a warning and leaves a package later commands refuse. So every lock a test job uses,
+  either passes with a warning and leaves a package later commands refuse, or, with the cache warm,
+  fails outright. So every lock a test job uses,
   copied or an environment root's own, must record the runner's platform; the job checks it before
-  init and names the failure `lock-platform` (§5.2 step 7, P39). It is an operability requirement,
+  init and names the failure `lock-platform` (§5.2 step 6, P39). It is an operability requirement,
   not a security one: a lock written by `terraform init` also records the registry's `zh:` zip
   checksums for every platform, and Terraform refuses a download that matches none of them, so a
   missing `h1:` never lets an unverified provider through. The verification step of the
@@ -718,16 +721,19 @@ derives `status` and `reason` from the JSON stream, in this order:
 | 0b | the effective lock records no checksum for the runner's platform (init and test skipped) | `error` | `lock-platform` |
 | 1 | init step did not succeed (the test step is skipped) | `error` | `init` |
 | 2 | Terraform below the floor (§3.5) | `error` | `terraform-version` |
-| 3 | no `test_abstract` message; diagnostics match "Module not installed", "there is no package for", "Inconsistent dependency lock file", "missing or corrupted provider plugins" (an environment lock that lacks the runner's platform, which read-only init only warns about) | `error` | `not-initialised` |
+| 3 | diagnostics match "Module not installed", "there is no package for", "Inconsistent dependency lock file", "missing or corrupted provider plugins", "Missing required provider", "Required plugins are not installed" or "does not match any of the checksums recorded in the dependency lock file", with or without a `test_abstract` (an uninitialised root reports one, with the diagnostic as a run error) | `error` | `not-initialised` |
 | 4 | no `test_abstract`; any other diagnostic (parse or configuration error, possibly in a **sibling** test file; the diagnostic's `range.filename` says which) | `error` | `invalid` |
 | 5 | `test_abstract` does not contain `rel` (Terraform warned "Unknown test file") | `error` | `not-discovered` |
-| 6 | `test_file.status == "error"` with no `test_run` messages (unknown provider, provider configuration, required variable at file level) | `error` | `file` |
+| 6 | `test_file.status == "error"` and no run with status `error` or `fail` (unknown provider, provider configuration, required variable at file level; the file's runs may still report `skip`) | `error` | `file` |
 | 7 | any `test_run.status == "error"` (provider or API error, evaluation error, postcondition); the file's later runs report `skip` | `error` | `run` |
 | 8 | any `test_run.status == "fail"` (assertion) | `fail` | `assertion` |
 | 9 | otherwise | `pass` | `` |
 
 `skip` as a run status is a consequence of an earlier error in the same file and is counted, never
-a top-level status. A tolerated job (`allow-failing-terraform-tests`) keeps its real `status`; the
+a top-level status. A file is `pass` only when Terraform exited 0 and its `test_summary` says so;
+anything else that fits no row, including output that is not a test run at all, is `invalid`, and a
+missing working directory is `not-discovered`. The counts come from `test_summary`'s numeric
+fields, never its text, which counts an errored run as failed. A tolerated job (`allow-failing-terraform-tests`) keeps its real `status`; the
 summary renders the tolerance (§6.4).
 
 ### 5.6 Per-file extract and outputs
@@ -1029,38 +1035,72 @@ that workflow migrates.
 
 ### 9.2 `terraform-test` (modernised)
 
-Inputs: `working-directory`, `test-file` (relative to it), `junit` (boolean, default true; only
-takes effect from 1.11). The embedded `azure/login` and the embedded artifact upload are removed;
-the workflow owns both. Files go under `$RUNNER_TEMP/<slug>/`, never `$GITHUB_WORKSPACE`. Outputs:
-§5.6. Behaviour: §3.5, §5.4, §5.5, §5.7, §5.8. Fixtures: JSON logs for each classification of §5.5
-(pass; assertion fail; run error with skipped followers; file-level error; parse error; filter miss;
-not initialised), captured from a real Terraform and stored with the version noted.
+Inputs: `test-file` (used as `-filter`, a leading `./` dropped), `working-directory` (the test
+root), `junit` (default true; only from 1.11), `slug` (the directory under `$RUNNER_TEMP`),
+`status-credentials`, `status-lock` and `status-init` (the outcomes of the job's earlier steps, so a
+failure there is reported as `no-credentials`, `lock-platform` or `init` without running terraform),
+`environments-lock-file` (the lock the written one is compared with), and the compatibility switches
+`azure-login` and `upload-artifact` (default `auto`, on only for the module CI call shape). Files go
+under `$RUNNER_TEMP/<slug>/`, never `$GITHUB_WORKSPACE`: `test.json`, `report.txt`, `junit.xml`,
+`runs.json`, `diagnostics.json`, `providers.json`.
+
+Outputs, all small, large content only as a path: `status`, `reason`, `passed`, `failed`,
+`errored`, `skipped`, `total`, `elapsed-ms`, `summary`, `exit-code`, `terraform-version`,
+`runner-platform` (`linux_amd64`, …), `test-file-path`, `json-file`, `report-file`, `junit-file`,
+`runs-json-file`, `diagnostics-json-file`, `providers-json-file`, `providers-summary`
+(`null 3.2.3 environments · random 3.9.1 floating`), `providers-floating-count`, `failed-runs-json`
+(the failed and errored runs with their first diagnostics, at most 3000 bytes) and
+`failed-runs-omitted`; `json` and `report` stay as aliases for module CI. Behaviour: §3.5, §5.4,
+§5.5, §5.7, §5.8. Fixtures: JSON logs captured from a real Terraform 1.16.2 with credential-free
+providers for every classification of §5.5, with the version noted, and a fake `terraform` that
+replays them.
 
 ### 9.3 `create-test-summary` (new)
 
-Inputs: `metadata-files-pattern` (default `terraform-test-meta-*.json`), `not-run-json`,
-`run-url`, `job-links-json-file` (resolved by a helper in the same action from the Jobs API, or
-passed in by tests), `output-file-suffix`. Outputs: `body-file`, `step-summary-file`, `failed-count`,
-`tolerated-count`, `passed-count`, `not-run-count`. Golden files for: all green; one failure; a
-tolerated error; an init error; a `no-credentials` error carrying the bring-up commands; misplaced
-and secrets-unavailable rows; a matrix row without metadata rendered from the job conclusion; a
-body over budget at each trim step; a run with zero rows; missing job links. ARG_MAX: the Jobs API
-response and every
-metadata file are read from disk with `jq --slurpfile` or `-f`; the body is assembled by appending to
-a file, never in a shell variable.
+Inputs, all optional and each degrading on its own: `metadata-files-pattern` (default
+`terraform-test-meta-*.json`); `tests-matrix-json`, the builder's matrix, captured as
+`toJSON(inputs.tests-matrix-json)` and written to a file, for reconciling rows without metadata
+(§6.2 step 5); `not-run-file`, the path of `relevance.json` (read at `.tests.not_run`) or of a bare
+list of `{file, lane, reason}`; `jobs-json-file`, the Jobs API's jobs, one list or object per page,
+for tests; empty, the action pages the run's jobs itself through `gh api` into a temp file, which
+needs `github-token` with `actions: read`; `run-url`; `output-file-suffix`. Outputs: `body-file`
+(at most 65 000 characters, without the marker), `step-summary-file`, `head-marker`
+(`<!-- tf:head:tests:<caller> -->`), `failed-count`, `tolerated-count`, `passed-count`,
+`not-run-count`. The action appends the step summary to `$GITHUB_STEP_SUMMARY` and emits the
+headline annotation of §6.6 itself, and always exits 0.
+
+It reads from each metadata file `.metadata.schema_version`, the row under `.matrix_context`
+(`slug`, `test.file`, `root`, `lane`, `allow-failing-terraform-tests`, `github-environment`,
+`root-kind` and the provider-set fields), the `terraform-test` outputs under `steps.test.outputs`,
+and `steps.upload-test-output.outputs.artifact-url`. When the test step left no status, the outcomes
+of the steps with ids `verify-credentials`, `provider-versions` and `init` classify the row as
+`no-credentials`, `lock-platform` or `init`. A matrix row without metadata whose job did not succeed
+counts as failed with reason `job did not run`, never tolerated.
+
+Goldens: all green; one failure; a tolerated error; an init error; a `no-credentials` error carrying
+the bring-up commands; a `lock-platform` error with the fix; misplaced and secrets-unavailable rows;
+rows without metadata; several provider sets; a body over budget at each trim step, and a last-resort
+cut that closes open fences and `<details>`; a run with zero rows; missing job links. ARG_MAX: the
+Jobs API response and every metadata file are read from disk with `jq --slurpfile` or `-f`; the body
+is assembled by appending to a file, never in a shell variable.
 
 ### 9.4 `capture-matrix-job-meta`
 
 Two optional inputs: `entity-name` (what `environment-name` really is; the old name stays as an
-alias) and `artifact-name` (default `matrix-job-meta-<entity>`), which sets **both** the artifact
-name and the JSON file's basename (P7). Existing callers see no change.
+alias, and when both are given and differ `entity-name` wins with a warning) and `artifact-name`
+(default `matrix-job-meta-<entity>`), which sets **both** the artifact name and the JSON file's
+basename (P7) and is also an output. The JSON keeps `.metadata.environment` for the entity. Existing
+callers see no change.
 
 ### 9.5 `terraform-init`
 
-Inputs `backend` (boolean, default `true`) and `lockfile-mode` (`default` | `readonly` |
-`readonly-if-present`, default `default`) as §5.3. Existing callers see no change. The
-`TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` export applies only when `lockfile-mode` resolves
-to a writable lock and a plugin cache directory is set.
+Inputs `backend` (boolean, default `true`), `lockfile-mode` (`default` | `readonly` |
+`readonly-if-present`, default `default`) and `plugin-cache-may-break-lock-file` (boolean, default
+`false`), as §5.3. The may-break export for the project init is an explicit opt-in, not implied by a
+writable lock: the environment job inits a committed lock with the plugin cache set, and there the
+variable would record new providers with one platform's checksum and fail init on a cached package
+the lock does not cover. It applies only with a plugin cache directory set and a writable lock.
+Unknown values fail the step before init runs. Existing callers see no change.
 
 ### 9.6 Workflow changes
 
@@ -1076,10 +1116,13 @@ to a writable lock and a plugin cache directory is set.
 ### 9.7 Module CI
 
 Untouched by this spec. `terraform-module-ci.yaml` keeps `create-tftest-matrix`'s `all-tests`
-output, the old `terraform-test` behaviour behind the modernised action's compatibility (the
-workflow passes `working-directory: ${{ github.workspace }}` and `test-file: tests/<file>` after
-migration), and `create-test-report`. Migrating it to the summary job is a follow-up once this has
-run for a while.
+output and `create-test-report`, and calls `terraform-test` as before, with `test-file` only. That
+call shape keeps the action's embedded login and upload (its `auto` switches), runs from the
+workspace with `-filter=tests/<file>`, and applies no version floor. Visible changes for module CI:
+a filter that matches no file is now red (`not-discovered`) instead of passing silently, the summary
+line loses its JSON quotes (the report builder matches `Success!` either way), and the report has
+the new format. Passing `working-directory` from module CI would switch its login and upload off;
+migrating it to the summary job is a follow-up once this has run for a while.
 
 ### 9.8 `export-env-vars` (modernised)
 
@@ -1088,19 +1131,24 @@ optional input, `export-secrets-with-prefixes-json` (JSON array of name prefixes
 every secret in `secrets-json` whose name starts with one of the prefixes is exported under its own
 name, before the explicit mapping and the plain variables are applied, so those override it
 (§3.2). Existing callers see no change. The prefix export is the only new code path; its tests
-cover prefix selection, case, ordering and an empty list.
+cover prefix selection, case, ordering and an empty list. An empty prefix is refused, since it
+would export the whole secret bag, the token included. The converted shim does not use
+`allexport`: secret values pass through shell variables, and under it they would reach the
+environment of every process the step starts.
 
 ### 9.9 `terraform-module-cache`
 
-One new optional input for the resolve phase: the run-block module declarations of every test file
-in the root (source and version), as JSON. A registry declaration goes through the existing version
-classifier, so a range keeps the root uncached; a local one is walked with the existing
-remote-module walk. The declarations enter the digest, and the `environment` input the key embeds is
-a per-root constant, not the file's slug, because init installs the run-block modules of every test
-file in the root. Existing callers pass nothing and see no change. Verified today: the resolve phase
-reads only `module` blocks in `.tf` files and has no way to be handed these, and passing the test
-root as an additional directory caches the wrong path, since Terraform installs run-block modules
-under the root's `.terraform/modules/test.tests.<file>.<run>…`.
+One new optional input for the resolve phase, `test-directory`: what `terraform test` gets as
+`-test-directory`, normally `tests`. When it is set, the action reads the run-block `module {}`
+declarations of every test file init loads for each directory it audits, `<dir>/*.tftest.hcl` and
+`<dir>/<test-directory>/*.tftest.hcl`, itself rather than being handed them, so what it audits is
+exactly what init installs. A registry declaration goes through the existing version classifier, so
+a range keeps the root uncached; a local one is walked with the existing remote-module walk,
+relative to the root. Every declaration enters the digest under Terraform's own module key,
+`test.tests.<file>.<run>`; a declaration it cannot read (no literal source) and any `.tftest.json`
+file keep the root uncached. Verify, snapshot and prune need no change: they classify by source and
+the run-block modules sit under the root's own `.terraform/modules`. Empty, the default, reads
+nothing; existing callers see no change.
 
 ## 10. Pitfalls
 
@@ -1145,9 +1193,9 @@ Indexed so implementation commits and future specs can cite them.
 | P35 | GitHub compares environment names case-insensitively but puts the stored name, case and all, into the token subject, and a flexible credential's `matches` compares case-sensitively (verified in Entra; undocumented). | A mixed-case environment name matches the environment but not the credential: `AADSTS7002131`. | The `tftest-` pattern is lowercase only; the builder lowercases and rejects an explicit name with upper case. |
 | P36 | Environments whose lock files differ produce one test job per file per distinct set. | The test matrix doubles while two environments disagree. | By design: the disagreement is what the extra run verifies. `providers-from` narrows a lane; re-aligning the environments returns to one set. |
 | P37 | The module-cache classifier reads `module` blocks in `.tf` files; a test file's `run { module { source } }` is invisible to it. | Verified: a registry run-block source with a version range was keyed from the `.tf` files alone and judged safe to save, and a restored cache kept its old version after the range moved; a local run-block source reaching a registry module was not cached at all. | The resolve phase takes the run-block declarations of every test file in the root: a range keeps the root uncached, local sources are walked (§5.3, §9.9). |
-| P39 | With `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` on, a cached package whose checksum the lock does not record for the runner's platform fails init instead of being downloaded again; read-only init on such a lock leaves a package `terraform test` refuses. | A copied environment lock without the runner's platform fails every warm-cache init of that set with a checksum error. | Every lock a test job uses must record the runner's platform: step 7 checks it and fails with `lock-platform`, naming the fix (§5.2, §5.3). |
+| P39 | With `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` on, a cached package whose checksum the lock does not record for the runner's platform fails init instead of being downloaded again; read-only init on such a lock leaves a package `terraform test` refuses. | A copied environment lock without the runner's platform fails every warm-cache init of that set with a checksum error. | Every lock a test job uses must record the runner's platform: step 6 checks it and fails with `lock-platform`, naming the fix (§5.2, §5.3). |
 | P40 | `hashFiles()` returns `''` when nothing matches. | Every environment root without a lock file shares one plugin-cache key. | The key carries a fallback, or the cache step is skipped without a lock (§5.2). |
-| P41 | `actions/cache` saves only the first entry for a key. With the environment job's key, the environment job saves first. | Test-only providers never reach the cache, and every test job downloads them. | The test job's key has its own `-tftest` suffix and falls back to the environment job's key through `restore-keys` (§5.2 step 8). |
+| P41 | `actions/cache` saves only the first entry for a key. With the environment job's key, the environment job saves first. | Test-only providers never reach the cache, and every test job downloads them. | The test job's key has its own `-tftest` suffix and falls back to the environment job's key through `restore-keys` (§5.2 step 7). |
 | P38 | Thirty init runs per pull request multiply exposure to transient registry and network failures. | Red jobs unrelated to the code. | Provider and module caches, authenticated module downloads; re-running failed jobs re-runs only the failed files. |
 
 ## 11. Test coverage
@@ -1183,7 +1231,7 @@ Indexed so implementation commits and future specs can cite them.
 - `export-env-vars`: goldens of the current behaviour before the conversion; the prefix export
   selects exactly the names with a listed prefix, is case-sensitive, is overridden by the explicit
   mapping and by plain variables, and does nothing for an empty list.
-- The lock check of step 7: a lock without the runner's platform fails with `lock-platform` and skips init; the runner's platform is derived from `runner.os` and `runner.arch` for both architectures.
+- The lock check of §5.2 step 6: a lock without the runner's platform fails with `lock-platform` and skips init; the runner's platform is derived from `runner.os` and `runner.arch` for both architectures.
 - `terraform-init`: `backend: false` adds the flag; `readonly-if-present` adds `-lockfile=readonly`
   with a lock and the may-break variable without; default unchanged.
 - `terraform-module-cache`: a registry run-block declaration with a range keeps the root uncached;
@@ -1266,4 +1314,30 @@ AI-assistant configuration files are never in these commits.
 
 ## 15. What implementation taught the spec
 
-Reserved.
+- **Discovery moved into the engine** (D20). The create-matrix adapter lists the committed files
+  and the locks in the step that builds the environment matrix, and `tests.py` decides under both
+  gates; `create-tftest-matrix` stays for module CI. The row gained `name`, the job's display name
+  with the provider-set suffix, because a job's `name:` expression cannot count the sets.
+- **One test job** (D21): an empty environment name means no environment, verified in a called
+  workflow.
+- **The earlier steps report through the test step.** The credential check, the lock check and init
+  are `continue-on-error`, the test step runs whatever happened and reports `no-credentials`,
+  `lock-platform` or `init` from their outcomes, and the summary falls back to those outcomes when
+  the test step left no status. The capture action uploads the metadata itself, so there is no
+  separate upload step.
+- **Init's may-break export is an explicit opt-in** (`plugin-cache-may-break-lock-file`), because
+  deriving it from a writable lock would have changed the environment job, which inits a committed
+  lock with the plugin cache set.
+- **The module cache reads the test files itself** (`test-directory`) rather than being handed
+  JSON: no second reader to drift from what init installs. It showed that the environment job had
+  the same exposure for an environment with a `tests/` directory, and it now passes
+  `test-directory: tests` too.
+- **`export-env-vars` keeps its order**: the secret mapping is applied after the plain variables, as
+  it always was, so §3.2's order became prefix export, plain variables, mapping.
+- **Terraform 1.16 classifies differently from the draft** in three places (§5.5): an uninitialised
+  root reports a `test_abstract` with a run error, a single missing package says "there is no
+  package for", and a file-level error still emits skipped runs. `test_summary`'s text counts an
+  errored run as failed; the counts come from its numeric fields.
+- **Module CI sees three changes** through the shared `terraform-test`: a file Terraform cannot find
+  now fails instead of passing silently, the summary line loses its quotes, and the report has the
+  new format (§9.7).
