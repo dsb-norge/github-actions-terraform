@@ -18,8 +18,19 @@
     "id": 4711
   },
   "schema_version": 1,
+  "tests": {
+    "directories_with_tf": [],
+    "environment_locks": {
+      "envs/env-a": null,
+      "envs/env-b": null,
+      "envs/env-c": null,
+      "envs/env-d": null
+    },
+    "files": []
+  },
   "workflow_inputs": {
     "add-pr-comment": true,
+    "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
     "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/a\"\n- environment: \"env-b\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/b\"\n- environment: \"env-c\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/c\"\n- environment: \"env-d\"\n  runs-on: \"runner-b\"\n  pr-comment-group: \"group-b\"\n  url: \"https://example.com/d\"\n",
@@ -38,6 +49,11 @@
     "pr-comment-group": "",
     "runs-on": "ubuntu-latest",
     "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./modules/mod-a\"\n- \"./modules/mod-b\"\n",
+    "terraform-test-enabled": true,
+    "terraform-test-exclude-paths-yml": "",
+    "terraform-test-lanes-yml": "",
+    "terraform-test-runs-on": "ubuntu-latest",
+    "terraform-test-timeout-minutes": 30,
     "terraform-version": "1.15.x",
     "tflint-version": "v0.64.0",
     "verify-lock-file": true
@@ -139,6 +155,14 @@
           "./modules/mod-a",
           "./modules/mod-b"
         ]
+      },
+      "terraform-test-exclude-paths-yml": {
+        "ok": true,
+        "value": null
+      },
+      "terraform-test-lanes-yml": {
+        "ok": true,
+        "value": null
       }
     }
   }

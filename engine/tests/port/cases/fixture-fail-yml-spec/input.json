@@ -15,8 +15,16 @@
     "id": 4711
   },
   "schema_version": 1,
+  "tests": {
+    "directories_with_tf": [],
+    "environment_locks": {
+      "envs/my-tf-env": null
+    },
+    "files": []
+  },
   "workflow_inputs": {
     "add-pr-comment": "true",
+    "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": "false",
     "cache-terraform-modules": "true",
     "environments-yml": "- environment: \"my-tf-env\"\n",
@@ -30,6 +38,11 @@
     "pr-auto-merge-from-actors-yml": "[]",
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
     "pr-comment-group": "",
+    "terraform-test-enabled": true,
+    "terraform-test-exclude-paths-yml": "",
+    "terraform-test-lanes-yml": "",
+    "terraform-test-runs-on": "ubuntu-latest",
+    "terraform-test-timeout-minutes": 30,
     "terraform-version": "latest",
     "tflint-version": "latest",
     "verify-lock-file": "true"
@@ -83,6 +96,14 @@
           "plan-max-count-move": -1,
           "plan-max-count-remove": 0
         }
+      },
+      "terraform-test-exclude-paths-yml": {
+        "ok": true,
+        "value": null
+      },
+      "terraform-test-lanes-yml": {
+        "ok": true,
+        "value": null
       }
     }
   }
