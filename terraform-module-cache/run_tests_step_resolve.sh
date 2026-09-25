@@ -684,3 +684,414 @@ export input_project_dir="env"
 run_resolve
 assert_log_has "b05 a resource block between modules is ignored" "2 reachable remote module(s)"
 assert_eq "b05 and both modules are pinned, so the directory is cached" "true" "$(out_value cache-enabled)"
+
+# ---------------------------------------------------------------------------
+# Run-block modules of test files (test-directory)
+#
+# 'terraform init' in a root installs the module of every 'run' block of every
+# test file it loads — '<root>/*.tftest.hcl' and '<root>/tests/*.tftest.hcl' —
+# under '.terraform/modules/test.<file>.<run>', whatever '-filter' later names.
+# Only local and registry sources are accepted there, so the exposures are a
+# registry range (a restored tree keeps the old release) and a local source
+# reaching a remote module (invisible to the .tf walk).
+# ---------------------------------------------------------------------------
+
+# Run the test-file walk directly, for the dot-path assertions.
+run_test_walk() {
+  (
+    export GITHUB_ACTION_PATH="${_this_script_dir}"
+    source "${_this_script_dir}/helpers.sh"
+    reset-walk-state
+    walk-test-run-modules "${WORK_DIR}/${1}" "${2}"
+  ) >"${STEP_LOG}" 2>/dev/null
+}
+
+# A root holding one pinned module in its .tf, so there is always something to
+# cache and the test files decide the verdict and the key.
+pinned_root_fixture() {
+  setup_workspace
+  write_tf "root/main.tf" <<'TF'
+module "naming" {
+  source  = "Azure/naming/azurerm"
+  version = "0.4.2"
+}
+TF
+  export input_project_dir="root"
+}
+
+# rb01 no test-directory: a test file with a range is not read, and the key is
+# the one the root had before the file existed — existing callers see no change.
+pinned_root_fixture
+run_resolve
+RB01_KEY_BEFORE="$(out_value cache-key)"
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  module {
+    source  = "cloudposse/label/null"
+    version = "~> 0.25"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb01 without test-directory the root stays cached" "true" "$(out_value cache-enabled)"
+assert_eq "rb01 and its key does not see the test file" "${RB01_KEY_BEFORE}" "$(out_value cache-key)"
+assert_log_lacks "rb01 and test files are not mentioned" "test files"
+
+# rb02 a registry run-block source with a range keeps the root uncached
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb02 a run-block registry range excludes the root" "false" "$(out_value cache-enabled)"
+assert_log_has "rb02 the notice names terraform's module key and the range" \
+  "test.tests.unit.basic (cloudposse/label/null ~> 0.25)"
+
+# rb03 an exact version is cached, with the declaration in the key
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  command = plan
+  module {
+    source  = "cloudposse/label/null"
+    version = "0.25.0"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb03 a run-block exact pin keeps the root cached" "true" "$(out_value cache-enabled)"
+assert_eq "rb03 the cache path is the root's own tree, where terraform installs it" \
+  "root/.terraform/modules" "$(out_value cache-paths)"
+assert_log_has "rb03 the run-block module is counted" "2 reachable remote module(s)"
+RB03_KEY="$(out_value cache-key)"
+assert "rb03 the declaration moves the key" test "${RB03_KEY}" != "${RB01_KEY_BEFORE}"
+assert "rb03 the key keeps the caller's environment, not a file slug" \
+  bash -c "[[ '${RB03_KEY}' == tf-modules-linux-test-env-* ]]"
+
+# rb04 bumping the run-block pin moves the key again
+sed -i 's/0.25.0/0.25.1/' "${WORK_DIR}/root/tests/unit.tftest.hcl"
+run_resolve
+assert "rb04 a bumped run-block pin moves the key" test "$(out_value cache-key)" != "${RB03_KEY}"
+
+# rb05 same declaration, same key; renaming the run block moves it, since the
+# module key terraform installs under is test.<file>.<run>
+sed -i 's/0.25.1/0.25.0/' "${WORK_DIR}/root/tests/unit.tftest.hcl"
+run_resolve
+assert_eq "rb05 the same declarations give the same key" "${RB03_KEY}" "$(out_value cache-key)"
+sed -i 's/run "basic"/run "renamed"/' "${WORK_DIR}/root/tests/unit.tftest.hcl"
+run_resolve
+assert "rb05 a renamed run block moves the key" test "$(out_value cache-key)" != "${RB03_KEY}"
+
+# rb06 test files with run blocks but no module blocks leave the key alone
+pinned_root_fixture
+run_resolve
+RB06_KEY="$(out_value cache-key)"
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+variables {
+  version = "1.0.0"
+}
+
+run "plain" {
+  command = plan
+  assert {
+    condition     = true
+    error_message = "never"
+  }
+}
+HCL
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb06 run blocks without a module leave the key unchanged" "${RB06_KEY}" "$(out_value cache-key)"
+
+# rb07 an empty root whose test reaches a registry module through a local
+# source: walked, relative to the ROOT and not the test file, keyed as
+# terraform keys it.
+setup_workspace
+write_tf "mods/wrap/main.tf" <<'TF'
+module "label" {
+  source  = "cloudposse/label/null"
+  version = "0.25.0"
+}
+TF
+write_tf "tests/unit-net.tftest.hcl" <<'HCL'
+run "wrapped" {
+  command = plan
+  module {
+    source = "./mods/wrap"
+  }
+}
+HCL
+export input_project_dir="."
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb07 a local run-block source reaching a registry module is cached" "true" "$(out_value cache-enabled)"
+assert_eq "rb07 the cache path is the root's tree" "./.terraform/modules" "$(out_value cache-paths)"
+assert_log_has "rb07 only the remote module counts" "1 reachable remote module(s)"
+run_test_walk "." "tests"
+assert_log_has "rb07 the local declaration is emitted under terraform's key" \
+  "$(printf 'test.tests.unit-net.wrapped\t./mods/wrap\t')"
+assert_log_has "rb07 the module it reaches is keyed beneath it" \
+  "$(printf 'test.tests.unit-net.wrapped.label\tcloudposse/label/null\t0.25.0')"
+
+# rb08 the same source resolved relative to the test file would be
+# 'tests/mods/wrap', which is not what terraform reads; it must not be walked.
+setup_workspace
+write_tf "tests/mods/wrap/main.tf" <<'TF'
+module "label" {
+  source  = "cloudposse/label/null"
+  version = "0.25.0"
+}
+TF
+write_tf "tests/unit.tftest.hcl" <<'HCL'
+run "wrapped" {
+  module {
+    source = "./mods/wrap"
+  }
+}
+HCL
+export input_project_dir="."
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb08 a source is not resolved relative to the test file" "false" "$(out_value cache-enabled)"
+assert_log_has "rb08 and the missing root-relative path is reported" "does not exist"
+
+# rb09 a local run-block source reaching a branch ref excludes the root
+setup_workspace
+write_tf "mods/wrap/main.tf" <<'TF'
+module "floating" {
+  source = "git::https://example.com/m.git?ref=main"
+}
+TF
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "wrapped" {
+  module {
+    source = "../mods/wrap"
+  }
+}
+HCL
+export input_project_dir="root"
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb09 a branch ref reached from a run block excludes the root" "false" "$(out_value cache-enabled)"
+assert_log_has "rb09 the notice names the walked module key" "test.tests.unit.wrapped.floating"
+
+# rb10 local sources that reach nothing remote: not cached, and nothing to key
+setup_workspace
+write_tf "mods/plain/main.tf" <<'TF'
+resource "terraform_data" "x" {}
+TF
+write_tf "tests/unit.tftest.hcl" <<'HCL'
+run "plain" {
+  module {
+    source = "./mods/plain"
+  }
+}
+HCL
+export input_project_dir="."
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb10 run blocks reaching nothing remote are not cached" "false" "$(out_value cache-enabled)"
+assert_log_has "rb10 says why" "no remote modules reachable"
+
+# rb11 a local run-block declaration enters the key even when it reaches
+# nothing remote: its manifest entry still appears under an unchanged key
+# otherwise, and the completeness check would warn on every exact hit.
+pinned_root_fixture
+write_tf "mods/plain/main.tf" <<'TF'
+resource "terraform_data" "x" {}
+TF
+export input_test_directory="tests"
+run_resolve
+RB11_KEY="$(out_value cache-key)"
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "plain" {
+  module {
+    source = "../mods/plain"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb11 the root stays cached" "true" "$(out_value cache-enabled)"
+assert_log_has "rb11 the local declaration is not counted as remote" "1 reachable remote module(s)"
+assert "rb11 but it moves the key" test "$(out_value cache-key)" != "${RB11_KEY}"
+
+# rb12 root-level test files are read too; a nested directory under tests/ is
+# not, because terraform does not load it either
+pinned_root_fixture
+write_tf "root/top.tftest.hcl" <<'HCL'
+run "x" {
+  module {
+    source  = "cloudposse/label/null"
+    version = ">= 0.25"
+  }
+}
+HCL
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb12 a root-level test file's range excludes the root" "false" "$(out_value cache-enabled)"
+assert_log_has "rb12 keyed test.<file>.<run> for a root-level file" "test.top.x"
+rm "${WORK_DIR}/root/top.tftest.hcl"
+write_tf "root/tests/nested/deep.tftest.hcl" <<'HCL'
+run "x" {
+  module {
+    source  = "cloudposse/label/null"
+    version = ">= 0.25"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb12 a file nested under tests/ is not read" "true" "$(out_value cache-enabled)"
+
+# rb13 test-directory names the directory read; 'tests' is then not read
+pinned_root_fixture
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "x" {
+  module {
+    source  = "cloudposse/label/null"
+    version = "~> 0.25"
+  }
+}
+HCL
+write_tf "root/spec/unit.tftest.hcl" <<'HCL'
+run "y" {
+  module {
+    source  = "cloudposse/label/null"
+    version = "0.25.0"
+  }
+}
+HCL
+export input_test_directory="./spec/"
+run_resolve
+assert_eq "rb13 a custom test directory replaces tests/" "true" "$(out_value cache-enabled)"
+assert_log_has "rb13 the directory is normalised" "test directory 'spec'"
+run_test_walk "root" "spec"
+assert_log_has "rb13 keyed under the custom directory" "test.spec.unit.y"
+
+# rb14 a '*.tftest.json' file is not parsed, so the root is not cached
+pinned_root_fixture
+write_tf "root/tests/unit.tftest.json" <<'JSON'
+{"run": {"basic": {"module": {"source": "cloudposse/label/null", "version": "0.25.0"}}}}
+JSON
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb14 a JSON test file keeps the root uncached" "false" "$(out_value cache-enabled)"
+assert_log_has "rb14 the notice says it could not be read" \
+  "test-file module declaration 'test.tests.unit' could not be read"
+
+# rb15 a module block with no literal source is not guessed at
+pinned_root_fixture
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  module {
+    version = "0.25.0"
+  }
+}
+HCL
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb15 a module block without a source keeps the root uncached" "false" "$(out_value cache-enabled)"
+assert_log_has "rb15 the notice names the run block" "'test.tests.unit.basic' could not be read"
+
+# rb16 only the module sub-block is read: a pinned 'version' in the run's
+# variables block, before or after, never makes a range look pinned
+pinned_root_fixture
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  variables {
+    source  = "acme/other/aws"
+    version = "9.9.9"
+  }
+
+  module {
+    source  = "cloudposse/label/null"
+    version = "~> 0.25"
+  }
+
+  variables {
+    version = "1.0.0"
+  }
+}
+HCL
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb16 a variables block does not lend the module its version" "false" "$(out_value cache-enabled)"
+assert_log_has "rb16 the module's own range is what is reported" "(cloudposse/label/null ~> 0.25)"
+
+# rb17 a module block with no version stays unpinned even when a later block
+# of the same run carries one
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  module {
+    source = "cloudposse/label/null"
+  }
+  variables {
+    version = "1.0.0"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb17 an unpinned run-block module is not pinned by a later block" "false" "$(out_value cache-enabled)"
+
+# rb18 a commented-out pin ahead of a live range: terraform reads the range,
+# and so must the reader
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "basic" {
+  module {
+    source = "cloudposse/label/null"
+    # version = "0.25.0"
+    // version = "0.25.0"
+    /*
+    version = "0.25.0"
+    */
+    version = "~> 0.25"
+  }
+}
+HCL
+run_resolve
+assert_eq "rb18 commented pins do not hide a live range" "false" "$(out_value cache-enabled)"
+
+# rb19 single-line and unformatted module blocks, several run blocks per file
+pinned_root_fixture
+write_tf "mods/wrap/main.tf" <<'TF'
+module "label" {
+  source  = "cloudposse/label/null"
+  version = "0.25.0"
+}
+TF
+write_tf "root/tests/unit.tftest.hcl" <<'HCL'
+run "one" {
+  module { source = "../mods/wrap" }
+}
+run "two" {
+module {
+source="cloudposse/label/null"
+version="0.25.0"
+}
+}
+run "three" {
+  command = plan
+}
+HCL
+export input_test_directory="tests"
+run_test_walk "root" "tests"
+assert_log_has "rb19 a single-line module block is read" "$(printf 'test.tests.unit.one\t../mods/wrap\t')"
+assert_log_has "rb19 an unformatted module block is read" \
+  "$(printf 'test.tests.unit.two\tcloudposse/label/null\t0.25.0')"
+assert_eq "rb19 a run block without a module contributes nothing" "3" "$(grep -c '^test\.' "${STEP_LOG}")"
+run_resolve
+assert_eq "rb19 and the root is cached" "true" "$(out_value cache-enabled)"
+assert_log_has "rb19 with the .tf, the run-block and the walked module counted" "3 reachable remote module(s)"
+
+# rb20 a local run-block source escaping the workspace is not walked
+setup_workspace
+write_tf "tests/unit.tftest.hcl" <<'HCL'
+run "escape" {
+  module {
+    source = "../../../../../../../../elsewhere"
+  }
+}
+HCL
+export input_project_dir="."
+export input_test_directory="tests"
+run_resolve
+assert_eq "rb20 an escaping run-block source is not cached" "false" "$(out_value cache-enabled)"
+assert_log_has "rb20 and is reported" "resolves outside the workspace"
+
+# rb21 the step still exits 0 and emits every output with test files read
+assert_eq "rb21 step exits 0" "0" "${LAST_EXIT}"

@@ -165,3 +165,16 @@ assert_eq "t45 the root-level module tree is pruned" \
   "0" "$(count_git_entries './.terraform/modules')"
 assert "t45 and the repository's own .git still survives" \
   test -f "${WORK_DIR}/.git/HEAD"
+
+# t46 run-block module directories live in the same tree and are pruned with it
+setup_workspace
+make_repo_metadata
+mkdir -p "${WORK_DIR}/root/.terraform/modules/test.tests.unit.basic/.git/objects"
+echo 'output "x" { value = 1 }' >"${WORK_DIR}/root/.terraform/modules/test.tests.unit.basic/main.tf"
+echo '{"Modules":[]}' >"${WORK_DIR}/root/.terraform/modules/modules.json"
+export input_cache_paths="root/.terraform/modules"
+run_prune
+assert_eq "t46 a run-block module's git metadata is pruned" \
+  "0" "$(count_git_entries 'root/.terraform/modules')"
+assert "t46 and its sources survive" \
+  test -f "${WORK_DIR}/root/.terraform/modules/test.tests.unit.basic/main.tf"

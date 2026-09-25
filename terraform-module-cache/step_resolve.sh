@@ -22,6 +22,10 @@
 #   input_environment          - Matrix environment name, for the key.
 #
 # Optional environment variables:
+#   input_test_directory - When non-empty, the run-block module declarations of
+#                          every test file terraform loads for each directory
+#                          ('<dir>/*.tftest.hcl', '<dir>/<this>/*.tftest.hcl')
+#                          join its reachable set. Empty: test files are not read.
 #   RUNNER_OS - Lowercased into the key. Defaults to 'linux'.
 #
 
@@ -51,8 +55,8 @@ function _collect_dirs {
 
 function main {
   local dirs_file decls_file digest_file excluded_file paths_file
-  local dir abs mutable_found dot_path src ver verdict
-  local digest key env_slug included_count
+  local dir abs mutable_found dot_path src ver verdict unreadable remote_count
+  local digest key env_slug included_count test_dir=''
 
   dirs_file="$(mktemp)"
   decls_file="$(mktemp)"
@@ -62,6 +66,11 @@ function main {
   : >"${excluded_file}"
 
   _collect_dirs "${dirs_file}"
+
+  if [ -n "${input_test_directory}" ]; then
+    test_dir="$(normalize-dir "${input_test_directory}")"
+    log-info "reading the run-block module declarations of test files, test directory '${test_dir}'"
+  fi
 
   included_count=0
   while IFS= read -r dir; do
@@ -80,25 +89,44 @@ function main {
     reset-walk-state
     : >"${decls_file}"
     walk-remote-modules "${abs}" >"${decls_file}"
+    # Init installs the run-block modules of every test file in the root into
+    # the same '.terraform/modules', whatever '-filter' later names, so they are
+    # part of what this directory's tree holds (Terraform-tests.md P37).
+    if [ -n "${test_dir}" ]; then
+      walk-test-run-modules "${abs}" "${test_dir}" >>"${decls_file}"
+    fi
 
-    if [ ! -s "${decls_file}" ]; then
-      log-info "no remote modules reachable, nothing to cache"
-      echo "${dir}: no remote modules reachable" >>"${excluded_file}"
+    # An empty source is the test-file reader saying it could not read a
+    # declaration. Guessing is the unsafe direction (§4.5.1), so it excludes.
+    unreadable="$(awk -F'\t' '$2 == "" { print $1; exit }' "${decls_file}")"
+    if [ -n "${unreadable}" ]; then
+      log-warn "test-file module declaration '${unreadable}' could not be read, excluding"
+      echo "${dir}: test-file module declaration '${unreadable}' could not be read" >>"${excluded_file}"
       end-group
       continue
     fi
 
     # Any mutable source anywhere in the reachable set disqualifies the whole
-    # directory. It then inits exactly as it does today (§3).
+    # directory. It then inits exactly as it does today (§3). Local lines, which
+    # only the run-block declarations contribute, count towards neither.
     mutable_found=''
+    remote_count=0
     while IFS=$'\t' read -r dot_path src ver; do
       [ -z "${dot_path}" ] && continue
       verdict="$(classify-source config "${src}" "${ver}")"
-      if [ "${verdict}" == 'mutable' ]; then
+      [ "${verdict}" == 'local' ] && continue
+      remote_count=$((remote_count + 1))
+      if [ "${verdict}" == 'mutable' ] && [ -z "${mutable_found}" ]; then
         mutable_found="${dot_path} (${src}${ver:+ ${ver}})"
-        break
       fi
     done <"${decls_file}"
+
+    if [ "${remote_count}" -eq 0 ]; then
+      log-info "no remote modules reachable, nothing to cache"
+      echo "${dir}: no remote modules reachable" >>"${excluded_file}"
+      end-group
+      continue
+    fi
 
     if [ -n "${mutable_found}" ]; then
       log-warn "reachable module '${mutable_found}' can move, excluding"
@@ -107,7 +135,7 @@ function main {
       continue
     fi
 
-    log-info "included, $(wc -l <"${decls_file}") reachable remote module(s)"
+    log-info "included, ${remote_count} reachable remote module(s)"
     echo "${dir}/.terraform/modules" >>"${paths_file}"
     # Digest input: the declarations, not the file contents. Editing a
     # resource block must not move the key; bumping a pin must (§4.4.1).

@@ -6,8 +6,10 @@ description: |
   Invoked four times per job, selected by the 'phase' input:
 
     resolve  - before the cache restore. Audits every init directory, follows
-               local module sources through the repository, and emits the cache
-               paths and the one cache key used by BOTH the restore and the save.
+               local module sources through the repository (and, with
+               'test-directory', the run-block modules of its test files), and
+               emits the cache paths and the one cache key used by BOTH the
+               restore and the save.
     snapshot - after the restore, before init. Copies the restored manifests
                aside so drift can be detected.
     verify   - after init, before the save. Warns when the module set changed
@@ -40,6 +42,24 @@ inputs:
     description: |
       resolve: the matrix environment name. Forms part of the cache key, since
       each environment has its own project-dir.
+    required: false
+    default: ""
+  test-directory:
+    description: |
+      resolve: when non-empty, the module blocks of the 'run' blocks of every
+      test file terraform loads for each directory join its reachable set:
+      '<dir>/*.tftest.hcl' and '<dir>/<test-directory>/*.tftest.hcl', the files
+      'terraform init' installs run-block modules for whatever '-filter' later
+      names. Pass what 'terraform test' gets as '-test-directory', normally
+      'tests'. The action reads the files itself rather than being handed the
+      declarations, so what it audits is exactly what init installs.
+      A registry declaration goes through the version classifier, so a range
+      keeps the directory uncached; a local one is walked relative to the
+      directory (not the test file); every declaration enters the key's digest,
+      under terraform's own module key ('test.tests.<file>.<run>'). A
+      declaration the reader cannot read - a module block with no literal
+      source, or any '*.tftest.json' file - keeps the directory uncached.
+      Empty (the default): test files are not read, exactly as before.
     required: false
     default: ""
   cache-paths:
@@ -93,6 +113,7 @@ runs:
       env:
         input_project_dir: ${{ inputs.project-dir }}
         input_environment: ${{ inputs.environment }}
+        input_test_directory: ${{ inputs.test-directory }}
       run: |
         # Audit the init directories and emit the module cache paths and key
         #

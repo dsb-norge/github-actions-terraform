@@ -265,3 +265,55 @@ export input_cache_paths="env/.terraform/modules"
 export input_cache_hit="false"
 run_verify
 assert_eq "v05 a root-only manifest is safe" "true" "$(out_value safe-to-save)"
+
+# ---------------------------------------------------------------------------
+# Run-block modules in the manifest
+#
+# Terraform records a test file's run-block modules in the root's own
+# modules.json, keyed 'test.<file>.<run>[.<child>]' (verified with 1.16.2).
+# The gate classifies by Source, so the keys need nothing special; these pin
+# that a manifest shaped like terraform's is read that way.
+# ---------------------------------------------------------------------------
+
+TEST_RUN_MANIFEST='{"Modules":[
+  {"Key":"","Source":"","Dir":"."},
+  {"Key":"test.tests.unit-net.basic","Source":"registry.terraform.io/cloudposse/label/null","Version":"0.25.0","Dir":".terraform/modules/test.tests.unit-net.basic"},
+  {"Key":"test.tests.unit-net.wrapped","Source":"../mods/wrap","Dir":"../mods/wrap"},
+  {"Key":"test.tests.unit-net.wrapped.label","Source":"registry.terraform.io/cloudposse/label/null","Version":"0.25.0","Dir":".terraform/modules/test.tests.unit-net.wrapped.label"},
+  {"Key":"test.top.x","Source":"registry.terraform.io/cloudposse/label/null","Version":"0.25.0","Dir":".terraform/modules/test.top.x"}
+]}'
+
+# v06 registry, local and walked run-block modules are safe to save
+setup_workspace
+write_manifest "root" <<<"${TEST_RUN_MANIFEST}"
+export input_cache_paths="root/.terraform/modules"
+export input_cache_hit="false"
+run_verify
+assert_eq "v06 a manifest of run-block modules is safe to save" "true" "$(out_value safe-to-save)"
+
+# v07 a branch ref reached through a local run-block source refuses the save
+setup_workspace
+write_manifest "root" <<'JSON'
+{"Modules":[
+  {"Key":"","Source":"","Dir":"."},
+  {"Key":"test.tests.unit.wrapped","Source":"../mods/wrap","Dir":"../mods/wrap"},
+  {"Key":"test.tests.unit.wrapped.floating","Source":"git::https://example.com/m.git?ref=main","Dir":".terraform/modules/test.tests.unit.wrapped.floating"}
+]}
+JSON
+export input_cache_paths="root/.terraform/modules"
+export input_cache_hit="false"
+run_verify
+assert_eq "v07 a moving source under a run-block key refuses the save" "false" "$(out_value safe-to-save)"
+assert_log_has "v07 and the warning names the run-block key" "test.tests.unit.wrapped.floating"
+
+# v08 an exact hit whose run-block entries did not change raises no warning,
+# and a new run block under an unchanged key does
+hit_fixture "${TEST_RUN_MANIFEST}"
+export input_cache_paths="env/.terraform/modules"
+run_verify
+assert_log_lacks "v08 unchanged run-block entries are not drift" "digest is incomplete"
+hit_fixture "${TEST_RUN_MANIFEST}"
+jq '.Modules += [{"Key":"test.tests.new.basic","Source":"registry.terraform.io/cloudposse/label/null","Version":"0.25.0","Dir":".terraform/modules/test.tests.new.basic"}]' \
+  <<<"${TEST_RUN_MANIFEST}" >"${WORK_DIR}/env/.terraform/modules/modules.json"
+run_verify
+assert_log_has "v08 a run-block entry added under an unchanged key is drift" "digest is incomplete for 'env'"

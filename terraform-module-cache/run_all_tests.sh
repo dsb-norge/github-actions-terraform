@@ -44,7 +44,7 @@ setup_workspace() {
   STEP_LOG=$(mktemp)
 
   # Clear inputs so a value never leaks from the previous test.
-  unset input_project_dir input_additional_dirs_json input_environment
+  unset input_project_dir input_additional_dirs_json input_environment input_test_directory
   unset input_cache_paths input_cache_hit input_snapshot_dir
   export input_additional_dirs_json='[]'
   export input_environment='test-env'
