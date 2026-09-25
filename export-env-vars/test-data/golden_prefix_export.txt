@@ -1,0 +1,35 @@
+exit: 0
+--- GITHUB_ENV ---
+ARM_CLIENT_ID<<"<DELIM-1>"
+secret-arm-client-id
+"<DELIM-1>"
+ARM_TENANT_ID<<"<DELIM-2>"
+secret-arm-tenant-id
+"<DELIM-2>"
+TF_VAR_admin_password<<"<DELIM-3>"
+secret-tf-var-password
+"<DELIM-3>"
+--- log ---
+export-env-vars: 'helpers.sh' loaded.
+export-env-vars: 'helpers_additional.sh' loaded.
+::group::export-env-vars: input 'extra-envs'
+{}
+::endgroup::
+::group::export-env-vars: input 'extra-envs-from-secrets'
+{}
+::endgroup::
+::group::export-env-vars: input 'export-secrets-with-prefixes-json'
+["ARM_", "TF_VAR_"]
+::endgroup::
+::group::export-env-vars: Making secrets with a listed name prefix available to subsequent actions
+export-env-vars: Secret 'ARM_CLIENT_ID' has a listed name prefix, reading value ...
+export-env-vars: Exporting environment variable 'ARM_CLIENT_ID'
+export-env-vars: Secret 'ARM_TENANT_ID' has a listed name prefix, reading value ...
+export-env-vars: Exporting environment variable 'ARM_TENANT_ID'
+export-env-vars: Secret 'TF_VAR_admin_password' has a listed name prefix, reading value ...
+export-env-vars: Exporting environment variable 'TF_VAR_admin_password'
+::endgroup::
+::group::export-env-vars: Making environment variables available to subsequent actions
+::endgroup::
+::group::export-env-vars: Making environment variables with secrets available to subsequent actions
+::endgroup::

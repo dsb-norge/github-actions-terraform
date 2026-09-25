@@ -50,6 +50,9 @@ setup() {
   EXTRA_ENVS='{}'
   EXTRA_SECRETS='{}'
   SECRETS='{}'
+  # What GitHub substitutes for an input the caller does not pass: its
+  # declared default. Every golden runs with it.
+  PREFIXES='[]'
 }
 
 # run_step — extract the action's step source with the current inputs
@@ -58,12 +61,14 @@ run_step() {
   printf '%s' "${EXTRA_ENVS}" >"${WORK_DIR}/extra-envs.json"
   printf '%s' "${EXTRA_SECRETS}" >"${WORK_DIR}/extra-envs-from-secrets.json"
   printf '%s' "${SECRETS}" >"${WORK_DIR}/secrets.json"
+  printf '%s' "${PREFIXES}" >"${WORK_DIR}/prefixes.json"
 
   python3 "${_this_script_dir}/extract_step_source.py" \
     "${_this_script_dir}/action.yml" export-envs "${WORK_DIR}/step.sh" \
     "inputs.extra-envs=@${WORK_DIR}/extra-envs.json" \
     "inputs.extra-envs-from-secrets=@${WORK_DIR}/extra-envs-from-secrets.json" \
     "inputs.secrets-json=@${WORK_DIR}/secrets.json" \
+    "inputs.export-secrets-with-prefixes-json=@${WORK_DIR}/prefixes.json" \
     "github.action_path=${_this_script_dir}"
 
   bash --noprofile --norc -eo pipefail "${WORK_DIR}/step.sh" >"${OUT_FILE}" 2>&1
@@ -96,6 +101,36 @@ env_file_eq() {
   env_file_has "${var}" || return 1
   actual="$(env_file_value "${var}"; printf 'x')"
   [[ "${actual}" == "${expected}x" ]]
+}
+
+# The variable names in $GITHUB_ENV, one per line, in the order appended.
+env_file_names() {
+  sed -n 's/^\([^<]*\)<<"[0-9a-f]\{20\}"$/\1/p' "${GITHUB_ENV}"
+}
+
+# The effective value of a variable: $GITHUB_ENV is last-wins, so the value of
+# the LAST entry for it.
+env_file_last_eq() {
+  local var="${1}" expected="${2}" actual
+  actual="$(python3 - "${var}" "${GITHUB_ENV}" <<'PY'
+import re
+import sys
+
+name, path = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
+matches = list(re.finditer(
+    r'^%s<<"([^"]+)"\n(.*?)\n"\1"$' % re.escape(name), text, re.S | re.M
+))
+sys.stdout.write(matches[-1].group(2) if matches else "<absent>")
+PY
+printf 'x')"
+  [[ "${actual}" == "${expected}x" ]]
+}
+
+# The names appended, in order, equal the expected list (one per argument).
+env_file_names_are() {
+  [[ "$(env_file_names)" == "$(printf '%s\n' "$@" | sed '/^$/d')" ]]
 }
 
 # Normalised transcript of the last run: exit code, $GITHUB_ENV, log.
@@ -462,6 +497,181 @@ setup
 EXTRA_ENVS='["A","B"]'
 run_step
 assert "golden: extra-envs is an array" matches_golden plain_array
+
+# ======================================================================
+# export-secrets-with-prefixes-json — every golden above runs with the
+# declared default '[]', so they double as "the default changes nothing".
+# ======================================================================
+
+# A bag with every kind of near miss for the prefixes ARM_ and TF_VAR_.
+PREFIX_BAG='{
+  "ARM_CLIENT_ID": "secret-arm-client-id",
+  "ARM_TENANT_ID": "secret-arm-tenant-id",
+  "TF_VAR_admin_password": "secret-tf-var-password",
+  "AZURE_CLIENT_ID": "secret-azure-client-id",
+  "REPO_ARM_CLIENT_ID": "secret-repo-arm",
+  "TF_VARIABLE": "secret-tf-variable",
+  "arm_lower_case": "secret-arm-lower",
+  "Arm_Mixed_Case": "secret-arm-mixed",
+  "github_token": "ghs_secret-token"
+}'
+
+# Every value in PREFIX_BAG starts with 'secret-' or 'ghs_secret-', so a
+# single grep catches any of them leaking into the log.
+no_secret_value_logged() {
+  ! grep -q 'secret-' "${OUT_FILE}"
+}
+
+# Selection: exactly the names that start with a listed prefix.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["ARM_", "TF_VAR_"]'
+run_step
+assert "prefix: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "prefix: exactly the names with a listed prefix are exported, in name order" \
+  env_file_names_are ARM_CLIENT_ID ARM_TENANT_ID TF_VAR_admin_password
+assert "prefix: each is exported under its own name with its own value" \
+  env_file_eq ARM_CLIENT_ID 'secret-arm-client-id'
+assert "prefix: a TF_VAR_ secret keeps its lower-case name" \
+  env_file_eq TF_VAR_admin_password 'secret-tf-var-password'
+assert "prefix: a prefix inside a name does not select it (REPO_ARM_...)" \
+  bash -c "! grep -q '^REPO_ARM_CLIENT_ID<<' '${GITHUB_ENV}'"
+assert "prefix: 'TF_VAR_' does not select 'TF_VARIABLE'" \
+  bash -c "! grep -q '^TF_VARIABLE<<' '${GITHUB_ENV}'"
+assert "prefix: the names are logged" \
+  grep -q "Exporting environment variable 'ARM_TENANT_ID'" "${OUT_FILE}"
+assert "prefix: no secret value is logged" no_secret_value_logged
+assert "prefix: no value is masked, as for the mapped secrets" \
+  bash -c "! grep -q '::add-mask::' '${OUT_FILE}'"
+assert "golden: prefix export" matches_golden prefix_export
+
+# Case-sensitive, both ways.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["ARM_"]'
+run_step
+assert "case: upper-case prefix selects only upper-case names" \
+  env_file_names_are ARM_CLIENT_ID ARM_TENANT_ID
+
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["arm_"]'
+run_step
+assert "case: lower-case prefix selects only lower-case names" \
+  env_file_names_are arm_lower_case
+
+# Ordering: the prefix export comes first, so the explicit mapping overrides it.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["ARM_"]'
+EXTRA_SECRETS='{"ARM_CLIENT_ID":"AZURE_CLIENT_ID"}'
+run_step
+assert "override by mapping: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "override by mapping: prefix entries first, mapped entry appended last" \
+  env_file_names_are ARM_CLIENT_ID ARM_TENANT_ID ARM_CLIENT_ID
+assert "override by mapping: the mapped secret's value wins" \
+  env_file_last_eq ARM_CLIENT_ID 'secret-azure-client-id'
+
+# ... and the plain variables override it too.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["ARM_", "TF_VAR_"]'
+EXTRA_ENVS='{"TF_VAR_admin_password":"plain-override","ARM_USE_OIDC":"true"}'
+run_step
+assert "override by plain: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "override by plain: prefix entries first, plain entries after" \
+  env_file_names_are ARM_CLIENT_ID ARM_TENANT_ID TF_VAR_admin_password ARM_USE_OIDC TF_VAR_admin_password
+assert "override by plain: the plain value wins" \
+  env_file_last_eq TF_VAR_admin_password 'plain-override'
+
+# All three sources on one key: plain, then mapped (the existing order), both
+# after the prefix export.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["ARM_"]'
+EXTRA_ENVS='{"ARM_TENANT_ID":"plain-tenant"}'
+EXTRA_SECRETS='{"ARM_TENANT_ID":"AZURE_CLIENT_ID"}'
+run_step
+assert "override by both: appended prefix, plain, mapped" \
+  env_file_names_are ARM_CLIENT_ID ARM_TENANT_ID ARM_TENANT_ID ARM_TENANT_ID
+assert "override by both: the mapped value wins, as it does over plain today" \
+  env_file_last_eq ARM_TENANT_ID 'secret-azure-client-id'
+assert "golden: prefix export overridden by both maps" matches_golden prefix_overridden
+
+# A multi-line secret round-trips through the prefix export.
+setup
+SECRETS='{"TF_VAR_pem":"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"}'
+PREFIXES='["TF_VAR_"]'
+run_step
+assert "prefix: a multi-line secret value round-trips" \
+  env_file_eq TF_VAR_pem '-----BEGIN PRIVATE KEY-----
+MIIB
+-----END PRIVATE KEY-----'
+
+# Prefixes that match nothing: nothing exported, and the log says so.
+setup
+SECRETS="${PREFIX_BAG}"
+PREFIXES='["NO_SUCH_"]'
+run_step
+assert "no match: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "no match: nothing is written to GITHUB_ENV" test ! -s "${GITHUB_ENV}"
+assert "no match: the log says so" grep -q "No secret has a listed name prefix." "${OUT_FILE}"
+
+# The empty list does nothing, and says nothing: same log as without prefixes.
+setup
+SECRETS="${PREFIX_BAG}"
+EXTRA_ENVS='{"PLAIN":"p"}'
+PREFIXES='[]'
+run_step
+_empty_list_log="$(mktemp)"
+cp "${OUT_FILE}" "${_empty_list_log}"
+assert "empty list: only the plain variable is exported" env_file_names_are PLAIN
+assert "empty list: the input is not mentioned in the log" \
+  bash -c "! grep -q 'prefix' '${OUT_FILE}'"
+
+# An expression that evaluates to '' arrives as '', not as the default.
+setup
+SECRETS="${PREFIX_BAG}"
+EXTRA_ENVS='{"PLAIN":"p"}'
+PREFIXES=''
+run_step
+assert "empty string: treated as the default" env_file_names_are PLAIN
+assert "empty string: same log as the empty list" \
+  cmp -s "${OUT_FILE}" "${_empty_list_log}"
+rm -f "${_empty_list_log}"
+
+# Invalid prefix lists fail the step before ANYTHING is exported, the plain
+# variables included.
+prefix_error_case() {
+  local label="${1}" value="${2}" message="${3}"
+  setup
+  SECRETS="${PREFIX_BAG}"
+  EXTRA_ENVS='{"PLAIN":"p"}'
+  EXTRA_SECRETS='{"MAPPED":"AZURE_CLIENT_ID"}'
+  PREFIXES="${value}"
+  run_step
+  assert "invalid (${label}): the step fails" test "${LAST_EXIT}" -ne 0
+  assert "invalid (${label}): nothing is written to GITHUB_ENV" test ! -s "${GITHUB_ENV}"
+  assert "invalid (${label}): the error names the input and the problem" \
+    grep -qF "ERROR: export-env-vars: input 'export-secrets-with-prefixes-json' ${message}" "${OUT_FILE}"
+}
+prefix_error_case "object" '{"ARM_":true}' "must be a JSON array of prefixes, not object"
+prefix_error_case "string" '"ARM_"' "must be a JSON array of prefixes, not string"
+prefix_error_case "null" 'null' "must be a JSON array of prefixes, not null"
+prefix_error_case "number" '1' "must be a JSON array of prefixes, not number"
+prefix_error_case "not JSON" 'ARM_,TF_VAR_' "is not valid JSON"
+prefix_error_case "two values" '["ARM_"] ["TF_VAR_"]' "must hold exactly one JSON array"
+prefix_error_case "non-string element" '["ARM_", 1]' "must hold non-empty strings only"
+prefix_error_case "empty prefix" '[""]' "must hold non-empty strings only"
+
+# A bag that is not an object cannot be exported from by prefix.
+setup
+SECRETS='null'
+PREFIXES='["ARM_"]'
+run_step
+assert "bag not an object: the step fails" test "${LAST_EXIT}" -ne 0
+assert "bag not an object: the error says so" \
+  grep -qF "input 'secrets-json' is not a JSON object" "${OUT_FILE}"
 
 # ----------------------------------------------------------------------
 # Summary

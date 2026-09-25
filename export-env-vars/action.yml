@@ -30,6 +30,20 @@ inputs:
             secrets-json: ?{{ toJSON(secrets) }}
             ...
     required: true
+  export-secrets-with-prefixes-json:
+    description: |
+      JSON array of secret name prefixes, for example '["ARM_", "TF_VAR_"]'.
+
+      Every secret in 'secrets-json' whose name starts with one of the prefixes
+      (case-sensitive) is exported as an environment variable of the same name.
+      This happens before 'extra-envs' and 'extra-envs-from-secrets' are
+      applied, so both of those override a variable exported this way.
+
+      An empty prefix, a non-string element or a value that is not a JSON
+      array fails the step before anything is exported. The default, '[]',
+      exports nothing.
+    required: false
+    default: "[]"
 runs:
   using: "composite"
   steps:
@@ -56,6 +70,10 @@ runs:
         input_secrets_json=$(cat <<'EXPORT_ENV_VARS_SECRETS_JSON'
         ${{ inputs.secrets-json }}
         EXPORT_ENV_VARS_SECRETS_JSON
+        )
+        input_export_secrets_with_prefixes_json=$(cat <<'EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON'
+        ${{ inputs.export-secrets-with-prefixes-json }}
+        EXPORT_ENV_VARS_EXPORT_SECRETS_WITH_PREFIXES_JSON
         )
 
         source "${{ github.action_path }}/step_export_envs.sh"

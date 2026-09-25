@@ -31,8 +31,13 @@ input_extra_envs_from_secrets='{
 input_secrets_json='{
   "AZURE_TENANT_ID": "11111111-1111-1111-1111-111111111111",
   "AZURE_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
+  "ARM_SUBSCRIPTION_ID": "33333333-3333-3333-3333-333333333333",
+  "TF_VAR_admin_password": "not-a-real-password",
   "github_token": "ghs_not-a-real-token"
 }'
+
+# An environment lane's prefix export. '[]' (the default) exports nothing.
+input_export_secrets_with_prefixes_json='["ARM_", "TF_VAR_"]'
 
 # Source the main script in a subshell so 'exit' doesn't terminate this
 # runner, under the shell flags the runner uses.
