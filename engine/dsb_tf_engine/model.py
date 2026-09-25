@@ -14,7 +14,8 @@ class DocumentError(Exception):
 
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
 # Present only when the adapter fetched them; absent means "relevance not computed".
-OPTIONAL_KEYS = ("changed_files", "run")
+OPTIONAL_KEYS = ("changed_files", "run", "tests")
+TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
 CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
 PUSH_KEYS = ("created", "forced", "deleted")
 
@@ -42,6 +43,18 @@ def _is_changed_files(value):
             and isinstance(value["error"], (str, type(None))) and isinstance(value["api_head_sha"], (str, type(None)))
             and _is_count(value["count"])
             and isinstance(value["files"], list) and all(isinstance(path, str) for path in value["files"]))
+
+
+def _is_strings(value):
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_tests(value):
+    locks = value.get("environment_locks") if isinstance(value, dict) else None
+    return (isinstance(value, dict) and set(value) == set(TESTS_KEYS) and _is_strings(value["files"])
+            and _is_strings(value["directories_with_tf"]) and isinstance(locks, dict)
+            and all(lock is None or (isinstance(lock, dict) and all(isinstance(v, str) for v in lock.values()))
+                    for lock in locks.values()))
 
 
 def check(document):
@@ -73,6 +86,8 @@ def check(document):
                  "input document: 'event.pull_request' needs the integer 'number', the string 'head_sha' and the "
                  "boolean 'is_fork'")
     _require(isinstance(event.get("action", ""), str), "input document: 'event.action' is not a string")
+    _require(isinstance(event.get("actor", ""), str), "input document: 'event.actor' is not a string")
+    _require(isinstance(caller.get("workflow_name", ""), str), "input document: 'caller.workflow_name' is not a string")
     if "run" in document:
         run = document["run"]
         _require(isinstance(run, dict) and _is_count(run.get("id")) and _is_count(run.get("attempt")),
@@ -93,3 +108,7 @@ def check(document):
         _require(_is_changed_files(document["changed_files"]),
                  "input document: 'changed_files' needs exactly 'available', 'truncated', 'error', 'api_head_sha', "
                  "'count' and 'files', typed as the adapter reports them")
+    if "tests" in document:
+        _require(_is_tests(document["tests"]),
+                 "input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "
+                 "'environment_locks' (a map of lock maps or null)")
