@@ -1224,6 +1224,40 @@ unset TEST_RELEVANCE_FILE
 cleanup_test_dir
 
 # ============================================================================
+# Test R20: The contract - the relevance.json the engine publishes, not a
+# hand-written one. A key the engine renames or drops fails here, where the
+# hand-written files above would stay green.
+# ============================================================================
+engine_relevance() {
+  python3 -I -B "${_this_script_dir}/../engine/tests/relevance_fixture.py" "${1}" "${TEST_RELEVANCE_FILE}"
+}
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+engine_relevance docs-only
+export GITHUB_ACTOR="renovate[bot]"
+run_test "Contract: the engine's docs-only file, an actor every environment allows" "true" \
+  "✅ prod-gh (not affected)" "✅ staging (not affected)" "✅ sandbox (not affected)" \
+  "Environments in relevance file: 3 (0 affected)"
+export GITHUB_ACTOR="dependabot[bot]"
+run_test "Contract: the engine's docs-only file, an actor prod does not allow" "false" \
+  "❌ prod-gh (not affected)" "✅ staging (not affected)"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+engine_relevance one-environment
+run_test "Contract: the engine's one-environment file without the affected environment's metadata" "false" \
+  "❌ staging (affected, no metadata)"
+create_metadata_file "matrix-job-meta-staging.json" "staging"
+export GITHUB_ACTOR="renovate[bot]"
+run_test "Contract: the engine's one-environment file with its metadata" "true" \
+  "✅ prod-gh (not affected)" "✅ sandbox (not affected)" "Environments in relevance file: 3 (1 affected)"
+export GITHUB_ACTOR="dependabot[bot]"
+unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
 # F2 — the step id this action reads by literal name must exist in the
 # reusable workflow (docs/Apply-and-destroy-reporting.md §5.1, P7, F2).
 #
