@@ -226,6 +226,162 @@ assert "Happy path preserves committed file content" \
   cmp -s <(printf '%s' "${ORIG_LOCK_CONTENT}") "${WORK_DIR}/.terraform.lock.hcl"
 
 # --------------------------------------------------------------------------
+# Lock-only mode
+# --------------------------------------------------------------------------
+
+# A working dir with a two-provider lock and no .terraform directory, in
+# lock-only mode. Sets globals as setup_workdir does.
+setup_lock_only() {
+  setup_workdir
+  rm -rf "${WORK_DIR}/.terraform"
+  ORIG_LOCK_CONTENT='provider "registry.terraform.io/hashicorp/random" {
+  version     = "3.9.1"
+  constraints = "~> 3.6"
+  hashes = [
+    "h1:aaa=",
+  ]
+}
+
+provider "registry.terraform.io/other/random" {
+  version = "1.2.3"
+  hashes = [
+    "h1:bbb=",
+  ]
+}
+'
+  printf '%s' "${ORIG_LOCK_CONTENT}" >"${WORK_DIR}/.terraform.lock.hcl"
+  export input_lock_only="true"
+  export input_plugin_cache_directory=""
+  export input_platforms="linux_amd64"
+}
+
+# Install a stub that records its working directory, its arguments and the
+# configuration it was given, then runs the optional snippet $1 in its cwd.
+install_stub_records() {
+  local stub_dir="${RUNNER_TEMP}/stub-bin"
+  mkdir -p "${stub_dir}"
+  STUB_LOG="${RUNNER_TEMP}/stub.log"
+  cat >"${stub_dir}/terraform" <<EOF
+#!/bin/env bash
+{ echo "cwd=\$(pwd)"; echo "args=\$*"; cat versions.tf 2>/dev/null; } >"${STUB_LOG}"
+${1:-}
+exit 0
+EOF
+  chmod +x "${stub_dir}/terraform"
+  export TF_BIN="${stub_dir}/terraform"
+}
+
+# Test 10: lock-only runs without .terraform, outside the working directory
+setup_lock_only
+install_stub_records
+run_step
+assert "Lock-only passes without a .terraform directory" \
+  test "${LAST_EXIT}" -eq 0
+assert "Lock-only sets is-complete=true" \
+  test "$(get_output is-complete)" = "true"
+assert "Lock-only runs terraform outside the working directory" \
+  bash -c '! grep -q "^cwd=${1}$" "${2}"' _ "${WORK_DIR}" "${STUB_LOG}"
+assert "Lock-only requires each locked provider at its locked version" \
+  grep -q 'p1 = { source = "registry.terraform.io/hashicorp/random", version = "3.9.1" }' "${STUB_LOG}"
+assert "Lock-only gives same-type providers of two namespaces distinct local names" \
+  grep -q 'p2 = { source = "registry.terraform.io/other/random", version = "1.2.3" }' "${STUB_LOG}"
+assert "Lock-only without a plugin cache downloads (no -fs-mirror)" \
+  bash -c '! grep -q -- "-fs-mirror" "${1}"' _ "${STUB_LOG}"
+assert "Lock-only passes the platform" \
+  grep -q -- "-platform=linux_amd64" "${STUB_LOG}"
+
+# Test 11: a missing platform hash fails, the committed lock is untouched
+setup_lock_only
+install_stub_records 'sed -i "s/\"h1:aaa=\",/\"h1:aaa=\",\n    \"h1:new=\",/" .terraform.lock.hcl'
+run_step
+assert "Lock-only with a missing hash fails with exit 1" \
+  test "${LAST_EXIT}" -eq 1
+assert "Lock-only with a missing hash sets is-complete=false" \
+  test "$(get_output is-complete)" = "false"
+assert "Lock-only never modifies the committed lock" \
+  cmp -s <(printf '%s' "${ORIG_LOCK_CONTENT}") "${WORK_DIR}/.terraform.lock.hcl"
+assert "Lock-only failure summary shows the missing hash" \
+  grep -q '+    "h1:new=",' "${GITHUB_STEP_SUMMARY}"
+assert "Lock-only failure summary names the working directory" \
+  grep -q "cd ${WORK_DIR}" "${GITHUB_STEP_SUMMARY}"
+
+# Test 12: the rewritten constraints line alone is not a difference
+setup_lock_only
+install_stub_records 'sed -i "s/constraints = \"~> 3.6\"/constraints = \"3.9.1\"/; /version = \"1.2.3\"/a\  constraints = \"1.2.3\"" .terraform.lock.hcl'
+run_step
+assert "Lock-only ignores rewritten and added constraints lines" \
+  test "${LAST_EXIT}" -eq 0
+
+# Test 13: a plugin cache holding every package is used as the mirror
+setup_lock_only
+install_stub_records
+cache="${RUNNER_TEMP}/cache"
+mkdir -p "${cache}/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64" \
+  "${cache}/registry.terraform.io/other/random/1.2.3/linux_amd64"
+input_plugin_cache_directory="${cache}"
+run_step
+assert "Lock-only hashes from a plugin cache that covers every provider" \
+  grep -q -- "-fs-mirror=${cache}" "${STUB_LOG}"
+
+# Test 14: a relative plugin cache path is resolved from the starting directory
+setup_lock_only
+install_stub_records
+mkdir -p "${RUNNER_TEMP}/cache/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64" \
+  "${RUNNER_TEMP}/cache/registry.terraform.io/other/random/1.2.3/linux_amd64"
+input_plugin_cache_directory="cache"
+(cd "${RUNNER_TEMP}" && run_step && echo "${LAST_EXIT}" >"${RUNNER_TEMP}/exit")
+assert "Lock-only resolves a relative plugin cache before changing directory" \
+  grep -q -- "-fs-mirror=${RUNNER_TEMP}/cache" "${STUB_LOG}"
+
+# Test 15: a plugin cache missing one provider is not used
+setup_lock_only
+install_stub_records
+cache="${RUNNER_TEMP}/cache"
+mkdir -p "${cache}/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64"
+input_plugin_cache_directory="${cache}"
+run_step
+assert "Lock-only downloads when the cache lacks a provider" \
+  bash -c '! grep -q -- "-fs-mirror" "${1}"' _ "${STUB_LOG}"
+
+# Test 16: a plugin cache missing one required platform is not used
+setup_lock_only
+install_stub_records
+cache="${RUNNER_TEMP}/cache"
+mkdir -p "${cache}/registry.terraform.io/hashicorp/random/3.9.1/linux_amd64" \
+  "${cache}/registry.terraform.io/other/random/1.2.3/linux_amd64"
+input_plugin_cache_directory="${cache}"
+input_platforms="linux_amd64
+linux_arm64"
+run_step
+assert "Lock-only downloads when the cache lacks a required platform" \
+  bash -c '! grep -q -- "-fs-mirror" "${1}"' _ "${STUB_LOG}"
+
+# Test 17: a lock that records no providers passes without running terraform
+setup_lock_only
+install_stub_fails
+printf '# no providers\n' >"${WORK_DIR}/.terraform.lock.hcl"
+run_step
+assert "Lock-only with no locked providers passes" \
+  test "${LAST_EXIT}" -eq 0
+assert "Lock-only with no locked providers sets is-complete=true" \
+  test "$(get_output is-complete)" = "true"
+
+# Test 18: a terraform failure propagates in lock-only mode too
+setup_lock_only
+install_stub_fails
+run_step
+assert "Lock-only terraform failure propagates exit code" \
+  test "${LAST_EXIT}" -eq 7
+
+# Test 19: lock-only 'false' keeps requiring .terraform
+setup_lock_only
+input_lock_only="false"
+install_stub_noop
+run_step
+assert "lock-only false still requires .terraform" \
+  grep -q "::error title=No .terraform directory" /tmp/test_output.txt
+
+# --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------
 echo ""
