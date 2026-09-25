@@ -16,7 +16,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 0 | Concurrency `queue: max`; apply-reporting invariant, fixtures, contract tests | [#56](https://github.com/dsb-norge/github-actions-terraform/pull/56), [#57](https://github.com/dsb-norge/github-actions-terraform/pull/57) | merged, released in `v0.33` | inherited |
 | 1 | The decision engine: the port behind goldens, the create-matrix adapter, both gates, the Python 3.12 floor tested in CI; `main` becomes the v1 line (internal refs `@v1`) | [#59](https://github.com/dsb-norge/github-actions-terraform/pull/59) | merged 2026-09-24 | yes, `v1` created on it |
 | 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | merged 2026-09-25 | yes |
-| 3 | Terraform tests: the test stage, lanes, environments, provider sets, summary | — (branch `feat/terraform-tests`: the spec updated with the open-question probes) | paused before implementation, pending the Entra and Azure questions of §3 | no |
+| 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | draft | no |
 | 4 | Dispatch and trigger events; the `goals-granted` gate switch | — | outstanding | no |
 | 5 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
 | 6 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
@@ -36,7 +36,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 |---|---|---|---|---|
 | Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3, 5 and 6 come with steps 3-5 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
-| Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | no | probes only (see §3) | no |
+| Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); the test-bed validation pending (§4) | yes |
 | Dispatch-and-triggers.md | yes | no | dispatch inputs inside a called workflow, `schedule` actor | no |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
