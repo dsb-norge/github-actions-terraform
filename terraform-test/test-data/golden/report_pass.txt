@@ -1,0 +1,11 @@
+Terraform test: modules/net/tests/unit-pass.tftest.hcl
+Working directory: modules/net
+Result: ✅ pass · 2 passed · 0 failed · 0 errored · 0 skipped · ⏱ 0:01
+Summary: Success! 2 passed, 0 failed.
+
+Run blocks:
+  pass   plans_with_default_prefix (0.47s)
+  pass   applies_with_custom_prefix (0.45s)
+
+Diagnostics:
+  (none)

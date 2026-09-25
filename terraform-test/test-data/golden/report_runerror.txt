@@ -1,0 +1,14 @@
+Terraform test: modules/net/tests/unit-runerror.tftest.hcl
+Working directory: modules/net
+Result: ❌ error (run) · 1 passed · 0 failed · 1 errored · 1 skipped · ⏱ 0:00
+Summary: Failure! 1 passed, 1 failed, 1 skipped.
+A run block errored; later run blocks were skipped.
+
+Run blocks:
+  pass   first_passes (0.17s)
+  error  postcondition_errors (0.1s)
+  skip   after_error
+
+Diagnostics:
+  [postcondition_errors] modules/net/main.tf:20: Resource postcondition failed
+    prefix must not be boom

@@ -5,6 +5,7 @@
 # terraform binary of the test suite, replaying a JSON log captured from a
 # real Terraform. Pass another fixture name (test-data/terraform-1.16.2/) as
 # the first argument, e.g. 'fail.json' or 'runerror.json'.
+#   bash run_local_step_run_tests.sh [fixture]
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -38,12 +39,35 @@ if [ "$(jq -r 'select(.type == "test_summary") | .test_summary.status' "${FAKE_T
   export FAKE_TF_EXIT=1
 fi
 
-# Input variables (match what action.yml would export)
-export input_test_file="unit-pass.tftest.hcl"
+# Input variables (match what action.yml would export). The fixtures were
+# captured from a module root with its tests/ directory.
+mkdir -p "${GITHUB_WORKSPACE}/modules/net"
+export input_test_file="tests/unit-pass.tftest.hcl"
+case "${_fixture}" in
+  fail.json) input_test_file="tests/unit-fail.tftest.hcl" ;;
+  runerror.json) input_test_file="tests/unit-runerror.tftest.hcl" ;;
+  fileerror.json) input_test_file="tests/unit-fileerror.tftest.hcl" ;;
+  unknownprov.json) input_test_file="tests/unit-unknownprov.tftest.hcl" ;;
+  filtermiss.json) input_test_file="tests/nosuch.tftest.hcl" ;;
+  emptyroot-mock.json | modnotinstalled.json) input_test_file="tests/unit-mod.tftest.hcl" ;;
+esac
+export input_working_directory="modules/net"
+export input_junit="true"
+export input_slug="modules-net--local"
+export input_status_credentials=""
+export input_status_lock=""
+export input_status_init="success"
+export input_environments_lock_file="envs/prod/.terraform.lock.hcl"
+
+# The lock init would have written, and the environment lock it was copied from
+cp "${_this_script_dir}/test-data/terraform-1.16.2/written.lock.hcl" "${GITHUB_WORKSPACE}/modules/net/.terraform.lock.hcl"
+mkdir -p "${GITHUB_WORKSPACE}/envs/prod"
+cp "${_this_script_dir}/test-data/terraform-1.16.2/copied.lock.hcl" "${GITHUB_WORKSPACE}/envs/prod/.terraform.lock.hcl"
 
 # Source the step in a subshell so 'exit' doesn't terminate this runner
 (
   cd "${GITHUB_WORKSPACE}" || exit 99
+  set -eo pipefail
   set -o allexport
   source "${_this_script_dir}/step_run_tests.sh"
 )
@@ -56,4 +80,8 @@ echo "GitHub Actions Outputs (GITHUB_OUTPUT):"
 echo "========================================"
 cat "${GITHUB_OUTPUT}"
 echo ""
+echo "========================================"
+echo "Step summary:"
+echo "========================================"
+cat "${GITHUB_STEP_SUMMARY}"
 echo "Files are kept under ${_tmp}"

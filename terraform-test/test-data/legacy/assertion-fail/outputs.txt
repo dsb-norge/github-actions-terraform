@@ -1,4 +1,0 @@
-exit-code='1'
-json='<WORKSPACE>/424242-unit-fail.tftest.hcl-<TIMESTAMP>-test-results.json'
-report='<WORKSPACE>/424242-unit-fail.tftest.hcl-<TIMESTAMP>-test-report.txt'
-summary='"Failure! 1 passed, 1 failed."'

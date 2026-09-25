@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?><testsuites>
+  <testsuite name="tests/unit-pass.tftest.hcl" tests="2" skipped="0" failures="0" errors="0">
+    <testcase name="plans_with_default_prefix" classname="tests/unit-pass.tftest.hcl" time="0.467486426" timestamp="2026-09-25T17:07:36Z"></testcase>
+    <testcase name="applies_with_custom_prefix" classname="tests/unit-pass.tftest.hcl" time="0.451689805" timestamp="2026-09-25T17:07:37Z"></testcase>
+  </testsuite>
+</testsuites>
