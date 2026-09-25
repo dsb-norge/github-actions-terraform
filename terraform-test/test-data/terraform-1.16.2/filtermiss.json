@@ -1,0 +1,4 @@
+{"@level":"info","@message":"Terraform 1.16.2","@module":"terraform.ui","@timestamp":"2026-09-25T18:58:10.010365+02:00","terraform":"1.16.2","type":"version","ui":"1.3"}
+{"@level":"info","@message":"Found 0 files and 0 run blocks","@module":"terraform.ui","@timestamp":"2026-09-25T18:58:10.041209+02:00","test_abstract":{},"type":"test_abstract"}
+{"@level":"info","@message":"Success! 0 passed, 0 failed.","@module":"terraform.ui","@timestamp":"2026-09-25T18:58:10.041323+02:00","test_summary":{"status":"pass","passed":0,"failed":0,"errored":0,"skipped":0},"type":"test_summary"}
+{"@level":"warn","@message":"Warning: Unknown test file","@module":"terraform.ui","@timestamp":"2026-09-25T18:58:10.041462+02:00","diagnostic":{"severity":"warning","summary":"Unknown test file","detail":"The specified test file, tests/nosuch.tftest.hcl, could not be found."},"type":"diagnostic"}

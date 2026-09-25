@@ -1,0 +1,12 @@
+Test result for file: unit-fail.tftest.hcl
+overall result: failure
+exit code: -1
+ 
+output: 
+Test: "prefix_is_wrong" -----> "fail" ✅ 
+Test: "still_passes" -----> "pass" ✅ 
+
+
+Test summary for file: "Failure! 1 passed, 1 failed."
+====================================================================================================
+
