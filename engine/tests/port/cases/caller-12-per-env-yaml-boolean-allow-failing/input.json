@@ -17,8 +17,18 @@
     "id": 4711
   },
   "schema_version": 1,
+  "tests": {
+    "directories_with_tf": [],
+    "environment_locks": {
+      "envs/env-a": null,
+      "envs/env-b": null,
+      "envs/env-c": null
+    },
+    "files": []
+  },
   "workflow_inputs": {
     "add-pr-comment": true,
+    "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
     "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/a\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000002\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000003\" # comment\n- environment: \"env-b\"\n  runs-on: \"runner-b\"\n  pr-comment-group: \"group-a\"\n  allow-failing-terraform-operations: true # comment\n  url: https://example.com/b\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000004\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000005\" # comment\n- environment: \"env-c\"\n  runs-on: \"runner-c\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/c\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000006\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000007\" # comment\n",
@@ -37,6 +47,11 @@
     "pr-comment-group": "",
     "runs-on": "ubuntu-latest",
     "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./modules/mod-a\"\n- \"./modules/mod-b\"\n- \"./modules/mod-c\"\n- \"./modules/mod-d\"\n- \"./modules/mod-e\"\n- \"./modules/mod-f\"\n",
+    "terraform-test-enabled": true,
+    "terraform-test-exclude-paths-yml": "",
+    "terraform-test-lanes-yml": "",
+    "terraform-test-runs-on": "ubuntu-latest",
+    "terraform-test-timeout-minutes": 30,
     "terraform-version": "1.14.x",
     "tflint-version": "v0.61.0",
     "verify-lock-file": true
@@ -155,6 +170,14 @@
           "./modules/mod-e",
           "./modules/mod-f"
         ]
+      },
+      "terraform-test-exclude-paths-yml": {
+        "ok": true,
+        "value": null
+      },
+      "terraform-test-lanes-yml": {
+        "ok": true,
+        "value": null
       }
     }
   }

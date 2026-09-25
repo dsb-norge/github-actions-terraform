@@ -15,8 +15,16 @@
     "id": 4711
   },
   "schema_version": 1,
+  "tests": {
+    "directories_with_tf": [],
+    "environment_locks": {
+      "envs/env-a": null
+    },
+    "files": []
+  },
   "workflow_inputs": {
     "add-pr-comment": true,
+    "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
     "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/a\"",
@@ -35,6 +43,11 @@
     "pr-comment-group": "",
     "runs-on": "ubuntu-latest",
     "terraform-init-additional-dirs-yml": "- \"./main\"\n",
+    "terraform-test-enabled": true,
+    "terraform-test-exclude-paths-yml": "",
+    "terraform-test-lanes-yml": "",
+    "terraform-test-runs-on": "ubuntu-latest",
+    "terraform-test-timeout-minutes": 30,
     "terraform-version": "1.15.x",
     "tflint-version": "v0.63.1",
     "verify-lock-file": true
@@ -103,6 +116,14 @@
         "value": [
           "./main"
         ]
+      },
+      "terraform-test-exclude-paths-yml": {
+        "ok": true,
+        "value": null
+      },
+      "terraform-test-lanes-yml": {
+        "ok": true,
+        "value": null
       }
     }
   }

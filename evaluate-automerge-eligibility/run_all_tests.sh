@@ -1680,14 +1680,16 @@ if "seed-pr-comments.result" in condition:
 conclusion = jobs["conclusion"]
 if str(conclusion.get("if")).strip() != "always()":
     problems.append(f"conclusion's if is {conclusion.get('if')!r}, expected always()")
-if conclusion.get("needs") != ["create-matrix", "terraform-ci-cd"]:
-    problems.append(f"conclusion needs {conclusion.get('needs')}, expected [create-matrix, terraform-ci-cd]")
+if conclusion.get("needs") != ["create-matrix", "terraform-ci-cd", "terraform-test"]:
+    problems.append(f"conclusion needs {conclusion.get('needs')}, expected [create-matrix, terraform-ci-cd, terraform-test]")
 steps = conclusion.get("steps", [])
 env = steps[0].get("env", {}) if steps else {}
 expected_env = {
     "CREATE_MATRIX_RESULT": "${{ needs.create-matrix.result }}",
     "AFFECTED_COUNT": "${{ needs.create-matrix.outputs.affected-count }}",
     "ENVIRONMENTS_RESULT": "${{ needs.terraform-ci-cd.result }}",
+    "TESTS_ACTIVE": "${{ needs.create-matrix.outputs.tests-active }}",
+    "TESTS_RESULT": "${{ needs.terraform-test.result }}",
 }
 for name, value in expected_env.items():
     if env.get(name) != value:
@@ -1710,32 +1712,40 @@ for name, job in jobs.items():
             downloads += 1
             if step.get("continue-on-error") is not True:
                 problems.append(f"{name}: the relevance download is not continue-on-error")
-if downloads != 4:
-    problems.append(f"{downloads} relevance downloads, expected the seed, the aggregator, the run summary and automerge")
+if downloads != 5:
+    problems.append(f"{downloads} relevance downloads, expected the seed, the aggregator, the run summary, automerge "
+                    "and the tests summary")
 
 # The conclusion's script, one case per row of §7.2.
 script = steps[0]["run"] if steps else "exit 3"
 cases = [
-    ("failure", "", "skipped", 1), ("cancelled", "", "skipped", 1), ("skipped", "", "skipped", 1),
-    ("success", "2", "success", 0), ("success", "0", "skipped", 0), ("success", "2", "skipped", 1),
-    ("success", "2", "failure", 1), ("success", "2", "cancelled", 1),
+    ("failure", "", "skipped", "skipped", "", 1), ("cancelled", "", "skipped", "skipped", "", 1),
+    ("skipped", "", "skipped", "skipped", "", 1),
+    ("success", "2", "success", "skipped", "false", 0), ("success", "0", "skipped", "skipped", "false", 0),
+    ("success", "2", "skipped", "skipped", "false", 1), ("success", "2", "failure", "skipped", "false", 1),
+    ("success", "2", "cancelled", "skipped", "false", 1),
+    # The tests, judged independently of the environments.
+    ("success", "2", "success", "success", "true", 0), ("success", "0", "skipped", "success", "true", 0),
+    ("success", "2", "success", "failure", "true", 1), ("success", "2", "success", "cancelled", "true", 1),
+    ("success", "2", "success", "skipped", "true", 1), ("success", "0", "skipped", "failure", "true", 1),
 ]
-for create_matrix, affected, environments, expected in cases:
+for create_matrix, affected, environments, tests, active, expected in cases:
     with tempfile.NamedTemporaryFile("w+") as summary:
         run_env = dict(os.environ, CREATE_MATRIX_RESULT=create_matrix, AFFECTED_COUNT=affected, UNAFFECTED_COUNT="1",
                        RELEVANCE_MODE="diff", RELEVANCE_REASON="diff", ENVIRONMENTS_RESULT=environments,
+                       TESTS_RESULT=tests, TESTS_ACTIVE=active, TESTS_COUNT="3" if active == "true" else "0",
                        GITHUB_STEP_SUMMARY=summary.name)
         done = subprocess.run(["bash", "-e", "-c", script], env=run_env, capture_output=True, text=True)
         written = open(summary.name, encoding="utf-8").read()
     verdict = "green" if expected == 0 else "red"
     annotation = "::notice title=Terraform conclusion::" if expected == 0 else "::error title=Terraform conclusion::"
-    label = f"create-matrix={create_matrix} affected={affected or '-'} environments={environments}"
+    label = f"create-matrix={create_matrix} affected={affected or '-'} environments={environments} tests={tests}/{active}"
     if done.returncode != expected:
         problems.append(f"conclusion exits {done.returncode} for {label}, expected {expected}")
     if f"conclusion: {verdict} — " not in written or annotation + f"conclusion: {verdict} — " not in done.stdout:
         problems.append(f"conclusion does not report {verdict} in the step summary and an annotation for {label}")
 
-print("checked the conclusion, the matrix gate, automerge, the relevance downloads and 8 conclusion cases")
+print(f"checked the conclusion, the matrix gate, automerge, the relevance downloads and {len(cases)} conclusion cases")
 for problem in problems:
     print(f"PROBLEM {problem}")
 sys.exit(1 if problems else 0)
@@ -1774,7 +1784,8 @@ jobs = yaml.safe_load(open(workflow, encoding="utf-8"))["jobs"]
 problems = []
 
 create = jobs["create-matrix"]
-names = ["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason", "changed-count"]
+names = ["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason", "changed-count",
+         "tests-matrix-json", "tests-count", "tests-active"]
 if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
@@ -1862,6 +1873,96 @@ else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f11_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   echo "${_f11_out}" | grep -v '^PROBLEM ' | tail -5
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F12 — the test stage's wiring (docs/Terraform-tests.md §5, §6, §9.6).
+#
+# One test job whose environment is the row's, empty meaning none; the gates
+# after every reporting step, as in the environment job (a gate exits 1 and
+# would skip the upload that explains the failure); the summary out of the
+# conclusion's needs, since a reporting job must never redden a run; and the
+# steps the summary reads by id.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F12 - the test job and the tests summary are wired as the spec says${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f12_out=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+
+jobs = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["jobs"]
+problems = []
+test = jobs.get("terraform-test", {})
+if test.get("name") != "${{ matrix.test.name }}":
+    problems.append(f"the test job's name is {test.get('name')!r}, expected the row's name")
+if test.get("environment") != {"name": "${{ matrix.test.github-environment }}", "deployment": False}:
+    problems.append(f"the test job's environment is {test.get('environment')}")
+if test.get("permissions") != {"contents": "read", "id-token": "write"}:
+    problems.append(f"the test job's permissions are {test.get('permissions')}")
+if set(test.get("needs", [])) != {"create-matrix", "seed-pr-comments"}:
+    problems.append(f"the test job needs {test.get('needs')}")
+condition = " ".join(str(test.get("if", "")).split())
+for clause in ("!cancelled()", "needs.create-matrix.result == 'success'", "needs.create-matrix.outputs.tests-active == 'true'"):
+    if clause not in condition:
+        problems.append(f"the test job's if lacks {clause}")
+if "seed-pr-comments.result" in condition:
+    problems.append("the test job's if tests the seed's result")
+steps = test.get("steps", [])
+ids = [step.get("id") for step in steps]
+for needed in ("verify-credentials", "provider-versions", "init", "test", "upload-test-output", "capture-metadata"):
+    if needed not in ids:
+        problems.append(f"the test job has no step with id '{needed}', which the summary reads")
+# The lock check runs before init, so only lock-only mode can work, and after the plugin cache is
+# restored so a warm cache spares the download (§5.2 step 6).
+if "provider-versions" in ids and "init" in ids:
+    check = steps[ids.index("provider-versions")]
+    if check.get("with", {}).get("lock-only") != "true":
+        problems.append("the lock check does not run lock-only, and nothing is initialised when it runs")
+    restore = [index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/cache@")]
+    if not restore or not restore[0] < ids.index("provider-versions") < ids.index("init"):
+        problems.append("the lock check does not run between the plugin cache restore and init")
+gates = [index for index, step in enumerate(steps) if str(step.get("name", "")).startswith("🧐 Validation outcome")]
+reporting = [ids.index(name) for name in ("test", "upload-test-output", "capture-metadata") if name in ids]
+if len(gates) != 3 or not reporting or min(gates) < max(reporting):
+    problems.append("the test job's three gates do not all come after the test, the upload and the capture")
+for index in gates:
+    if steps[index].get("continue-on-error") != "${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}":
+        problems.append(f"the gate '{steps[index].get('name')}' ignores allow-failing-terraform-tests")
+if "terraform-test-summary" in jobs.get("conclusion", {}).get("needs", []):
+    problems.append("the tests summary is in the conclusion's needs")
+summary = jobs.get("terraform-test-summary", {})
+if set(summary.get("needs", [])) != {"create-matrix", "terraform-test"}:
+    problems.append(f"the tests summary needs {summary.get('needs')}")
+if not str(summary.get("if", "")).strip().startswith("always()"):
+    problems.append("the tests summary does not run always()")
+for step in summary.get("steps", []):
+    if step.get("continue-on-error") is not True:
+        problems.append(f"the tests summary's step '{step.get('name')}' can fail the job")
+# Every output create-matrix exposes must be one the create-tf-vars-matrix action declares; an
+# undeclared one reads as an empty string, and an empty tests-active silently skips the stage.
+import os, re
+action = yaml.safe_load(open(os.path.join(os.path.dirname(sys.argv[1]), "..", "..", "create-tf-vars-matrix", "action.yml"),
+                             encoding="utf-8"))
+declared = set((action.get("outputs") or {}))
+for name, value in (jobs["create-matrix"].get("outputs") or {}).items():
+    match = re.fullmatch(r"\$\{\{ steps\.create-matrix\.outputs\.([a-z-]+) \}\}", str(value))
+    if match is None or match.group(1) not in declared:
+        problems.append(f"create-matrix's output '{name}' reads an output create-tf-vars-matrix does not declare")
+print("checked the test job's name, environment, permissions, needs, lock check, gates and step ids, the tests summary, and create-matrix's outputs")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f12_rc=0 || _f12_rc=$?
+if [[ "${_f12_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f12_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f12_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
