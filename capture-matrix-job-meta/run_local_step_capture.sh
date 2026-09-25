@@ -22,8 +22,11 @@ export GITHUB_EVENT_NAME="pull_request"
 export GITHUB_REF="refs/pull/123/merge"
 export GITHUB_SHA="abc123def456"
 
-# Required input variables
+# Input variables. 'environment-name' is the alias existing callers pass;
+# set input_entity_name and input_artifact_name to try the other naming.
 export input_environment_name="sandbox"
+export input_entity_name=""
+export input_artifact_name=""
 
 # Matrix context JSON (example - full matrix context with nested vars)
 export input_matrix_context_json='{
