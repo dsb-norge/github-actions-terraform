@@ -131,7 +131,7 @@ terraform-test-lanes-yml: |
     timeout-minutes: 60
 ```
 
-The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_x` secret arrives as `TF_VAR_X`: declare the variable in upper case, or map it, `extra-envs-from-secrets-yml: { TF_VAR_x: TF_VAR_X }`. A test file that uses `var.x` itself declares `variable "x" {}`, which Terraform 1.13 requires and 1.12 refuses.
+The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_tenant_id` secret arrives as `TF_VAR_TENANT_ID`; the lane exports it under both that name and `TF_VAR_tenant_id`, so a snake_case or an upper-case declaration works. A mixed-case variable name needs an explicit mapping in `extra-envs-from-secrets-yml`. A test file that uses `var.x` itself declares `variable "x" {}`, which Terraform 1.13 requires and 1.12 refuses.
 
 **Bringing up an environment lane:**
 

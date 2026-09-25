@@ -1915,6 +1915,10 @@ ids = [step.get("id") for step in steps]
 for needed in ("verify-credentials", "provider-versions", "init", "test", "upload-test-output", "capture-metadata"):
     if needed not in ids:
         problems.append(f"the test job has no step with id '{needed}', which the summary reads")
+# An environment lane's TF_VAR_ secrets arrive upper-cased; the export adds the lower-cased copies.
+exports = [step for step in steps if str(step.get("uses", "")).split("@")[0].endswith("/export-env-vars")]
+if len(exports) != 1 or "fromJSON('[\"TF_VAR_\"]')" not in str(exports[0].get("with", {}).get("lower-case-copies-for-prefixes-json", "")):
+    problems.append("the lane export does not add lower-case copies of an environment lane's TF_VAR_ secrets")
 # The lock check runs before init, so only lock-only mode can work, and after the plugin cache is
 # restored so a warm cache spares the download (§5.2 step 6).
 if "provider-versions" in ids and "init" in ids:
