@@ -19,6 +19,8 @@ WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(support.TESTS_DIR)),
 # Keys the workflow reads from a row that the required-field list does not name. A recorded
 # finding (docs/Decision-engine.md §9): the port keeps the list as the bash builder had it.
 READ_BUT_NOT_REQUIRED = {"runs-on", "format-check-in-root-dir"}
+# Set by the engine on every row it puts in a matrix (rule 7), never read from the caller; I16 holds it.
+SET_BY_THE_ENGINE = {"goals-granted"}
 
 # Workflow inputs that reach a row only by generic forwarding, so they go missing when the
 # input does. Every other required field is filled by the engine itself.
@@ -164,7 +166,8 @@ class WorkflowContractTest(unittest.TestCase):
     def test_the_workflow_reads_only_required_or_known_unlisted_keys(self):
         keys = self.read_keys()
         self.assertGreater(len(keys), 15, "the workflow scan found too little to be trusted")
-        self.assertEqual(set(), keys - set(environments.REQUIRED_FIELDS) - READ_BUT_NOT_REQUIRED)
+        self.assertEqual(set(), keys - set(environments.REQUIRED_FIELDS) - READ_BUT_NOT_REQUIRED - SET_BY_THE_ENGINE)
+        self.assertLessEqual(SET_BY_THE_ENGINE, keys)
 
     def test_the_known_unlisted_keys_are_still_read_and_still_unlisted(self):
         # When the gap is closed, this list must shrink with it.
