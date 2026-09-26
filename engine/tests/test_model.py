@@ -177,11 +177,34 @@ class TestFactsTest(unittest.TestCase):
 
     def test_the_actor_and_the_workflow_name_are_strings(self):
         for section, key, message in (("event", "actor", "input document: 'event.actor' is not a string"),
+                                      ("event", "triggering_actor",
+                                       "input document: 'event.triggering_actor' is not a string"),
+                                      ("event", "base_ref", "input document: 'event.base_ref' is not a string"),
                                       ("caller", "workflow_name", "input document: 'caller.workflow_name' is not a string")):
             with self.subTest(key=key):
                 document = support.document()
                 document[section][key] = None
                 self.assertDocumentError(document, message)
+
+
+class DispatchShapeTest(unittest.TestCase):
+    MESSAGE = ("input document: 'event.dispatch' needs exactly the boolean 'block' and the strings 'environment', "
+               "'goal' and 'reason'")
+
+    def test_the_dispatch_inputs_have_their_shape(self):
+        good = {"block": True, "environment": "", "goal": "", "reason": ""}
+        for bad in (None, [], {}, {**good, "block": "true"}, {**good, "goal": None}, {**good, "environment": 1},
+                    {**good, "reason": False}, {**good, "extra": ""},
+                    {key: value for key, value in good.items() if key != "reason"}):
+            with self.subTest(bad=bad):
+                document = support.document()
+                document["event"]["dispatch"] = bad
+                with self.assertRaises(model.DocumentError) as raised:
+                    model.check(document)
+                self.assertEqual(self.MESSAGE, str(raised.exception))
+        document = support.document()
+        document["event"]["dispatch"] = good
+        model.check(document)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,14 @@
           "goals": [
             "all"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-enabled": "false",
           "pr-auto-merge-from-actors": [],

@@ -31,10 +31,11 @@ class EnvironmentsTest(unittest.TestCase):
     def test_a_row_carries_the_run_verdict_and_the_record(self):
         output = decide.decide(support.document(environments=[{"environment": "env-a"}, {"environment": "env-7"}],
                                                 directories={"./envs/env-a": True, "./envs/env-7": True}))
-        self.assertEqual([("env-a", "run", ["relevance: all:not-computed"]), ("env-7", "run", ["relevance: all:not-computed"])],
+        self.assertEqual([("env-a", "run", ["relevance: all:not-computed", "goals: none"]),
+                          ("env-7", "run", ["relevance: all:not-computed", "goals: none"])],
                          [(e["environment"], e["verdict"], e["reasons"]) for e in output["environments"]])
-        self.assertEqual(["env-a: run — relevance: all:not-computed", "env-7: run — relevance: all:not-computed"],
-                         output["record"])
+        self.assertEqual(["env-a: run — relevance: all:not-computed; goals: none",
+                          "env-7: run — relevance: all:not-computed; goals: none"], output["record"])
         self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
 
     def test_the_record_joins_every_reason_in_order(self):
@@ -51,7 +52,7 @@ class EnvironmentsTest(unittest.TestCase):
     def test_the_output_document_has_exactly_its_keys(self):
         keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record"}
         output = decide.decide(support.document())
-        self.assertEqual(keys | {"relevance", "tests", "comments"}, set(output))
+        self.assertEqual(keys | {"relevance", "tests", "comments", "trigger"}, set(output))
         self.assertEqual(1, output["schema_version"])
         self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])
         output = decide.decide(support.document(environments=[]))

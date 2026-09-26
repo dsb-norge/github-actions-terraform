@@ -9,6 +9,35 @@ import re
 from dsb_tf_engine import values
 
 VERDICTS = ("run", "skip")
+GRANTED_VOCABULARY = {"init", "format", "validate", "lint", "plan", "apply", "destroy-plan", "destroy"}
+# Reasons of the rules before relevance (docs/Decision-engine.md §6, rules 2 and 3).
+EARLIER_RULES = ("trigger-events:", "dispatch:")
+
+
+def _contains(goals, goal):
+    """The workflow's contains(): list element or substring, without case. Written apart from the
+    engine's, so the invariants do not inherit its mistakes."""
+    if isinstance(goals, str):
+        return goal.lower() in goals.lower()
+    return isinstance(goals, list) and goal.lower() in [item.lower() for item in goals if isinstance(item, str)]
+
+
+def _gate_allows(document, goals, goal):
+    """Whether the workflow's own gate for `goal` passes for these raw goals on this event (I1)."""
+    event, default = document["event"], document["caller"]["default_branch"]
+    on_default = event["ref_name"] == default
+    on_pr = (event["name"] == "pull_request" and event.get("action", "") not in ("closed", "converted_to_draft")
+             and event.get("base_ref", "") == default)
+    if goal == "apply":
+        return ((_contains(goals, "all") or _contains(goals, "apply"))
+                and event["name"] in ("push", "workflow_dispatch", "schedule") and on_default
+                or _contains(goals, "apply-on-pr") and on_pr)
+    if goal == "destroy":
+        return (_contains(goals, "destroy") and event["name"] in ("push", "workflow_dispatch") and on_default
+                or _contains(goals, "destroy-on-pr") and on_pr)
+    if goal == "destroy-plan":
+        return _contains(goals, "destroy-plan")
+    return _contains(goals, "all") or _contains(goals, goal)
 
 
 def declared_environments(document):
@@ -60,12 +89,15 @@ def check(document, output):
     if output["counts"]["affected"] + output["counts"]["unaffected"] != len(environments):
         violations.append("counts: affected and unaffected do not sum to the environments decided")
 
-    # I6 and I13: mode all runs every environment, and says why in every one.
+    # I6 and I13: mode all runs every environment the earlier rules left, and says why in every one.
     relevance = output.get("relevance")
     if relevance is not None and relevance["mode"] == "all":
         reason = f"relevance: all:{relevance['reason']}"
-        if any(entry["verdict"] != "run" or reason not in entry["reasons"] for entry in environments):
+        if any((entry["verdict"] != "run" or reason not in entry["reasons"])
+               and not entry["reasons"][0].startswith(EARLIER_RULES) for entry in environments):
             violations.append("I6: mode all but an environment does not run for it")
+    if any(entry["verdict"] == "run" and entry["reasons"][0].startswith(EARLIER_RULES) for entry in environments):
+        violations.append("rules 2-3: an environment dropped by an earlier rule runs")
     if relevance is not None and document["workflow_inputs"].get("path-relevance-enabled") is False \
             and relevance["reason"] != "disabled":
         violations.append("I13: relevance switched off but the reason is not 'disabled'")
@@ -87,14 +119,20 @@ def check(document, output):
             if head["kind"] == "env" and (entry is None or entry["pr-comment-group"] != ""
                                           or entry["add-pr-comment"] != "true"):
                 violations.append(f"I14: an environment head for '{head['key']}', which gets none")
-            if head["state"] == "not-affected" and (entry is None or entry["verdict"] != "skip"):
-                violations.append(f"I14: a 'not affected' head for '{head['key']}', which is affected")
+            if head["state"] == "not-affected" and (entry is None or entry["verdict"] != "skip"
+                                                    or not entry["reasons"][0].startswith("relevance:")):
+                violations.append(f"I14: a 'not affected' head for '{head['key']}', which is not skipped by relevance")
+            if head["state"] == "not-taking-part" and (entry is None or entry["verdict"] != "skip"
+                                                       or not entry["reasons"][0].startswith("trigger-events:")):
+                violations.append(f"I14: a 'not taking part' head for '{head['key']}', which takes part")
         for name in manifest["purge_tags_for"]:
             entry = by_key.get(name)
             if entry is None or entry["verdict"] != "skip" or entry["add-pr-comment"] != "true":
                 violations.append(f"I14: a tag purge for '{name}', which is not an unaffected commenting environment")
         if len(manifest["gc"]) != 4 * len(manifest["purge_tags_for"]):
             violations.append("I14: not four purge rules per purged environment")
+
+    violations += _goal_invariants(document, output)
 
     tests = output.get("tests")
     if tests is not None:
@@ -114,4 +152,41 @@ def check(document, output):
             name = row["test"]["github-environment"]
             if name and (re.fullmatch(r"tftest-[a-z0-9-]{1,40}", name) is None or name.casefold() in taken):
                 violations.append(f"I9: the test row '{row['slug']}' runs in '{name}'")
+    return violations
+
+
+def _goal_invariants(document, output):
+    """I1, I2, I3, I15, I16 and I17: what the granted goals and a dispatch may be."""
+    violations = []
+    if output["errors"]:
+        return violations
+    event = document["event"]
+    rows = {row["environment"]: row["vars"] for stage in output["matrices"].values() for row in stage["include"]}
+    running = [entry for entry in output["environments"] if entry["verdict"] == "run"]
+    for entry in running:
+        name, granted = entry["environment"], entry.get("goals")
+        row = rows.get(name, {})
+        # I16: the entry and the row the gates read say the same.
+        if granted is None or row.get("goals-granted") != granted:
+            violations.append(f"I16: '{name}' has goals {granted} but goals-granted {row.get('goals-granted')}")
+            continue
+        raw = row.get("goals")
+        # I1: only the eight goals, and each one the workflow's own gate would let through.
+        if not set(granted) <= GRANTED_VOCABULARY:
+            violations.append(f"I1: '{name}' is granted a goal outside the vocabulary: {granted}")
+        for goal in granted:
+            if not _gate_allows(document, raw, goal):
+                violations.append(f"I1: '{name}' is granted '{goal}', which its goals and this event do not allow")
+        # I15: never destroy on a schedule.
+        if event["name"] == "schedule" and "destroy" in granted:
+            violations.append(f"I15: '{name}' is granted destroy on a schedule")
+        # I3: a dispatch only removes from what a push to the same ref would grant.
+        if event["name"] == "workflow_dispatch":
+            as_push = {**document, "event": {**event, "name": "push"}}
+            if any(not _gate_allows(as_push, raw, goal) for goal in granted):
+                violations.append(f"I3: the dispatch grants '{name}' more than a push to the same ref would")
+    named = event.get("dispatch", {}).get("environment", "") if event["name"] == "workflow_dispatch" else ""
+    # I2 and I17: a dispatch naming one environment runs exactly that one.
+    if named and [entry["environment"] for entry in running] != [named]:
+        violations.append(f"I2: the dispatch named '{named}' but {[e['environment'] for e in running]} run")
     return violations

@@ -55,6 +55,13 @@
             "lint",
             "plan"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
@@ -134,6 +141,13 @@
             "lint",
             "plan"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
@@ -207,6 +221,13 @@
           "format-check-in-root-dir": "false",
           "github-environment": "env-c",
           "goals": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan"
+          ],
+          "goals-granted": [
             "init",
             "format",
             "validate",

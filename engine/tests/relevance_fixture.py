@@ -10,7 +10,8 @@ suites here instead of in production. Usage, from any directory:
 Every scenario has three environments, auto-merge enabled for all: `prod` ungrouped
 (github-environment `prod-gh`, auto-merge only for `renovate[bot]`), `staging` and `sandbox` in the
 group `platform`, any actor (`sandbox` applies on pull request). Pull request #87, run #4711
-attempt #1.
+attempt #1. The event scenarios are not pull requests: a dispatch of `staging` with a plan by
+`octocat`, and a schedule no environment takes part in.
 """
 
 import json
@@ -34,6 +35,14 @@ SCENARIOS = {
     "docs-only": ["README.md", "envs/prod/README.md"],
     "one-environment": ["envs/staging/main.tf"],
     "workflow-changed": [".github/workflows/ci.yml"],
+    "dispatch-staging": None,
+    "schedule-nothing": None,
+}
+EVENTS = {
+    "dispatch-staging": {"name": "workflow_dispatch", "ref_name": "main", "actor": "octocat",
+                         "dispatch": {"block": True, "environment": "staging", "goal": "plan",
+                                      "reason": "reconcile after incident 42"}},
+    "schedule-nothing": {"name": "schedule", "ref_name": "main", "actor": "octocat"},
 }
 
 
@@ -66,8 +75,17 @@ def document(files):
     }
 
 
+def scenario_document(scenario):
+    if scenario not in EVENTS:
+        return document(SCENARIOS[scenario])
+    doc = document([])
+    del doc["changed_files"]
+    doc["event"] = EVENTS[scenario]
+    return doc
+
+
 def write(scenario, path):
-    output = decide.decide(document(SCENARIOS[scenario]))
+    output = decide.decide(scenario_document(scenario))
     if output["errors"]:
         raise SystemExit(f"relevance_fixture: scenario {scenario!r} does not decide: {output['errors']}")
     with tempfile.TemporaryDirectory() as temp:

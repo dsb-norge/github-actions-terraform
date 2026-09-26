@@ -33,7 +33,7 @@ NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
-             "record")
+             "record", "trigger")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -173,10 +173,29 @@ def _is_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _input_text(value):
+    """A dispatch input as text: absent is empty (P9), a string as given, anything else as JSON."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+def dispatch_facts(payload):
+    """The standard dispatch inputs (docs/Dispatch-and-triggers.md §3.1). The payload's `inputs` is
+    null when the calling workflow declares no inputs block (P8), and a string input dispatched empty
+    is absent from it (P9), so each input is read as text and 'block' says whether there was a block."""
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, dict):
+        return {"block": False, "environment": "", "goal": "", "reason": ""}
+    return {"block": True, **{key: _input_text(inputs.get(key)) for key in ("environment", "goal", "reason")}}
+
+
 def event_facts(event_name, payload):
-    """What the payload says about the change: the three push booleans, or the pull request's
-    action, number, head commit and whether it comes from a fork. A pull request payload without
-    its number and head reports nothing."""
+    """What the payload says about the change: the three push booleans, the pull request's action,
+    number, head commit and whether it comes from a fork, or a dispatch's inputs. A pull request
+    payload without its number and head reports nothing."""
+    if event_name == "workflow_dispatch":
+        return {"dispatch": dispatch_facts(payload)}
     if event_name == "push":
         return {"push": {
             "created": payload.get("created") is True or payload.get("before") == ZERO_SHA,
@@ -357,8 +376,10 @@ def build_document(inputs, facts, tools, isdir):
     entries = yaml_inputs.get("environments-yml", {}).get("value")
     event = {"name": facts["event_name"], "ref_name": facts["ref_name"],
              **event_facts(facts["event_name"], facts["payload"])}
-    if facts.get("actor"):
-        event["actor"] = facts["actor"]
+    # The operation gates compare github.base_ref, the runner's, not the payload's (docs/Decision-engine.md §6).
+    for key in ("actor", "triggering_actor", "base_ref"):
+        if facts.get(key):
+            event[key] = facts[key]
     document = {
         "schema_version": SCHEMA_VERSION,
         "caller": {"repository": facts["repository"], "default_branch": facts["default_branch"],
@@ -401,6 +422,8 @@ def run(inputs_file, environ, stream, tools, isdir):
             "run": run_facts,
             "workflow_name": environ.get("GITHUB_WORKFLOW", ""),
             "actor": environ.get("GITHUB_ACTOR", ""),
+            "triggering_actor": environ.get("GITHUB_TRIGGERING_ACTOR", ""),
+            "base_ref": environ.get("GITHUB_BASE_REF", ""),
         }
         document = build_document(inputs, facts, tools, isdir)
     except AdapterError as error:

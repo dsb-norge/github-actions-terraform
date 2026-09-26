@@ -47,6 +47,12 @@ def _not_affected(entry, block, run, number):
             "</details>")
 
 
+def _not_taking_part(entry, run):
+    events = ", ".join(entry["trigger-events"])
+    return (f"➖ Does not take part in pull requests: this environment's trigger-events are {events} "
+            f"(run #{run['id']} attempt #{run['attempt']}).")
+
+
 def _tests_head(document, tests_block, waiting):
     """The tests head, after the environment heads: scoped per calling workflow, because a repository
     may call this workflow from two and both would discover the same files (docs/Terraform-tests.md §6.3)."""
@@ -81,6 +87,10 @@ def manifest(document, block, entries, tests_block):
             mode = " · ".join(MODE_LINES[goal] for goal in mutates)
             heads.append(_head("env", entry["github-environment"], "placeholder", mutates,
                                waiting + (f"\n\n{mode}" if mode else "")))
+        elif entry["reasons"][0].startswith("trigger-events:"):
+            # Dropped before relevance: "not affected by this change" would be the wrong reason.
+            heads.append(_head("env", entry["github-environment"], "not-taking-part", mutates,
+                               _not_taking_part(entry, run)))
         else:
             heads.append(_head("env", entry["github-environment"], "not-affected", mutates,
                                _not_affected(entry, block, run, pull_request["number"])))

@@ -41,6 +41,9 @@
           "format-check-in-root-dir": "false",
           "github-environment": "env-a",
           "goals": "plan",
+          "goals-granted": [
+            "plan"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",

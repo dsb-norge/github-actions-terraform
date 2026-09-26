@@ -44,6 +44,14 @@
           "goals": [
             "all"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
+          ],
           "my-custom": {
             "a": [
               1,

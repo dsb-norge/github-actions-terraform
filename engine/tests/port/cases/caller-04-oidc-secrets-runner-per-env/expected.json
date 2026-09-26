@@ -54,6 +54,14 @@
           "goals": [
             "all"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",

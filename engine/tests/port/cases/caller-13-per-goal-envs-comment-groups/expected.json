@@ -59,6 +59,14 @@
           "goals": [
             "all"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
@@ -136,6 +144,14 @@
           "github-environment": "env-b",
           "goals": [
             "all"
+          ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
           ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
@@ -215,6 +231,14 @@
           "goals": [
             "all"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
@@ -292,6 +316,14 @@
           "github-environment": "env-d",
           "goals": [
             "all"
+          ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint",
+            "plan",
+            "apply"
           ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",

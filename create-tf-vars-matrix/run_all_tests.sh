@@ -399,7 +399,7 @@ echo '[{"filename": "envs/env-a/main.tf", "status": "modified"}]' \
   >"${SANDBOX}/api/repos_example-org_example-repo_pulls_87_files?per_page=100&page=2"
 run_step GITHUB_EVENT_NAME=pull_request
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]] \
-  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]] \
+  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**; goals: init, format, validate, lint, plan" ]] \
   && [[ "$(wc -l <"${SANDBOX}/gh-calls")" -eq 3 ]] && [[ "$(step_output changed-count)" == "101" ]]; then
   pass
 else
@@ -413,7 +413,7 @@ jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "mai
   >"${SANDBOX}/event.json"
 run_step GITHUB_EVENT_NAME=push
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(matrix_output | jq -c .environment)" == '["env-a"]' ]] \
-  && [[ "$(logged_record)" == "env-a: run — relevance: all:api-error" ]] && ! grep -q '^::error' "${OUT_FILE}"; then
+  && [[ "$(logged_record)" == "env-a: run — relevance: all:api-error; goals: init, format, validate, lint, plan, apply" ]] && ! grep -q '^::error' "${OUT_FILE}"; then
   pass
 else
   fail "exit ${STEP_EXIT}, or a failed fetch did not fail open"
@@ -429,7 +429,7 @@ echo '{"files": [{"filename": "envs/env-a/main.tf"}]}' \
   >"${SANDBOX}/api/repos_example-org_example-repo_compare_main...${after}"
 run_step GITHUB_EVENT_NAME=push GITHUB_REF_NAME=feature/new
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(cat "${SANDBOX}/gh-calls")" == "api repos/example-org/example-repo/compare/main...${after}" ]] \
-  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**" ]]; then
+  && [[ "$(logged_record)" == "env-a: run — relevance: envs/env-a/**; goals: init, format, validate, lint, plan" ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, or the new branch was not compared against the default branch: $(cat "${SANDBOX}/gh-calls")"
@@ -455,7 +455,7 @@ make_gh
 jq -n --arg b "${before}" --arg a "${after}" '{repository: {default_branch: "main"}, forced: true, before: $b, after: $a}' \
   >"${SANDBOX}/event.json"
 run_step GITHUB_EVENT_NAME=push
-if [[ ${STEP_EXIT} -eq 0 ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] && [[ "$(logged_record)" == "env-a: run — relevance: all:forced" ]]; then
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] && [[ "$(logged_record)" == "env-a: run — relevance: all:forced; goals: init, format, validate, lint, plan, apply" ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, or a forced push was fetched: $(cat "${SANDBOX}/gh-calls")"

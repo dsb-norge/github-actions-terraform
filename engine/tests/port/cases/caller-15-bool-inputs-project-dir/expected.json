@@ -46,6 +46,12 @@
             "validate",
             "lint"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
