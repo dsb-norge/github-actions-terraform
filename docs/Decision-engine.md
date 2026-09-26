@@ -221,9 +221,10 @@ The features extend it; the full document, as they specify it:
     "ref_name": "feature/x",
     "actor": "octocat",
     "triggering_actor": "octocat",
+    "base_ref": "main",
     "push": { "created": false, "forced": false, "deleted": false },
-    "pull_request": { "number": 87, "base_ref": "main", "head_sha": "…", "is_fork": false, "draft": false },
-    "dispatch_inputs": { "environment": "", "goal": "", "reason": "" }
+    "pull_request": { "number": 87, "head_sha": "…", "is_fork": false, "draft": false },
+    "dispatch": { "block": true, "environment": "", "goal": "", "reason": "" }
   },
   "workflow_inputs": { … },
   "yaml": { … },
@@ -238,15 +239,20 @@ The features extend it; the full document, as they specify it:
 ```
 
 - Row variables are typed separately from `workflow_inputs` (D9).
-- `dispatch_inputs` are strings, as GitHub delivers them. When the caller declares no `inputs:`
-  block the payload key is `null`, and a string input left empty is absent from the payload
-  rather than `""`; the adapter passes all three keys, `""` for each that is missing.
+- `dispatch` is present on `workflow_dispatch` only. When the caller declares no `inputs:` block
+  the payload key is `null`, and a string input left empty is absent from the payload rather than
+  `""`; the adapter passes `block` (whether there was a block at all) and all three inputs as text,
+  `""` for each that is missing and a caller's input of another type as its JSON. A dispatch
+  document without the key is read as a dispatch without a block.
+- `base_ref` is the runner's `GITHUB_BASE_REF`, which the on-PR gates compare, not a payload
+  field; `triggering_actor` is `GITHUB_TRIGGERING_ACTOR`. Both, like `actor`, are present only when
+  the runner sets them.
 - Only the sections a command needs must be present; an absent `tests` section means "no test
   stage", an absent `changed_files` means "relevance not computed" (mode `all`, reason
   `not-computed`). `run`, `event.action`, `event.push` and `event.pull_request` are optional too;
   when present they are checked whole. As built: `push` holds exactly its three booleans,
-  `pull_request` its `number`, `head_sha` and `is_fork`, `changed_files` exactly its six facts;
-  `base_ref`, `draft`, `actor` and `dispatch_inputs` arrive with the rules that read them.
+  `pull_request` its `number`, `head_sha` and `is_fork`, `changed_files` exactly its six facts,
+  `dispatch` exactly its four keys; `draft` arrives with the rule that reads it.
 - A renamed file is in `files` under both its paths; `count` is what the API counted, one per
   changed file.
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
@@ -263,7 +269,8 @@ The features extend it; the full document, as they specify it:
 
 ## 5. The output document
 
-What it emits as built, the port with relevance and the comment manifest:
+What it emits as built, the port with trigger events, the dispatch filter, relevance, the granted
+goals, the test stage and the comment manifest (the tests block is shown below):
 
 ```json
 {
@@ -271,11 +278,13 @@ What it emits as built, the port with relevance and the comment manifest:
   "errors": [],
   "notices": ["relevance diff (diff): 1 of 2 environments affected"],
   "relevance": { "mode": "diff", "reason": "diff", "changed_count": 3 },
+  "trigger": { "event": "pull_request", "lines": [] },
   "environments": [
-    { "environment": "prod", "verdict": "run", "reasons": ["relevance: envs/prod/**"],
+    { "environment": "prod", "verdict": "run", "reasons": ["relevance: envs/prod/**", "goals: init, format, validate, lint, plan"],
       "github-environment": "prod", "add-pr-comment": "true", "pr-comment-group": "", "mutates-on-pr": [],
       "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": [], "pr-auto-merge-limits": { … },
-      "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"] },
+      "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"],
+      "trigger-events": ["pull_request", "push", "workflow_dispatch"], "goals": ["init", "format", "validate", "lint", "plan"] },
     { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], … }
   ],
   "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },
@@ -287,7 +296,8 @@ What it emits as built, the port with relevance and the comment manifest:
     "purge_tags_for": ["staging"],
     "gc": [ { "marker-prefix": "<!-- tf:tag:plan:staging:", "keep-marker-substring": "" }, … ]
   },
-  "record": [ "prod: run — relevance: envs/prod/**", "staging: skip — relevance: no changed file matches" ]
+  "record": [ "prod: run — relevance: envs/prod/**; goals: init, format, validate, lint, plan",
+              "staging: skip — relevance: no changed file matches" ]
 }
 ```
 
@@ -297,8 +307,14 @@ the empty matrix `{"environment": [], "include": []}`; the workflow's count gate
 GitHub. Each environment entry carries, besides its verdict, what the jobs after the matrix read
 for it whether or not it runs: the row's `github-environment`, `add-pr-comment`,
 `pr-comment-group` and resolved `pr-auto-merge-*` values, `mutates-on-pr` (the `apply-on-pr` and
-`destroy-on-pr` goals it holds, read as the workflow's `contains()` reads them), and its resolved
-`paths` and `paths-ignore`. The features extend it to the full document:
+`destroy-on-pr` goals it holds, read as the workflow's `contains()` reads them), its resolved
+`paths` and `paths-ignore`, and its resolved `trigger-events`. A running environment's entry also
+carries its granted `goals`, equal to its row's `goals-granted` (I16), and its reasons end with
+them. An environment dropped by rule 2 or 3 is skipped for that rule's reason, `trigger-events:
+<event> not enabled` or `dispatch: not the requested environment`, and relevance is not evaluated
+for it. `trigger` names the event and holds the lines the run summary quotes and that lead the
+notices: who dispatched what, a dispatch without an inputs block, or a schedule no environment
+takes part in (Dispatch-and-triggers.md §5). The features extend it to the full document:
 
 ```json
 {
@@ -361,8 +377,9 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §4.3 | `relevance-mode`, `relevance-reason`, `changed-count` | `relevance.mode`, `relevance.reason`, `relevance.changed_count` |
 | Terraform-tests.md §4.5 | `tests-matrix-json`, `tests-count`, `tests-active`, the not-run list | `tests.matrix`, `tests.count`, `tests.active`, `tests.not_run` (in `relevance.json`, not a job output); a row is exactly the §4.5 row schema |
 | Terraform-tests.md §5.3 | provider sets | `tests.provider_sets` |
-| Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder` or `not-affected`, `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
-| Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`, one per decision kind, in the relevance spec's format |
+| Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder`, `not-affected` or `not-taking-part` (an environment whose `trigger-events` lack `pull_request`), `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
+| Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`: the `trigger` lines first, then one per decision kind, in the relevance spec's format |
+| Dispatch-and-triggers.md §5 | the dispatch record line, the empty-schedule notice | `trigger.lines`, in `relevance.json` for the run summary |
 
 ## 6. The decision procedure
 
@@ -375,7 +392,7 @@ not evaluated:
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
-| 5 | Goals: expand the environment's `goals` to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
+| 5 | Goals: expand the environment's `goals`, read as the gates' `contains()` reads them (a list element or a substring of a string, without case), to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
 | 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
 | 7 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
 
@@ -390,7 +407,8 @@ environments' verdicts and the event.
 Checked by `invariants.py` on every case of every kind (§8). A violated invariant fails the suite
 even when the case's expected output matches. An invariant is checked from the commit that builds
 the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, the test
-stage I4 and I9, and properties of their own: an output with errors carries no environments, no
+stage I4 and I9, trigger events, the dispatch filter and the granted goals I1, I2, I3, I15, I16
+and I17 (derived apart from `triggers.py`, from the raw goals and the event), and properties of their own: an output with errors carries no environments, no
 matrices and no relevance block, the record has one line per environment, the affected and
 unaffected counts sum to the environments decided, and the test count, the active flag and the
 test rows agree, with every slug unique.
@@ -409,7 +427,7 @@ test rows agree, with every slug unique.
 | I11 | Every `skip` verdict and every `not_run` entry has a non-empty reason from the fixed vocabulary. |
 | I12 | The output is byte-identical across runs with `PYTHONHASHSEED=0` and `=1`, and invariant under a permutation of the input document's key order. |
 | I13 | With `path-relevance-enabled: false`, every environment's relevance reason is `all:disabled` and every environment that passed rules 2, 3 and 5 runs. |
-| I14 | A `not-affected` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` for a relevance reason and `add-pr-comment: true`; a grouped environment gets no per-environment head at all. |
+| I14 | A `not-affected` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` for a relevance reason (a `not-taking-part` head: for a `trigger-events` reason) and `add-pr-comment: true`; a grouped environment gets no per-environment head at all. |
 | I15 | `destroy` is never granted on `schedule`; on `workflow_dispatch` it is granted only when the environment's own goals hold it and the ref is the default branch, never through the `goal` input. |
 | I16 | `environments[].goals` equals `vars.goals-granted` for every `run` row. |
 | I17 | A dispatch with a non-empty `environment` input yields at least one `run` verdict or an error, never a green empty matrix. On `schedule` the empty case is permitted, with the documented notice. |
@@ -723,3 +741,11 @@ AI-assistant configuration files are never in these commits.
   `unique` sorts them, not in first-seen order. The first mutation run on the new modules found
   seven survivors, each redundant code (a defensive copy, an early return whose value nobody read)
   or an untested literal; the code was removed or the literal tested.
+- **Trigger events, the dispatch filter and the goals joined without moving a row but one key.**
+  Every port golden changed only by `goals-granted`, the goals the gates granted before; the port
+  case inputs gained `trigger-events-yml` and their documents a dispatch without an inputs block,
+  which adds a notice and nothing else. The expansion had to mirror `contains()`, case and
+  substrings included, because the gates now read its result. The invariants for the new rules are
+  derived apart from `triggers.py`, from the raw goals and the event, so they cannot inherit its
+  mistakes. The first mutation run on the new module found six survivors: two redundant pieces (an
+  unread key, a discarded return value) removed, and four untested cases tested.

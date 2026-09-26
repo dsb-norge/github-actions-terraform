@@ -6,9 +6,8 @@ environment on demand with a chosen goal, and letting each environment say which
 part in. Together they let a calling repository trigger its one workflow on every event and keep
 the decisions inside.
 
-Status: **specification, not yet implemented.** Both controls are rules of the
-[decision engine](Decision-engine.md) and land after its port. §12 is reserved for what
-implementation teaches the spec.
+Both controls are rules of the [decision engine](Decision-engine.md): trigger events are rule 2,
+the dispatch filter rule 3 and the granted goals rule 5 of its procedure (`triggers.py`).
 
 ## 1. Why
 
@@ -138,7 +137,7 @@ workflow's gates do today, then applies the `goal` input as a cap:
 | `default` or empty | Push semantics for the ref: apply on the default branch when the goals hold `apply` or `all`, **destroy on the default branch when the goals hold `destroy`** (as today), plan and destroy-plan elsewhere. |
 | `plan` | The expansion intersected with `init, format, validate, lint, plan`. Never adds `plan` to an environment without it; removes `apply`, `destroy-plan` and `destroy`. |
 | `apply` | As `default`, and an error unless the goals hold `apply` or `all` (`apply-on-pr` alone does not count) and the ref is the default branch (D5, D6). |
-| `destroy-plan` | `init` and `destroy-plan`; never `destroy`. An error unless the goals hold `destroy-plan` or `destroy`; `all` is the standard goals only and does not include it. |
+| `destroy-plan` | The expansion intersected with `init` and `destroy-plan`; never `destroy`. An error unless the goals hold `destroy-plan`: `all` is the standard goals only and does not include it, and `destroy` alone never plans a destroy (the destroy step runs only after a successful destroy plan), so a cap that granted `destroy-plan` to it would add, not remove (I3). |
 
 The `goal` input never grants `destroy`, `destroy-on-pr` or `apply-on-pr`. The engine's invariants
 I1, I3, I15, I16 and I17 assert these rules on every generated case, and the operation gates read
@@ -155,6 +154,9 @@ A validation error stops the run in `create-matrix`, red conclusion, with one me
 | `goal: apply` for an environment without the goal | `dispatch: environment 'sandbox' does not hold the goal 'apply' (goals: init, format, validate, lint, plan)` |
 | an unknown value in `trigger-events` | `environments-yml: environment 'prod': unknown trigger event 'merge'` |
 | `schedule` in the global list | `trigger-events-yml: 'schedule' is per environment only; add it to the trigger-events of the environment the schedule is for` |
+| a list that is empty or not a list | `environments-yml: environment 'prod': 'trigger-events' must be a non-empty list of events, not 'push'`, or `trigger-events-yml: the list must be …` |
+| `goal: destroy-plan` for an environment without it | `dispatch: environment 'prod' does not hold the goal 'destroy-plan' (goals: all)` |
+| a `goal` outside the four (a caller's own input of type `string`, or the API) | `dispatch: unknown goal 'destroy'; the goal input is one of default, plan, apply, destroy-plan` |
 | the named environment takes no part in dispatches | `dispatch: environment 'staging' does not take part in workflow_dispatch (trigger-events: pull_request, push)` |
 | the run's event is outside the vocabulary | `event 'merge_group' is not supported by this workflow; supported: pull_request, push, workflow_dispatch, schedule` |
 | a dispatch with no inputs block at all | not an error: every environment runs with `goals-yml`, and the run summary says the block is missing and where to copy it from |
@@ -174,13 +176,22 @@ environment their schedule was for as part of their move to v1.
 
 A dispatch or schedule has no pull request, so the surfaces are the run summary and annotations:
 
-- `create-matrix` writes the decision record (Decision-engine.md §5): per environment, run or
-  skip and why, and for a dispatch a first line `dispatched by <actor> (re-run by
-  <triggering_actor>): environment <name>, goal <goal>, reason "<reason>"`, the parenthesis only
-  when the two differ.
-- A `::notice title=Terraform CI::` carries the same first line, so it shows in the checks pane.
+- `create-matrix` logs the decision record (Decision-engine.md §5): per environment, run or skip
+  and why, a running environment's line ending in its granted goals
+  (`staging: run — relevance: all:event; goals: init, format, validate, lint, plan, apply`).
+- A dispatch's line, `dispatched by <actor> (re-run by <triggering_actor>): environment <name>,
+  goal <goal>, reason "<reason>"`, the parenthesis only when the two differ, `(all)` for an empty
+  environment, `default` for an empty goal and `no reason given` for an empty reason, is the first
+  `::notice title=Terraform CI::`, so it shows in the checks pane, and the run summary quotes it
+  under its relevance line. The record itself stays one line per environment.
+- A dispatch whose caller declares no inputs block says so in the same two places, with where to
+  copy the block from; a schedule that no environment takes part in says which key would change
+  it. Neither run speaks of "this change" in the run summary.
 - The environment jobs and the conclusion are unchanged; the conclusion's own summary line already
   counts what ran.
+- On a pull request, an ungrouped commenting environment whose `trigger-events` lack
+  `pull_request` gets a head saying it does not take part in pull requests and naming its events,
+  never the "not affected by this pull request" head, whose reason would be wrong.
 
 Concurrency is unchanged: a dispatched environment takes its usual per-environment group, so a
 manual reconcile queues behind a merge apply of the same environment rather than racing it.
@@ -228,11 +239,13 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | P4 | `schedule` used to mean every environment. | The two scheduling callers' nightly runs would apply nothing after moving to v1 without the opt-in. | A step of the move to v1; the empty-schedule notice says which key to set. Never shipped on a rolling major tag. |
 | P8 | With no `inputs:` block the payload's `inputs` key is `null`; `github.event.inputs.environment` evaluates to the empty string. | A shim that expects an object fails, or reads `"null"`. | The shim normalises `null` to an empty object; the engine treats absent, empty and `default` alike. |
 | P9 | A string input dispatched empty is **absent** from the payload's `inputs`, not `""` (verified on the test bed: a dispatch leaving `environment` and `reason` empty delivered `{"goal": "default"}` only). | A shim that reads the object's keys sees fewer inputs than the block declares. | The shim passes all three keys, `""` for each that is absent. |
-| P9 | A cap that silently adds. | `goal: plan` on a validate-only environment planning something nobody reviewed. | The cap intersects, never unions (D5); invariant I3. |
+| P13 | A cap that silently adds. | `goal: plan` on a validate-only environment planning something nobody reviewed. | The cap intersects, never unions (D5); invariant I3. |
 | P10 | A named dispatch that selects nothing. | A green run that did nothing while the operator believes the environment was reconciled. | An error (§4.3); invariant I17. |
 | P5 | A dispatch from the CLI on a non-default `--ref` with `goal: apply`. | Refused. | The error names the branch; run it on `main`. |
 | P6 | Two dispatches of the same environment overlap. | Queued, not raced, by the per-environment concurrency group; a third overlapping run cancels the pending one until `queue: max` lands. | Documented; the queue spec removes the cancel. |
-| P7 | The `reason` input is free text and lands in the summary and a notice. | Anything typed there is on the run page. | Documented; nothing else is done with it. |
+| P7 | The `reason` input is free text and lands in the summary and a notice. | Anything typed there is on the run page; a line break would end the workflow command early and start another. | Whitespace is collapsed to single spaces, so the reason is one line; nothing else is done with it. |
+| P11 | The workflow's `contains(matrix.vars.goals, …)` reads a list element or a substring of a string, without case. | The granted goals must mirror it exactly, or switching the gates to `goals-granted` changes what runs: `[ALL]` plans, and a scalar `goals-yml: destroy-plan` holds `plan` and `destroy`. | The engine's expansion uses the same semantics; the scalar case is a latent hazard of today's workflow, kept rather than changed silently. |
+| P12 | The on-PR gates compare `github.base_ref`, which is the runner's `GITHUB_BASE_REF`, not a payload field. | Reading the payload could disagree with the gate. | The adapter passes `GITHUB_BASE_REF` as `event.base_ref`. |
 
 ## 9. Tests
 
@@ -272,4 +285,16 @@ AI-assistant configuration files are never in these commits.
 
 ## 12. What implementation taught the spec
 
-Reserved.
+- **`destroy-plan` needs the goal itself.** The first rule, "the goals hold `destroy-plan` or
+  `destroy`", would have granted a destroy plan to an environment holding only `destroy`, which a
+  push never grants: a cap that adds. The error now asks for `destroy-plan` (§4.2).
+- **The expansion mirrors `contains()`**, case and substrings included (P11), because the gates
+  move to `goals-granted` and must keep doing what they did.
+- **The dispatch line is a notice and a run-summary line, not a record line**: the record stays one
+  line per environment, which the engine's own properties check. The run summary stops saying "no
+  environment is affected by this change" on a dispatch or a schedule, which carry no change.
+- **A pull-request head for an environment that does not take part in pull requests** was needed:
+  the "not affected" head would have blamed the change.
+- **Validation before the event**: the trigger-events lists are validated before an unsupported
+  event is refused, so a broken configuration is reported whatever the event, as the other rules
+  are.

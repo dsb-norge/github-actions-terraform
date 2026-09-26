@@ -133,7 +133,7 @@ checked whatever the mode:
 
 | Input | Type | Default | Meaning |
 |---|---|---|---|
-| `path-relevance-enabled` | boolean | `true` | When `false`, relevance mode is `all` for every run: every environment runs, exactly as before this spec, and no changed files are fetched. The per-environment keys are validated but ignored. Setting it inside an environment is an error, since it would do nothing there; `paths: ["**"]` is the per-environment switch. |
+| `path-relevance-enabled` | boolean | `true` | When `false`, relevance mode is `all` for every run: every environment that takes part in the event runs, exactly as before this spec, and no changed files are fetched. The per-environment keys are validated but ignored. Setting it inside an environment is an error, since it would do nothing there; `paths: ["**"]` is the per-environment switch. |
 
 ### 3.5 Caller migration
 
@@ -233,7 +233,9 @@ changed-file path, derives the mode and reason of §4.2, and for each environmen
 (expanding `auto` with the environment's normalised `project-dir` and additional dirs) and
 `paths-ignore`, then:
 
-- mode `all`: every environment is affected, matched rule `all:<reason>`.
+- mode `all`: every environment is affected, matched rule `all:<reason>`, except one an earlier rule
+  already dropped: it does not take part in the event, or a dispatch named another environment
+  ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.1); relevance is not evaluated for it.
 - mode `diff`: an environment is affected when any changed file is relevant to it (§3.3); the
   first matching rule is recorded.
 
@@ -576,7 +578,7 @@ environments-yml: |
 |---|---|
 | Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test job's `if:` drops its `seed-pr-comments` result clause for the same reason as §5.3. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | Conditionality comes for free: a dependency on an environment that is not in the run is satisfied trivially, and is recorded. `relevance.json` carries what the stage builder needs. The conclusion rule for a stage skipped while its row count is non-zero is shared with that spec. |
-| Single-environment dispatch (later) | `workflow_dispatch` is mode `all` until that spec adds a filter; a dispatched environment is always affected. |
+| Dispatch and trigger events ([Dispatch-and-triggers.md](Dispatch-and-triggers.md)) | `workflow_dispatch` and `schedule` are mode `all`; the trigger events and the dispatch filter come first, so an environment that does not take part, or that a dispatch did not name, is skipped for that reason and a dispatched environment is always affected. A pull request skip for trigger events gets its own head, not the "not affected" one. |
 | Test-root lock files (later) | Unchanged. |
 
 ## 11. Actions: new and changed
