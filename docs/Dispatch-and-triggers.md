@@ -37,7 +37,7 @@ trigger on everything and let the engine decide.
 | D4 | `goal` offers `default`, `plan`, `apply`, `destroy-plan`. The input can never add `destroy`. An environment whose own `goals-yml` holds `destroy` still destroys on a default-branch dispatch with `goal: default`, as it does today. | Destroying stays a `goals-yml` decision made in a reviewed commit; the dispatch button cannot introduce it. |
 | D5 | The `goal` input is a **cap**: it only removes goals from what the environment's own `goals` would grant on a push to the same ref. `plan` and `destroy-plan` cap; `apply` requires the environment to hold `apply` or `all`. Asking for more is an error, not a silent downgrade. | A validate-only repository must not become an apply target through a dropdown, and a `plan` request must never be silently widened into a plan the environment does not have. |
 | D6 | `apply` by dispatch runs on the default branch only, as apply always has. Asking for it elsewhere is an error, not a silent plan. | A person who asked for an apply and got a plan would not notice until the outage. |
-| D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in.** A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in when they move to v1. |
+| D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in, per environment only**: the global list may not hold it. A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in when they move to v1. A scheduled environment holding `apply` is applied unattended, which is a decision about that environment: in the global list it would reach every environment, including one added later or a list copied from another repository. Nobody needs the global form, and allowing it later breaks nothing, where forbidding it later would (maintainer's decision). |
 | D8 | A dispatched environment is always relevant and always runs regardless of `paths`; relevance mode is `all` on dispatch, as the relevance spec says. | A dispatch is a person asking. |
 | D9 | Tests do not run on `workflow_dispatch` (Terraform-tests.md D7). | A recovery must not start integration tests against the tenant being recovered. A later addition may add a `test-file` dispatch input. |
 | D10 | The run records who dispatched what, with which goal and reason, in the run summary and a notice: both `github.actor` and `github.triggering_actor`, since a re-run keeps the original actor. | A dispatch that bypasses ordering ([Environment-ordering.md](Environment-ordering.md)) must be visible. |
@@ -85,8 +85,9 @@ gh workflow run terraform-ci-cd.yml --ref main -f environment=staging -f goal=ap
 | `trigger-events-yml` (workflow input) | YAML list | `[pull_request, push, workflow_dispatch]` | Events on which an environment takes part unless it says otherwise. |
 | `trigger-events` (per environment in `environments-yml`) | list | the global default | Replaces the global list for this environment. |
 
-Valid values: `pull_request`, `push`, `workflow_dispatch`, `schedule`. Anything else is a
-validation error.
+Valid values: `pull_request`, `push`, `workflow_dispatch`, and, in an environment's own
+`trigger-events` only, `schedule` (D7). Anything else is a validation error, and so is `schedule`
+in `trigger-events-yml`.
 
 ```yaml
 trigger-events-yml: |
@@ -153,6 +154,7 @@ A validation error stops the run in `create-matrix`, red conclusion, with one me
 | `goal: apply` off the default branch | `dispatch: apply is only allowed from the default branch 'main'; this run is on 'feature/x'` |
 | `goal: apply` for an environment without the goal | `dispatch: environment 'sandbox' does not hold the goal 'apply' (goals: init, format, validate, lint, plan)` |
 | an unknown value in `trigger-events` | `environments-yml: environment 'prod': unknown trigger event 'merge'` |
+| `schedule` in the global list | `trigger-events-yml: 'schedule' is per environment only; add it to the trigger-events of the environment the schedule is for` |
 | the named environment takes no part in dispatches | `dispatch: environment 'staging' does not take part in workflow_dispatch (trigger-events: pull_request, push)` |
 | the run's event is outside the vocabulary | `event 'merge_group' is not supported by this workflow; supported: pull_request, push, workflow_dispatch, schedule` |
 | a dispatch with no inputs block at all | not an error: every environment runs with `goals-yml`, and the run summary says the block is missing and where to copy it from |
@@ -255,9 +257,6 @@ line. A survey of the calling repositories found no dispatch input named `enviro
 
 1. **A later `test-file` dispatch input** for running one test file: not in this spec; the
    dispatch block gains a fourth input then, with the same copy-paste property.
-2. **Whether the global `trigger-events-yml` should be able to include `schedule`**: allowed by
-   this spec; a repository whose every environment reconciles nightly sets it once. Confirm this is
-   wanted rather than forcing the opt-in per environment.
 
 ## 11. Implementation order
 
