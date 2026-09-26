@@ -518,6 +518,43 @@ assert "R8: mode all names the engine's reason" grep -qxF 'Relevance: `all` (wor
 unset input_relevance_file
 teardown
 
+# R9 — the trigger block: who dispatched what, and a schedule nothing took part in, from the engine's
+# own file. Neither run carries a change, so neither says "affected by this change".
+setup
+engine_relevance dispatch-staging
+write_meta "staging" success "0:0:0" "0:10"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R9: the dispatch line is quoted under the relevance line" \
+  grep -qxF '> dispatched by octocat: environment staging, goal plan, reason "reconcile after incident 42"' \
+  "${GITHUB_STEP_SUMMARY}"
+assert "R9: a dispatch does not speak of a change" bash -c "! grep -q 'this change' '${GITHUB_STEP_SUMMARY}'"
+assert "R9: the dashed rows are not part of the run" \
+  grep -qxF '_Rows of `—`: not part of this run, so not planned._' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+setup
+engine_relevance schedule-nothing
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R9: exits 0 on a schedule nothing took part in" test "${LAST_EXIT}" -eq 0
+assert "R9: the schedule line names the key" \
+  grep -qxF "> schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the environment the schedule is for" \
+  "${GITHUB_STEP_SUMMARY}"
+assert "R9: no 'nothing needed verifying' on a schedule" bash -c "! grep -q 'Nothing needed verifying' '${GITHUB_STEP_SUMMARY}'"
+unset input_relevance_file
+teardown
+
+setup
+engine_relevance docs-only
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R9: a pull request has no trigger line" bash -c "! grep -q '^> ' '${GITHUB_STEP_SUMMARY}'"
+assert "R9: and still says nothing needed verifying" grep -q 'Nothing needed verifying' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
