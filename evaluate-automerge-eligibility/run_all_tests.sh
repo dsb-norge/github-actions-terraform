@@ -1971,6 +1971,78 @@ else
 fi
 
 # ============================================================================
+# F13 — the operation gates read the granted goals (docs/Decision-engine.md D10,
+# docs/Dispatch-and-triggers.md D11).
+#
+# A dispatch's goal cap only works if no gate reads the raw goals: a step gated
+# on contains(matrix.vars.goals, 'all') would plan or apply what the cap removed.
+# The raw list stays for the renderers (goals-json). The apply and destroy gates
+# keep their event and branch clauses as defence in depth, and destroy never
+# accepts schedule. The trigger-events-yml input reaches the engine through
+# toJSON(inputs), with schedule absent from its default.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F13 - the operation gates read goals-granted, with their event clauses kept${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f13_out=$(python3 - "${_workflow}" <<'PYEOF'
+import re, sys, yaml
+
+workflow = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+jobs = workflow["jobs"]
+problems = []
+gated = []
+for job_id, job in jobs.items():
+    for step in job.get("steps", []):
+        condition = " ".join(str(step.get("if", "")).split())
+        label = f"{job_id}/{step.get('id') or step.get('name')}"
+        if re.search(r"matrix\.vars\.goals\b(?!-)", condition):
+            problems.append(f"the step '{label}' gates on the raw goals")
+        if "matrix.vars.goals-granted" in condition:
+            gated.append(label)
+        for key, value in (step.get("with") or {}).items():
+            if re.search(r"matrix\.vars\.goals\b(?!-)", str(value)) and key != "goals-json":
+                problems.append(f"the step '{label}' passes the raw goals as '{key}'")
+steps = {step.get("id"): step for step in jobs["terraform-ci-cd"]["steps"] if step.get("id")}
+for goal, step_id in (("init", "init"), ("format", "fmt"), ("validate", "validate"), ("lint", "lint"),
+                      ("plan", "plan"), ("apply", "apply"), ("destroy-plan", "destroy-plan"), ("destroy", "destroy")):
+    condition = " ".join(str(steps.get(step_id, {}).get("if", "")).split())
+    if f"contains(matrix.vars.goals-granted, '{goal}')" not in condition:
+        problems.append(f"the step '{step_id}' does not gate on the granted goal '{goal}'")
+for step_id, events in (("apply", ("push", "workflow_dispatch", "schedule")), ("destroy", ("push", "workflow_dispatch"))):
+    condition = " ".join(str(steps[step_id].get("if", "")).split())
+    for clause in [f"github.event_name == '{event}'" for event in events] + [
+            "matrix.vars.caller-repo-is-on-default-branch == 'true'", "github.event.action != 'closed'",
+            "github.event.action != 'converted_to_draft'", "github.base_ref == matrix.vars.caller-repo-default-branch"]:
+        if clause not in condition:
+            problems.append(f"the step '{step_id}' lost its defence-in-depth clause {clause}")
+if "github.event_name == 'schedule'" in " ".join(str(steps["destroy"].get("if", "")).split()):
+    problems.append("the destroy step accepts schedule")
+inputs = workflow[True]["workflow_call"]["inputs"]
+trigger = inputs.get("trigger-events-yml", {})
+if trigger.get("type") != "string" or yaml.safe_load(str(trigger.get("default"))) != ["pull_request", "push",
+                                                                                         "workflow_dispatch"]:
+    problems.append(f"the trigger-events-yml input is {trigger}")
+create = [step for step in jobs["create-matrix"]["steps"] if "create-tf-vars-matrix" in str(step.get("uses", ""))]
+if len(create) != 1 or create[0].get("with", {}).get("inputs-json") != "${{ toJSON(inputs) }}":
+    problems.append("create-matrix does not hand the engine toJSON(inputs)")
+print(f"checked {len(gated)} gates on goals-granted, the apply and destroy clauses, and the trigger-events-yml input")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f13_rc=0 || _f13_rc=$?
+if [[ "${_f13_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f13_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f13_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

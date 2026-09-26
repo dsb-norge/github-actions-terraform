@@ -347,6 +347,20 @@ on:
           environment on every change, set its 'paths' to ['**'].
         required: false
         default: true
+      trigger-events-yml:
+        type: string
+        description: |
+          YAML list of the events an environment takes part in unless it sets its own 'trigger-events' in
+          'environments-yml': any of pull_request, push and workflow_dispatch. 'schedule' is opt-in per environment
+          only: a scheduled environment that holds 'apply' is applied unattended, so it goes in that environment's own
+          'trigger-events', never here. A run on any other event is a validation error. See
+          docs/Dispatch-and-triggers.md.
+
+          A dispatch runs one environment with a chosen goal when the calling workflow declares the standard
+          'workflow_dispatch' inputs block (environment, goal, reason); the inputs are read from the caller's event,
+          nothing is forwarded through 'with:'.
+        required: false
+        default: "[pull_request, push, workflow_dispatch]"
       cache-terraform-modules:
         type: boolean
         description: |
@@ -772,14 +786,14 @@ jobs:
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
+        if: contains(matrix.vars.goals-granted, 'lint')
         uses: dsb-norge/github-actions-terraform/setup-tflint@v1
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
           working-directory: ${{ matrix.vars.project-dir }}
 
       - name: "🚀 Cache Terraform provider plugins"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
+        if: contains(matrix.vars.goals-granted, 'init')
         uses: actions/cache@v5
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
@@ -806,7 +820,7 @@ jobs:
         id: module-cache
         if: |
           matrix.vars.cache-terraform-modules == 'true'
-          && (contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init'))
+          && contains(matrix.vars.goals-granted, 'init')
         uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
         with:
           phase: resolve
@@ -849,7 +863,7 @@ jobs:
 
       - name: ⚙️ Terraform Init
         id: init
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
+        if: contains(matrix.vars.goals-granted, 'init')
         uses: dsb-norge/github-actions-terraform/terraform-init@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -947,7 +961,7 @@ jobs:
 
       - name: 🖌 Terraform Format
         id: fmt
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
+        if: contains(matrix.vars.goals-granted, 'format')
         uses: dsb-norge/github-actions-terraform/terraform-fmt@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -957,7 +971,7 @@ jobs:
 
       - name: ✔ Terraform Validate
         id: validate
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
+        if: contains(matrix.vars.goals-granted, 'validate')
         uses: dsb-norge/github-actions-terraform/terraform-validate@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -967,7 +981,7 @@ jobs:
 
       - name: 🧹 Lint with TFLint
         id: lint
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
+        if: contains(matrix.vars.goals-granted, 'lint')
         uses: dsb-norge/github-actions-terraform/lint-with-tflint@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -976,7 +990,7 @@ jobs:
 
       - name: 📖 Terraform Plan
         id: plan
-        if: steps.init.outcome == 'success' && ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan') )
+        if: steps.init.outcome == 'success' && contains(matrix.vars.goals-granted, 'plan')
         uses: dsb-norge/github-actions-terraform/terraform-plan@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -1248,7 +1262,7 @@ jobs:
       # If 'allow-failing-terraform-operations' is 'true' for the environment the job will not terminate.
 
       - name: "🧐 Validation outcome: ⚙️ Init"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'init')
+        if: contains(matrix.vars.goals-granted, 'init')
         run: |
           if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
             echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
@@ -1273,7 +1287,7 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 🖌 Format"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'format')
+        if: contains(matrix.vars.goals-granted, 'format')
         run: |
           if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
             echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
@@ -1282,7 +1296,7 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: ✔ Validate"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'validate')
+        if: contains(matrix.vars.goals-granted, 'validate')
         run: |
           if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
             echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
@@ -1291,7 +1305,7 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 🧹 TFLint"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'lint')
+        if: contains(matrix.vars.goals-granted, 'lint')
         run: |
           if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
             echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
@@ -1300,7 +1314,7 @@ jobs:
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 📖 Plan"
-        if: contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'plan')
+        if: contains(matrix.vars.goals-granted, 'plan')
         run: |
           if [ ! "${{ steps.plan.outcome }}" == 'success' ]; then
             echo "::error title=Plan failed::Outcome of terraform plan step was '${{ steps.plan.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
@@ -1312,21 +1326,18 @@ jobs:
       - name: 🐙 Terraform Apply
         id: apply
         # Run step when:
-        #   - plan succeeded AND:
-        #     1. one of the goals [all, apply]
-        #        AND push or manual on default branch
-        #     2. goal 'apply-on-pr'
-        #        AND pull request to default branch
-        #        except when PR is being closed or converted to draft
+        #   - plan succeeded AND the engine granted 'apply' (from 'all', 'apply' or 'apply-on-pr', and
+        #     never past a dispatch's goal cap) AND, kept as defence in depth, the event is still one of:
+        #     1. push, manual or schedule on the default branch
+        #     2. pull request to the default branch, except when it is being closed or converted to draft
         if: |
           steps.plan.outcome == 'success'
+          && contains(matrix.vars.goals-granted, 'apply')
           && (
-            ( ( contains(matrix.vars.goals, 'all') || contains(matrix.vars.goals, 'apply') )
-              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
+            ( ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
             ) || (
-              contains(matrix.vars.goals, 'apply-on-pr')
-              && github.event_name == 'pull_request'
+              github.event_name == 'pull_request'
               && github.event.action != 'closed'
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
@@ -1385,7 +1396,7 @@ jobs:
         id: destroy-plan
         if: |
           steps.init.outcome == 'success'
-          && contains(matrix.vars.goals, 'destroy-plan')
+          && contains(matrix.vars.goals-granted, 'destroy-plan')
         uses: dsb-norge/github-actions-terraform/terraform-plan@v1
         with:
           working-directory: ${{ matrix.vars.project-dir }}
@@ -1422,21 +1433,19 @@ jobs:
       - name: ☠ Terraform Destroy
         id: destroy
         # Run step when:
-        #   - destroy plan succeeded AND:
-        #     1. goal 'destroy'
-        #        AND push or manual on default branch
-        #     2. goal 'destroy-on-pr'
-        #        AND pull request to default branch
-        #        except when PR is being closed or converted to draft
+        #   - destroy plan succeeded AND the engine granted 'destroy' (from 'destroy' or 'destroy-on-pr', never
+        #     on a schedule, never through a dispatch's goal input) AND, kept as defence in depth, the event is
+        #     still one of:
+        #     1. push or manual on the default branch
+        #     2. pull request to the default branch, except when it is being closed or converted to draft
         if: |
           steps.destroy-plan.outcome == 'success'
+          && contains(matrix.vars.goals-granted, 'destroy')
           && (
-            ( contains(matrix.vars.goals, 'destroy')
-              && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
+            ( ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' )
               && matrix.vars.caller-repo-is-on-default-branch == 'true'
             ) || (
-              contains(matrix.vars.goals, 'destroy-on-pr')
-              && github.event_name == 'pull_request'
+              github.event_name == 'pull_request'
               && github.event.action != 'closed'
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
