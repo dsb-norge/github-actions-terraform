@@ -83,17 +83,24 @@ column is what to do in a standard project repository.
 ## 5. Migration checklist per repository
 
 1. Read §3 and note which rows apply; read §4 and decide which features to switch on now.
-2. On a branch: change `@v0` to `@v1` in every calling workflow file; remove `on.paths` and
+2. If the repository has committed test files, audit its identities before it moves. Every test job
+   can request an OIDC token, and in a lane without an environment the token's subject is the pull
+   request's, or the branch's on a push, so test code from a pull request can use any identity that
+   trusts such a subject. Plan and apply credentials must be environment secrets of the Terraform
+   environments, never repository or organisation secrets, and no plan or apply identity may trust a
+   `pull_request` or branch subject; remove or narrow every federated credential that does
+   (Workflow-terraform-ci-default.md, "Keeping plan and apply identities out of reach").
+3. On a branch: change `@v0` to `@v1` in every calling workflow file; remove `on.paths` and
    `on.paths-ignore`; add the dispatch block; add `trigger-events` where a schedule exists; add
    lanes if the repository has credentialed tests.
-3. Open a pull request that touches only documentation and confirm a green conclusion with every
+4. Open a pull request that touches only documentation and confirm a green conclusion with every
    environment "not affected". Then one that touches one environment. Then, if tests exist, one
    that breaks a test and confirm the conclusion goes red.
-4. Merge and read the first push run's summary: the decision record says why each environment ran
+5. Merge and read the first push run's summary: the decision record says why each environment ran
    or did not.
-5. Delete the workflow files the move made redundant: a path-filtered second workflow, a nightly
+6. Delete the workflow files the move made redundant: a path-filtered second workflow, a nightly
    file.
-6. For credentialed test lanes, complete the environment bring-up of Terraform-tests.md §3.6 and
+7. For credentialed test lanes, complete the environment bring-up of Terraform-tests.md §3.6 and
    re-run the failed jobs.
 
 ## 6. Implementation order across specs
