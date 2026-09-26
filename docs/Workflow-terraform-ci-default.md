@@ -46,9 +46,63 @@ See more examples under [example usage](#example-usage) further down.
 
 There are several optional fields for each entry in `environments-yml`, see description of each in the [workflow declaration](.github/workflows/terraform-ci-cd-default.yml).
 
+#### Events, dispatch and schedule
+
+The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`; any other event is a validation error. Trigger the calling workflow on the events you want and let each environment say which it takes part in. The full design is [Dispatch-and-triggers.md](./Dispatch-and-triggers.md).
+
+| Input or field | Default | Meaning |
+|---|---|---|
+| `trigger-events-yml` (input) | `[pull_request, push, workflow_dispatch]` | The events an environment takes part in unless it sets its own. `schedule` is not allowed here. |
+| `trigger-events` (per environment) | the input | Replaces the input for this environment. The only place `schedule` may appear. |
+
+**Schedule is opt-in per environment.** A scheduled environment that holds `apply` is applied unattended, so only the environment the schedule is for opts in; a schedule nothing opted into runs nothing, green, with a notice naming the key:
+
+```yaml
+on:
+  schedule: [{ cron: "0 2 * * *" }]
+  # … pull_request, push, workflow_dispatch as usual
+# …
+      environments-yml: |
+        - environment: prod
+        - environment: staging
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]   # nightly reconcile
+```
+
+A scheduled run never destroys; an environment holding `destroy` runs its destroy plan and stops there.
+
+**Dispatching one environment.** Add the standard inputs block to the calling workflow, the same in every repository; the workflow reads the inputs from the caller's event, nothing goes through `with:`:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to run, as named in environments-yml. Empty runs every environment."
+        type: string
+        default: ""
+      goal:
+        description: "Goal for this run. default follows goals-yml; plan, apply and destroy-plan override it for the selected environments."
+        type: choice
+        options: [default, plan, apply, destroy-plan]
+        default: default
+      reason:
+        description: "Why this run is dispatched. Recorded in the run summary."
+        type: string
+        default: ""
+```
+
+```bash
+gh workflow run <calling-workflow>.yml --ref main -f environment=staging -f goal=apply -f reason="rebuild after incident 42"
+```
+
+- `goal` only ever removes from what the environment's `goals-yml` would grant on a push to the same branch: `plan` and `destroy-plan` cap it, `apply` needs the environment to hold `apply` or `all` and the default branch. Asking for more is an error, never a silent downgrade, and the dropdown can never add `destroy`.
+- A name that matches no environment, or one whose `trigger-events` lack `workflow_dispatch`, is an error, never a green run that did nothing.
+- Who dispatched what, with which goal and reason, is the first notice of the run and a line of the run summary. Without the inputs block a dispatch runs every environment with its `goals-yml`, and says where to copy the block from.
+- Tests do not run on a dispatch or a schedule.
+
 #### Which environments run: path relevance
 
-On `pull_request` and `push`, an environment runs only when the change touches a file that is relevant to it. A pull request is judged on its whole diff, a push on everything it carried. On `schedule` and `workflow_dispatch` every environment runs. The full design is [Path-relevance.md](./Path-relevance.md).
+On `pull_request` and `push`, an environment runs only when the change touches a file that is relevant to it. A pull request is judged on its whole diff, a push on everything it carried. On `schedule` and `workflow_dispatch` every environment that takes part in the event runs (see the next section). The full design is [Path-relevance.md](./Path-relevance.md).
 
 Two optional fields per environment decide what is relevant:
 
