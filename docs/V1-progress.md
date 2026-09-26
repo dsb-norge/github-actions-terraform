@@ -37,7 +37,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 | Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3, 5 and 6 come with steps 3-5 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
 | Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
-| Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 rows pending (§4) | yes |
+| Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 dispatch and schedule rows on pull requests, pushes, dispatches and a schedule (§4) | yes |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
 | apply reporting hardening (#57) | yes | yes | in CI on six Terraform minors | no spec |
@@ -233,6 +233,36 @@ table only says where.
   passed from the environment's `TF_VAR_NEEDED` beside the upper-case one, and the version lane at
   1.12.2 reported "Terraform 1.12.2 is below the 1.13.0 floor"; every other row as in the third run.
 
+### Step 4, #65: dispatch and trigger events
+
+- Test first for `triggers.py`: every row of the spec's §6 and every error of §4.3 as a table case,
+  generated cases across events, trigger-events, dispatch inputs, branches and goals, and the
+  invariants I1, I2, I3, I15, I16 and I17 derived apart from the module. Gates: 451 tests, 100
+  percent of lines and branches, 3181 mutants all killed (six survivors on the first run: two
+  redundant pieces removed, four cases tested). Every port golden changed only by `goals-granted`.
+  Structural test F13 was shown failing on a gate put back on the raw goals and on a destroy gate
+  that accepted schedule.
+- Test bed through `preview/pr-65`, pull request dsb-norge/azure-terraform-peder-tester#62, the
+  spec's roles on local-backend environments (`outputs-kept-poc` prod with `[all, destroy-plan]`,
+  `noop-poc` staging with `[all]` and schedule, `destroy-plan-poc` scratch with the destroy goals
+  and no pull requests), every result as the spec says:
+  - pull request: the two taking part planned without apply; `destroy-plan-poc` skipped with
+    `trigger-events: pull_request not enabled`, its head saying it takes no part in pull requests;
+  - dispatch from the branch with `goal: apply`: refused in create-matrix, naming the default
+    branch; a fleet-wide `goal: plan` from the branch capped all three (scratch to `init, plan`),
+    the dispatch line the first notice and quoted in the run summary;
+  - the push that merged it to the test bed's `main`: apply where granted, destroy only in
+    `destroy-plan-poc`, through the switched gates;
+  - dispatches on `main`: the recovery apply ran `noop-poc` alone, planned and applied; scratch on
+    `default` planned, applied, destroy-planned and destroyed; `goal: destroy-plan` on prod ran its
+    destroy plan only, the gates skipping plan and apply; a misspelt name and `destroy-plan` for an
+    environment without it failed with the spec's messages;
+  - a five-minute schedule on `main`: the scheduled run planned and applied `noop-poc` alone, the
+    other two skipped with `trigger-events: schedule not enabled`. The cron was removed and the
+    test bed's `main` restored to `@v1` right after.
+- Not exercised on the test bed, covered by tests: a dispatch without an inputs block after the
+  move (the port cases and the adapter tests), a re-run by another actor, an unsupported event.
+
 ## 5. Findings to carry
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
@@ -246,6 +276,12 @@ Recorded while building, not fixed in the step that found them, each waiting for
 
 - The required-fields list lacks `runs-on` and `format-check-in-root-dir`, which the workflow reads
   (Decision-engine.md §9).
+- A scalar `goals-yml` string is read by the gates' `contains()` as a substring: `goals-yml:
+  destroy-plan` (not a list) holds `plan` and `destroy`, so it destroys on a push to the default
+  branch. The granted goals mirror it on purpose (Dispatch-and-triggers.md P11). For the
+  maintainer to decide whether a scalar string should be one goal, matched exactly.
+- A skipped matrix job shows its unevaluated name: the test job appears as `matrix.test.name` when
+  the stage does not run. GitHub does not evaluate a skipped job's matrix name; cosmetic.
 - `ubuntu-latest` moving to ubuntu-26.04 brings Python 3.14 to `create-matrix`; the engine is
   standard library only, and CI runs its suite on the newest 3.x as well as the 3.12 floor.
 - `verify-terraform-lock`'s test 12 failed once when every suite ran in parallel on one machine and
