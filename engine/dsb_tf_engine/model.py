@@ -18,6 +18,8 @@ OPTIONAL_KEYS = ("changed_files", "run", "tests")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
 CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
 PUSH_KEYS = ("created", "forced", "deleted")
+# 'block' says whether the calling workflow declares dispatch inputs at all.
+DISPATCH_KEYS = ("block", "environment", "goal", "reason")
 
 
 def _require(condition, message):
@@ -87,6 +89,16 @@ def check(document):
                  "boolean 'is_fork'")
     _require(isinstance(event.get("action", ""), str), "input document: 'event.action' is not a string")
     _require(isinstance(event.get("actor", ""), str), "input document: 'event.actor' is not a string")
+    _require(isinstance(event.get("triggering_actor", ""), str),
+             "input document: 'event.triggering_actor' is not a string")
+    _require(isinstance(event.get("base_ref", ""), str), "input document: 'event.base_ref' is not a string")
+    if "dispatch" in event:
+        dispatch = event["dispatch"]
+        _require(isinstance(dispatch, dict) and set(dispatch) == set(DISPATCH_KEYS)
+                 and isinstance(dispatch["block"], bool)
+                 and all(isinstance(dispatch[key], str) for key in DISPATCH_KEYS[1:]),
+                 "input document: 'event.dispatch' needs exactly the boolean 'block' and the strings 'environment', "
+                 "'goal' and 'reason'")
     _require(isinstance(caller.get("workflow_name", ""), str), "input document: 'caller.workflow_name' is not a string")
     if "run" in document:
         run = document["run"]

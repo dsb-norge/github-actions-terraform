@@ -19,6 +19,9 @@ import support
 READ_BY_THE_ACTIONS = {"environment", "github-environment", "verdict", "reasons", "add-pr-comment", "pr-comment-group",
                        "mutates-on-pr", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits",
                        "paths", "paths-ignore"}
+# The decision itself, published beside what the actions read: every entry's trigger events, and the
+# goals a running environment is granted (docs/Decision-engine.md I16).
+DECISION_FIELDS = {"trigger-events"}
 
 
 def written(scenario):
@@ -35,10 +38,24 @@ class ContractTest(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 published = written(scenario)
                 self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments",
-                                  "notices", "warnings", "record"}, set(published))
+                                  "notices", "warnings", "record", "trigger"}, set(published))
+                self.assertEqual({"event", "lines"}, set(published["trigger"]))
                 self.assertEqual({"mode", "reason", "changed_count"}, set(published["relevance"]))
                 for entry in published["environments"]:
-                    self.assertEqual(READ_BY_THE_ACTIONS, set(entry))
+                    goals = {"goals"} if entry["verdict"] == "run" else set()
+                    self.assertEqual(READ_BY_THE_ACTIONS | DECISION_FIELDS | goals, set(entry))
+
+    def test_the_event_scenarios_publish_their_trigger_lines(self):
+        dispatch = written("dispatch-staging")
+        self.assertEqual({"event": "workflow_dispatch", "lines": [
+            'dispatched by octocat: environment staging, goal plan, reason "reconcile after incident 42"']},
+            dispatch["trigger"])
+        self.assertEqual(["skip", "run", "skip"], [entry["verdict"] for entry in dispatch["environments"]])
+        schedule = written("schedule-nothing")
+        self.assertEqual({"event": "schedule", "lines": [
+            "schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the "
+            "environment the schedule is for"]}, schedule["trigger"])
+        self.assertEqual({"affected": 0, "unaffected": 3}, schedule["counts"])
 
     def test_the_scenarios_decide_what_the_actions_tests_expect(self):
         cases = {
@@ -75,7 +92,7 @@ class ContractTest(unittest.TestCase):
                     done = subprocess.run([sys.executable, "-I", "-B", script, *argv], capture_output=True, text=True,
                                           cwd=temp)
                     self.assertNotEqual(0, done.returncode)
-                    self.assertIn("usage: relevance_fixture.py <docs-only|one-environment|workflow-changed>",
+                    self.assertIn("usage: relevance_fixture.py <docs-only|one-environment|workflow-changed|dispatch-staging|schedule-nothing>",
                                   done.stderr)
 
     def test_a_scenario_that_does_not_decide_is_refused(self):

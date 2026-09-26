@@ -305,7 +305,9 @@ class BuildDocumentTest(unittest.TestCase):
     def test_the_document_is_complete_and_valid(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(), lambda path: True)
         self.assertEqual({"schema_version": 1, "caller": {"repository": "o/r", "default_branch": "main"},
-                          "event": {"name": "workflow_dispatch", "ref_name": "feature/x"}, "workflow_inputs": DEFAULT_INPUTS,
+                          "event": {"name": "workflow_dispatch", "ref_name": "feature/x",
+                                    "dispatch": {"block": False, "environment": "", "goal": "", "reason": ""}},
+                          "workflow_inputs": DEFAULT_INPUTS,
                           "yaml": {"inputs": {"environments-yml": {"ok": True, "value": [{"environment": "env-a"}]}},
                                    "environments": [{}]},
                           "directories_exist": {"./envs/env-a": True}, "run": {"id": 4711, "attempt": 1}}, document)
@@ -390,9 +392,30 @@ class EventFactsTest(unittest.TestCase):
                 self.assertEqual({}, adapter.event_facts("pull_request", payload))
 
     def test_other_events_report_nothing(self):
-        for name in ("schedule", "workflow_dispatch", "pull_request_target"):
+        for name in ("schedule", "pull_request_target"):
             with self.subTest(name=name):
-                self.assertEqual({}, adapter.event_facts(name, {"created": True, "pull_request": {"number": 1}}))
+                self.assertEqual({}, adapter.event_facts(name, {"created": True, "pull_request": {"number": 1},
+                                                                "inputs": {"environment": "x"}}))
+
+    def test_a_dispatch_reports_its_inputs_block(self):
+        cases = [
+            # No inputs block: the payload's inputs is null (P8), or missing altogether.
+            ({"inputs": None}, {"block": False, "environment": "", "goal": "", "reason": ""}),
+            ({}, {"block": False, "environment": "", "goal": "", "reason": ""}),
+            ({"inputs": "text"}, {"block": False, "environment": "", "goal": "", "reason": ""}),
+            # Empty string inputs are absent (P9): the block is there, the values are empty.
+            ({"inputs": {"goal": "default"}}, {"block": True, "environment": "", "goal": "default", "reason": ""}),
+            ({"inputs": {}}, {"block": True, "environment": "", "goal": "", "reason": ""}),
+            ({"inputs": {"environment": "staging", "goal": "apply", "reason": "rebuild after incident 42",
+                         "other": "x"}},
+             {"block": True, "environment": "staging", "goal": "apply", "reason": "rebuild after incident 42"}),
+            # A caller's own input of another type is carried as its JSON text, never dropped silently.
+            ({"inputs": {"environment": 7, "goal": True, "reason": None}},
+             {"block": True, "environment": "7", "goal": "true", "reason": ""}),
+        ]
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                self.assertEqual({"dispatch": expected}, adapter.event_facts("workflow_dispatch", payload))
 
 
 class PullRequestFilesTest(unittest.TestCase):
@@ -602,6 +625,14 @@ class RelevanceDocumentTest(unittest.TestCase):
         self.assertEqual({"name": "schedule", "ref_name": "x"}, document["event"])
         self.assertNotIn("changed_files", document)
 
+    def test_the_actors_and_the_base_ref_come_from_the_runner_when_set(self):
+        facts = {**self.FACTS, "actor": "someone", "triggering_actor": "another", "base_ref": "main"}
+        event = adapter.build_document(DEFAULT_INPUTS, facts, FakeTools(api=self.API), lambda path: True)["event"]
+        self.assertEqual(("someone", "another", "main"), (event["actor"], event["triggering_actor"], event["base_ref"]))
+        facts = {**self.FACTS, "actor": "", "triggering_actor": "", "base_ref": ""}
+        event = adapter.build_document(DEFAULT_INPUTS, facts, FakeTools(api=self.API), lambda path: True)["event"]
+        self.assertEqual(set(), {"actor", "triggering_actor", "base_ref"} & set(event))
+
 
 class RunTest(unittest.TestCase):
     def test_a_decision_publishes_the_matrix_and_logs_everything_verbatim(self):
@@ -628,7 +659,7 @@ class RunTest(unittest.TestCase):
         document = json.loads(groups["decision engine input document"])
         self.assertEqual(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False), groups["decision engine input document"])
         self.assertIn("example.com/å", groups["decision engine input document"])
-        self.assertEqual("env-a: run — relevance: envs/env-a/**\nb: skip — relevance: no changed file matches",
+        self.assertEqual("env-a: run — relevance: envs/env-a/**; goals: none\nb: skip — relevance: no changed file matches",
                          groups["decision record"])
         matrix = runner.matrix()
         self.assertEqual(json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False), groups["matrix-json"])
@@ -680,7 +711,7 @@ class RunTest(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
         self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
-                          "warnings", "record"}, set(published))
+                          "warnings", "record", "trigger"}, set(published))
         self.assertEqual((["env-a", "b"], ["run", "skip"], {"affected": 1, "unaffected": 1}),
                          ([e["environment"] for e in published["environments"]],
                           [e["verdict"] for e in published["environments"]], published["counts"]))
@@ -701,7 +732,8 @@ class RunTest(unittest.TestCase):
         tools = FakeTools(api={COMPARE: {"files": [{"filename": "tests/a.tftest.hcl"}]}},
                           git={TEST_PATTERNS: (0, "tests/a.tftest.hcl\0docs/x.tftest.hcl\0", "")})
         runner = Runner(self, inputs={**DEFAULT_INPUTS, "terraform-test-enabled": True},
-                        environ={"GITHUB_WORKFLOW": "CI build", "GITHUB_ACTOR": "octocat"})
+                        environ={"GITHUB_WORKFLOW": "CI build", "GITHUB_ACTOR": "octocat",
+                                 "GITHUB_TRIGGERING_ACTOR": "hubot", "GITHUB_BASE_REF": "trunk"})
         self.assertEqual(0, runner.run(tools))
         outputs = runner.outputs()
         matrix = json.loads(outputs["tests-matrix-json"])
@@ -710,7 +742,9 @@ class RunTest(unittest.TestCase):
         self.assertIn("::warning title=create-tf-vars-matrix::test file 'docs/x.tftest.hcl' is misplaced",
                       runner.log.getvalue())
         document = json.loads(_groups(runner.log.getvalue())["decision engine input document"])
-        self.assertEqual(("CI build", "octocat"), (document["caller"]["workflow_name"], document["event"]["actor"]))
+        self.assertEqual(("CI build", "octocat", "hubot", "trunk"),
+                         (document["caller"]["workflow_name"], document["event"]["actor"],
+                          document["event"]["triggering_actor"], document["event"]["base_ref"]))
 
     def test_the_test_matrix_is_published_compact_sorted_and_unescaped(self):
         tools = FakeTools(api={COMPARE: {"files": []}}, git={TEST_PATTERNS: (0, "tests/å.tftest.hcl\0", "")})

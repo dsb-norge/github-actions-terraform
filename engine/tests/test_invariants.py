@@ -160,7 +160,7 @@ class InvariantCheckerTest(unittest.TestCase):
     def test_a_not_affected_head_for_an_affected_environment(self):
         document, output = self.seeded(["envs/a/x.tf"])
         output["comments"]["heads"][-1]["state"] = "not-affected"
-        self.assertEqual(["I14: a 'not affected' head for 'a', which is affected"], invariants.check(document, output))
+        self.assertEqual(["I14: a 'not affected' head for 'a', which is not skipped by relevance"], invariants.check(document, output))
 
     def test_a_purge_for_an_affected_environment(self):
         document, output = self.seeded(["envs/a/x.tf"])
@@ -210,6 +210,99 @@ class InvariantCheckerTest(unittest.TestCase):
         output.update(errors=["something"], environments=[], matrices={}, record=[],
                       counts={"affected": 0, "unaffected": 0})
         self.assertEqual(["errors present but a relevance block is emitted"], invariants.check(document, output))
+
+
+class GoalInvariantTest(unittest.TestCase):
+    """I1, I2, I3, I15, I16 and rules 2-3, each against an output broken in one way."""
+
+    def decide(self, event="push", goals=("all",), dispatch=None, trigger_events=None, ref="main"):
+        environment = {"environment": "a", "goals-yml": list(goals)}
+        if trigger_events is not None:
+            environment["trigger-events"] = trigger_events
+        document = support.document(environments=[environment, {"environment": "b"}],
+                                    env_yaml=[{"goals-yml": support.parsed(list(goals))}, {}], ref_name=ref)
+        document["event"]["name"] = event
+        if dispatch is not None:
+            document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", **dispatch}
+        output = decide.decide(document)
+        self.assertEqual([], invariants.check(document, output))
+        return document, output
+
+    def grant(self, output, goals):
+        output["environments"][0]["goals"] = goals
+        output["matrices"]["1"]["include"][0]["vars"]["goals-granted"] = goals
+
+    def assertViolation(self, document, output, fragment):
+        violations = invariants.check(document, output)
+        self.assertTrue(any(fragment in violation for violation in violations),
+                        f"expected a violation containing {fragment!r}, got {violations}")
+
+    def test_an_environment_dropped_by_an_earlier_rule_that_runs(self):
+        document, output = self.decide(event="schedule", trigger_events=["schedule"])
+        output["environments"][1]["verdict"] = "run"
+        self.assertViolation(document, output, "rules 2-3")
+
+    def test_a_not_taking_part_head_for_an_environment_that_takes_part(self):
+        document, output = decided(1)
+        document["event"] = {"name": "pull_request", "ref_name": "main",
+                             "pull_request": {"number": 1, "head_sha": "a", "is_fork": False}}
+        document["run"] = {"id": 1, "attempt": 1}
+        output["comments"] = {"heads": [{"kind": "env", "key": "env-0", "state": "not-taking-part"}],
+                              "purge_tags_for": [], "gc": []}
+        self.assertViolation(document, output, "I14: a 'not taking part' head")
+
+    def test_goals_that_disagree_with_the_row(self):
+        document, output = self.decide()
+        output["environments"][0]["goals"] = ["init"]
+        self.assertViolation(document, output, "I16")
+
+    def test_a_running_entry_without_goals(self):
+        document, output = self.decide()
+        del output["environments"][0]["goals"]
+        self.assertViolation(document, output, "I16")
+
+    def test_a_goal_outside_the_vocabulary(self):
+        document, output = self.decide()
+        self.grant(output, ["init", "all"])
+        self.assertViolation(document, output, "I1: 'a' is granted a goal outside the vocabulary")
+
+    def test_a_goal_the_gate_would_not_pass(self):
+        for goals, granted in ((("plan",), ["plan", "apply"]), (("apply",), ["destroy"]),
+                               (("init",), ["destroy-plan"]), (("init",), ["lint"])):
+            with self.subTest(goals=goals, granted=granted):
+                document, output = self.decide(goals=goals)
+                self.grant(output, granted)
+                self.assertViolation(document, output, "I1: 'a' is granted")
+
+    def test_apply_off_the_default_branch(self):
+        document, output = self.decide(ref="feature/x")
+        self.grant(output, ["apply"])
+        self.assertViolation(document, output, "I1: 'a' is granted 'apply'")
+
+    def test_destroy_on_a_schedule(self):
+        document, output = self.decide(event="schedule", goals=("destroy", "destroy-plan"),
+                                       trigger_events=["schedule"])
+        self.grant(output, ["destroy-plan", "destroy"])
+        self.assertViolation(document, output, "I15")
+
+    def test_a_dispatch_that_grants_more_than_a_push(self):
+        document, output = self.decide(event="workflow_dispatch", goals=("plan",), dispatch={"goal": "plan"})
+        document["event"]["name"] = "workflow_dispatch"
+        self.grant(output, ["plan", "apply"])
+        self.assertViolation(document, output, "I3")
+
+    def test_a_named_dispatch_that_runs_another_environment(self):
+        document, output = self.decide(event="workflow_dispatch", dispatch={"environment": "a"})
+        output["environments"][1]["verdict"] = "run"
+        self.assertViolation(document, output, "I2")
+        document, output = self.decide(event="workflow_dispatch", dispatch={"environment": "a"})
+        output["environments"][0]["verdict"] = "skip"
+        self.assertViolation(document, output, "I2")
+
+    def test_the_goal_invariants_are_not_checked_on_an_error(self):
+        document, output = self.decide()
+        output.update({"errors": ["x"], "environments": [], "matrices": {}})
+        self.assertEqual([], [v for v in invariants.check(document, output) if v.startswith(("I1", "I2", "I3", "I16"))])
 
 
 if __name__ == "__main__":

@@ -45,7 +45,9 @@ def run(**kwargs):
 
 
 def verdicts(output):
-    return {e["environment"]: (e["verdict"], e["reasons"]) for e in output["environments"]}
+    """Each environment's verdict and its relevance reasons; the granted goals are triggers.py's."""
+    return {e["environment"]: (e["verdict"], [r for r in e["reasons"] if not r.startswith("goals:")])
+            for e in output["environments"]}
 
 
 class ModeTest(unittest.TestCase):
@@ -64,7 +66,6 @@ class ModeTest(unittest.TestCase):
             ("disabled", dict(files=["README.md"], enabled="false")),
             ("event", dict(event="schedule")),
             ("event", dict(event="workflow_dispatch", files=["README.md"])),
-            ("event", dict(event="pull_request_target", files=["README.md"])),
             ("forced", dict(event="push", files=["README.md"], push={"forced": True})),
             ("branch-deleted", dict(event="push", files=[], push={"deleted": True})),
             ("not-computed", dict()),
@@ -228,10 +229,10 @@ class MatchingTest(unittest.TestCase):
                           "sandbox": ("skip", ["relevance: no changed file matches"])}, verdicts(output))
 
     def test_mode_all_runs_everything_and_says_why(self):
-        for kwargs, reason in ((dict(event="schedule"), "event"), (dict(files=[], enabled=False), "disabled")):
+        for kwargs, reason in ((dict(event="workflow_dispatch"), "event"), (dict(files=[], enabled=False), "disabled")):
             with self.subTest(reason=reason):
                 output = run(environments=ENVS, **kwargs)
-                self.assertEqual({(e["verdict"], tuple(e["reasons"])) for e in output["environments"]},
+                self.assertEqual({(e["verdict"], tuple(e["reasons"][:1])) for e in output["environments"]},
                                  {("run", (f"relevance: all:{reason}",))})
 
     def test_the_matrix_holds_the_affected_rows_in_declaration_order(self):
@@ -247,8 +248,8 @@ class MatchingTest(unittest.TestCase):
 
     def test_mode_all_reproduces_the_rows_without_relevance(self):
         with_rules = run(environments=[{"environment": "prod", "paths": ["x/**"], "paths-ignore": ["y/**"]}],
-                         event="schedule")
-        without = run(environments=[{"environment": "prod"}], event="schedule")
+                         event="workflow_dispatch")
+        without = run(environments=[{"environment": "prod"}], event="workflow_dispatch")
         self.assertEqual(without["matrices"], with_rules["matrices"])
 
     def test_the_rules_are_not_row_variables(self):
@@ -265,7 +266,8 @@ class MatchingTest(unittest.TestCase):
                           "mutates-on-pr": ["apply-on-pr"], "pr-auto-merge-enabled": "true",
                           "pr-auto-merge-from-actors": ["bot"], "pr-auto-merge-limits": None,
                           "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
-                          "paths-ignore": ["**/*.md"]}, entry)
+                          "paths-ignore": ["**/*.md"], "trigger-events": ["pull_request", "push", "workflow_dispatch"]},
+                         entry)
 
     def test_mutates_on_pr_lists_the_on_pr_goals_in_a_fixed_order(self):
         for goals, expected in ((["destroy-on-pr", "apply-on-pr"], ["apply-on-pr", "destroy-on-pr"]),
@@ -281,7 +283,8 @@ class MatchingTest(unittest.TestCase):
         self.assertEqual(["relevance diff (diff): 0 of 3 environments affected; nothing to verify for this change"],
                          run(environments=ENVS, files=["README.md"])["notices"])
         self.assertEqual(["relevance all (event): 3 of 3 environments affected"],
-                         run(environments=ENVS, event="schedule")["notices"])
+                         [notice for notice in run(environments=ENVS, event="workflow_dispatch")["notices"]
+                          if notice.startswith("relevance")])
         self.assertEqual(["relevance diff (diff): 1 of 1 environment affected"],
                          run(files=["envs/prod/a.tf"])["notices"])
 
@@ -353,7 +356,7 @@ class ValidationTest(unittest.TestCase):
                          self.errors({"environment": "prod", "paths": "x", "paths-ignore": ["ok/**", ""]}))
 
     def test_rules_are_validated_whatever_the_mode(self):
-        for kwargs in (dict(event="schedule"), dict(files=[], enabled=False)):
+        for kwargs in (dict(event="workflow_dispatch"), dict(files=[], enabled=False)):
             with self.subTest(kwargs=kwargs):
                 output = decide.decide(document(environments=[{"environment": "prod", "paths": "x"}], **kwargs))
                 self.assertEqual(["The environment 'prod' sets 'paths' to 'x'; it must be a list of patterns!"],

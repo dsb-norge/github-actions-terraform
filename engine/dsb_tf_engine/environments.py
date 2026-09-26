@@ -34,6 +34,7 @@ YML_INPUTS = (
     "pr-auto-merge-from-actors-yml",
     "pr-auto-merge-limits-yml",
     "terraform-init-additional-dirs-yml",
+    "trigger-events-yml",
 )
 
 # The test stage's inputs: read by tests.py for the test rows, never forwarded into an environment's.
@@ -67,8 +68,8 @@ BOOLEAN_INPUTS = (
     "format-check-in-root-dir", "path-relevance-enabled", "pr-auto-merge-enabled", "verify-lock-file",
 )
 
-# Relevance rules: resolved by relevance.py, never row variables.
-RULE_FIELDS = ("paths", "paths-ignore")
+# Relevance rules and trigger events: resolved by relevance.py and triggers.py, never row variables.
+RULE_FIELDS = ("paths", "paths-ignore", "trigger-events")
 
 # An environment name, and a github-environment, reach comment markers (':'-separated, ended by
 # '-->'), artifact names, concurrency groups and shell; this is what is safe in all of them.

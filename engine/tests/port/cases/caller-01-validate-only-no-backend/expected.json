@@ -49,6 +49,12 @@
             "validate",
             "lint"
           ],
+          "goals-granted": [
+            "init",
+            "format",
+            "validate",
+            "lint"
+          ],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",
           "pr-auto-merge-app-private-key-secret": "",
@@ -112,6 +118,12 @@
           "format-check-in-root-dir": "false",
           "github-environment": "env-b",
           "goals": [
+            "init",
+            "format",
+            "validate",
+            "lint"
+          ],
+          "goals-granted": [
             "init",
             "format",
             "validate",

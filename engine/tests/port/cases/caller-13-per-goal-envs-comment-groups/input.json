@@ -10,6 +10,12 @@
     "./envs/env-d": true
   },
   "event": {
+    "dispatch": {
+      "block": false,
+      "environment": "",
+      "goal": "",
+      "reason": ""
+    },
     "name": "workflow_dispatch",
     "ref_name": "main"
   },
@@ -56,6 +62,7 @@
     "terraform-test-timeout-minutes": 30,
     "terraform-version": "1.15.x",
     "tflint-version": "v0.64.0",
+    "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
     "verify-lock-file": true
   },
   "yaml": {
@@ -163,6 +170,14 @@
       "terraform-test-lanes-yml": {
         "ok": true,
         "value": null
+      },
+      "trigger-events-yml": {
+        "ok": true,
+        "value": [
+          "pull_request",
+          "push",
+          "workflow_dispatch"
+        ]
       }
     }
   }

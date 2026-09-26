@@ -148,6 +148,43 @@ class GeneratedTest(unittest.TestCase):
         self.assertEqual({"run", "skip"}, verdicts)
 
 
+class GeneratedTriggersTest(unittest.TestCase):
+    """Events x trigger-events x dispatch inputs x branch x goals (docs/Dispatch-and-triggers.md §9): every
+    combination decides soundly, and the outcome kinds all occur."""
+
+    GOALS = (["all"], ["all", "destroy-plan"], ["init", "format", "validate", "lint"], ["plan", "apply-on-pr"],
+             ["init", "plan", "apply", "destroy-plan", "destroy"], ["destroy-on-pr", "destroy-plan"], "all",
+             "destroy-plan", [], None, ["APPLY"])
+    EVENTS = (None, ["push"], ["schedule"], ["pull_request", "push", "workflow_dispatch", "schedule"],
+              ["workflow_dispatch"])
+    DISPATCH = (None, {"block": False}, {"environment": ""}, {"environment": "a"}, {"environment": "b", "goal": "plan"},
+                {"goal": "apply"}, {"environment": "a", "goal": "destroy-plan"}, {"environment": "z"}, {"goal": "x"})
+
+    def test_every_combination_is_sound(self):
+        kinds = set()
+        for event, goals, events, dispatch, ref, action in itertools.product(
+                ("pull_request", "push", "workflow_dispatch", "schedule"), self.GOALS, self.EVENTS, self.DISPATCH,
+                ("main", "feature/x"), ("opened", "closed")):
+            if event != "workflow_dispatch" and dispatch is not None or event != "pull_request" and action == "closed":
+                continue
+            environment = {"environment": "a", "goals-yml": goals}
+            if events is not None:
+                environment["trigger-events"] = events
+            document = support.document(environments=[environment, {"environment": "b", "goals-yml": ["all"]}],
+                                        env_yaml=[{"goals-yml": support.parsed(goals)},
+                                                  {"goals-yml": support.parsed(["all"])}], ref_name=ref)
+            document["event"].update({"name": event, "action": action, "base_ref": "main"})
+            if dispatch is not None:
+                document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", **dispatch}
+            with self.subTest(event=event, goals=goals, events=events, dispatch=dispatch, ref=ref, action=action):
+                original = copy.deepcopy(document)
+                output = decide.decide(document)
+                self.assertEqual(original, document)
+                self.assertEqual([], invariants.check(document, output))
+                kinds.add("error" if output["errors"] else f"{output['counts']['affected']} run")
+        self.assertEqual({"error", "0 run", "1 run", "2 run"}, kinds)
+
+
 class GeneratedTestsTest(unittest.TestCase):
     """The test stage's random walk: rules, lanes, events and facts; the invariants hold, nothing crashes."""
 

@@ -46,9 +46,13 @@ class PortTest(unittest.TestCase):
                 if expected["exit_code"] == 0:
                     self.assertEqual([], output["errors"])
                     self.assertEqual(expected["matrix"], output["matrices"]["1"])
-                    # A port case is a dispatch: every environment runs, as it did before relevance.
+                    # A port case is a dispatch without an inputs block: every environment runs, as it did
+                    # before relevance, with the goals its gates grant.
                     self.assertEqual(["relevance: all:event"] * len(output["environments"]),
-                                     [reason for e in output["environments"] for reason in e["reasons"]])
+                                     [e["reasons"][0] for e in output["environments"]])
+                    self.assertEqual([f"goals: {', '.join(row['vars']['goals-granted']) or 'none'}"
+                                      for row in output["matrices"]["1"]["include"]],
+                                     [e["reasons"][1] for e in output["environments"]])
                 else:
                     self.assertEqual(expected["errors"], output["errors"])
 
