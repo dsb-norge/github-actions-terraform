@@ -222,8 +222,13 @@ function render_with_relevance {
   ENVIRONMENT_COUNT="${n_env}"
   FAILED_COUNT="${n_failed}"
 
-  local mode reason changed
+  local mode reason changed event lines_file
   mode=$(jq -r '.relevance.mode // "" | tostring' "${file}")
+  # Who dispatched what, or a schedule nothing took part in (docs/Dispatch-and-triggers.md §5); a file
+  # from before the trigger block has neither.
+  event=$(jq -r '.trigger.event // "" | tostring' "${file}")
+  lines_file=$(mktemp)
+  jq -r '.trigger.lines // [] | .[] | tostring' "${file}" >"${lines_file}" 2>/dev/null || : >"${lines_file}"
   reason=$(jq -r '.relevance.reason // "" | tostring' "${file}")
   changed=$(jq -r '.relevance.changed_count // 0 | tostring' "${file}")
 
@@ -238,7 +243,8 @@ function render_with_relevance {
 
   printf '## Terraform run summary\n\n'
   printf '**%s**\n\n' "${headline}"
-  if [ "${n_affected}" -eq 0 ]; then
+  # A dispatch or a schedule carries no change; its trigger line says why nothing ran.
+  if [ "${n_affected}" -eq 0 ] && [ "${event}" != 'workflow_dispatch' ] && [ "${event}" != 'schedule' ]; then
     printf '_Nothing needed verifying: no environment is affected by this change._\n\n'
   fi
   # In mode diff the reason is always 'diff' and the count is what matters; in
@@ -249,13 +255,20 @@ function render_with_relevance {
   else
     printf 'Relevance: `%s` (%s)\n\n' "${mode}" "${reason}"
   fi
+  local line
+  while IFS= read -r line; do
+    printf '> %s\n\n' "${line}"
+  done <"${lines_file}"
+  rm -f "${lines_file}"
   printf '| Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |\n'
   printf '|---|:---:|---|---|---|---|---|\n'
   cat "${rows_file}"
   rm -f "${rows_file}"
   print_footer
   # A tooltip does not show on a phone, where this page is often read.
-  if [ "${n_unaffected}" -gt 0 ]; then
+  if [ "${n_unaffected}" -gt 0 ] && { [ "${event}" = 'workflow_dispatch' ] || [ "${event}" = 'schedule' ]; }; then
+    printf '\n_Rows of `—`: not part of this run, so not planned._\n'
+  elif [ "${n_unaffected}" -gt 0 ]; then
     printf '\n_Rows of `—`: not affected by this change, so not planned._\n'
   fi
 }
