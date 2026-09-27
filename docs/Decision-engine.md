@@ -388,11 +388,11 @@ not evaluated:
 
 | # | Rule | Source spec | Reason recorded |
 |---|---|---|---|
-| 1 | Validation of the environment's fields: names, types, globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | each spec's validation section | `error: …` |
+| 1 | Validation of the environment's fields: names, types, goals (a list of known goal names, a single name written alone being that one goal), globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | each spec's validation section | `error: …` |
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
-| 5 | Goals: expand the environment's `goals`, read as the gates' `contains()` reads them (a list element or a substring of a string, without case), to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
+| 5 | Goals: expand the environment's `goals`, a list of known names by rule 1, to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
 | 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
 | 7 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
 
@@ -741,11 +741,15 @@ AI-assistant configuration files are never in these commits.
   `unique` sorts them, not in first-seen order. The first mutation run on the new modules found
   seven survivors, each redundant code (a defensive copy, an early return whose value nobody read)
   or an untested literal; the code was removed or the literal tested.
+- **The goals stopped being substrings.** The first build of rule 5 mirrored the v0 gates'
+  `contains()`, which read a string of goals as a substring, so a list written without its dashes
+  held `destroy`. Rule 1 now holds a caller's goals to a list of known names; the port changed only
+  where the old builder's own fixture named goals that do not exist and where a single goal or none
+  was a string or null in the row.
 - **Trigger events, the dispatch filter and the goals joined without moving a row but one key.**
   Every port golden changed only by `goals-granted`, the goals the gates granted before; the port
   case inputs gained `trigger-events-yml` and their documents a dispatch without an inputs block,
-  which adds a notice and nothing else. The expansion had to mirror `contains()`, case and
-  substrings included, because the gates now read its result. The invariants for the new rules are
+  which adds a notice and nothing else. The invariants for the new rules are
   derived apart from `triggers.py`, from the raw goals and the event, so they cannot inherit its
   mistakes. The first mutation run on the new module found six survivors: two redundant pieces (an
   unread key, a discarded return value) removed, and four untested cases tested.

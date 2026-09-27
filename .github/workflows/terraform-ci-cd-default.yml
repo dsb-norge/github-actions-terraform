@@ -120,20 +120,22 @@ on:
                 - The 'init' goal was specified and the 'init' stage was successful.
               - apply, this causes the 'apply' stage to run, deploying the plan from the 'plan' stage. Additional requirements for 'apply' stage to run:
                 - The 'plan' goal was specified and the 'plan' stage was successful (which also implies 'init').
-                - AND workflow was not called from a pull request. This behavior can be overridden adding the goal 'apply-on-pr'.
-                - AND workflow was called from the default branch of the calling repo.
+                - AND the run is a push, a dispatch or a schedule on the default branch of the calling repo.
             special goals
               - all, this is the default, a shorthand version for all standard goals.
-              - apply-on-pr, specify this to make the 'apply' goal have effect also when the workflow was called from a pull request.
+              - apply-on-pr, runs the 'apply' stage on a pull request against the default branch, on its own: it does not need
+                'apply', and 'apply' alone never applies on a pull request. It still needs the 'plan' stage to succeed.
               - destroy-plan, this causes an additional 'plan' stage to run with the terraform flag '-destroy'. Additional requirements for 'plan' stage to run:
                 - The 'init' goal was specified and the 'init' stage was successful.
               - destroy, this causes an additional 'apply' stage to run, deploying the plan created as a result of the 'destroy-plan' goal. Additional requirements for 'destroy' stage to run:
                 - The 'destroy-plan' goal was specified and the 'plan' stage with the terraform flag '-destroy' was successful (which also implies 'init').
-                - AND workflow was not called from a pull request. This behavior can be overridden adding the goal 'destroy-on-pr'.
-                - AND workflow was called from the default branch of the calling repo.
-              - destroy-on-pr, specify this to make the 'destroy' goal have effect also when the workflow was called from a pull request.
+                - AND the run is a push or a dispatch on the default branch of the calling repo, never a schedule.
+              - destroy-on-pr, runs the 'destroy' stage on a pull request against the default branch, on its own: it does not need
+                'destroy', and 'destroy' alone never destroys on a pull request. It still needs 'destroy-plan'.
 
-          Type: YAML array (as string).
+          Type: YAML list (as string), one goal per item. A single goal may be written alone ('plan'), which is that one
+          goal. Any other name, or a list written without its dashes ('init plan destroy-plan' on separate lines, which
+          YAML reads as one string), is a validation error: the old substring reading turned that string into a destroy.
           Example:
             goals-yml: "[init, format, validate]"
 

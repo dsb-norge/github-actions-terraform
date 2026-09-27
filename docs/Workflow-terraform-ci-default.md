@@ -15,7 +15,7 @@ Default DSB CI/CD workflow for terraform projects that performs various operatio
 10. If called from either of events `push` or `workflow_dispatch` on the default branch of the calling repo and `plan` step was successful, run `terraform apply`. I.e. the default is to perform terraform apply when merging PRs.
 11. After `apply` (and `destroy-plan` / `destroy` when those goals are set), report the outcome: the PR comments from step 8 are updated with one block per operation and one tag comment per operation that ran, and — on every event, PR or not — each matrix job writes its environment's block to its `$GITHUB_STEP_SUMMARY` with a `::notice` / `::error` for the apply result, and a `run-summary` job writes one table covering every environment to the run page. An environment that neither applies nor destroys renders exactly the comment it always did. If `apply`, `destroy-plan` or `destroy` failed, stop the workflow with a failure (same `allow-failing-terraform-operations` escape hatch as step 9). See [Apply-and-destroy-reporting.md](./Apply-and-destroy-reporting.md).
 
-What steps to execute and when can be modified using the input `goals-yml`, see description pf the input documented in the [workflow](.github/workflows/terraform-ci-cd-default.yml).
+What steps to execute and when can be modified using the input `goals-yml`, see the description of the input documented in the [workflow](.github/workflows/terraform-ci-cd-default.yml). Goals are a YAML list of known names (`[init, format, validate]`, or one `- name` per line); a single goal may be written alone. Any other name, or a list written without its dashes, is a validation error.
 
 #### **Inputs**
 
@@ -95,7 +95,7 @@ on:
 gh workflow run <calling-workflow>.yml --ref main -f environment=staging -f goal=apply -f reason="rebuild after incident 42"
 ```
 
-- `goal` only ever removes from what the environment's `goals-yml` would grant on a push to the same branch: `plan` and `destroy-plan` cap it, `apply` needs the environment to hold `apply` or `all` and the default branch. Asking for more is an error, never a silent downgrade, and the dropdown can never add `destroy`.
+- `goal` only ever removes from what the environment's `goals-yml` would grant on a push to the same branch: `plan`, `apply` and `destroy-plan` cap it (an `apply` never brings the destroy goals with it; only `default` does, when `goals-yml` holds them), and `apply` needs the environment to hold `apply` or `all` and the default branch. Asking for more is an error, never a silent downgrade, and the dropdown can never add `destroy`.
 - A name that matches no environment, or one whose `trigger-events` lack `workflow_dispatch`, is an error, never a green run that did nothing.
 - Who dispatched what, with which goal and reason, is the first notice of the run and a line of the run summary. Without the inputs block a dispatch runs every environment with its `goals-yml`, and says where to copy the block from.
 - Tests do not run on a dispatch or a schedule.
@@ -244,7 +244,7 @@ Valid goal keys are the ones you write in `goals-yml`: `init`, `format`, `valida
 
 - The key is **`format`**, even though the workflow step is called `fmt`.
 - **`destroy-plan` and `destroy` are separate** from `plan` and `apply`, so a destroy plan can be tuned independently.
-- **There is no `all` key.** `all` is not a stage, it is shorthand expanded inside each step's condition, so there is nothing to attach values to — the every-goal layer is `extra-envs-yml`. Writing `all:` is a hard error rather than a silent no-op.
+- **There is no `all` key.** `all` is not a stage, it is shorthand the decision engine expands into the goals it grants, so there is nothing to attach values to — the every-goal layer is `extra-envs-yml`. Writing `all:` is a hard error rather than a silent no-op.
 
 An unknown goal key, a secret name that is not available to the workflow, an environment variable name that is not a valid one, or a value that is a list or a mapping all fail the job early, before any terraform runs.
 
