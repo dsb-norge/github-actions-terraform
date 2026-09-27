@@ -338,5 +338,12 @@ None; the decisions are the maintainer's (D3, D9, D10, D13).
   a successful plan; the errored rule is defence in depth for other callers.
 - **The notice has two forms.** The first draft had only "eligible despite"; a pull request that is
   not eligible for another reason still names its tolerated tests, in the second form (§5.1).
-- **Open until the test bed confirms it:** GitHub's wording for a stale `--match-head-commit`, the
-  fallback when the head cannot be read (§6), is from memory; the live refusal of §10 records it.
+- **GitHub's refusal of a stale head, confirmed live:** `gh pr merge --match-head-commit` with a head
+  the pull request no longer has fails with `GraphQL: Head branch was modified. Review and try the
+  merge again. (mergePullRequest)`, the fallback wording of §6. On the test bed the step then read
+  the new head and named both; a moved base was refused before any merge call; and the pins of an
+  up-to-date pull request merged it.
+- **A moved base stays moved until the pull request is updated.** After the base moved, GitHub kept
+  the pull request's old merge commit for minutes, so the same merge commit is refused on every
+  attempt; the next run, after the pull request is brought up to date, has a merge commit on the
+  new base.
