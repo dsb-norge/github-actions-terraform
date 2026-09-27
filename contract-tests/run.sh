@@ -11,6 +11,14 @@
 # captured console with the fixture pinned under the parser's test-data/, so a
 # wording change in a new terraform release fails loudly and names the line.
 #
+# A scenario's plan is also rendered with 'terraform show -json', as
+# terraform-plan's JSON step does (stdout only), and counted a second time from
+# that JSON plan through parse-terraform-plan's 'plan-json-file' input; those
+# counts must equal the same expected.json values. The console has no segment
+# for moves or removals, so these scenarios are what proves the JSON counting
+# under every supported minor — the JSON plan's shape can change between
+# releases too.
+#
 # The unit suites of the two parsers pin the fixtures; this script is what
 # proves the fixtures are still what terraform prints. See
 # docs/Apply-and-destroy-reporting.md §16 and docs/Testing-in-ci.md §13.
@@ -244,6 +252,7 @@ function run_scenario {
 
   # Console files named as the actions name them.
   local plan_console="${work}/tf-plan-console-output-${name}.txt"
+  local plan_json="${work}/tf-plan-${name}.json"
   local apply_console="${work}/tf-apply-console-output-${name}.txt"
   local plan_rc="" apply_rc=""
   local -a plan_extra=()
@@ -256,6 +265,11 @@ function run_scenario {
         # Exactly terraform-plan's command line.
         tf_in "${work}" "${plan_console}" plan -detailed-exitcode -input=false -no-color "-out=${work}/tfplan" ${plan_extra[@]+"${plan_extra[@]}"}
         plan_rc=$?
+        # Exactly terraform-plan's JSON step, before the plan is applied: stdout
+        # into the file, stderr apart.
+        if ! (cd "${work}" && "${TF_BIN}" show -json "${work}/tfplan") >"${plan_json}" 2>"${work}/show-json.err"; then
+          FAILURES+=("terraform show -json failed — see ${work}/show-json.err")
+        fi
         if [ "${operation}" = 'interrupt' ]; then
           # A cancelled job delivers SIGINT; terraform gets five seconds of a
           # thirty-second provisioner before it arrives (long enough for the
@@ -302,6 +316,19 @@ function run_scenario {
       expect_eq "${name}" plan "${k}-count" "$(jq -r ".plan.\"${k}\"" "${expected}")" "$(get_out "${plan_out}" "${k}-count")"
     done
     expect_eq "${name}" plan has-output-only-changes "$(jq -r '.plan."has-output-only-changes"' "${expected}")" "$(get_out "${plan_out}" has-output-only-changes)"
+    expect_eq "${name}" plan counts-source console "$(get_out "${plan_out}" counts-source)"
+    expect_eq "${name}" plan plan-complete '' "$(get_out "${plan_out}" plan-complete)"
+    # The same plan counted from its JSON plan: the same expected values.
+    local plan_json_out="${work}/parse-plan-json.out" plan_json_log="${work}/parse-plan-json.log"
+    run_parser "${PLAN_ACTION}" step_parse_plan_output.sh "${work}" "${plan_json_out}" "${plan_json_log}" \
+      "input_plan_console_file=${plan_console}" "input_plan_json_file=${plan_json}"
+    for k in import add change destroy move remove total; do
+      expect_eq "${name}" "plan (JSON)" "${k}-count" "$(jq -r ".plan.\"${k}\"" "${expected}")" "$(get_out "${plan_json_out}" "${k}-count")"
+    done
+    expect_eq "${name}" "plan (JSON)" has-output-only-changes "$(jq -r '.plan."has-output-only-changes"' "${expected}")" "$(get_out "${plan_json_out}" has-output-only-changes)"
+    expect_eq "${name}" "plan (JSON)" counts-source json "$(get_out "${plan_json_out}" counts-source)"
+    # No scenario targets or defers anything: every one is the whole plan.
+    expect_eq "${name}" "plan (JSON)" plan-complete true "$(get_out "${plan_json_out}" plan-complete)"
     [ "${CAPTURE}" = 'true' ] || check_signature "${name}" "${plan_console}" "${plan_fixture}" plan
   fi
 
