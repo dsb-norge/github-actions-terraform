@@ -7,10 +7,12 @@
 #   ./run_local_step_auto_merge_pr.sh                     # Run with mock gh (safe)
 #   GH_MOCK_MODE=failure ./run_local_step_auto_merge_pr.sh  # Simulate merge failure
 #   TEST_NULL_MERGEABLE=true GH_MOCK_MODE=retry GH_MOCK_FAIL_COUNT=2 MERGE_RETRY_DELAY=0 ./run_local_step_auto_merge_pr.sh  # Simulate retry
+#   GH_MOCK_BASE_MOVED=true ./run_local_step_auto_merge_pr.sh  # Simulate a base that moved after the plan
 #
 # Environment variables:
 #   GH_MOCK_MODE        - Mock mode: success, failure, or retry (default: success)
 #   GH_MOCK_FAIL_COUNT  - For retry mode, number of failures before success (default: 2)
+#   GH_MOCK_BASE_MOVED  - Set to "true" for a base branch tip other than the planned base
 #   MERGE_RETRY_DELAY   - Seconds between retry attempts (default: 5, use 0 for fast tests)
 #   TEST_NULL_MERGEABLE - Set to "true" to test with null mergeable status (triggers retry logic)
 #
@@ -28,11 +30,35 @@ export GITHUB_ACTION_PATH="${_this_script_dir}"
 # ============================================================================
 GH_MOCK_MODE="${GH_MOCK_MODE:-success}"
 GH_MOCK_FAIL_COUNT="${GH_MOCK_FAIL_COUNT:-2}"
+GH_MOCK_BASE_MOVED="${GH_MOCK_BASE_MOVED:-false}"
 GH_MOCK_ATTEMPT_FILE=$(mktemp)
 echo "0" > "${GH_MOCK_ATTEMPT_FILE}"
 
+# The head the run planned, the event's merge commit, and the base the plans saw
+PLANNED_HEAD_SHA="e12b36765775e6f04c2be35fad528ecad246af07"
+MERGE_COMMIT_SHA="03b530372841a10494f3d0cf838598a4eacee798"
+PLANNED_BASE_SHA="5f2c9e0d1a3b4c5d6e7f8091a2b3c4d5e6f70819"
+
 gh() {
   echo "[MOCK gh] Called with: $*" >&2
+
+  # The base check and the head read answer the same in every mode
+  if [[ "$1" == "api" && "$2" == */commits/* ]]; then
+    echo "${PLANNED_BASE_SHA}"
+    return 0
+  fi
+  if [[ "$1" == "api" && "$2" == */branches/* ]]; then
+    if [[ "${GH_MOCK_BASE_MOVED}" == "true" ]]; then
+      echo "9a8b7c6d5e4f30211203f4e5d6c7b8a990a1b2c3"
+    else
+      echo "${PLANNED_BASE_SHA}"
+    fi
+    return 0
+  fi
+  if [[ "$1" == "pr" && "$2" == "view" && " $* " == *" headRefOid "* ]]; then
+    echo "${PLANNED_HEAD_SHA}"
+    return 0
+  fi
 
   case "${GH_MOCK_MODE}" in
     failure)
@@ -87,6 +113,8 @@ export -f gh
 # Required input variables
 export input_repo_ref="dsb-infra/azure-terraform-dsb-platform-sandbox"
 export input_pr_number="60"
+export input_head_sha="${PLANNED_HEAD_SHA}"
+export input_merge_sha="${MERGE_COMMIT_SHA}"
 
 # GitHub event context JSON - simulates ${{ toJSON(github.event) }}
 # Use TEST_NULL_MERGEABLE=true to test with null mergeable status (triggers retry logic)

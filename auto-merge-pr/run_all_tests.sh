@@ -22,106 +22,116 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_RUN=0
 
+# Every temp file of the suite lives under one directory, removed on exit
+_mock_root=$(mktemp -d)
+trap 'rm -rf "${_mock_root}"' EXIT
+
+# The commits of the tests: the head the run planned, the event's merge commit,
+# the base the plans saw (the merge commit's first parent), and a base and a
+# head that moved after the run planned
+_head_sha="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+_merge_sha="0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"
+_base_sha="b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3"
+_moved_base_sha="c0ffee00000000000000000000000000000000b1"
+_moved_head_sha="dead0000000000000000000000000000000000a2"
+
 # ============================================================================
-# Mock gh CLI - succeeds and logs what was called
+# Mock gh CLI
+#
+# Logs every call to stderr and to GH_MOCK_CALLS_FILE, and answers:
+#   gh api repos/<repo>/commits/<sha>   the merge commit's first parent, GH_MOCK_PLANNED_BASE,
+#                                       or fails when GH_MOCK_COMMIT_LOOKUP=fail
+#   gh api repos/<repo>/branches/<ref>  the base branch's tip: the next of GH_MOCK_BASE_TIPS
+#                                       (space-separated, the last repeating), or fails when
+#                                       GH_MOCK_BRANCH_LOOKUP=fail
+#   gh pr view --json headRefOid        the head now, GH_MOCK_HEAD_NOW, or fails when empty
+#   gh pr view --json mergeable         the next of GH_MOCK_VIEW_RESPONSES, then MERGEABLE
+#   gh pr merge                         by GH_MOCK_MODE: success; failure (every time, with
+#                                       GH_MOCK_MERGE_ERROR on stderr); retry (fails
+#                                       GH_MOCK_FAIL_COUNT times, then succeeds)
+# Each call runs in a subshell of the step, so the counters live in files.
 # ============================================================================
-gh_mock_success() {
-  echo "[MOCK gh] Called with: $*" >&2
-  # Handle 'gh pr view' for mergeable status check
-  if [[ "$1" == "pr" && "$2" == "view" ]]; then
-    echo "MERGEABLE"
-  fi
-  return 0
+_gh_mock_next() {
+  local file="${GH_MOCK_STATE_DIR}/${1}"
+  local value=0
+  [[ -f "${file}" ]] && value=$(cat "${file}")
+  echo $((value + 1)) >"${file}"
+  echo "${value}"
 }
 
-# ============================================================================
-# Mock gh CLI - fails with exit code 1 and logs what was called
-# ============================================================================
-gh_mock_failure() {
+gh() {
   echo "[MOCK gh] Called with: $*" >&2
-  echo "[MOCK gh] Simulating failure" >&2
-  return 1
-}
-
-# ============================================================================
-# Mock gh CLI - fails initially then succeeds (for retry testing)
-# Uses a temp file to track attempts across subshells
-# ============================================================================
-GH_MOCK_ATTEMPT_FILE=""
-GH_MOCK_FAIL_COUNT=0
-GH_MOCK_VIEW_RESPONSES=()
-
-gh_mock_retry() {
-  echo "[MOCK gh] Called with: $*" >&2
-
-  # Read current attempt from file
-  local current_attempt=0
-  if [[ -f "${GH_MOCK_ATTEMPT_FILE}" ]]; then
-    current_attempt=$(cat "${GH_MOCK_ATTEMPT_FILE}")
+  echo "$*" >>"${GH_MOCK_CALLS_FILE}"
+  local index
+  if [[ "$1" == "api" ]]; then
+    case "$2" in
+      */commits/*)
+        if [[ "${GH_MOCK_COMMIT_LOOKUP}" == "fail" ]]; then
+          echo "gh: Not Found (HTTP 404)" >&2
+          return 1
+        fi
+        echo "${GH_MOCK_PLANNED_BASE}"
+        ;;
+      */branches/*)
+        if [[ "${GH_MOCK_BRANCH_LOOKUP}" == "fail" ]]; then
+          echo "gh: Not Found (HTTP 404)" >&2
+          return 1
+        fi
+        local tips=(${GH_MOCK_BASE_TIPS})
+        index=$(_gh_mock_next branches)
+        [[ ${index} -lt ${#tips[@]} ]] || index=$((${#tips[@]} - 1))
+        echo "${tips[${index}]}"
+        ;;
+    esac
+    return 0
   fi
-
-  # Handle 'gh pr view' for mergeable status check
   if [[ "$1" == "pr" && "$2" == "view" ]]; then
-    # Use view_attempt to track which response to return
-    local view_file="${GH_MOCK_ATTEMPT_FILE}.view"
-    local view_attempt=0
-    if [[ -f "${view_file}" ]]; then
-      view_attempt=$(cat "${view_file}")
+    if [[ " $* " == *" headRefOid "* ]]; then
+      [[ -n "${GH_MOCK_HEAD_NOW}" ]] || return 1
+      echo "${GH_MOCK_HEAD_NOW}"
+      return 0
     fi
-    echo $((view_attempt + 1)) > "${view_file}"
-
-    if [[ ${#GH_MOCK_VIEW_RESPONSES[@]} -gt 0 && ${view_attempt} -lt ${#GH_MOCK_VIEW_RESPONSES[@]} ]]; then
-      echo "${GH_MOCK_VIEW_RESPONSES[${view_attempt}]}"
+    index=$(_gh_mock_next view)
+    if [[ ${index} -lt ${#GH_MOCK_VIEW_RESPONSES[@]} ]]; then
+      echo "${GH_MOCK_VIEW_RESPONSES[${index}]}"
     else
       echo "MERGEABLE"
     fi
     return 0
   fi
-
-  # Handle 'gh pr merge'
   if [[ "$1" == "pr" && "$2" == "merge" ]]; then
-    current_attempt=$((current_attempt + 1))
-    echo "${current_attempt}" > "${GH_MOCK_ATTEMPT_FILE}"
-
-    if [[ ${current_attempt} -le ${GH_MOCK_FAIL_COUNT} ]]; then
-      echo "[MOCK gh] Simulating failure (attempt ${current_attempt}/${GH_MOCK_FAIL_COUNT})" >&2
-      return 1
-    fi
-    echo "[MOCK gh] Success on attempt ${current_attempt}" >&2
+    index=$(_gh_mock_next merge)
+    case "${GH_MOCK_MODE}" in
+      failure)
+        echo "[MOCK gh] Simulating failure" >&2
+        echo "${GH_MOCK_MERGE_ERROR}" >&2
+        return 1
+        ;;
+      retry)
+        if [[ ${index} -lt ${GH_MOCK_FAIL_COUNT} ]]; then
+          echo "[MOCK gh] Simulating failure (attempt $((index + 1))/${GH_MOCK_FAIL_COUNT})" >&2
+          return 1
+        fi
+        echo "[MOCK gh] Success on attempt $((index + 1))" >&2
+        ;;
+    esac
     return 0
   fi
-
   return 0
 }
-
-# Current mock mode (success, failure, or retry)
-GH_MOCK_MODE="success"
-
-# The actual mock function that gets exported - delegates based on mode
-gh() {
-  case "${GH_MOCK_MODE}" in
-    failure)
-      gh_mock_failure "$@"
-      ;;
-    retry)
-      gh_mock_retry "$@"
-      ;;
-    *)
-      gh_mock_success "$@"
-      ;;
-  esac
-}
-export -f gh gh_mock_success gh_mock_failure gh_mock_retry
+export -f gh _gh_mock_next
 
 # Function to run a single test
 # Args:
 #   $1 - test_name: Description of the test
 #   $2 - expected_exit_code: Expected exit code (0 for success)
-#   $3 - expected_output_pattern: Optional grep pattern to match in output
+#   $3... - grep patterns: each must match the output; one starting with '!' must not.
+#           After 'calls:' (or '!calls:') a pattern is matched against the gh calls made.
 run_test() {
   local test_name="${1}"
   local expected_exit_code="${2}"
-  local expected_output_pattern="${3:-}"
+  shift 2
+  local patterns=("$@")
 
   TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -131,7 +141,7 @@ run_test() {
   echo -e "${BLUE}========================================${NC}"
 
   # Set up GITHUB_OUTPUT
-  export GITHUB_OUTPUT=$(mktemp)
+  export GITHUB_OUTPUT=$(mktemp -p "${_mock_root}")
 
   # Required system variables
   export GITHUB_ACTION_PATH="${_this_script_dir}"
@@ -150,18 +160,29 @@ run_test() {
     exit_code_passed=true
   fi
 
-  # Check output pattern if specified
-  local pattern_passed=true
-  if [[ -n "${expected_output_pattern}" ]]; then
-    if echo "${output}" | grep -q "${expected_output_pattern}"; then
-      pattern_passed=true
-    else
-      pattern_passed=false
+  # Check the output patterns
+  local failed_patterns=()
+  local pattern text negate
+  for pattern in "${patterns[@]}"; do
+    negate=false
+    if [[ "${pattern}" == '!'* ]]; then
+      negate=true
+      pattern="${pattern#!}"
     fi
-  fi
+    text="${output}"
+    if [[ "${pattern}" == calls:* ]]; then
+      text=$(cat "${GH_MOCK_CALLS_FILE}")
+      pattern="${pattern#calls:}"
+    fi
+    if grep -q -- "${pattern}" <<<"${text}"; then
+      [[ "${negate}" == "false" ]] || failed_patterns+=("found, but must not be: ${pattern}")
+    else
+      [[ "${negate}" == "true" ]] || failed_patterns+=("not found: ${pattern}")
+    fi
+  done
 
   # Report result
-  if [[ "${exit_code_passed}" == "true" && "${pattern_passed}" == "true" ]]; then
+  if [[ "${exit_code_passed}" == "true" && ${#failed_patterns[@]} -eq 0 ]]; then
     echo -e "${GREEN}✓ PASSED${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else
@@ -169,12 +190,15 @@ run_test() {
     if [[ "${exit_code_passed}" != "true" ]]; then
       echo "  Expected exit code: ${expected_exit_code}, got: ${actual_exit_code}"
     fi
-    if [[ "${pattern_passed}" != "true" ]]; then
-      echo "  Expected output pattern '${expected_output_pattern}' not found"
-    fi
+    for pattern in "${failed_patterns[@]}"; do
+      echo "  Expected output pattern ${pattern}"
+    done
     echo ""
     echo "Test output:"
     echo "${output}"
+    echo ""
+    echo "gh calls:"
+    cat "${GH_MOCK_CALLS_FILE}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 
@@ -185,16 +209,26 @@ run_test() {
 # Function to reset all variables to valid defaults
 reset_defaults() {
   export GH_MOCK_MODE="success"
-  # Create fresh temp file for retry attempt tracking
-  export GH_MOCK_ATTEMPT_FILE=$(mktemp)
-  echo "0" > "${GH_MOCK_ATTEMPT_FILE}"
+  # Fresh state for the mock's counters and call log
+  export GH_MOCK_STATE_DIR=$(mktemp -d -p "${_mock_root}")
+  export GH_MOCK_CALLS_FILE="${GH_MOCK_STATE_DIR}/calls"
+  : >"${GH_MOCK_CALLS_FILE}"
   export GH_MOCK_FAIL_COUNT=0
   export GH_MOCK_VIEW_RESPONSES=()
+  export GH_MOCK_MERGE_ERROR="GraphQL: Pull request is not mergeable (mergePullRequest)"
+  # The base has not moved and the head is the planned one
+  export GH_MOCK_PLANNED_BASE="${_base_sha}"
+  export GH_MOCK_BASE_TIPS="${_base_sha}"
+  export GH_MOCK_COMMIT_LOOKUP="ok"
+  export GH_MOCK_BRANCH_LOOKUP="ok"
+  export GH_MOCK_HEAD_NOW="${_head_sha}"
   # Use fast retry for testing (0 seconds instead of 5)
   export MERGE_RETRY_DELAY=0
   export MERGE_RETRY_MAX_ATTEMPTS=5
   export input_repo_ref="test-org/test-repo"
   export input_pr_number="123"
+  export input_head_sha="${_head_sha}"
+  export input_merge_sha="${_merge_sha}"
   export input_github_event_context_json='{
     "action": "synchronize",
     "number": 123,
@@ -203,7 +237,9 @@ reset_defaults() {
       "draft": false,
       "mergeable": true,
       "title": "Test PR",
-      "number": 123
+      "number": 123,
+      "head": {"sha": "'"${_head_sha}"'"},
+      "base": {"ref": "main"}
     },
     "repository": {
       "full_name": "test-org/test-repo"
@@ -280,7 +316,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Handle null mergeable status (pending)" 0 "mergeable status is pending"
@@ -420,7 +457,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Null mergeable uses retry logic" 0 "Using retry logic due to pending mergeable status"
@@ -438,7 +476,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry succeeds on second attempt" 0 "Merge attempt 2"
@@ -456,7 +495,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry succeeds on third attempt" 0 "Merge attempt 3"
@@ -472,7 +512,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry fails after max attempts" 1 "Failed to merge PR after 5 attempts"
@@ -483,17 +524,21 @@ run_test "Retry fails after max attempts" 1 "Failed to merge PR after 5 attempts
 reset_defaults
 export GH_MOCK_MODE="retry"
 export GH_MOCK_FAIL_COUNT=5
-export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "NOT_MERGEABLE")
+# GitHub's value is CONFLICTING; the NOT_MERGEABLE this case used to send is no value GitHub reports
+export GH_MOCK_VIEW_RESPONSES=("UNKNOWN" "CONFLICTING")
 export input_github_event_context_json='{
   "action": "synchronize",
   "number": 123,
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
-run_test "Retry aborts when PR becomes non-mergeable" 1 "PR is not mergeable"
+run_test "Retry stops when PR becomes CONFLICTING" 1 \
+  "::error title=Auto-merge refused::The pull request conflicts with the base branch 'main' (mergeable: CONFLICTING), so it was not merged." \
+  "Merge attempt 3/5" "!Merge attempt 4/5"
 
 # ============================================================================
 # Test 22: Retry logs waiting message between attempts
@@ -508,7 +553,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry logs wait message" 0 "Waiting .* seconds before retry"
@@ -526,7 +572,8 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry logs mergeable status check" 0 "Current mergeable status:"
@@ -545,10 +592,116 @@ export input_github_event_context_json='{
   "pull_request": {
     "state": "open",
     "draft": false,
-    "mergeable": null
+    "mergeable": null,
+    "base": {"ref": "main"}
   }
 }'
 run_test "Retry confirms PR is mergeable" 0 "PR is now confirmed mergeable"
+
+# ============================================================================
+# The pins (docs/Auto-merge.md §6, D2, D3, D11)
+#
+# The merge is tied to what the run planned: the base the plans saw (the merge
+# commit's first parent) must still be the base branch's tip, and GitHub must
+# find the planned head. A refusal for either is final, never retried.
+# ============================================================================
+_event_pending='{
+  "action": "synchronize",
+  "number": 123,
+  "pull_request": {"state": "open", "draft": false, "mergeable": null, "base": {"ref": "main"}}
+}'
+_head_moved_error="GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)"
+
+reset_defaults
+run_test "Pins: the merge passes --match-head-commit with the planned head" 0 \
+  "MOCK gh.*pr merge 123 --admin --rebase --delete-branch --repo test-org/test-repo --match-head-commit ${_head_sha}"
+
+reset_defaults
+run_test "Pins: the base check reads the merge commit's first parent and the base branch's tip" 0 \
+  "calls:^api repos/test-org/test-repo/commits/${_merge_sha} --jq .parents\[0\].sha$" \
+  "calls:^api repos/test-org/test-repo/branches/main --jq .commit.sha$" \
+  "Base branch 'main' is still at ${_base_sha:0:7}"
+
+reset_defaults
+export GH_MOCK_BASE_TIPS="${_moved_base_sha}"
+run_test "Pins: the base moved - refused before any merge call" 1 \
+  "::error title=Auto-merge refused::The base branch 'main' moved after this run planned the pull request (planned on ${_base_sha:0:7}, now ${_moved_base_sha:0:7}), so the merged result was never planned. The next run, after the pull request is brought up to date, decides." \
+  "!calls:pr merge"
+
+reset_defaults
+export GH_MOCK_BASE_TIPS="${_moved_base_sha}"
+export input_github_event_context_json="${_event_pending}"
+run_test "Pins: the base moved while mergeability is pending - no merge, no retry" 1 \
+  "The base branch 'main' moved" "!calls:pr merge" "!Merge attempt 2/5"
+
+reset_defaults
+export GH_MOCK_MODE="retry"
+export GH_MOCK_FAIL_COUNT=1
+export GH_MOCK_BASE_TIPS="${_base_sha} ${_moved_base_sha}"
+export input_github_event_context_json="${_event_pending}"
+run_test "Pins: the base moves between attempts - the next attempt refuses and stops" 1 \
+  "Merge attempt 2/5" "The base branch 'main' moved" "!Success on attempt" "!Merge attempt 3/5"
+
+reset_defaults
+export GH_MOCK_COMMIT_LOOKUP="fail"
+run_test "Pins: the planned base cannot be read - not merged" 1 \
+  "::error title=Auto-merge refused::Could not read the base this run planned the pull request on (the first parent of the merge commit ${_merge_sha:0:7}), so the pull request was not merged." \
+  "!calls:pr merge"
+
+reset_defaults
+export GH_MOCK_BRANCH_LOOKUP="fail"
+run_test "Pins: the base branch's tip cannot be read - not merged" 1 \
+  "::error title=Auto-merge refused::Could not read the tip of the base branch 'main'" \
+  "!calls:pr merge"
+
+reset_defaults
+export GH_MOCK_MODE="failure"
+export GH_MOCK_MERGE_ERROR="${_head_moved_error}"
+export GH_MOCK_HEAD_NOW="${_moved_head_sha}"
+run_test "Pins: the head moved - GitHub refuses, the message names both heads" 1 \
+  "::error title=Auto-merge refused::The pull request's head moved after this run planned it (planned ${_head_sha:0:7}, now ${_moved_head_sha:0:7}), so it was not merged; the run for the new head decides." \
+  "calls:^pr view 123 --repo test-org/test-repo --json headRefOid --jq .headRefOid$"
+
+reset_defaults
+export GH_MOCK_MODE="failure"
+export GH_MOCK_MERGE_ERROR="${_head_moved_error}"
+export GH_MOCK_HEAD_NOW="${_moved_head_sha}"
+export input_github_event_context_json="${_event_pending}"
+run_test "Pins: the head moved while mergeability is pending - no retry" 1 \
+  "The pull request's head moved" "!Merge attempt 2/5"
+
+reset_defaults
+export GH_MOCK_MODE="failure"
+export GH_MOCK_MERGE_ERROR="${_head_moved_error}"
+export GH_MOCK_HEAD_NOW=""
+export input_github_event_context_json="${_event_pending}"
+run_test "Pins: GitHub says the head moved and the head cannot be read - refused as moved" 1 \
+  "The pull request's head moved after this run planned it (planned ${_head_sha:0:7}, now unknown)" "!Merge attempt 2/5"
+
+reset_defaults
+export GH_MOCK_MODE="failure"
+run_test "Pins: a merge failure with the head unchanged is not taken for a moved head" 1 \
+  "Failed to merge PR" "!head moved"
+
+reset_defaults
+export input_head_sha=""
+run_test "Pins: head-sha missing - not merged, nothing looked up" 1 \
+  "Missing required input: head-sha" "!calls:."
+
+reset_defaults
+export input_merge_sha=""
+run_test "Pins: merge-sha missing - not merged, nothing looked up" 1 \
+  "Missing required input: merge-sha" "!calls:."
+
+reset_defaults
+export input_head_sha="abc123"
+run_test "Pins: head-sha that is not a full commit SHA - not merged" 1 \
+  "Input head-sha 'abc123' is not a full commit SHA" "!calls:."
+
+reset_defaults
+export input_github_event_context_json='{"action": "synchronize", "number": 123, "pull_request": {"state": "open", "draft": false, "mergeable": true}}'
+run_test "Pins: an event without the base branch - not merged" 1 \
+  "Missing required 'pull_request.base.ref' field" "!calls:."
 
 # ============================================================================
 # Summary

@@ -6,6 +6,13 @@ description: |
   It checks that the PR is open, not a draft, and in a mergeable state before performing
   the merge operation with admin privileges using rebase strategy.
 
+  The merge is pinned to what the run evaluated (docs/Auto-merge.md §6):
+  - Base: the base the plans saw, the first parent of `merge-sha`, must still be the tip of
+    the pull request's base branch; otherwise nothing is merged. A lookup that fails refuses
+    too.
+  - Head: the merge passes `--match-head-commit <head-sha>`, so GitHub refuses it when the
+    pull request's head moved.
+
   ## Prerequisites
 
   - Must run in pull_request event context
@@ -15,8 +22,14 @@ description: |
   ## Behavior Notes
 
   - Uses GitHub CLI (gh) for merge operations
-  - Merges with --admin --rebase --delete-branch flags
-  - Exits with error if PR is not in a valid state for merging
+  - Merges with --admin --rebase --delete-branch --match-head-commit <head-sha>
+  - Exits with error if PR is not in a valid state for merging, or if `head-sha` or
+    `merge-sha` is missing
+  - A refused merge (base or head moved, a conflict) is an error annotation, and the PR stays
+    open for a person
+  - While GitHub has not computed mergeability yet (event `mergeable: null`), retries, reading
+    the live value (MERGEABLE, CONFLICTING, UNKNOWN); stops on CONFLICTING, and never retries
+    after a refusal for a moved head or base
   - Skips gracefully when PR is being closed or converted to draft
 
 author: "Artjoms Laivins, Peder Schmedling"
@@ -34,6 +47,22 @@ inputs:
       This should include pull_request data with state, draft, and mergeable fields.
       Pass as: toJSON(github.event)
     required: true
+
+  head-sha:
+    description: |
+      The pull request's head SHA the run planned, `github.event.pull_request.head.sha`. The
+      merge is made only while the head is still this commit. Required for merging: the step
+      fails without it.
+    required: false
+    default: ""
+
+  merge-sha:
+    description: |
+      The run's `github.sha`, the event's merge commit: the head merged with the base as it was
+      when the run planned it. Its first parent must still be the base branch's tip. Required
+      for merging: the step fails without it.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -71,6 +100,8 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         input_repo_ref: ${{ github.repository }}
         input_pr_number: ${{ github.event.number }}
+        input_head_sha: ${{ inputs.head-sha }}
+        input_merge_sha: ${{ inputs.merge-sha }}
       run: |
         # Merge the pull request with admin privileges
         #
