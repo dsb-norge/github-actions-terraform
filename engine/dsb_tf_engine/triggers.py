@@ -25,7 +25,8 @@ DESTROY_EVENTS = ("push", "workflow_dispatch")
 # Pull request actions the workflow's on-PR clauses exclude.
 CLOSING_ACTIONS = ("closed", "converted_to_draft")
 GOAL_INPUTS = ("default", "plan", "apply", "destroy-plan")
-CAPS = {"plan": STANDARD, "destroy-plan": ("init", "destroy-plan")}
+# Every goal input but default is a cap: someone who asked for an apply never gets a destroy with it.
+CAPS = {"plan": STANDARD, "apply": STANDARD + ("apply",), "destroy-plan": ("init", "destroy-plan")}
 # The absent block: nothing to filter or cap; its reason is never read.
 NO_INPUTS = {"block": False, "environment": "", "goal": ""}
 DOCS = "docs/Dispatch-and-triggers.md"

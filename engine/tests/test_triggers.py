@@ -283,6 +283,12 @@ class GoalInputTest(unittest.TestCase):
         output = decided(document(environments[:2], event="workflow_dispatch", dispatch={"goal": "apply"}))
         self.assertEqual({"a": ["apply"], "b": WITH_APPLY}, granted(output))
 
+    def test_apply_never_brings_a_destroy_with_it(self):
+        output = decided(document(event="workflow_dispatch", dispatch={"environment": "scratch", "goal": "apply"}))
+        self.assertEqual({"scratch": ["init", "plan", "apply"]}, granted(output))
+        output = decided(document(event="workflow_dispatch", dispatch={"environment": "prod", "goal": "apply"}))
+        self.assertEqual({"prod": WITH_APPLY}, granted(output))
+
     def test_apply_off_the_default_branch_is_refused_before_any_environment(self):
         output = decided(document([{"environment": "d", "goals-yml": ["init"]}], event="workflow_dispatch",
                                   ref="feature/x", dispatch={"goal": "apply"}))
