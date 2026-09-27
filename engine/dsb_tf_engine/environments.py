@@ -518,8 +518,15 @@ def build_row(document, globals_, index, environment):
     ref_name = document["event"]["ref_name"]
     row["caller-repo-default-branch"] = default_branch
     row["caller-repo-calling-branch"] = ref_name
-    row["caller-repo-is-on-default-branch"] = "true" if ref_name == default_branch else "false"
+    row["caller-repo-is-on-default-branch"] = "true" if on_default_branch(document) else "false"
     return row
+
+
+def on_default_branch(document):
+    """Whether the run's ref is the default branch: a branch of that name, never a tag
+    (docs/Configuration-validation.md §3.8)."""
+    event = document["event"]
+    return event["ref_type"] == "branch" and event["ref_name"] == document["caller"]["default_branch"]
 
 
 def project_dir_path(environment):

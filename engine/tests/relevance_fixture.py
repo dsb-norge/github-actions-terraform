@@ -40,10 +40,11 @@ SCENARIOS = {
     "schedule-nothing": None,
 }
 EVENTS = {
-    "dispatch-staging": {"name": "workflow_dispatch", "ref_name": "main", "actor": "octocat",
+    "dispatch-staging": {"name": "workflow_dispatch", "ref_name": "main", "ref_type": "branch", "actor": "octocat",
                          "dispatch": {"block": True, "environment": "staging", "goal": "plan",
-                                      "reason": "reconcile after incident 42"}},
-    "schedule-nothing": {"name": "schedule", "ref_name": "main", "actor": "octocat"},
+                                      "reason": "reconcile after incident 42",
+                                      "inputs": ["environment", "goal", "reason"]}},
+    "schedule-nothing": {"name": "schedule", "ref_name": "main", "ref_type": "branch", "actor": "octocat"},
 }
 
 
@@ -61,7 +62,7 @@ def document(files):
     return {
         "schema_version": 1,
         "caller": {"repository": "example-org/example-repo", "default_branch": "main"},
-        "event": {"name": "pull_request", "ref_name": "feature/x", "action": "synchronize",
+        "event": {"name": "pull_request", "ref_name": "feature/x", "ref_type": "branch", "action": "synchronize",
                   "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
         "workflow_inputs": inputs,
         "yaml": {

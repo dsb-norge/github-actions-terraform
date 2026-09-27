@@ -11,10 +11,12 @@
       "block": false,
       "environment": "",
       "goal": "",
+      "inputs": [],
       "reason": ""
     },
     "name": "workflow_dispatch",
-    "ref_name": "trunk"
+    "ref_name": "trunk",
+    "ref_type": "branch"
   },
   "run": {
     "attempt": 1,

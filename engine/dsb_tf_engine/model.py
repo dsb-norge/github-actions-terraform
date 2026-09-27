@@ -18,8 +18,10 @@ OPTIONAL_KEYS = ("changed_files", "run", "tests")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
 CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
 PUSH_KEYS = ("created", "forced", "deleted")
-# 'block' says whether the calling workflow declares dispatch inputs at all.
-DISPATCH_KEYS = ("block", "environment", "goal", "reason")
+# 'block' says whether the calling workflow declares dispatch inputs at all, 'inputs' names the ones
+# this dispatch delivered.
+DISPATCH_KEYS = ("block", "environment", "goal", "reason", "inputs")
+REF_TYPES = ("branch", "tag")
 
 
 def _require(condition, message):
@@ -75,8 +77,8 @@ def check(document):
              "input document: 'caller' needs the strings 'repository' and 'default_branch'")
     event = document["event"]
     _require(isinstance(event, dict) and isinstance(event.get("name"), str)
-             and isinstance(event.get("ref_name"), str),
-             "input document: 'event' needs the strings 'name' and 'ref_name'")
+             and isinstance(event.get("ref_name"), str) and event.get("ref_type") in REF_TYPES,
+             "input document: 'event' needs the strings 'name' and 'ref_name', and 'ref_type' 'branch' or 'tag'")
     if "push" in event:
         push = event["push"]
         _require(isinstance(push, dict) and all(isinstance(push.get(key), bool) for key in PUSH_KEYS),
@@ -96,9 +98,10 @@ def check(document):
         dispatch = event["dispatch"]
         _require(isinstance(dispatch, dict) and set(dispatch) == set(DISPATCH_KEYS)
                  and isinstance(dispatch["block"], bool)
-                 and all(isinstance(dispatch[key], str) for key in DISPATCH_KEYS[1:]),
-                 "input document: 'event.dispatch' needs exactly the boolean 'block' and the strings 'environment', "
-                 "'goal' and 'reason'")
+                 and all(isinstance(dispatch[key], str) for key in ("environment", "goal", "reason"))
+                 and _is_strings(dispatch["inputs"]),
+                 "input document: 'event.dispatch' needs exactly the boolean 'block', the strings 'environment', "
+                 "'goal' and 'reason', and the list of strings 'inputs'")
     _require(isinstance(caller.get("workflow_name", ""), str), "input document: 'caller.workflow_name' is not a string")
     if "run" in document:
         run = document["run"]

@@ -16,7 +16,7 @@
 #     environment, and the caller's checkout staying off Python's import path.
 #
 # To run the adapter by hand against a file holding toJSON(inputs), in the project's checkout:
-#   GITHUB_REPOSITORY=o/r GITHUB_EVENT_NAME=push GITHUB_REF_NAME=main GITHUB_OUTPUT=/tmp/out \
+#   GITHUB_REPOSITORY=o/r GITHUB_EVENT_NAME=push GITHUB_REF_NAME=main GITHUB_REF_TYPE=branch GITHUB_OUTPUT=/tmp/out \
 #     python3 -I -B engine/run.py create-matrix --inputs-file <file holding toJSON(inputs)>
 #
 
@@ -101,7 +101,7 @@ run_step() {
     # A dispatch fetches no changed files: the port cases decide rows, and relevance, which a
     # push or a pull request adds, has its own tests below.
     export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="workflow_dispatch"
-    export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
+    export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_REF_TYPE="branch" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
     export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token" GITHUB_RUN_ID="4711" GITHUB_RUN_ATTEMPT="1"
     mkdir -p "${SANDBOX}/temp" && export RUNNER_TEMP="${SANDBOX}/temp"
     export PATH="${SANDBOX}/bin:${PATH}"

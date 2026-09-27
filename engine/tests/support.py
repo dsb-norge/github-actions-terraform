@@ -47,7 +47,7 @@ def document(environments=None, inputs=None, env_yaml=None, directories=None, re
     return {
         "schema_version": 1,
         "caller": {"repository": "example-org/example-repo", "default_branch": default_branch},
-        "event": {"name": "push", "ref_name": ref_name},
+        "event": {"name": "push", "ref_name": ref_name, "ref_type": "branch"},
         "workflow_inputs": workflow_inputs,
         "yaml": {
             "inputs": {"environments-yml": parsed(copy.deepcopy(environments))},

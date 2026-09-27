@@ -175,7 +175,7 @@ class GeneratedTriggersTest(unittest.TestCase):
                                                   {"goals-yml": support.parsed(["all"])}], ref_name=ref)
             document["event"].update({"name": event, "action": action, "base_ref": "main"})
             if dispatch is not None:
-                document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", **dispatch}
+                document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", "inputs": [], **dispatch}
             with self.subTest(event=event, goals=goals, events=events, dispatch=dispatch, ref=ref, action=action):
                 original = copy.deepcopy(document)
                 output = decide.decide(document)

@@ -30,7 +30,7 @@ def document(environments=None, event="push", ref="main", dispatch=None, trigger
     doc = support.document(environments=environments, env_yaml=env_yaml, ref_name=ref)
     doc["event"]["name"] = event
     if dispatch is not None:
-        doc["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", **dispatch}
+        doc["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", "inputs": [], **dispatch}
     if trigger_events is not None:
         doc["yaml"]["inputs"]["trigger-events-yml"] = support.parsed(trigger_events)
     for key, value in (("action", action), ("base_ref", base_ref), ("actor", actor),
@@ -109,7 +109,7 @@ class SpecTableTest(unittest.TestCase):
 
     def test_a_dispatch_without_an_inputs_block_runs_every_environment_with_its_goals(self):
         doc = document(event="workflow_dispatch", actor="octocat")
-        doc["event"]["dispatch"] = {"block": False, "environment": "", "goal": "", "reason": ""}
+        doc["event"]["dispatch"] = {"block": False, "environment": "", "goal": "", "reason": "", "inputs": []}
         output = decided(doc)
         self.assertEqual({"prod": WITH_APPLY + ["destroy-plan"], "staging": WITH_APPLY,
                           "sandbox": ["init", "format", "validate", "lint"],
@@ -254,7 +254,7 @@ class DispatchFilterTest(unittest.TestCase):
 
     def test_the_dispatch_filter_and_cap_apply_only_to_a_dispatch(self):
         doc = document(event="push")
-        doc["event"]["dispatch"] = {"block": True, "environment": "staging", "goal": "plan", "reason": ""}
+        doc["event"]["dispatch"] = {"block": True, "environment": "staging", "goal": "plan", "reason": "", "inputs": []}
         output = decided(doc)
         self.assertEqual(4, output["counts"]["affected"])
         self.assertEqual(WITH_APPLY + ["destroy-plan"], granted(output)["prod"])
@@ -510,9 +510,30 @@ class GoalsRuleTest(unittest.TestCase):
                          decided(doc)["errors"])
 
 
+class RefTypeTest(unittest.TestCase):
+    """The default branch is a branch: a tag of its name is not it (docs/Configuration-validation.md §3.8)."""
+
+    def run_on(self, ref_type, **kwargs):
+        doc = document([{"environment": "prod", "goals-yml": ["all", "destroy-plan", "destroy"]}], **kwargs)
+        doc["event"]["ref_type"] = ref_type
+        return decided(doc)
+
+    def test_a_tag_named_like_the_default_branch_applies_nothing(self):
+        on_branch, on_tag = self.run_on("branch"), self.run_on("tag")
+        self.assertEqual({"prod": WITH_APPLY + ["destroy-plan", "destroy"]}, granted(on_branch))
+        self.assertEqual({"prod": STANDARD + ["destroy-plan"]}, granted(on_tag))
+        self.assertEqual(["true", "false"], [output["matrices"]["1"]["include"][0]["vars"]["caller-repo-is-on-default-branch"]
+                                             for output in (on_branch, on_tag)])
+
+    def test_a_dispatched_apply_on_a_tag_names_the_tag(self):
+        self.assertEqual(["dispatch: apply is only allowed from the default branch 'main'; this run is on the tag "
+                          "'main'"],
+                         self.run_on("tag", event="workflow_dispatch", dispatch={"goal": "apply"})["errors"])
+
+
 class LinesTest(unittest.TestCase):
     def line(self, **kwargs):
-        dispatch = {key: kwargs.pop(key) for key in ("environment", "goal", "reason") if key in kwargs}
+        dispatch = {key: kwargs.pop(key) for key in ("environment", "goal", "reason", "inputs") if key in kwargs}
         return decided(document(event="workflow_dispatch", dispatch=dispatch, **kwargs))["trigger"]["lines"]
 
     def test_the_dispatch_line(self):
@@ -522,9 +543,9 @@ class LinesTest(unittest.TestCase):
 
     def test_a_re_run_names_both_actors_and_the_same_actor_once(self):
         self.assertEqual(["dispatched by octocat (re-run by hubot): environment (all), goal default, no reason given"],
-                         self.line(actor="octocat", triggering_actor="hubot"))
+                         self.line(goal="default", actor="octocat", triggering_actor="hubot"))
         self.assertEqual(["dispatched by octocat: environment (all), goal default, no reason given"],
-                         self.line(actor="octocat", triggering_actor="octocat"))
+                         self.line(goal="default", actor="octocat", triggering_actor="octocat"))
 
     def test_an_unknown_actor(self):
         self.assertEqual(["dispatched by an unknown actor: environment (all), goal plan, no reason given"],
@@ -532,9 +553,19 @@ class LinesTest(unittest.TestCase):
 
     def test_a_reason_is_one_line(self):
         self.assertEqual(['dispatched by a: environment (all), goal default, reason "two lines ::error::x"'],
-                         self.line(actor="a", reason="  two\nlines\r\n\t::error::x  "))
+                         self.line(goal="default", actor="a", reason="  two\nlines\r\n\t::error::x  "))
         self.assertEqual(["dispatched by a: environment (all), goal default, no reason given"],
-                         self.line(actor="a", reason=" \n "))
+                         self.line(goal="default", actor="a", reason=" \n "))
+
+    def test_a_block_without_the_standard_inputs_says_so(self):
+        self.assertEqual(["dispatched by a: this dispatch delivered the inputs mode, target but neither 'environment' "
+                          "nor 'goal', so every environment runs with its goals; the standard block is in "
+                          "docs/Dispatch-and-triggers.md §3.1"],
+                         self.line(actor="a", inputs=["mode", "target"]))
+        self.assertEqual(["dispatched by a: this dispatch delivered no inputs, so every environment runs with its "
+                          "goals; the standard block is in docs/Dispatch-and-triggers.md §3.1"], self.line(actor="a"))
+        output = decided(document(event="workflow_dispatch", dispatch={"inputs": ["mode"]}))
+        self.assertEqual(["run"] * 4, [entry["verdict"] for entry in output["environments"]])
 
     def test_the_lines_come_first_among_the_notices(self):
         output = decided(document(event="workflow_dispatch", dispatch={"environment": "staging"}, actor="a"))

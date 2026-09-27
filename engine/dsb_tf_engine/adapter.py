@@ -48,8 +48,8 @@ READ_AS = {**{name: AS_TEXT for name in VARIABLE_SETTINGS},
            "environments-yml": _as_text_in_entries(VARIABLE_SETTINGS),
            "terraform-test-lanes-yml": _as_text_in_entries(("extra-envs-yml",))}
 YQ_PROBE_JSON = '{"probe":[1]}'
-REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
-                        "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP")
+REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_REF_TYPE", "GITHUB_OUTPUT",
+                        "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP")
 NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
@@ -206,11 +206,13 @@ def _input_text(value):
 def dispatch_facts(payload):
     """The standard dispatch inputs (docs/Dispatch-and-triggers.md §3.1). The payload's `inputs` is
     null when the calling workflow declares no inputs block (P8), and a string input dispatched empty
-    is absent from it (P9), so each input is read as text and 'block' says whether there was a block."""
+    is absent from it (P9), so each input is read as text and 'block' says whether there was a block.
+    'inputs' names what was delivered, never the values, which may be anything the caller declared."""
     inputs = payload.get("inputs")
     if not isinstance(inputs, dict):
-        return {"block": False, "environment": "", "goal": "", "reason": ""}
-    return {"block": True, **{key: _input_text(inputs.get(key)) for key in ("environment", "goal", "reason")}}
+        return {"block": False, "environment": "", "goal": "", "reason": "", "inputs": []}
+    return {"block": True, **{key: _input_text(inputs.get(key)) for key in ("environment", "goal", "reason")},
+            "inputs": sorted(inputs)}
 
 
 def event_facts(event_name, payload):
@@ -397,7 +399,7 @@ def build_document(inputs, facts, tools, isdir):
     yaml_inputs = parse_inputs(tools, inputs)
     # A parse that failed carries the value null, which yields no entries.
     entries = yaml_inputs.get("environments-yml", {}).get("value")
-    event = {"name": facts["event_name"], "ref_name": facts["ref_name"],
+    event = {"name": facts["event_name"], "ref_name": facts["ref_name"], "ref_type": facts["ref_type"],
              **event_facts(facts["event_name"], facts["payload"])}
     # The operation gates compare github.base_ref, the runner's, not the payload's (docs/Decision-engine.md §6).
     for key in ("actor", "triggering_actor", "base_ref"):
@@ -440,6 +442,7 @@ def run(inputs_file, environ, stream, tools, isdir):
             "repository": environ["GITHUB_REPOSITORY"],
             "event_name": environ["GITHUB_EVENT_NAME"],
             "ref_name": environ["GITHUB_REF_NAME"],
+            "ref_type": environ["GITHUB_REF_TYPE"],
             "default_branch": default_branch(payload, environ["GITHUB_REPOSITORY"], tools),
             "payload": payload,
             "run": run_facts,
