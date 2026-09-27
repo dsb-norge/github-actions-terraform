@@ -40,6 +40,8 @@ Changes the road does not list, made on the v1 line because a step's review surf
 | Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
 | Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 dispatch and schedule rows on pull requests, pushes, dispatches and a schedule (§4) | yes |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
+| Configuration-validation.md | yes (step 5) | no | no | no |
+| Auto-merge.md | yes (step 5) | no | no | no |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
 | apply reporting hardening (#57) | yes | yes | in CI on six Terraform minors | no spec |
 
@@ -72,6 +74,10 @@ table only says where.
 | Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 7) |
 | Terraform-tests.md | lower-case `TF_VAR_` names from environment secrets; the version floor | decided 2026-09-25 by the maintainer after the test bed showed GitHub upper-casing secret names and 1.12 refusing a test file's `variable` block: environment lanes export a lower-cased copy of every `TF_VAR_*` secret, and the floor is 1.13 |
 | Terraform-tests.md | the copied lock and the runner's platform; the shared plugin-cache key | decided 2026-09-25 by the maintainer: every lock a test job uses must record the runner's platform, checked before init as `lock-platform`; the test job's cache key gets a `-tftest` suffix and falls back to the environment job's |
+| Configuration-validation.md, Auto-merge.md | auto-merge with no actors; a per-environment actor list; goals whose prerequisite is missing | decided 2026-09-27 by the maintainer: an error that says plainly what is wrong; it replaces the global list; an error |
+| Auto-merge.md | the merge after the base moved; auto-merge for other base branches; the JSON plan artifact | decided 2026-09-27 by the maintainer: refused; default branch only; no longer uploaded |
+| Auto-merge.md | whether a tolerated failure (`allow-failing-terraform-operations`, `allow-failing-terraform-tests`) blocks auto-merge | **open, in discussion with the maintainer**: `allow-failing-terraform-tests` is meant as the lever that lets a pull request auto-merge despite a failing lane |
+| Configuration-validation.md | a `codeowners` value for the actor list, resolved from CODEOWNERS | dropped 2026-09-27 by the maintainer, after the facts: teams resolve only with an organisation Members permission no workflow token has, email owners cannot be mapped, and an owner merging their own change past review defeats it |
 | Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 6 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
 | Road-to-v1.md | the module CI workflow on the engine in v1 or after | open |
@@ -307,8 +313,15 @@ longer brings the destroy goals. The rest is step 5, each item verified against 
     is exported as the literal `null`.
 11. A dispatch whose inputs block holds none of the standard names runs every environment with its
     full goals and says only "environment (all), goal default".
-12. A per-environment `pr-auto-merge-enabled` is accepted and never read; only the global value
-    decides.
+12. A per-environment `pr-auto-merge-enabled: true` does nothing while the global input is
+    `false` (the auto-merge job never runs); a per-environment `false` is read and makes that
+    environment ineligible. Nothing says the `true` is inert.
+13. The merger's retry waits for a mergeable state spelt `NOT_MERGEABLE`, which GitHub never
+    reports (`MERGEABLE`, `CONFLICTING`, `UNKNOWN`), and the auto-merge job has no fork condition.
+14. The JSON plan exists (`terraform show -json`, with stderr in the same file) but nothing reads it.
+
+The specs are [Configuration-validation.md](Configuration-validation.md) and
+[Auto-merge.md](Auto-merge.md).
 
 ### Other findings
 
