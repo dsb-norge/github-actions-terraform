@@ -264,7 +264,10 @@ class MatchingTest(unittest.TestCase):
         self.assertEqual({"environment": "prod", "verdict": "skip", "reasons": ["relevance: no changed file matches"],
                           "github-environment": "gh-prod", "add-pr-comment": "true", "pr-comment-group": "g",
                           "mutates-on-pr": ["apply-on-pr"], "pr-auto-merge-enabled": "true",
-                          "pr-auto-merge-from-actors": ["bot"], "pr-auto-merge-limits": None,
+                          "pr-auto-merge-from-actors": ["bot"],
+                          "pr-auto-merge-limits": {"plan-max-count-add": 0, "plan-max-count-change": 0,
+                                                   "plan-max-count-destroy": 0, "plan-max-count-import": -1,
+                                                   "plan-max-count-move": -1, "plan-max-count-remove": 0},
                           "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
                           "paths-ignore": ["**/*.md"], "trigger-events": ["pull_request", "push", "workflow_dispatch"],
                           "relevant": False},
@@ -349,9 +352,9 @@ class ValidationTest(unittest.TestCase):
                           "directory '/srv/x' is an absolute path; directories are relative to the repository root; "
                           "set its 'paths' explicitly!"],
                          self.errors({"environment": "prod", "project-dir": "/srv/x"}, directories={"/srv/x": True}))
-        self.assertEqual(["The environment 'prod' uses auto, but its terraform-init-additional-dirs entry 5 cannot "
-                          "be matched: the pattern 5 is not a string; set its 'paths' explicitly!"],
-                         self.errors({"environment": "prod", "terraform-init-additional-dirs-yml": [5]}))
+        self.assertEqual(["The environment 'prod' uses auto, but its project-dir 5 cannot be matched: the pattern 5 "
+                          "is not a string; set its 'paths' explicitly!"],
+                         self.errors({"environment": "prod", "project-dir": 5}, directories={"5": True}))
 
     def test_explicit_paths_need_no_matchable_directories(self):
         self.assertEqual([], self.errors({"environment": "prod", "project-dir": "../x", "paths": ["**"]},

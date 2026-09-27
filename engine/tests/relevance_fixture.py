@@ -9,7 +9,7 @@ suites here instead of in production. Usage, from any directory:
 
 Every scenario has three environments, auto-merge enabled for all: `prod` ungrouped
 (github-environment `prod-gh`, auto-merge only for `renovate[bot]`), `staging` and `sandbox` in the
-group `platform`, any actor (`sandbox` applies on pull request). Pull request #87, run #4711
+group `platform`, for `renovate[bot]` and `dependabot[bot]` (`sandbox` applies on pull request). Pull request #87, run #4711
 attempt #1. The event scenarios are not pull requests: a dispatch of `staging` with a plan by
 `octocat`, and a schedule no environment takes part in.
 """
@@ -29,6 +29,7 @@ ENVIRONMENTS = [
     {"environment": "staging", "pr-comment-group": "platform"},
     {"environment": "sandbox", "pr-comment-group": "platform", "goals-yml": ["all", "apply-on-pr"]},
 ]
+ACTORS = ["renovate[bot]", "dependabot[bot]"]
 LIMITS = {"plan-max-count-add": 0, "plan-max-count-change": 0, "plan-max-count-destroy": 0,
           "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": 0}
 SCENARIOS = {
@@ -55,7 +56,8 @@ def document(files):
     inputs = {"environments-yml": json.dumps(ENVIRONMENTS), "add-pr-comment": True, "apply-extract-include-outputs": False,
               "cache-terraform-modules": True, "path-relevance-enabled": True, "pr-auto-merge-enabled": True,
               "pr-comment-group": "", "terraform-version": "latest", "tflint-version": "latest",
-              "verify-lock-file": True, "goals-yml": "[all]", "pr-auto-merge-limits-yml": json.dumps(LIMITS)}
+              "verify-lock-file": True, "goals-yml": "[all]", "pr-auto-merge-from-actors-yml": json.dumps(ACTORS),
+              "pr-auto-merge-limits-yml": json.dumps(LIMITS)}
     return {
         "schema_version": 1,
         "caller": {"repository": "example-org/example-repo", "default_branch": "main"},
@@ -64,7 +66,7 @@ def document(files):
         "workflow_inputs": inputs,
         "yaml": {
             "inputs": {"environments-yml": _parsed(ENVIRONMENTS), "goals-yml": _parsed(["all"]),
-                       "pr-auto-merge-limits-yml": _parsed(LIMITS)},
+                       "pr-auto-merge-from-actors-yml": _parsed(ACTORS), "pr-auto-merge-limits-yml": _parsed(LIMITS)},
             "environments": [{key: _parsed(value) for key, value in e.items() if key.endswith("-yml")}
                              for e in ENVIRONMENTS],
         },

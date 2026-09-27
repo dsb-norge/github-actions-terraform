@@ -47,8 +47,9 @@ TEST_INPUTS = (
     "terraform-test-timeout-minutes",
 )
 
-# Replaced per environment: the environment's value, else the global one, else an empty list.
-REPLACE_FIELDS = ("goals-yml", "terraform-init-additional-dirs-yml")
+# The list settings, replaced per environment: the environment's value, else the global one, a plain
+# string written alone being its one item and none an empty list.
+REPLACE_FIELDS = ("goals-yml", "pr-auto-merge-from-actors-yml", "terraform-init-additional-dirs-yml")
 
 # Merged per environment: the environment's value merged into the global one.
 MERGE_FIELDS = (
@@ -56,7 +57,6 @@ MERGE_FIELDS = (
     "extra-envs-from-secrets-yml",
     "extra-envs-per-goal-yml",
     "extra-envs-yml",
-    "pr-auto-merge-from-actors-yml",
     "pr-auto-merge-limits-yml",
 )
 
@@ -209,8 +209,9 @@ PREREQUISITES = {
 GOAL_LIST = ", ".join(GOALS)
 
 
-def _as_goal_list(value):
-    """The goals as a list: a plain string is one goal, never a substring, and none is empty."""
+def _as_list(value):
+    """A list setting as a list: a plain string written alone is its one item, never split, and none
+    is an empty list."""
     if value is None:
         return []
     return [value] if isinstance(value, str) else value
@@ -231,7 +232,7 @@ def _goal_name_problem(owner, goal):
 
 def goal_problems(owner, value):
     """Every problem of one goals value (docs/Configuration-validation.md §3.2); `owner` begins each message."""
-    goals = _as_goal_list(value)
+    goals = _as_list(value)
     if not isinstance(goals, list):
         return [f"{owner} has the goals {shown(value)}; they must be a list of goal names."]
     problems = [_goal_name_problem(owner, goal) for goal in goals if goal not in GOALS]
@@ -245,30 +246,180 @@ def goal_problems(owner, value):
 VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # The job-wide variable maps, merged global then per environment (docs/Configuration-validation.md §3.5).
 JOB_VARIABLES = ("extra-envs", "extra-envs-from-secrets")
+JOB_VARIABLE_SETTINGS = tuple(f"{field}-yml" for field in JOB_VARIABLES)
 
 
-def _variables(name, field, value):
-    """A job-wide variable map with its nulls dropped, or a ConfigError naming every bad name or value.
-    A null means "not set", so a per-environment null removes a global variable; $GITHUB_ENV cannot unset
-    one, and exporting it would give the job the text 'null'."""
+def variable_problems(where, value):
+    """Every problem of one job-wide variable map as written (docs/Configuration-validation.md §3.5); `where(key)`
+    begins a message about one variable. A value that is not a mapping is left to the rules of its own."""
     if not isinstance(value, dict):
-        return value
+        return []
     problems = []
     for key, each in value.items():
-        where = f"The variable {shown(key)} of the environment '{name}' in '{field}-yml'"
         if not (isinstance(key, str) and VARIABLE_NAME.fullmatch(key)):
-            problems.append(f"{where} is not a variable name: a name is letters, digits and underscores, not starting "
-                            "with a digit.")
+            problems.append(f"{where(key)} is not a variable name: a name is letters, digits and underscores, not "
+                            "starting with a digit.")
         elif isinstance(each, (dict, list)):
             kind = "a mapping" if isinstance(each, dict) else "a list"
             marks = "braces" if isinstance(each, dict) else "brackets"
-            problems.append(f"{where} is {kind}; a variable's value is text. Quote it if the {marks} are part of the "
-                            "value.")
+            problems.append(f"{where(key)} is {kind}; a variable's value is text. Quote it if the {marks} are part of "
+                            "the value.")
         elif each is not None and not isinstance(each, str):
-            problems.append(f"{where} is {shown(each)}, which is not text; quote it.")
-    if problems:
-        raise ConfigError(problems)
+            problems.append(f"{where(key)} is {shown(each)}, which is not text; quote it.")
+    return problems
+
+
+def _without_nulls(value):
+    """A job-wide variable map after the merge, its nulls dropped. A null means "not set", so a
+    per-environment null removes a global variable; $GITHUB_ENV cannot unset one, and exporting it would
+    give the job the text 'null'."""
+    if not isinstance(value, dict):
+        return value
     return {key: each for key, each in value.items() if each is not None}
+
+
+INIT_DIRS = "terraform-init-additional-dirs-yml"
+
+
+def init_dir_problems(owner, subject, value):
+    """Every problem of one additional-init-directories value (docs/Configuration-validation.md §3.4).
+    `owner` begins a message about one directory, `subject` one about the value as a whole."""
+    directories = _as_list(value)
+    if not isinstance(directories, list):
+        return [f"{subject} {shown(value)}; it must be a list of directories."]
+    return [f"{owner} has the additional init directory '', which is empty." if directory == "" else
+            f"{owner} has the additional init directory {shown(directory)}, which is not text; quote it."
+            for directory in directories if directory == "" or not isinstance(directory, str)]
+
+
+# Who may auto-merge, and within which plan counts (docs/Configuration-validation.md §3.6).
+ACTORS = "pr-auto-merge-from-actors-yml"
+LIMITS = "pr-auto-merge-limits-yml"
+ENABLED = "pr-auto-merge-enabled"
+# GitHub's login form; an App's bot account ends in [bot].
+LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
+LIMIT_KEYS = ("plan-max-count-add", "plan-max-count-change", "plan-max-count-destroy", "plan-max-count-import",
+              "plan-max-count-move", "plan-max-count-remove")
+LIMIT_RULE = "the six limits are plan-max-count-add, -change, -destroy, -import, -move and -remove"
+NAME_THE_ACTORS = ('so there is no one whose pull requests may merge without review. Name the accounts{where}, for '
+                   'example ["dependabot[bot]"].')
+
+
+def default_limits():
+    """The input's documented default, which an absent or empty global value means; a new mapping each
+    time, so no row shares one with the engine."""
+    return {"plan-max-count-add": 0, "plan-max-count-change": 0, "plan-max-count-destroy": 0,
+            "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": 0}
+
+
+def _actor_problem(owner, actor):
+    parts = [part for part in re.split(r"[\s,]+", actor) if part] if isinstance(actor, str) else []
+    if len(parts) > 1 and all(LOGIN.fullmatch(part) for part in parts):
+        return (f"{owner} holds {shown(actor)}, which is not a login. It looks like a list written without its "
+                "dashes: write one account per line starting with '- ', or "
+                f"[{', '.join(json.dumps(part) for part in parts)}].")
+    if isinstance(actor, int) and not isinstance(actor, bool):
+        return f"{owner} holds {shown(actor)}, which is not a login; quote it if it is one."
+    return (f"{owner} holds {shown(actor)}, which is not a login: a login is letters, digits and hyphens, up to 39, "
+            "not starting with a hyphen, and a bot's ends in [bot].")
+
+
+def actor_problems(owner, subject, value):
+    """Every problem of one actor list; `owner` begins a message about one actor, `subject` one about the
+    value as a whole."""
+    actors = _as_list(value)
+    if not isinstance(actors, list):
+        return [f"{subject} {shown(value)}; it must be a list of logins."]
+    return [_actor_problem(owner, actor) for actor in actors if not (isinstance(actor, str) and LOGIN.fullmatch(actor))]
+
+
+def limit_problems(subject, key_subject, value):
+    """Every problem of one limits mapping as written. `subject` begins a message about the value as a
+    whole, `key_subject(key)` one about one of its keys. Missing keys are checked after the merge."""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{subject} {shown(value)}; it must be a mapping of the six limits."]
+    problems = []
+    for key, limit in value.items():
+        if key not in LIMIT_KEYS:
+            guess = near_miss(key, LIMIT_KEYS)
+            problems.append(f"{key_subject(key)}, which is not a limit" + (f"; did you mean '{guess}'?" if guess
+                                                                           else f"; {LIMIT_RULE}."))
+        elif isinstance(limit, str):
+            problems.append(f"{key_subject(key)} to {shown(limit)}, which is text; a limit is a whole number, written "
+                            "without quotes, and -1 means no limit.")
+        elif isinstance(limit, bool) or not isinstance(limit, int) or limit < -1:
+            problems.append(f"{key_subject(key)} to {shown(limit)}; a limit is a whole number of -1 or more, and -1 "
+                            "means no limit.")
+    return problems
+
+
+def _setting_problems(document, globals_, environments):
+    """Every problem of the list and limit settings as written, each global value once, naming the input,
+    then each environment's own."""
+    problems = goal_problems("goals-yml", globals_["goals-yml"])
+    problems += init_dir_problems(INIT_DIRS, f"{INIT_DIRS} is", globals_[INIT_DIRS])
+    problems += actor_problems(ACTORS, f"{ACTORS} is", globals_[ACTORS])
+    problems += limit_problems(f"{LIMITS} is", lambda key: f"{LIMITS} sets {shown(key)}", globals_[LIMITS])
+    for setting in JOB_VARIABLE_SETTINGS:
+        problems += variable_problems(lambda key, setting=setting: f"The variable {shown(key)} in '{setting}'",
+                                      globals_[setting])
+    for index, entry in enumerate(environments):
+        if not (isinstance(entry, dict) and _is_name(entry.get("environment"))):
+            continue
+        name = entry["environment"]
+        if "goals-yml" in entry:
+            problems += goal_problems(f"The environment '{name}'", _env_field(document, index, "goals-yml"))
+        if INIT_DIRS in entry:
+            problems += init_dir_problems(f"The environment '{name}'", f"The environment '{name}' sets '{INIT_DIRS}' to",
+                                          _env_field(document, index, INIT_DIRS))
+        if ACTORS in entry:
+            problems += actor_problems(f"The {ACTORS} of the environment '{name}'",
+                                       f"The environment '{name}' sets '{ACTORS}' to", _env_field(document, index, ACTORS))
+        if LIMITS in entry:
+            problems += limit_problems(f"The environment '{name}' sets '{LIMITS}' to",
+                                       lambda key, name=name: f"The environment '{name}' sets {shown(key)} in '{LIMITS}'",
+                                       _env_field(document, index, LIMITS))
+        for setting in (setting for setting in JOB_VARIABLE_SETTINGS if setting in entry):
+            problems += variable_problems(
+                lambda key, name=name, setting=setting: f"The variable {shown(key)} of the environment '{name}' in "
+                                                        f"'{setting}'",
+                _env_field(document, index, setting))
+    return problems
+
+
+def _switched_on(document):
+    return values.get_val(document["workflow_inputs"].get(ENABLED)) == "true"
+
+
+def _auto_merge_problems(document, environments, rows):
+    """What the environments end up with: an actor list naming someone wherever auto-merge is on, and all
+    six limits."""
+    problems = []
+    unnamed = [row["environment"] for row in rows
+               if _switched_on(document) and row[ENABLED] == "true" and not row["pr-auto-merge-from-actors"]]
+    if unnamed and not any(ACTORS in entry for entry in environments):
+        problems.append(f"Auto-merge is switched on ({ENABLED}), but {ACTORS} names nobody, "
+                        + NAME_THE_ACTORS.format(where=""))
+    else:
+        problems += [f"Auto-merge is switched on ({ENABLED}), but the actor list that applies to the environment "
+                     f"'{name}' names nobody, " + NAME_THE_ACTORS.format(where=f" in {ACTORS}") for name in unnamed]
+    for entry, row in zip(environments, rows):
+        missing = ", ".join(f"'{key}'" for key in LIMIT_KEYS if key not in row["pr-auto-merge-limits"])
+        if missing and LIMITS in entry:
+            problems.append(f"The limits of the environment '{row['environment']}' lack {missing}; {LIMIT_RULE}.")
+        elif missing:
+            problems.append(f"{LIMITS} lacks {missing}; {LIMIT_RULE}.")
+    # A global value that lacks a limit is reported once, not once per environment inheriting it.
+    return list(dict.fromkeys(problems))
+
+
+def setting_warnings(document, rows):
+    """The settings that are valid but change nothing."""
+    return [f"The environment '{row['environment']}' sets {ENABLED}: true, but auto-merge is switched off for the "
+            f"whole run (the input {ENABLED} is false), so it has no effect."
+            for row in rows if not _switched_on(document) and row[ENABLED] == "true"]
 
 
 def _typed_overrides(document, name, environment):
@@ -337,13 +488,8 @@ def build_row(document, globals_, index, environment):
     row.setdefault("url", "")
 
     for field in REPLACE_FIELDS:
-        if field in row:
-            row[_unsuffixed(field)] = _env_field(document, index, field)
-        else:
-            global_value = globals_[field]
-            row[_unsuffixed(field)] = [] if global_value is None else global_value
-
-    row["goals"] = _as_goal_list(row["goals"])
+        value = _env_field(document, index, field) if field in row else globals_[field]
+        row[_unsuffixed(field)] = _as_list(value)
 
     for field in MERGE_FIELDS:
         if field in row:
@@ -358,7 +504,7 @@ def build_row(document, globals_, index, environment):
             row[_unsuffixed(field)] = globals_[field]
 
     for field in JOB_VARIABLES:
-        row[field] = _variables(name, field, row[field])
+        row[field] = _without_nulls(row[field])
 
     for field in PER_GOAL_FIELDS:
         if isinstance(row[field], str):
@@ -417,14 +563,12 @@ def build_rows(document):
     if not isinstance(environments, list):
         raise ConfigError(["The specification for input 'environments-yml' must be a list of environments!"])
 
-    problems = check_keys(environments)
     # A global problem is reported once, naming the input, not once per environment that inherits it.
-    problems += goal_problems("goals-yml", globals_["goals-yml"])
-    for index, entry in enumerate(environments):
-        if isinstance(entry, dict) and _is_name(entry.get("environment")) and "goals-yml" in entry:
-            problems += goal_problems(f"The environment '{entry['environment']}'", _env_field(document, index, "goals-yml"))
+    problems = check_keys(environments) + _setting_problems(document, globals_, environments)
     if problems:
         raise ConfigError(problems)
+    if globals_[LIMITS] in (None, {}):
+        globals_[LIMITS] = default_limits()
     rows = [build_row(document, globals_, index, environment) for index, environment in enumerate(environments)]
 
     seen = set()
@@ -444,4 +588,7 @@ def build_rows(document):
                                "group, so each needs its own!"])
 
     validate_rows(document, rows)
+    problems = _auto_merge_problems(document, environments, rows)
+    if problems:
+        raise ConfigError(problems)
     return rows

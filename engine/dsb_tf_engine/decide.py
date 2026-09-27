@@ -52,6 +52,7 @@ def decide(document):
         block, entries = relevance.decide_relevance(document, declared, rows, dropped)
         granted = triggers.grant(document, rows, entries)
         tests_block, warnings, notices = tests.decide_tests(document, rows)
+        warnings = environments.setting_warnings(document, rows) + warnings
     except environments.ConfigError as error:
         return _failed(error.messages)
     for index, entry in enumerate(entries):

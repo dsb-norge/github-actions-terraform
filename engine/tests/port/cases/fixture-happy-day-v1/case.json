@@ -35,7 +35,7 @@
   ],
   "engine_expected": {
     "exit_code": 0,
-    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare; the fixture's goals that do not exist ('dummy', 'apple', 'destroy-plan-on-pr') are left out, since they are now refused",
+    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare; the fixture's goals that do not exist ('dummy', 'apple', 'destroy-plan-on-pr') are left out, since they are now refused; an environment's own pr-auto-merge-from-actors-yml replaces the global one (docs/Configuration-validation.md §3.6)",
     "matrix": {
       "environment": [
         "my-first-env",
@@ -67,6 +67,9 @@
               "destroy",
               "apply-on-pr",
               "destroy-on-pr"
+            ],
+            "pr-auto-merge-from-actors": [
+              "global-actor"
             ],
             "terraform-init-additional-dirs": [
               "./main",
@@ -112,9 +115,6 @@
               "ARM_USE_AZUREAD": "true",
               "ARM_USE_OIDC": "true"
             },
-            "pr-auto-merge-from-actors": [
-              "global-actor"
-            ],
             "pr-auto-merge-limits": {
               "plan-max-count-add": 0,
               "plan-max-count-change": 0,
@@ -158,6 +158,9 @@
             "allow-failing-terraform-operations": false,
             "goals": [
               "all"
+            ],
+            "pr-auto-merge-from-actors": [
+              "env-actor"
             ],
             "terraform-init-additional-dirs": [
               "./main",
@@ -205,10 +208,6 @@
               "ARM_USE_AZUREAD": "true",
               "ARM_USE_OIDC": "true"
             },
-            "pr-auto-merge-from-actors": [
-              "global-actor",
-              "env-actor"
-            ],
             "pr-auto-merge-limits": {
               "plan-max-count-add": 5,
               "plan-max-count-change": 0,
@@ -253,6 +252,9 @@
               "format",
               "validate",
               "lint"
+            ],
+            "pr-auto-merge-from-actors": [
+              "global-actor"
             ],
             "terraform-init-additional-dirs": [
               "./main",
@@ -299,9 +301,6 @@
               "ARM_USE_AZUREAD": "true",
               "ARM_USE_OIDC": "true"
             },
-            "pr-auto-merge-from-actors": [
-              "global-actor"
-            ],
             "pr-auto-merge-limits": {
               "plan-max-count-add": 0,
               "plan-max-count-change": 0,

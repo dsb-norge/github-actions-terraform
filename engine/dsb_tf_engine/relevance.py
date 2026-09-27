@@ -83,8 +83,7 @@ def _auto(name, row, errors):
         errors.append(f"The environment '{name}' uses auto, but its project-dir {shown(row['project-dir'])} cannot "
                       f"be matched: {error}; set its 'paths' explicitly!")
     rules += [globs.compile_glob(pattern) for pattern in AUTO_SHARED]
-    directories = row["terraform-init-additional-dirs"]
-    for directory in directories if isinstance(directories, list) else [directories]:
+    for directory in row["terraform-init-additional-dirs"]:
         try:
             rules.append(_directory(directory))
         except globs.GlobError as error:

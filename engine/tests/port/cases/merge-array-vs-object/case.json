@@ -35,5 +35,12 @@
   "default_branch": "main",
   "directories": [
     "envs/env-a"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "the actor list is replaced per environment, never merged, and an environment's that is a mapping is refused as not a list of logins (docs/Configuration-validation.md §3.6)",
+    "errors": [
+      "The environment 'env-a' sets 'pr-auto-merge-from-actors-yml' to {\"a\": 1}; it must be a list of logins."
+    ]
+  }
 }
