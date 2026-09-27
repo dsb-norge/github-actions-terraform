@@ -151,6 +151,7 @@ A validation error stops the run in `create-matrix`, red conclusion, with one me
 |---|---|
 | `environment` names nothing in `environments-yml` | `dispatch: no environment named 'stagin'. Environments: prod, staging, sandbox` |
 | `goal: apply` off the default branch | `dispatch: apply is only allowed from the default branch 'main'; this run is on 'feature/x'` |
+| `goal: apply` from a tag named like the default branch | `dispatch: apply is only allowed from the default branch 'main'; this run is on the tag 'main'` (the default branch is a branch, never a tag: [Configuration-validation.md](Configuration-validation.md) §3.8) |
 | `goal: apply` for an environment without the goal | `dispatch: environment 'sandbox' does not hold the goal 'apply' (goals: init, format, validate, lint, plan)` |
 | an unknown value in `trigger-events` | `environments-yml: environment 'prod': unknown trigger event 'merge'` |
 | `schedule` in the global list | `trigger-events-yml: 'schedule' is per environment only; add it to the trigger-events of the environment the schedule is for` |
@@ -185,8 +186,12 @@ A dispatch or schedule has no pull request, so the surfaces are the run summary 
   `::notice title=Terraform CI::`, so it shows in the checks pane, and the run summary quotes it
   under its relevance line. The record itself stays one line per environment.
 - A dispatch whose caller declares no inputs block says so in the same two places, with where to
-  copy the block from; a schedule that no environment takes part in says which key would change
-  it. Neither run speaks of "this change" in the run summary.
+  copy the block from. So does a dispatch through a block without the standard inputs, one that
+  delivered neither `environment` nor `goal`, naming the inputs it did deliver (never their values):
+  `dispatched by octocat: this dispatch delivered the inputs mode, target but neither 'environment' nor 'goal', so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1`.
+  The standard block's `goal` is a choice with a default, always delivered, which is what makes the
+  case recognisable. A schedule that no environment takes part in says which key would change it.
+  None of these runs speaks of "this change" in the run summary.
 - The environment jobs and the conclusion are unchanged; the conclusion's own summary line already
   counts what ran.
 - On a pull request, an ungrouped commenting environment whose `trigger-events` lack
