@@ -23,6 +23,8 @@ GITHUB_ACTOR="a-random-user"
 input_metadata_files_pattern="matrix-job-meta-*.json"
 # Path of a relevance.json from the matrix builder; empty evaluates the metadata files alone
 input_relevance_file=""
+# The test jobs' metadata; a tolerated failing test is named in a notice
+input_test_metadata_files_pattern="terraform-test-meta-*.json"
 
 # Create test metadata file(s)
 # This simulates what capture-matrix-job-meta would produce
@@ -51,6 +53,7 @@ cat > matrix-job-meta-sandbox.json << 'EOF'
       "environment": "sandbox",
       "pr-auto-merge-enabled": true,
       "goals": ["all"],
+      "goals-granted": ["init", "format", "validate", "lint", "plan"],
       "pr-auto-merge-from-actors": ["dependabot[bot]", "a-random-user"],
       "pr-auto-merge-limits": {
         "plan-max-count-add": 0,
@@ -66,6 +69,11 @@ cat > matrix-job-meta-sandbox.json << 'EOF'
     "actor": "a-random-user"
   },
   "steps": {
+    "init": {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "verify-lock": {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "fmt": {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "validate": {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "lint": {"outcome": "success", "conclusion": "success", "outputs": {}},
     "plan": {
       "outcome": "success",
       "conclusion": "success",
@@ -80,7 +88,9 @@ cat > matrix-job-meta-sandbox.json << 'EOF'
         "count-destroy": "0",
         "count-import": "0",
         "count-move": "0",
-        "count-remove": "0"
+        "count-remove": "0",
+        "counts-source": "json",
+        "plan-complete": "true"
       }
     },
     "apply": {
@@ -107,8 +117,22 @@ cat > matrix-job-meta-sandbox.json << 'EOF'
 }
 EOF
 
+# A test job whose integration lane failed under allow-failing-terraform-tests
+cat > terraform-test-meta-root--int-x.json << 'EOF'
+{
+  "metadata": {"environment": "root--int-x", "captured_at": "2026-09-25T10:10:00Z", "schema_version": "2.0.0"},
+  "matrix_context": {
+    "slug": "root--int-x",
+    "test": {"file": "tests/int-x.tftest.hcl", "lane": "integration", "allow-failing-terraform-tests": true}
+  },
+  "steps": {
+    "test": {"outcome": "failure", "conclusion": "success", "outputs": {"status": "fail", "reason": "assertion"}}
+  }
+}
+EOF
+
 echo ""
-echo "Created test metadata file: matrix-job-meta-sandbox.json"
+echo "Created test metadata files: matrix-job-meta-sandbox.json, terraform-test-meta-root--int-x.json"
 echo ""
 
 # Source the main script in a subshell so 'exit' doesn't terminate this runner

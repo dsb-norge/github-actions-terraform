@@ -53,70 +53,70 @@ function get_pr_auto_merge_limits_json {
   jq -c "${base}.\"pr-auto-merge-limits\" // {}" "${file}" 2>/dev/null || echo "{}"
 }
 
-# Extract pr-auto-merge-from-actors as JSON array string from a metadata or relevance file
+# Extract pr-auto-merge-from-actors as compact JSON from a metadata or relevance file,
+# as it is: null when absent, so a missing list is refused rather than read as empty
 # Args: $1 = JSON file path, $2 = jq path of the object holding the value (default: the matrix row)
 function get_pr_auto_merge_from_actors_json {
   local file="${1}"
   local base="${2:-${_METADATA_VARS}}"
-  jq -c "${base}.\"pr-auto-merge-from-actors\" // []" "${file}" 2>/dev/null || echo "[]"
+  jq -c "${base}.\"pr-auto-merge-from-actors\"" "${file}" 2>/dev/null || echo "null"
 }
 
-# Check if goals array contains a specific goal
-# Args: $1 = metadata file path, $2 = goal to check for
-function goals_contain {
+# The goals the engine grants (goals-granted), the vocabulary of the workflow's
+# operation gates: no 'all', no '-on-pr'. On a pull request 'apply' and
+# 'destroy' are granted only through apply-on-pr and destroy-on-pr.
+_GRANTED_GOALS=(init format validate lint plan apply destroy-plan destroy)
+
+# Why the metadata's goals-granted cannot be read, or nothing when it can. The
+# raw goals are not a fallback: they are what the caller asked for, not what the
+# run's gates did, and "a plan should have been created" must mean the same to
+# this check as to the plan step.
+# Args: $1 = metadata file path
+function get_goals_granted_problem {
+  local file="${1}"
+  jq -r --args '
+    .matrix_context.vars as $vars
+    | if ($vars | type) != "object" or ($vars | has("goals-granted") | not) then
+        "The metadata has no goals-granted, the goals this run granted the environment, so what it should have planned is unknown (metadata from an older workflow?), environment is ineligible for PR auto merge"
+      elif ($vars["goals-granted"] | type) != "array" then
+        "The metadata'\''s goals-granted is \($vars["goals-granted"] | tojson), not a list of goals, so what the environment should have planned is unknown, environment is ineligible for PR auto merge"
+      else
+        [$vars["goals-granted"][] | select(type != "string" or (. as $g | $ARGS.positional | index($g) | not))] as $unknown
+        | if ($unknown | length) > 0 then
+            "The metadata'\''s goals-granted holds \($unknown[0] | tojson), which is not a goal (\($ARGS.positional | join(", "))), so what the environment should have planned is unknown, environment is ineligible for PR auto merge"
+          else "" end
+      end' "${_GRANTED_GOALS[@]}" <"${file}" 2>/dev/null ||
+    echo "The metadata's goals-granted could not be read, environment is ineligible for PR auto merge"
+}
+
+# "true" if the metadata's goals-granted holds the goal, "false" otherwise
+# Args: $1 = metadata file path, $2 = goal
+function get_goal_granted {
   local file="${1}"
   local goal="${2}"
-  local contains
-  contains=$(jq -r --arg goal "${goal}" '.matrix_context.vars.goals | if . then map(select(. == $goal)) | length else 0 end' "${file}" 2>/dev/null || echo "0")
-  [[ "${contains}" -gt 0 ]]
+  jq -r --arg goal "${goal}" '
+    .matrix_context.vars["goals-granted"]
+    | if type == "array" and index($goal) != null then "true" else "false" end' "${file}" 2>/dev/null || echo "false"
 }
 
-# Derive plan-shouldve-been-created from goals
-# Returns "true" if goals contains 'all' or 'plan'
-# Args: $1 = metadata file path
-function get_plan_shouldve_been_created {
-  local file="${1}"
-  if goals_contain "${file}" "all" || goals_contain "${file}" "plan"; then
-    echo "true"
-  else
-    echo "false"
-  fi
-}
+# The step ids of the Terraform operations, as the workflow's environment job
+# names them. A tolerated failure of any of them blocks auto-merge:
+# allow-failing-terraform-operations keeps the check green, it never merges
+# without review. An absent or skipped step is not a failure.
+_OPERATION_STEP_IDS=(init verify-lock fmt validate lint plan apply destroy-plan destroy)
 
-# Derive destroy-plan-shouldve-been-created from goals
-# Returns "true" if goals contains 'destroy-plan'
+# The operation steps that ended failure or cancelled, as "id (outcome)" joined
+# by ", ", or nothing
 # Args: $1 = metadata file path
-function get_destroy_plan_shouldve_been_created {
+function get_failed_operations {
   local file="${1}"
-  if goals_contain "${file}" "destroy-plan"; then
-    echo "true"
-  else
-    echo "false"
-  fi
-}
-
-# Derive performing-apply-on-pr from goals
-# Returns "true" if goals contains 'apply-on-pr'
-# Args: $1 = metadata file path
-function get_performing_apply_on_pr {
-  local file="${1}"
-  if goals_contain "${file}" "apply-on-pr"; then
-    echo "true"
-  else
-    echo "false"
-  fi
-}
-
-# Derive performing-destroy-on-pr from goals
-# Returns "true" if goals contains 'destroy-on-pr'
-# Args: $1 = metadata file path
-function get_performing_destroy_on_pr {
-  local file="${1}"
-  if goals_contain "${file}" "destroy-on-pr"; then
-    echo "true"
-  else
-    echo "false"
-  fi
+  jq -r --args '
+    (.steps // {}) as $steps
+    | [$ARGS.positional[] as $id
+       | (($steps[$id] // {}) | if type == "object" then (.outcome // "") else "" end) as $outcome
+       | select($outcome == "failure" or $outcome == "cancelled")
+       | "\($id) (\($outcome))"]
+    | join(", ")' "${_OPERATION_STEP_IDS[@]}" <"${file}" 2>/dev/null || echo "steps (unreadable)"
 }
 
 # Get step outcome from metadata file
@@ -162,10 +162,17 @@ function extract_environment_data {
   input_pr_auto_merge_limits_json=$(get_pr_auto_merge_limits_json "${file}")
   input_pr_auto_merge_from_actors_json=$(get_pr_auto_merge_from_actors_json "${file}")
 
+  # The goals the run granted decide what should have run; see get_goals_granted_problem
+  input_goals_granted_json=$(jq -c '.matrix_context.vars["goals-granted"]' "${file}" 2>/dev/null || echo "null")
+  input_goals_granted_problem=$(get_goals_granted_problem "${file}")
+
+  # The operation steps that failed or were cancelled, tolerated or not
+  input_failed_operations=$(get_failed_operations "${file}")
+
   # Plan-related derived values
-  input_plan_shouldve_been_created=$(get_plan_shouldve_been_created "${file}")
+  input_plan_shouldve_been_created=$(get_goal_granted "${file}" "plan")
   input_plan_was_created=$(get_step_outcome_success "${file}" "plan")
-  input_performing_apply_on_pr=$(get_performing_apply_on_pr "${file}")
+  input_performing_apply_on_pr=$(get_goal_granted "${file}" "apply")
   input_apply_on_pr_succeeded=$(get_step_outcome_success "${file}" "apply")
 
   # Plan counts from parse-plan step
@@ -175,11 +182,14 @@ function extract_environment_data {
   input_plan_count_import=$(get_step_output "${file}" "parse-plan" "count-import")
   input_plan_count_move=$(get_step_output "${file}" "parse-plan" "count-move")
   input_plan_count_remove=$(get_step_output "${file}" "parse-plan" "count-remove")
+  # Where the counts came from and whether the plan covers every change; see validate_count_evidence
+  input_plan_counts_source=$(get_step_output "${file}" "parse-plan" "counts-source")
+  input_plan_complete=$(get_step_output "${file}" "parse-plan" "plan-complete")
 
   # Destroy plan-related derived values
-  input_destroy_plan_shouldve_been_created=$(get_destroy_plan_shouldve_been_created "${file}")
+  input_destroy_plan_shouldve_been_created=$(get_goal_granted "${file}" "destroy-plan")
   input_destroy_plan_was_created=$(get_step_outcome_success "${file}" "destroy-plan")
-  input_performing_destroy_on_pr=$(get_performing_destroy_on_pr "${file}")
+  input_performing_destroy_on_pr=$(get_goal_granted "${file}" "destroy")
   input_destroy_on_pr_succeeded=$(get_step_outcome_success "${file}" "destroy")
 
   # Destroy plan counts from parse-destroy-plan step
@@ -189,6 +199,8 @@ function extract_environment_data {
   input_destroy_plan_count_import=$(get_step_output "${file}" "parse-destroy-plan" "count-import")
   input_destroy_plan_count_move=$(get_step_output "${file}" "parse-destroy-plan" "count-move")
   input_destroy_plan_count_remove=$(get_step_output "${file}" "parse-destroy-plan" "count-remove")
+  input_destroy_plan_counts_source=$(get_step_output "${file}" "parse-destroy-plan" "counts-source")
+  input_destroy_plan_complete=$(get_step_output "${file}" "parse-destroy-plan" "plan-complete")
 }
 
 # Set the input_* variables of the configuration, enabled and actor checks from
@@ -204,6 +216,35 @@ function extract_relevance_entry_data {
   input_pr_auto_merge_enabled=$(get_pr_auto_merge_enabled "${file}" "${base}")
   input_pr_auto_merge_limits_json=$(get_pr_auto_merge_limits_json "${file}" "${base}")
   input_pr_auto_merge_from_actors_json=$(get_pr_auto_merge_from_actors_json "${file}" "${base}")
+  input_unplanned_reason=$(get_unplanned_reason "${file}" "${index}")
+}
+
+# Why an environment the relevance file skips was never planned although the
+# change may concern it, or nothing when the skip means "not affected". On a
+# pull request an environment whose trigger-events lack pull_request is dropped
+# before relevance is applied, so its skip says nothing about the change; the
+# engine publishes whether a changed file is relevant to it all the same
+# (docs/Auto-merge.md D6). A file from before that field fails closed for such
+# an environment; a plain relevance skip without it is judged as before.
+# Args: $1 = relevance file path, $2 = index into .environments
+function get_unplanned_reason {
+  local file="${1}"
+  local index="${2}"
+  jq -r --argjson index "${index}" '
+    .environments[$index] as $entry
+    | (($entry.environment // $entry["github-environment"]) | tostring) as $name
+    | (($entry.reasons // [])[0] // "") as $reason
+    | (($reason | startswith("trigger-events:"))
+       or (($entry["trigger-events"] | type) == "array" and (any($entry["trigger-events"][]; . == "pull_request") | not))
+      ) as $out_of_pull_requests
+    | if $entry.relevant == true and $out_of_pull_requests then
+        "The change touches '\''\($name)'\'', which takes no part in pull requests, so it was never planned, environment is ineligible for PR auto merge"
+      elif $entry.relevant == true then
+        "The change touches '\''\($name)'\'', which was skipped (\($reason)), so it was never planned, environment is ineligible for PR auto merge"
+      elif ($entry | has("relevant") | not) and $out_of_pull_requests then
+        "'\''\($name)'\'' takes no part in pull requests and the relevance file does not say whether the change touches it, so it may never have been planned, environment is ineligible for PR auto merge"
+      else "" end' "${file}" 2>/dev/null ||
+    echo "The relevance entry at index ${index} could not be read, environment is ineligible for PR auto merge"
 }
 
 # ============================================================================
@@ -225,6 +266,41 @@ function find_metadata_files {
   for file in "${files[@]}"; do
     echo "${file}"
   done
+}
+
+# ============================================================================
+# Test Job Metadata
+# ============================================================================
+
+# Describe a test job whose test ended 'fail' or 'error', as one tab-separated
+# line: tolerated ("true" or "false"), status, test file, lane. Prints nothing for
+# any other status. The conclusion judges the test jobs, so nothing read here
+# decides eligibility (docs/Auto-merge.md D13); it is read only to name a
+# tolerated failure, so a merge past a failing test is never silent.
+# Args: $1 = test metadata file path (from capture-matrix-job-meta in the test job)
+function describe_failing_test {
+  local file="${1}"
+  jq -r '
+    def truthy: . == true or . == "true";
+    . as $root
+    | ((.steps.test.outputs.status // "") | tostring) as $status
+    | select($status == "fail" or $status == "error")
+    | (.matrix_context.test // {}) as $test
+    | [(if ($test["allow-failing-terraform-tests"] | truthy) then "true" else "false" end),
+       $status,
+       ((($test.file // "") | tostring) | if . == "" then (($root.metadata.environment // "unknown test") | tostring) else . end),
+       (($test.lane // "") | tostring)]
+    | @tsv' "${file}"
+}
+
+# Escape a value for the message part of a GitHub workflow command
+# (everything after '::'). Only %, CR and LF are special there.
+function escape-annotation-message {
+  local s="${1}"
+  s="${s//%/%25}"
+  s="${s//$'\r'/%0D}"
+  s="${s//$'\n'/%0A}"
+  printf '%s' "${s}"
 }
 
 # ============================================================================
@@ -289,16 +365,21 @@ function validate_relevance_file {
     return 1
   fi
 
-  # Metadata is matched on github-environment, so each entry must name one, and only once
+  # Metadata is matched on github-environment, so each entry must name one, and only once.
+  # relevant, reasons and trigger-events decide whether a skip counts as unaffected, so a
+  # present one of the wrong shape must not be read as absent.
   local bad_entries
   bad_entries=$(jq '[.environments[] | select(
       type != "object"
       or ((."github-environment" | type) != "string")
       or ."github-environment" == ""
       or ((.verdict == "run" or .verdict == "skip") | not)
+      or (has("relevant") and ((.relevant | type) != "boolean"))
+      or (has("reasons") and ((.reasons | type) != "array" or any(.reasons[]; type != "string")))
+      or (has("trigger-events") and ((."trigger-events" | type) != "array"))
     )] | length' "${file}")
   if [[ "${bad_entries}" -gt 0 ]]; then
-    log-warn "Relevance file '${file}' has ${bad_entries} malformed environment entr(y/ies): each needs a non-empty 'github-environment' and a 'verdict' of 'run' or 'skip'"
+    log-warn "Relevance file '${file}' has ${bad_entries} malformed environment entr(y/ies): each needs a non-empty 'github-environment' and a 'verdict' of 'run' or 'skip', and 'relevant' is a boolean, 'reasons' a list of text and 'trigger-events' a list where given"
     return 1
   fi
 
