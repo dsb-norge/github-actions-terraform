@@ -285,6 +285,38 @@ run_test "H1: 'Actions: 2 to invoke.' after the Plan line's counts" \
                                                           "0" "1" "0" "0" "0" "0"
 
 # --------------------------------------------------
+# J1–J7: the console halves of the JSON-plan fixture pairs
+# (test-data/plan_json_*.{log,json}, provenance in test-data/README.md): each
+# console was captured together with 'terraform show -json' of the same saved
+# plan. Pinned here as the console parser reads them.
+#
+# J1 is a known miscount, pinned on purpose. One resource value reads
+# "No changes allowed; Plan: 0 to add, 0 to change, 0 to destroy.", which the
+# unanchored 'No changes.' search matches, so a plan that imports 1, adds 3,
+# changes 2 and destroys 3 reads as none of those. Only the move and the
+# removal survive, because each is counted from its own resource line. The
+# console text holds resource values; it cannot be trusted for the counts.
+# --------------------------------------------------
+#                                                       imports adds changes destroys moves removes [output-only]
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_injected_summary.log"
+run_test "J1: a value that reads like a summary zeroes the console's import, add, change and destroy" \
+                                                          "0" "0" "0" "0" "1" "1" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_no_changes.log"
+run_test "J2: no changes"                                 "0" "0" "0" "0" "0" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_outputs_only.log"
+run_test "J3: an added output and nothing else"           "0" "0" "0" "0" "0" "0" "true"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_destroy_plan.log"
+run_test "J4: a -destroy plan"                            "0" "0" "0" "4" "0" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_data_read.log"
+run_test "J5: a deferred data-source read beside resource changes" \
+                                                          "0" "2" "1" "1" "0" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_targeted_incomplete.log"
+run_test "J6: a -target plan reads as an ordinary one"    "0" "0" "1" "0" "0" "0" "false"
+export input_plan_console_file="${_this_script_dir}/test-data/plan_json_errored.log"
+run_test "J7: an errored plan's partial Plan line is read as the plan's counts" \
+                                                          "0" "0" "1" "0" "0" "0" "false"
+
+# --------------------------------------------------
 # Summary
 # --------------------------------------------------
 echo ""

@@ -1,0 +1,95 @@
+terraform_data.new_name: Refreshing state... [id=71eb9679-a6a4-eb7e-41b1-f8c4738cbe07]
+terraform_data.keep: Refreshing state... [id=de00bcbc-49be-4fd9-74d0-e6e0a22253a9]
+terraform_data.delete_me[0]: Refreshing state... [id=c178b91d-d74b-a8e9-1dff-72b3a2294b2e]
+terraform_data.update_me: Refreshing state... [id=563e08fe-302f-c1e6-ab65-0ed42cba4380]
+terraform_data.replace_me: Refreshing state... [id=e4677d54-196d-ffa6-04b5-cb4096939c2f]
+random_string.imported[0]: Preparing import... [id=abcde]
+random_string.imported[0]: Refreshing state... [id=abcde]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+  ~ update in-place
+  - destroy
+-/+ destroy and then create replacement
+
+Terraform will perform the following actions:
+
+  # random_string.imported[0] must be replaced
+  # (imported from "abcde")
+  # Warning: this will destroy the imported resource
+-/+ resource "random_string" "imported" {
+      ~ id          = "abcde" -> (known after apply)
+        length      = 5
+        lower       = true
+        min_lower   = 0
+        min_numeric = 0
+        min_special = 0
+        min_upper   = 0
+        number      = true
+        numeric     = true
+      ~ result      = "abcde" -> (known after apply)
+      ~ special     = true -> false # forces replacement
+        upper       = true
+    }
+
+  # terraform_data.created will be created
+  + resource "terraform_data" "created" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.delete_me[0] will be destroyed
+  # (because index [0] is out of range for count)
+  - resource "terraform_data" "delete_me" {
+      - id = "c178b91d-d74b-a8e9-1dff-72b3a2294b2e" -> null
+    }
+
+ # terraform_data.forget_me[0] will no longer be managed by Terraform, but will not be destroyed
+ # (destroy = false is set in the configuration)
+ . resource "terraform_data" "forget_me" {
+        id = "448d02bb-8d85-5d13-23b1-145f72fa44d3"
+    }
+
+  # terraform_data.new_name will be updated in-place
+  # (moved from terraform_data.old_name[0])
+  ~ resource "terraform_data" "new_name" {
+        id     = "71eb9679-a6a4-eb7e-41b1-f8c4738cbe07"
+      + input  = "tags = No changes allowed; Plan: 0 to add, 0 to change, 0 to destroy."
+      + output = (known after apply)
+    }
+
+  # terraform_data.replace_me must be replaced
+-/+ resource "terraform_data" "replace_me" {
+      ~ id               = "e4677d54-196d-ffa6-04b5-cb4096939c2f" -> (known after apply)
+      ~ triggers_replace = [
+          ~ 1 -> "2",
+        ]
+    }
+
+  # terraform_data.update_me will be updated in-place
+  ~ resource "terraform_data" "update_me" {
+        id     = "563e08fe-302f-c1e6-ab65-0ed42cba4380"
+      ~ input  = 1 -> "2"
+      ~ output = 1 -> (known after apply)
+    }
+
+Plan: 1 to import, 3 to add, 2 to change, 3 to destroy.
+
+Changes to Outputs:
+  ~ o = 1 -> "2"
+
+Warning: Some objects will no longer be managed by Terraform
+
+If you apply this plan, Terraform will discard its tracking information for
+the following objects, but it will not delete them:
+ - terraform_data.forget_me[0]
+
+After applying this plan, Terraform will no longer manage these objects. You
+will need to import them into Terraform to manage them again.
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: p.bin
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "p.bin"

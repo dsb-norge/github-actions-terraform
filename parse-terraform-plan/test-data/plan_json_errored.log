@@ -1,0 +1,26 @@
+terraform_data.guarded: Refreshing state... [id=4424182f-e90c-287e-5476-d391c95ed3b6]
+terraform_data.created: Refreshing state... [id=0a5fb098-9f19-0861-5656-f164b65c7ef5]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform planned the following actions, but then encountered a problem:
+
+  # terraform_data.created will be updated in-place
+  ~ resource "terraform_data" "created" {
+        id     = "0a5fb098-9f19-0861-5656-f164b65c7ef5"
+      ~ input  = 1 -> "2"
+      ~ output = 1 -> (known after apply)
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+
+Error: Resource precondition failed
+
+  on main.tf line 11, in resource "terraform_data" "guarded":
+  11:       condition     = var.phase == 1
+    ├────────────────
+    │ var.phase is "2"
+
+The guard refuses phase 2.

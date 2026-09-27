@@ -1,0 +1,60 @@
+terraform_data.keep: Refreshing state... [id=de00bcbc-49be-4fd9-74d0-e6e0a22253a9]
+terraform_data.update_me: Refreshing state... [id=563e08fe-302f-c1e6-ab65-0ed42cba4380]
+terraform_data.replace_me: Refreshing state... [id=f2a65593-44f8-54c4-404d-9438a9a9f8d9]
+random_string.imported[0]: Refreshing state... [id=8edmn]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # random_string.imported[0] will be destroyed
+  - resource "random_string" "imported" {
+      - id          = "8edmn" -> null
+      - length      = 5 -> null
+      - lower       = true -> null
+      - min_lower   = 0 -> null
+      - min_numeric = 0 -> null
+      - min_special = 0 -> null
+      - min_upper   = 0 -> null
+      - number      = true -> null
+      - numeric     = true -> null
+      - result      = "8edmn" -> null
+      - special     = false -> null
+      - upper       = true -> null
+    }
+
+  # terraform_data.keep will be destroyed
+  - resource "terraform_data" "keep" {
+      - id     = "de00bcbc-49be-4fd9-74d0-e6e0a22253a9" -> null
+      - input  = "same" -> null
+      - output = "same" -> null
+    }
+
+  # terraform_data.replace_me will be destroyed
+  - resource "terraform_data" "replace_me" {
+      - id               = "f2a65593-44f8-54c4-404d-9438a9a9f8d9" -> null
+      - triggers_replace = [
+          - "1",
+        ] -> null
+    }
+
+  # terraform_data.update_me will be destroyed
+  - resource "terraform_data" "update_me" {
+      - id     = "563e08fe-302f-c1e6-ab65-0ed42cba4380" -> null
+      - input  = "1" -> null
+      - output = "1" -> null
+    }
+
+Plan: 0 to add, 0 to change, 4 to destroy.
+
+Changes to Outputs:
+  - o = "1" -> null
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: p.bin
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "p.bin"
