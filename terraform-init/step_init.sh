@@ -157,10 +157,15 @@ function main {
   # Additional dirs init — parse JSON array, iterate, tee -a so each
   # invocation's output is appended to the same console file.
   local more_dirs_json="${input_additional_dirs_json:-[]}"
-  local more_dirs
-  more_dirs=$(printf '%s' "${more_dirs_json}" | jq -cr '.[]?' 2>/dev/null || echo "")
+  # One element per NUL-terminated item: a directory holding a space, or any
+  # other character bash would split on, stays one directory.
+  local -a more_dirs=()
+  local extra_dir
+  while IFS= read -r -d '' extra_dir; do
+    more_dirs+=("${extra_dir}")
+  done < <(printf '%s' "${more_dirs_json}" | jq -j '.[]? | tostring, "\u0000"' 2>/dev/null)
 
-  if [ -z "${more_dirs}" ]; then
+  if [ "${#more_dirs[@]}" -eq 0 ]; then
     log-info "no additional directories to init specified"
   else
     log-info "additional directories to init specified"
@@ -171,8 +176,7 @@ function main {
       export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="true"
     fi
 
-    local extra_dir
-    for extra_dir in ${more_dirs}; do
+    for extra_dir in "${more_dirs[@]}"; do
       start-group "additional init directory '${extra_dir}'"
       local abs_dir="${GITHUB_WORKSPACE}/${extra_dir}"
       log-info "looking for directory ..."
