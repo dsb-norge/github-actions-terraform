@@ -200,10 +200,10 @@
             "GOMEMLIMIT": null
           },
           "lint": {
-            "GOGC": 400
+            "GOGC": "400"
           },
           "plan": {
-            "GOGC": 25,
+            "GOGC": "25",
             "GOMEMLIMIT": "12GiB"
           }
         }
@@ -212,8 +212,8 @@
         "ok": true,
         "value": {
           "ANOTHER_ENV": "1 2 3",
-          "ARM_USE_AZUREAD": true,
-          "ARM_USE_OIDC": true
+          "ARM_USE_AZUREAD": "true",
+          "ARM_USE_OIDC": "true"
         }
       },
       "goals-yml": {

@@ -65,8 +65,8 @@
         "extra-envs-per-goal-yml": {
           "ok": true,
           "value": [
-            1,
-            2
+            "1",
+            "2"
           ]
         }
       }
@@ -78,8 +78,8 @@
           {
             "environment": "env-a",
             "extra-envs-per-goal-yml": [
-              1,
-              2
+              "1",
+              "2"
             ]
           }
         ]

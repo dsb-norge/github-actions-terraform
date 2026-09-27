@@ -99,8 +99,8 @@
         "ok": true,
         "value": {
           "ARM_TENANT_ID": "00000000-0000-0000-0000-000000000001",
-          "ARM_USE_AZUREAD": true,
-          "ARM_USE_OIDC": true
+          "ARM_USE_AZUREAD": "true",
+          "ARM_USE_OIDC": "true"
         }
       },
       "goals-yml": {

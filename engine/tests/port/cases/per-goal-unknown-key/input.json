@@ -84,7 +84,7 @@
         "ok": true,
         "value": {
           "all": {
-            "NOPE": 1
+            "NOPE": "1"
           }
         }
       },

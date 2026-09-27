@@ -29,8 +29,8 @@
             "validate": {}
           },
           "extra-envs-per-goal": [
-            1,
-            2
+            "1",
+            "2"
           ],
           "format-check-in-root-dir": "false",
           "github-environment": "env-a",

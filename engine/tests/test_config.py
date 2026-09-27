@@ -149,3 +149,60 @@ class NearMissTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VariablesTest(unittest.TestCase):
+    """The job-wide variable maps (docs/Configuration-validation.md §3.5)."""
+
+    def output(self, env_value=None, global_value=None, field="extra-envs-yml"):
+        environment = {"environment": "prod"}
+        env_yaml = {}
+        if env_value is not None:
+            environment[field] = env_value
+            env_yaml[field] = support.parsed(env_value)
+        document = support.document(environments=[environment], env_yaml=[env_yaml])
+        if global_value is not None:
+            document["yaml"]["inputs"][field] = support.parsed(global_value)
+        output = decide.decide(document)
+        self.assertEqual([], invariants.check(document, output))
+        return output
+
+    def row(self, output, field):
+        return output["matrices"]["1"]["include"][0]["vars"][field]
+
+    def test_a_null_is_not_set_and_a_per_environment_null_removes_a_global_variable(self):
+        for field in ("extra-envs-yml", "extra-envs-from-secrets-yml"):
+            with self.subTest(field=field):
+                output = self.output({"GONE": None, "LOCAL": "b"}, {"GONE": "global", "KEPT": "a", "NULL": None}, field)
+                self.assertEqual({"KEPT": "a", "LOCAL": "b"}, self.row(output, field[:-4]))
+
+    def test_names_follow_the_variable_rule(self):
+        for key in ("1ABC", "A-B", "A B", ""):
+            with self.subTest(key=key):
+                self.assertEqual([f"The variable {key!r} of the environment 'prod' in 'extra-envs-yml' is not a variable "
+                                  "name: a name is letters, digits and underscores, not starting with a digit."],
+                                 self.output({key: "x"})["errors"])
+        self.assertEqual([], self.output({"_A1": "x", "a": "y"})["errors"])
+
+    def test_a_value_is_text(self):
+        cases = [({"TAGS": {"a": "b"}}, "is a mapping; a variable's value is text. Quote it if the braces are part of "
+                                        "the value."),
+                 ({"TAGS": ["a"]}, "is a list; a variable's value is text. Quote it if the brackets are part of the "
+                                   "value."),
+                 ({"TAGS": 3}, "is 3, which is not text; quote it."),
+                 ({"TAGS": True}, "is true, which is not text; quote it.")]
+        for value, tail in cases:
+            with self.subTest(value=value):
+                self.assertEqual([f"The variable 'TAGS' of the environment 'prod' in 'extra-envs-yml' {tail}"],
+                                 self.output(value)["errors"])
+
+    def test_every_problem_of_the_map_is_reported(self):
+        self.assertEqual(["The variable '1A' of the environment 'prod' in 'extra-envs-from-secrets-yml' is not a "
+                          "variable name: a name is letters, digits and underscores, not starting with a digit.",
+                          "The variable 'B' of the environment 'prod' in 'extra-envs-from-secrets-yml' is a list; a "
+                          "variable's value is text. Quote it if the brackets are part of the value."],
+                         self.output({"1A": "S", "B": ["x"]}, field="extra-envs-from-secrets-yml")["errors"])
+
+    def test_a_map_that_is_not_a_mapping_is_left_to_its_own_rules(self):
+        output = self.output(global_value="text")
+        self.assertEqual("text", self.row(output, "extra-envs"))

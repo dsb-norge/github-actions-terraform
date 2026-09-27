@@ -95,10 +95,10 @@
                 "GOMEMLIMIT": null
               },
               "lint": {
-                "GOGC": 400
+                "GOGC": "400"
               },
               "plan": {
-                "GOGC": 25,
+                "GOGC": "25",
                 "GOMEMLIMIT": "12GiB"
               },
               "init": {},
@@ -109,8 +109,8 @@
             },
             "extra-envs": {
               "ANOTHER_ENV": "1 2 3",
-              "ARM_USE_AZUREAD": true,
-              "ARM_USE_OIDC": true
+              "ARM_USE_AZUREAD": "true",
+              "ARM_USE_OIDC": "true"
             },
             "pr-auto-merge-from-actors": [
               "global-actor"
@@ -188,10 +188,10 @@
                 "GOMEMLIMIT": null
               },
               "lint": {
-                "GOGC": 400
+                "GOGC": "400"
               },
               "plan": {
-                "GOGC": 25,
+                "GOGC": "25",
                 "GOMEMLIMIT": "24GiB"
               },
               "init": {},
@@ -202,8 +202,8 @@
             },
             "extra-envs": {
               "ANOTHER_ENV": "1 2 3",
-              "ARM_USE_AZUREAD": true,
-              "ARM_USE_OIDC": true
+              "ARM_USE_AZUREAD": "true",
+              "ARM_USE_OIDC": "true"
             },
             "pr-auto-merge-from-actors": [
               "global-actor",
@@ -282,10 +282,10 @@
                 "GOMEMLIMIT": null
               },
               "lint": {
-                "GOGC": 400
+                "GOGC": "400"
               },
               "plan": {
-                "GOGC": 25,
+                "GOGC": "25",
                 "GOMEMLIMIT": "12GiB"
               },
               "init": {},
@@ -296,8 +296,8 @@
             },
             "extra-envs": {
               "ANOTHER_ENV": "1 2 3",
-              "ARM_USE_AZUREAD": true,
-              "ARM_USE_OIDC": true
+              "ARM_USE_AZUREAD": "true",
+              "ARM_USE_OIDC": "true"
             },
             "pr-auto-merge-from-actors": [
               "global-actor"
