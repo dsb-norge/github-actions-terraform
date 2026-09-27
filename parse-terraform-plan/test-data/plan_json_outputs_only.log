@@ -1,0 +1,17 @@
+terraform_data.keep: Refreshing state... [id=de00bcbc-49be-4fd9-74d0-e6e0a22253a9]
+terraform_data.replace_me: Refreshing state... [id=f2a65593-44f8-54c4-404d-9438a9a9f8d9]
+terraform_data.update_me: Refreshing state... [id=563e08fe-302f-c1e6-ab65-0ed42cba4380]
+random_string.imported[0]: Refreshing state... [id=8edmn]
+
+Changes to Outputs:
+  + extra = "new"
+
+You can apply this plan to save these new output values to the Terraform
+state, without changing any real infrastructure.
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: p.bin
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "p.bin"

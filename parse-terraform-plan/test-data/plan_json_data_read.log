@@ -1,0 +1,62 @@
+terraform_data.keep: Refreshing state... [id=de00bcbc-49be-4fd9-74d0-e6e0a22253a9]
+terraform_data.replace_me: Refreshing state... [id=f2a65593-44f8-54c4-404d-9438a9a9f8d9]
+terraform_data.update_me: Refreshing state... [id=563e08fe-302f-c1e6-ab65-0ed42cba4380]
+random_string.imported[0]: Refreshing state... [id=8edmn]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+  ~ update in-place
+-/+ destroy and then create replacement
+ <= read (data resources)
+
+Terraform will perform the following actions:
+
+  # data.local_file.deferred will be read during apply
+  # (config refers to values not yet known)
+ <= data "local_file" "deferred" {
+      + content              = (known after apply)
+      + content_base64       = (known after apply)
+      + content_base64sha256 = (known after apply)
+      + content_base64sha512 = (known after apply)
+      + content_md5          = (known after apply)
+      + content_sha1         = (known after apply)
+      + content_sha256       = (known after apply)
+      + content_sha512       = (known after apply)
+      + filename             = (known after apply)
+      + id                   = (known after apply)
+    }
+
+  # terraform_data.replace_me must be replaced
+-/+ resource "terraform_data" "replace_me" {
+      ~ id               = "f2a65593-44f8-54c4-404d-9438a9a9f8d9" -> (known after apply)
+      ~ triggers_replace = [
+          ~ "1" -> "3",
+        ]
+    }
+
+  # terraform_data.update_me will be updated in-place
+  ~ resource "terraform_data" "update_me" {
+        id     = "563e08fe-302f-c1e6-ab65-0ed42cba4380"
+      ~ input  = "1" -> "3"
+      ~ output = "1" -> (known after apply)
+    }
+
+  # terraform_data.uses_ds will be created
+  + resource "terraform_data" "uses_ds" {
+      + id     = (known after apply)
+      + input  = (known after apply)
+      + output = (known after apply)
+    }
+
+Plan: 2 to add, 1 to change, 1 to destroy.
+
+Changes to Outputs:
+  ~ o = "1" -> "3"
+
+─────────────────────────────────────────────────────────────────────────────
+
+Saved the plan to: p.bin
+
+To perform exactly these actions, run the following command to apply:
+    terraform apply "p.bin"
