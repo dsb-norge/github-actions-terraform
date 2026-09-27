@@ -1069,6 +1069,15 @@ All scenarios use the built-in `terraform_data` resource — it supports `import
 4. for the tick scenario, that a real tick line was printed and the filtered console has none;
 5. that the **summary-bearing lines** of the captured console — `Plan:`, `Apply complete!`, `No changes.`, the "without changing any real infrastructure" sentence, `Changes to Outputs:`, `Warning:`, `Error:`, the resource-action lines (including both move forms), the tick shape with its elapsed time normalised — match the pinned fixture. A mismatch fails the job with one `::error` per console that lists the lines `Terraform <v> emits` which the fixture lacks and the lines `the fixture <path> has` which that version does not emit, then `update the fixture (contract-tests/run.sh --capture <scenario>) if intended`; the last forty lines of each console follow in the job log, and the whole scratch directory is uploaded as the `contract-tests-<version>` artifact.
 
+Each scenario with a plan is also counted from its **JSON plan**: before the apply, `run.sh` renders
+the saved plan with `terraform show -json` as `terraform-plan`'s JSON step does (stdout into the
+file, stderr apart), runs `parse-terraform-plan` a second time with `plan-json-file`, and holds the
+six counts, the total and `has-output-only-changes` to the same `expected.json` values, with
+`counts-source` saying which source each run used and `plan-complete` empty for the console run and
+`true` for the JSON run. A mismatch names itself `plan (JSON) <key>`. The JSON plan is the evidence
+auto-merge judges ([Auto-merge.md](Auto-merge.md) §5.2), and its shape can change between releases
+as the console's wording can, so it gets the same oracle.
+
 Only those lines are compared, not the whole console: resource ids, durations and the order two parallel creates finish in are noise. Because every `Warning:` line is in the signature, a release that prints a new warning in every console fails every scenario at once — on purpose, since that warning would reach every calling repository's PR comment too.
 
 A scenario whose language feature is newer than the oldest version in the window carries `min-terraform` in its `expected.json` (`import_block`: 1.5, `removed_block_forget`: 1.7). Below the floor it is skipped with a one-line note, counted as neither passed nor failed, and listed as skipped in the job summary.

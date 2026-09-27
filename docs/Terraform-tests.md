@@ -5,10 +5,8 @@ Authoritative spec for the `terraform test` stage of
 discovered, how each one becomes a job, how credentials reach a test, how results reach the pull
 request and the run page, and how a failing test blocks a merge.
 
-Status: **specification, not yet implemented.** The decisions in §2 are settled; the questions
-that probes on the test bed, a local Terraform and the documentation could answer are answered in
-the text, and §12 lists what is still open. §15 is reserved for what implementation teaches the
-spec.
+Status: **implemented.** The decisions in §2 are settled; §12 lists what is still open, and §15
+is what implementation taught the spec.
 
 Out of scope: [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) keeps its
 own test job and per-file comments for now (§9.7); per-environment path relevance and single-file
