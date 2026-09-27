@@ -1,30 +1,75 @@
 name: "Parse terraform plan file"
 description: |
-  Parses a Terraform plan's console output file to extract resource change counts.
-  Outputs the number of resources to be added, changed, destroyed, imported, moved, and removed.
+  Counts the resources a Terraform plan adds, changes, destroys, imports, moves and removes.
+  The counts come from the JSON plan when 'plan-json-file' is given, and from the plan's
+  console output otherwise.
 author: "Peder Schmedling"
 inputs:
   plan-console-file:
     description: Path of file with plan output captured from console.
     required: true
+  plan-json-file:
+    description: |
+      Path of the JSON plan, 'terraform show -json' of the saved plan: the terraform-plan
+      action's 'json-output-file' output.
+
+      Given, every count and 'has-output-only-changes' come from the JSON plan and the
+      console output is not read for them. A JSON plan that does not exist, cannot be
+      read, is not a Terraform JSON plan of format 1.x, or says it errored makes every
+      count '?'; it never falls back to the console. A plan that is not complete
+      ("complete": false, as with -target or deferred changes) is counted; whether it
+      is the whole plan is 'plan-complete'.
+
+      Empty, the default, counts from the console output as this action always did. The
+      console text holds resource values, so a value that reads like a summary line can
+      forge those counts; pass the JSON plan wherever the counts decide anything.
+    required: false
+    default: ""
 outputs:
+  counts-source:
+    description: |
+      Where the counts came from: "json" when 'plan-json-file' was given (whether or not
+      the JSON plan could be counted; the counts are '?' when it could not), "console"
+      otherwise.
+    value: ${{ steps.parse-plan-output.outputs.counts-source }}
+  plan-complete:
+    description: |
+      Whether the JSON plan is the whole plan: "true" only when it says
+      "complete": true; "false" when it says false (as with -target or deferred
+      changes) or does not say; "?" when the counts are '?'. Empty when the counts
+      come from the console ('plan-json-file' empty), which cannot tell. The counts
+      of an incomplete plan are still its counts; a consumer that must see the whole
+      plan refuses anything but "true".
+    value: ${{ steps.parse-plan-output.outputs.plan-complete }}
   count-add:
-    description: Number of resources to be added.
+    description: |
+      Number of resources to be added. From the JSON plan: managed resources whose
+      actions hold "create", a replacement included.
     value: ${{ steps.parse-plan-output.outputs.add-count }}
   count-change:
-    description: Number of resources to be changed.
+    description: |
+      Number of resources to be changed. From the JSON plan: managed resources whose
+      actions are ["update"].
     value: ${{ steps.parse-plan-output.outputs.change-count }}
   count-destroy:
-    description: Number of resources to be destroyed.
+    description: |
+      Number of resources to be destroyed. From the JSON plan: managed resources whose
+      actions hold "delete", a replacement included.
     value: ${{ steps.parse-plan-output.outputs.destroy-count }}
   count-import:
-    description: Number of resources to be imported.
+    description: |
+      Number of resources to be imported. From the JSON plan: managed resources with
+      'change.importing', whatever their actions.
     value: ${{ steps.parse-plan-output.outputs.import-count }}
   count-move:
-    description: Number of resources to be moved.
+    description: |
+      Number of resources to be moved. From the JSON plan: managed resources whose
+      'previous_address' differs from their address, whatever their actions.
     value: ${{ steps.parse-plan-output.outputs.move-count }}
   count-remove:
-    description: Number of resources to be removed.
+    description: |
+      Number of resources to be removed from state without being destroyed (a 'removed'
+      block). From the JSON plan: managed resources whose actions hold "forget".
     value: ${{ steps.parse-plan-output.outputs.remove-count }}
   count-total:
     description: |
@@ -43,7 +88,10 @@ outputs:
       "false" otherwise. Lets consumers render output-only plans differently
       from truly-no-change plans even though both yield count-total=0.
 
-      Detected from the "Changes to Outputs:" header together with count-total
+      From the JSON plan: an 'output_changes' entry whose actions are not ["no-op"],
+      together with count-total being 0.
+
+      From the console: the "Changes to Outputs:" header together with count-total
       being 0. Terraform's "without changing any real infrastructure" sentence
       is not a reliable signal on its own: it is omitted whenever the plan also
       defers a data source read, which output-only plans commonly do.
@@ -55,7 +103,8 @@ runs:
       shell: bash
       env:
         input_plan_console_file: ${{ inputs.plan-console-file }}
+        input_plan_json_file: ${{ inputs.plan-json-file }}
       run: |
-        # Extract resource change counts from the plan console output
+        # Count the plan's resource changes
         set -o allexport
         source "${{ github.action_path }}/step_parse_plan_output.sh"

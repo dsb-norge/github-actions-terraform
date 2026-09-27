@@ -17,6 +17,9 @@ export GITHUB_WORKSPACE="${_this_script_dir}"
 # Required input variables (match what action.yml would export)
 # Use a test data file that exercises common parsing paths
 export input_plan_console_file="${_this_script_dir}/test-data/plan_1_add_1_change_5_destroy_2_move.log"
+# Counts from the console unless PLAN_JSON_FILE names a JSON plan, e.g.
+#   PLAN_JSON_FILE=test-data/plan_json_injected_summary.json bash run_local_step_parse_plan_output.sh
+export input_plan_json_file="${PLAN_JSON_FILE:-}"
 
 # Source the main script in a subshell so 'exit' doesn't terminate this runner
 (
