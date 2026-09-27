@@ -184,6 +184,25 @@ assert "Additional dirs: console file contains both invocations' output" \
   bash -c "[[ \$(grep -c 'initialized OK' '${_cf}') -eq 2 ]]"
 
 # ----------------------------------------------------------------------
+# Test: A directory holding a space is one directory, not two
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+mkdir -p "${GITHUB_WORKSPACE}/modules/with space" "${GITHUB_WORKSPACE}/modules/foo"
+export input_additional_dirs_json='["modules/with space", "modules/foo"]'
+export MOCK_TF_EXIT=0
+export MOCK_TF_STDOUT="initialized OK"
+export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
+run_step
+assert "Spaced dir: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Spaced dir: terraform invoked three times" \
+  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 3 ]]"
+assert "Spaced dir: the spaced directory is initialised whole" \
+  grep -qF -- "-chdir=${GITHUB_WORKSPACE}/modules/with space init" "${MOCK_TF_ARGV_FILE}"
+assert "Spaced dir: the directory after it is initialised too" \
+  grep -qF -- "-chdir=${GITHUB_WORKSPACE}/modules/foo init" "${MOCK_TF_ARGV_FILE}"
+
+# ----------------------------------------------------------------------
 # Test: Failure path — terraform exit 1 → step exits non-zero
 # ----------------------------------------------------------------------
 setup_workdir
