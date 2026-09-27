@@ -31,7 +31,7 @@ setup_workdir() {
   export input_environment_name="testenv"
   export input_plan_tf_output_file="${RUNNER_TEMP}/fake-plan.bin"
 
-  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_ENV_FILE
+  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_STDERR MOCK_ENV_FILE
   unset input_extra_envs_file
 }
 
@@ -47,6 +47,9 @@ if [ -n "${MOCK_ENV_FILE:-}" ]; then
 fi
 if [ -n "${MOCK_TF_STDOUT:-}" ]; then
   printf '%s' "${MOCK_TF_STDOUT}"
+fi
+if [ -n "${MOCK_TF_STDERR:-}" ]; then
+  printf '%s\n' "${MOCK_TF_STDERR}" >&2
 fi
 exit "${MOCK_TF_EXIT:-0}"
 STUB
@@ -109,6 +112,98 @@ assert "json output file contains stub output verbatim" \
 assert "json output is valid JSON" \
   bash -c "python3 -c 'import json,sys; json.load(open(\"${json_file}\"))'"
 assert "step exits 0 on happy path" test "${LAST_EXIT}" -eq 0
+
+# ----------------------------------------------------------------------
+# stderr apart from the JSON. 'terraform show -json … >file 2>&1' put
+# terraform's stderr into the file, and one warning line there made the whole
+# document unreadable as JSON. The file holds stdout only; stderr reaches the
+# log.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=0
+export MOCK_TF_STDOUT='{"format_version":"1.2","resource_changes":[]}'
+export MOCK_TF_STDERR='Warning: a notice terraform printed on stderr'
+run_step
+json_file="$(get_output tf-plan-json-output-file)"
+assert "stderr apart: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "stderr apart: the file holds terraform's stdout, byte for byte" \
+  bash -c "[[ \"\$(cat '${json_file}')\" == '{\"format_version\":\"1.2\",\"resource_changes\":[]}' ]]"
+assert "stderr apart: the warning is not in the file" \
+  bash -c "! grep -q 'Warning:' '${json_file}'"
+assert "stderr apart: the file is valid JSON" \
+  bash -c "python3 -c 'import json,sys; json.load(open(\"${json_file}\"))'"
+assert "stderr apart: the warning reaches the log" \
+  grep -q 'Warning: a notice terraform printed on stderr' '/tmp/test_output_json.txt'
+
+# ----------------------------------------------------------------------
+# A failed 'terraform show -json' leaves no file: a partial document must not
+# pass for the plan. The path is published all the same, so a consumer is told
+# where the JSON plan would be and finds none.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+export MOCK_TF_EXIT=1
+export MOCK_TF_STDOUT='{"format_version":"1.2","resource_chan'
+export MOCK_TF_STDERR='Error: Failed to read the given file as a state or plan file'
+run_step
+json_file="$(get_output tf-plan-json-output-file)"
+assert "failed show: step exits non-zero" test "${LAST_EXIT}" -ne 0
+assert "failed show: the path is still published" \
+  test "${json_file}" = "${GITHUB_WORKSPACE}/tf-plan-testenv.json"
+assert "failed show: no partial file is left at the path" test ! -e "${json_file}"
+assert "failed show: the error names terraform's exit code" \
+  grep -q "'terraform show -json' failed with exit code 1" '/tmp/test_output_json.txt'
+assert "failed show: terraform's stderr reaches the log" \
+  grep -q 'Error: Failed to read the given file as a state or plan file' '/tmp/test_output_json.txt'
+
+# ----------------------------------------------------------------------
+# A file already at the path is never taken for this plan's JSON: it is
+# removed first, so a step that fails before 'terraform show' even runs leaves
+# nothing there. And the path is published before anything can fail.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_terraform
+printf '%s' '{"format_version":"1.2","stale":true}' >"${GITHUB_WORKSPACE}/tf-plan-testenv.json"
+export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
+run_step
+assert "stale file: the step fails on the missing working directory" test "${LAST_EXIT}" -ne 0
+assert "stale file: nothing is left at the path" test ! -e "${GITHUB_WORKSPACE}/tf-plan-testenv.json"
+assert "stale file: the path is published all the same" \
+  test "$(get_output tf-plan-json-output-file)" = "${GITHUB_WORKSPACE}/tf-plan-testenv.json"
+
+setup_workdir
+install_stub_terraform
+export input_extra_envs_file="${RUNNER_TEMP}/nope/missing.json"
+run_step
+assert "path first: a step that fails on its extra envs still publishes the path" \
+  test "$(get_output tf-plan-json-output-file)" = "${GITHUB_WORKSPACE}/tf-plan-testenv.json"
+
+# ----------------------------------------------------------------------
+# The JSON plan is not uploaded as an artifact: it holds sensitive values in
+# plain text, which the console plan does not. The action keeps publishing its
+# path for the consumers on the runner.
+# ----------------------------------------------------------------------
+_action_yml="${_this_script_dir}/action.yml"
+
+# The 'path' of every upload-artifact step in action.yml, one per line.
+uploaded_paths() {
+  yq -r '.runs.steps[] | select((.uses // "") | test("upload-artifact")) | .with.path' "${_action_yml}"
+}
+no_upload_names_json() { ! uploaded_paths | grep -q -i 'json'; }
+only_console_is_uploaded() {
+  # shellcheck disable=SC2016 # the literal expression text, not a shell expansion
+  [[ "$(uploaded_paths)" == '${{ steps.plan.outputs.tf-plan-console-output-file }}' ]]
+}
+json_output_names_the_json_step() {
+  # shellcheck disable=SC2016 # the literal expression text, not a shell expansion
+  [[ "$(yq -r '.outputs."json-output-file".value' "${_action_yml}")" == '${{ steps.plan-json.outputs.tf-plan-json-output-file }}' ]]
+}
+
+assert "no artifact: no upload step names the JSON plan" no_upload_names_json
+assert "no artifact: the one upload left is the console output" only_console_is_uploaded
+assert "no artifact: the json-output-file output still names the JSON step's file" \
+  json_output_names_the_json_step
 
 # ======================================================================
 # Per-goal environment variables (the 'extra-envs-file' input)
