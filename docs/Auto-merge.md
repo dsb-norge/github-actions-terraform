@@ -50,6 +50,7 @@ pipeline end to end found these places where it was not:
 | D9 | Auto-merge runs only for a pull request against the **default branch**, from the same repository (`head.repo.full_name == github.repository`). | Decided by the maintainer for the base branch: only the default branch is production to the gates. A fork's run has no secrets and its code is never merged unreviewed; the full-name comparison also holds for a calling repository that is itself a fork, and for a deleted fork's null `head.repo`. |
 | D10 | The JSON plan is no longer uploaded as an artifact; it stays on the runner, where the parse step reads it. | Decided by the maintainer: it holds sensitive values in plain text, and nothing used the artifact. |
 | D11 | The merger's retry reads GitHub's `mergeable` values as GitHub reports them (`MERGEABLE`, `CONFLICTING`, `UNKNOWN`), stops on `CONFLICTING`, and never retries a refusal for a moved head or base. | The old comparison with `NOT_MERGEABLE` never matched. |
+| D13 | A tolerated failure of a Terraform operation blocks auto-merge; a tolerated test does not. An affected environment is not eligible when any of its operation steps (`init`, `verify-lock`, `fmt`, `validate`, `lint`, `plan`, `apply`, `destroy-plan`, `destroy`) ended `failure` or `cancelled`, whether or not `allow-failing-terraform-operations` kept the job green. A test job tolerated by `allow-failing-terraform-tests` does not block eligibility, and the evaluator names each such test in its log and in a notice. | Decided by the maintainer: `allow-failing-terraform-operations` means "do not fail the check", never "merge without review", and the old evaluator enforced it for the plan but not for format, validate, lint or the lock check; `allow-failing-terraform-tests` is meant as the lever that lets a pull request auto-merge although a tolerated lane fails, and it stays visible. |
 | D12 | One set of `plan-max-count-*` limits applies to the sum of an environment's plan and destroy-plan counts, as today; the workflow's comment that promised separate destroy-plan limits is corrected. | The comment described limits that never existed. |
 
 ## 3. The pipeline as kept
@@ -95,6 +96,7 @@ For an affected environment, from its metadata:
 | apply on pull request | `apply` in `goals-granted` (granted on a pull request only through `apply-on-pr`); the apply step's outcome | granted and not `success` |
 | destroy on pull request | `destroy` in `goals-granted`; the destroy step's outcome | granted and not `success` |
 | limits | the counts of §5.2 against the row's `pr-auto-merge-limits` | a count over its limit, or a count unknown |
+| operations | the outcomes of `init`, `verify-lock`, `fmt`, `validate`, `lint`, `plan`, `apply`, `destroy-plan`, `destroy` | any is `failure` or `cancelled`, a tolerated one included (D13) |
 
 As today, a plan whose apply ran on the pull request is not judged by the plan limits (the apply
 already happened); likewise the destroy plan and a destroy on the pull request. The limits apply to
@@ -106,8 +108,11 @@ validated, as defence in depth. An environment skipped because its `trigger-even
 when it is (D6): `relevance.json` carries, for every environment, whether a changed file is relevant
 to it, whatever its verdict.
 
-Whether a tolerated failure (`allow-failing-terraform-operations` or
-`allow-failing-terraform-tests`) blocks eligibility is §11's open question.
+Test jobs are judged by the conclusion, as today: one that fails untolerated turns it red and the
+auto-merge job does not run. The auto-merge job also downloads the test jobs' metadata
+(`terraform-test-meta-*`) to name every tolerated failing or erroring test in its log and in a
+notice, `auto-merge eligible despite the tolerated failing test tests/int-x.tftest.hcl (lane integration)`;
+they never make the pull request ineligible (D13).
 
 ### 5.2 The counts
 
@@ -213,7 +218,8 @@ because `nightly` was never planned on the pull request.
   under every supported minor.
 - `evaluate-automerge-eligibility`: `goals-granted` against raw goals that differ; the actor list
   without case; a per-environment list replacing the global one; an environment out of pull
-  requests, relevant and not; the existing suites unchanged elsewhere.
+  requests, relevant and not; each operation step failed under tolerance; a tolerated failing test
+  named and not blocking; the existing suites unchanged elsewhere.
 - `auto-merge-pr`: `--match-head-commit` passed; a moved base refused before merging; a moved
   head's message; the retry stopping on `CONFLICTING` and not retrying a refused pin.
 - Engine: relevance published for every environment, whatever its verdict.
@@ -225,13 +231,7 @@ because `nightly` was never planned on the pull request.
 
 ## 11. Open questions
 
-1. **Tolerated failures and eligibility.** With `allow-failing-terraform-operations: true`, a
-   failing format, validate, lint or lock check leaves the environment's job green, and the
-   evaluator reads none of those outcomes; a failing plan does block (the plan-created check). With
-   `allow-failing-terraform-tests: true`, a failing test leaves the test job green, and the
-   evaluator never reads test results at all, so it is the lever that lets a pull request
-   auto-merge although a tolerated lane fails. For the maintainer: whether tolerance means "may
-   still auto-merge", for each of the two.
+None; the decisions are the maintainer's (D3, D9, D10, D13).
 
 ## 12. Implementation order
 
@@ -243,7 +243,7 @@ because `nightly` was never planned on the pull request.
    comparison.
 5. `feat(engine):` relevance published for every environment.
 6. `feat(evaluate-automerge-eligibility):` `goals-granted`, actors without case, environments out
-   of pull requests, the tolerated-failure rule once decided.
+   of pull requests, the operation outcomes, the tolerated tests named.
 7. `fix(auto-merge-pr):` the base check, `--match-head-commit`, the retry's values.
 8. `feat(workflow):` the JSON file to the parse steps, the head and base SHAs to the merger, the
    base-branch and same-repository conditions, the corrected comment; structural tests.
