@@ -8,7 +8,8 @@
 # This script processes multiple metadata files from capture-matrix-job-meta
 # and produces an aggregated eligibility decision across all environments.
 # With a relevance file from the matrix builder it judges every environment of
-# the run, including those no job ran for (docs/Path-relevance.md §8).
+# the run, including those no job ran for (docs/Path-relevance.md §8). The test
+# jobs' metadata only names the tolerated failing tests (docs/Auto-merge.md §5.1).
 #
 
 # do not allow unset variables
@@ -107,22 +108,33 @@ function check_pr_automerge_enabled {
 }
 
 # 3. Actor Authorization Check
+# The list names who may auto-merge; it never means "everyone". The engine
+# refuses an enabled environment without one, so an empty or missing list here
+# is a broken input and fails closed. Logins compare without case, as GitHub's do.
 function check_actor_authorization {
   log-info "Checking actor authorization..."
   log-info "  Current actor: ${GITHUB_ACTOR}"
 
-  local actor_count
-  actor_count=$(echo "${input_pr_auto_merge_from_actors_json}" | jq -r 'length')
+  local list_type login_count
+  list_type=$(jq -r 'type' <<<"${input_pr_auto_merge_from_actors_json}" 2>/dev/null || echo "unreadable")
+  if [[ "${list_type}" != "array" ]]; then
+    add_failure_reason "The actor list that applies to this environment (pr-auto-merge-from-actors) is ${input_pr_auto_merge_from_actors_json:-empty}, not a list of logins, so no pull request may auto-merge"
+    log-info "Actor authorization: FAIL"
+    RESULT_ACTOR_AUTH="FAIL"
+    return 1
+  fi
 
-  if [[ "${actor_count}" -eq 0 ]]; then
-    log-info "  Actor list is empty, all actors are allowed"
-    log-info "Actor authorization: PASS"
-    RESULT_ACTOR_AUTH="PASS"
-    return 0
+  login_count=$(jq -r 'map(select(type == "string" and . != "")) | length' <<<"${input_pr_auto_merge_from_actors_json}")
+  if [[ "${login_count}" -eq 0 ]]; then
+    add_failure_reason "The actor list that applies to this environment (pr-auto-merge-from-actors) names nobody, so no pull request may auto-merge; name the accounts in pr-auto-merge-from-actors-yml"
+    log-info "Actor authorization: FAIL"
+    RESULT_ACTOR_AUTH="FAIL"
+    return 1
   fi
 
   local actor_found
-  actor_found=$(echo "${input_pr_auto_merge_from_actors_json}" | jq -r --arg actor "${GITHUB_ACTOR}" 'map(select(. == $actor)) | length')
+  actor_found=$(jq -r --arg actor "${GITHUB_ACTOR}" \
+    'map(select(type == "string" and ascii_downcase == ($actor | ascii_downcase))) | length' <<<"${input_pr_auto_merge_from_actors_json}")
 
   if [[ "${actor_found}" -gt 0 ]]; then
     log-info "  Actor '${GITHUB_ACTOR}' found in allowed list"
@@ -274,14 +286,43 @@ function determine_limit_applicability {
 }
 
 # 7. Validate Counts
+# Counts are judged only when they come from a complete JSON plan. The console
+# text holds resource values, which can forge its summary line; an incomplete
+# plan (-target, changes deferred to a later plan) counts only part of the change.
+# Args: $1 = "plan" or "destroy plan", $2 = its counts-source, $3 = its plan-complete
+# Returns: 0 when the counts can be judged, 1 otherwise (reason recorded)
+function validate_count_evidence {
+  local what="${1}"
+  local source="${2}"
+  local complete="${3}"
+
+  # An empty output and an absent one read the same: the parse step said nothing
+  if [[ "${source}" != "json" ]]; then
+    add_failure_reason "The ${what} of '${input_environment_name}' was not counted from its JSON plan (${source:+counts-source: }${source:-no counts-source}), so its counts cannot be trusted for auto-merge"
+    return 1
+  fi
+  if [[ "${complete}" == "true" ]]; then
+    log-info "    counted from the JSON plan, which is complete [OK]"
+    return 0
+  fi
+  if [[ "${complete}" == "false" ]]; then
+    add_failure_reason "The ${what} of '${input_environment_name}' is not complete (a -target plan, or changes deferred to a later plan), so its counts do not cover every change"
+  else
+    add_failure_reason "The ${what} of '${input_environment_name}' does not say it is complete (${complete:+plan-complete: }${complete:-no plan-complete}), so its counts may not cover every change"
+  fi
+  return 1
+}
+
 function validate_counts {
   log-info "Validating plan counts..."
   local counts_valid=true
+  local evidence_valid=true
 
   local count_types=("add" "change" "destroy" "import" "move" "remove")
 
   if [[ "${INCLUDE_PLAN_LIMITS}" == "true" ]]; then
     log-info "  Checking plan counts..."
+    validate_count_evidence "plan" "${input_plan_counts_source}" "${input_plan_complete}" || evidence_valid=false
     for count_type in "${count_types[@]}"; do
       local var_name="input_plan_count_${count_type}"
       local val="${!var_name}"
@@ -297,6 +338,7 @@ function validate_counts {
 
   if [[ "${INCLUDE_DESTROY_PLAN_LIMITS}" == "true" ]]; then
     log-info "  Checking destroy plan counts..."
+    validate_count_evidence "destroy plan" "${input_destroy_plan_counts_source}" "${input_destroy_plan_complete}" || evidence_valid=false
     for count_type in "${count_types[@]}"; do
       local var_name="input_destroy_plan_count_${count_type}"
       local val="${!var_name}"
@@ -312,6 +354,8 @@ function validate_counts {
 
   if [[ "${counts_valid}" == "false" ]]; then
     add_failure_reason "Required plan counts are missing or invalid. Plan parsing may have failed, environment is ineligible for PR auto merge"
+  fi
+  if [[ "${counts_valid}" == "false" || "${evidence_valid}" == "false" ]]; then
     log-info "Count validation: FAIL"
     return 1
   fi
@@ -394,27 +438,56 @@ function evaluate_limits {
   fi
 }
 
-# 4-9 for an environment the change did not affect: no job ran, so there is
-# no plan to validate and nothing to count. Recorded rather than skipped
-# silently, so the log shows these checks were considered.
-function record_plan_checks_not_affected {
-  log-info "Environment is not affected by this change and no job ran for it"
-  RESULT_PLAN_CREATION="NOT AFFECTED"
-  RESULT_DESTROY_PLAN_CREATION="NOT AFFECTED"
-  RESULT_APPLY_SUCCESS="NOT AFFECTED"
-  RESULT_DESTROY_SUCCESS="NOT AFFECTED"
-  RESULT_PLAN_LIMITS_APPLICABILITY="NOT AFFECTED"
-  RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="NOT AFFECTED"
+# 10. Operation Outcomes
+# allow-failing-terraform-operations keeps the job and the check green; it never
+# means "merge without review", so a tolerated failure blocks auto-merge too.
+function check_operation_outcomes {
+  log-info "Checking the outcomes of the Terraform operations (${_OPERATION_STEP_IDS[*]})..."
+
+  if [[ -z "${input_failed_operations}" ]]; then
+    log-info "  No operation failed or was cancelled"
+    log-info "Operation outcomes: PASS"
+    RESULT_OPERATION_OUTCOMES="PASS"
+    return 0
+  fi
+
+  add_failure_reason "Terraform operation(s) did not succeed: ${input_failed_operations}. A failure allow-failing-terraform-operations tolerates still blocks auto-merge, environment is ineligible for PR auto merge"
+  log-info "Operation outcomes: FAIL"
+  RESULT_OPERATION_OUTCOMES="FAIL"
+  return 1
+}
+
+# 4-9, and 10 unless it still runs, for an environment whose plan-based checks
+# cannot be run, recorded rather than skipped silently so the log shows they
+# were considered
+# Args: $1 = the result recorded for each check, $2 = why,
+#       $3 = "with-operations" to record check 10 as well
+function record_plan_checks {
+  local result="${1}"
+  log-info "${2}"
+  RESULT_PLAN_CREATION="${result}"
+  RESULT_DESTROY_PLAN_CREATION="${result}"
+  RESULT_APPLY_SUCCESS="${result}"
+  RESULT_DESTROY_SUCCESS="${result}"
+  RESULT_PLAN_LIMITS_APPLICABILITY="${result}"
+  RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="${result}"
   log-info "  Plan creation: ${RESULT_PLAN_CREATION}"
   log-info "  Destroy plan creation: ${RESULT_DESTROY_PLAN_CREATION}"
   log-info "  Apply on PR: ${RESULT_APPLY_SUCCESS}"
   log-info "  Destroy on PR: ${RESULT_DESTROY_SUCCESS}"
   log-info "  Plan limits: ${RESULT_PLAN_LIMITS_APPLICABILITY}"
   log-info "  Destroy plan limits: ${RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY}"
+  if [[ "${3:-}" == "with-operations" ]]; then
+    RESULT_OPERATION_OUTCOMES="${result}"
+    log-info "  Operation outcomes: ${RESULT_OPERATION_OUTCOMES}"
+  fi
 }
 
 # Log the plan inputs read from an affected environment's metadata
 function log_plan_inputs {
+  log-info "Goals granted: ${input_goals_granted_json}"
+  log-info "Failed or cancelled operations: ${input_failed_operations:-<none>}"
+  log-info ""
   log-info "Plan inputs:"
   log-info "  plan-shouldve-been-created: ${input_plan_shouldve_been_created}"
   log-info "  plan-was-created: ${input_plan_was_created}"
@@ -426,6 +499,8 @@ function log_plan_inputs {
   log-info "  plan-count-import: ${input_plan_count_import:-<empty>}"
   log-info "  plan-count-move: ${input_plan_count_move:-<empty>}"
   log-info "  plan-count-remove: ${input_plan_count_remove:-<empty>}"
+  log-info "  plan-counts-source: ${input_plan_counts_source:-<empty>}"
+  log-info "  plan-complete: ${input_plan_complete:-<empty>}"
   log-info ""
   log-info "Destroy plan inputs:"
   log-info "  destroy-plan-shouldve-been-created: ${input_destroy_plan_shouldve_been_created}"
@@ -438,11 +513,34 @@ function log_plan_inputs {
   log-info "  destroy-plan-count-import: ${input_destroy_plan_count_import:-<empty>}"
   log-info "  destroy-plan-count-move: ${input_destroy_plan_count_move:-<empty>}"
   log-info "  destroy-plan-count-remove: ${input_destroy_plan_count_remove:-<empty>}"
+  log-info "  destroy-plan-counts-source: ${input_destroy_plan_counts_source:-<empty>}"
+  log-info "  destroy-plan-complete: ${input_destroy_plan_complete:-<empty>}"
 }
 
-# 4-9 for an affected environment, from its metadata
+# 4-10 for an affected environment, from its metadata
 # Clears ENV_IS_ELIGIBLE on any failure
 function run_plan_checks {
+  if [[ -n "${input_goals_granted_problem}" ]]; then
+    start-group "Steps 4-9: Plan-based checks (${input_environment_name})"
+    add_failure_reason "${input_goals_granted_problem}"
+    record_plan_checks "UNKNOWN" "The goals this run granted are unknown, so no plan-based check can be judged"
+    ENV_IS_ELIGIBLE="false"
+    end-group
+  else
+    run_goal_checks
+  fi
+
+  # 10. Operation Outcomes
+  start-group "Step 10: Operation Outcomes (${input_environment_name})"
+  if ! check_operation_outcomes; then
+    ENV_IS_ELIGIBLE="false"
+  fi
+  end-group
+}
+
+# 4-9 for an affected environment whose granted goals are known
+# Clears ENV_IS_ELIGIBLE on any failure
+function run_goal_checks {
   # 4. Plan Creation Validation
   start-group "Step 4: Plan Creation Validation (${input_environment_name})"
   if ! validate_plan_creation; then
@@ -500,6 +598,8 @@ function run_plan_checks {
 # Evaluate a single environment's eligibility
 # Args: $1 = "affected" (default): every check, all input_* variables must be set
 #       "unaffected": checks 1-3 only, from the pr-auto-merge input_* variables
+#       "unplanned": checks 1-3 as for "unaffected", then not eligible for
+#                    input_unplanned_reason (skipped although it may be relevant)
 # Returns: 0 if evaluation completed (check ENV_IS_ELIGIBLE for result), 1 on fatal error
 function evaluate_single_environment {
   local scope="${1:-affected}"
@@ -521,6 +621,7 @@ function evaluate_single_environment {
   declare -g RESULT_DESTROY_SUCCESS="SKIPPED"
   declare -g RESULT_PLAN_LIMITS_APPLICABILITY="SKIPPED"
   declare -g RESULT_DESTROY_PLAN_LIMITS_APPLICABILITY="SKIPPED"
+  declare -g RESULT_OPERATION_OUTCOMES="SKIPPED"
 
   ENV_IS_ELIGIBLE="true"
 
@@ -532,6 +633,8 @@ function evaluate_single_environment {
   log-info ""
   if [[ "${scope}" == "unaffected" ]]; then
     log-info "Not affected by this change: values from the relevance file, no plan inputs"
+  elif [[ "${scope}" == "unplanned" ]]; then
+    log-info "Skipped without a plan although the change may concern it: values from the relevance file, no plan inputs"
   else
     log_plan_inputs
   fi
@@ -568,15 +671,22 @@ function evaluate_single_environment {
   end-group
 
   if [[ "${scope}" == "unaffected" ]]; then
-    start-group "Steps 4-9: Plan-based checks (${input_environment_name})"
-    record_plan_checks_not_affected
+    # No job ran, so there is no plan to validate and nothing to count
+    start-group "Steps 4-10: Plan-based checks (${input_environment_name})"
+    record_plan_checks "NOT AFFECTED" "Environment is not affected by this change and no job ran for it" with-operations
+    end-group
+  elif [[ "${scope}" == "unplanned" ]]; then
+    start-group "Steps 4-10: Plan-based checks (${input_environment_name})"
+    add_failure_reason "${input_unplanned_reason}"
+    record_plan_checks "NOT PLANNED" "No job ran for the environment, so nothing shows what the change does to it" with-operations
+    ENV_IS_ELIGIBLE="false"
     end-group
   else
     run_plan_checks
   fi
 
-  # 10. Final Eligibility Determination for this environment
-  start-group "Step 10: Final Eligibility Determination (${input_environment_name})"
+  # 11. Final Eligibility Determination for this environment
+  start-group "Step 11: Final Eligibility Determination (${input_environment_name})"
   log-info "Final eligibility: ${ENV_IS_ELIGIBLE}"
   if [[ "${ENV_IS_ELIGIBLE}" == "true" ]]; then
     log-info "Environment '${input_environment_name}' is ELIGIBLE for PR automerge"
@@ -760,16 +870,90 @@ function evaluate_with_relevance {
       record_environment_result "false" "${github_env}" "(affected, no metadata)"
 
     else
+      # Skipped, without a job: unaffected, unless it was dropped before
+      # relevance and the change may concern it. Either way its enabled flag,
+      # actors and limits are still judged, the limits as defence in depth.
       extract_relevance_entry_data "${relevance_file}" "${index}"
-      if ! evaluate_single_environment "unaffected"; then
-        log-error "Exiting due to fatal error in environment evaluation of '${github_env}'"
-        return 1
+      if [[ -n "${input_unplanned_reason}" ]]; then
+        if ! evaluate_single_environment "unplanned"; then
+          log-error "Exiting due to fatal error in environment evaluation of '${github_env}'"
+          return 1
+        fi
+        record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}" "(skipped, never planned)"
+      else
+        if ! evaluate_single_environment "unaffected"; then
+          log-error "Exiting due to fatal error in environment evaluation of '${github_env}'"
+          return 1
+        fi
+        record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}" "(not affected)"
       fi
-      record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}" "(not affected)"
     fi
   done
 
   return 0
+}
+
+# ============================================================================
+# Test Jobs
+# ============================================================================
+
+# Keep every tolerated failing or erroring test in main's TOLERATED_TESTS, as
+# "status<TAB>file<TAB>lane". The conclusion judges the test jobs: an untolerated
+# failure turns it red and this job never runs, and allow-failing-terraform-tests
+# is the lever that lets a pull request auto-merge although a lane fails
+# (docs/Auto-merge.md D13). So nothing here changes eligibility, and an
+# unreadable file is only logged.
+# Args: $1 = glob pattern of the test jobs' metadata files
+function collect_tolerated_tests {
+  local pattern="${1}"
+  local files=() file tolerated status test_file lane
+
+  start-group "Test Jobs"
+  if [[ -z "${pattern}" ]]; then
+    log-info "No test metadata files pattern, no test job is named"
+    end-group
+    return 0
+  fi
+  shopt -s nullglob
+  files=(${pattern})
+  shopt -u nullglob
+  log-info "Found ${#files[@]} test metadata file(s) matching: ${pattern}"
+
+  for file in "${files[@]}"; do
+    if ! jq empty "${file}" 2>/dev/null; then
+      log-warn "Test metadata file '${file}' is not valid JSON, it names no test"
+      continue
+    fi
+    while IFS=$'\t' read -r tolerated status test_file lane; do
+      if [[ "${tolerated}" == "true" ]]; then
+        TOLERATED_TESTS+=("${status}"$'\t'"${test_file}"$'\t'"${lane}")
+        log-info "  ${test_file}${lane:+ (lane ${lane})}: ${status}, tolerated by allow-failing-terraform-tests, does not block auto-merge"
+      else
+        log-warn "  ${test_file}${lane:+ (lane ${lane})}: ${status} and not tolerated; the conclusion judges the test jobs, not this step"
+      fi
+    done < <(describe_failing_test "${file}")
+  done
+  log-info "Tolerated failing or erroring tests: ${#TOLERATED_TESTS[@]}"
+  end-group
+}
+
+# Name every tolerated failing or erroring test in a notice, so a merge past a
+# failing test is never silent
+# Args: $1 = "true" when the pull request is eligible
+function report_tolerated_tests {
+  local eligible="${1}"
+  local entry status test_file lane what message
+  for entry in "${TOLERATED_TESTS[@]}"; do
+    IFS=$'\t' read -r status test_file lane <<<"${entry}"
+    what="the tolerated $([[ "${status}" == "error" ]] && echo "erroring" || echo "failing") test ${test_file}${lane:+ (lane ${lane})}"
+    if [[ "${eligible}" == "true" ]]; then
+      message="auto-merge eligible despite ${what}"
+    else
+      message="${what^} does not block auto-merge; the pull request is not eligible for other reasons"
+    fi
+    log-info "${message}"
+    echo "::notice title=Auto-merge::$(escape-annotation-message "${message}")"
+  done
 }
 
 # ============================================================================
@@ -780,6 +964,7 @@ function main {
   log-info "Starting automerge eligibility evaluation..."
   log-info "Metadata files pattern: ${input_metadata_files_pattern}"
   log-info "Relevance file: ${input_relevance_file:-<none>}"
+  log-info "Test metadata files pattern: ${input_test_metadata_files_pattern:-<none>}"
 
   local relevance_file="${input_relevance_file:-}"
   if [[ -n "${relevance_file}" && ! -e "${relevance_file}" ]]; then
@@ -795,8 +980,11 @@ function main {
   local environments_eligible=0
   local environments_ineligible=0
   declare -a ENVIRONMENT_RESULTS=()
+  declare -a TOLERATED_TESTS=()
   RELEVANCE_ENV_COUNT=""
   RELEVANCE_AFFECTED_COUNT=""
+
+  collect_tolerated_tests "${input_test_metadata_files_pattern:-}"
 
   # Find all metadata files matching the pattern
   start-group "File Discovery"
@@ -810,6 +998,7 @@ function main {
     log-info "Setting is-eligible=false (no files to process)"
     set-output "is-eligible" "false"
     end-group
+    report_tolerated_tests "false"
     return 0
   fi
 
@@ -869,8 +1058,11 @@ function main {
   else
     log-info "❌ FINAL RESULT: Not all environments eligible - PR CANNOT be automerged"
   fi
+  log-info "Tolerated failing or erroring tests: ${#TOLERATED_TESTS[@]}"
   log-info "=========================================="
   end-group
+
+  report_tolerated_tests "${overall_eligible}"
 
   # Set output
   set-output "is-eligible" "${overall_eligible}"
