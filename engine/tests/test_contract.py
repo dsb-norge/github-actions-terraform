@@ -74,7 +74,7 @@ class ContractTest(unittest.TestCase):
                                   prod["pr-auto-merge-from-actors"], prod["add-pr-comment"]))
                 self.assertEqual(-1, prod["pr-auto-merge-limits"]["plan-max-count-import"])
                 self.assertEqual(["apply-on-pr"], published["environments"][2]["mutates-on-pr"])
-                self.assertEqual([("true", None), ("true", None)],
+                self.assertEqual([("true", ["renovate[bot]", "dependabot[bot]"])] * 2,
                                  [(e["pr-auto-merge-enabled"], e["pr-auto-merge-from-actors"])
                                   for e in published["environments"][1:]])
 
