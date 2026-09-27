@@ -35,5 +35,13 @@
   "default_branch": "main",
   "directories": [
     "envs/env-a"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "an environment may hold only the settings of docs/Configuration-validation.md §3.1; a key that is not one was forwarded unread and is now refused",
+    "errors": [
+      "The environment 'env-a' sets 'foo-yml', which is not a setting. The settings an environment may hold are listed in docs/Configuration-validation.md §3.1.",
+      "The environment 'env-a' sets 'my-custom', which is not a setting. The settings an environment may hold are listed in docs/Configuration-validation.md §3.1."
+    ]
+  }
 }

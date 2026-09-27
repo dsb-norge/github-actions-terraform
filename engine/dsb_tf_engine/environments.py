@@ -79,6 +79,25 @@ NAME_RULE = "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter
 # Maps from goal name to variables, which must hold every goal key.
 PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 
+# The keys an environments-yml entry may hold (docs/Configuration-validation.md §3.1), besides the
+# per-environment inputs and the per-environment YAML settings below.
+ENTRY_KEYS = ("environment", "project-dir", "github-environment", "url", "paths", "paths-ignore", "trigger-events",
+              "allow-failing-terraform-operations")
+# Workflow inputs an environment may override. A new input is in exactly one of this list, the YAML
+# settings (REPLACE_FIELDS, MERGE_FIELDS) or WORKFLOW_ONLY_INPUTS; a test holds the workflow to it.
+PER_ENVIRONMENT_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
+                          "format-check-in-root-dir", "pr-auto-merge-enabled", "pr-comment-group", "runs-on",
+                          "terraform-version", "tflint-version", "verify-lock-file")
+# path-relevance-enabled is refused per environment by relevance.py, with its own advice.
+WORKFLOW_ONLY_INPUTS = ("environments-yml", "trigger-events-yml", "path-relevance-enabled", *TEST_INPUTS,
+                        "pr-auto-merge-app-id", "pr-auto-merge-app-private-key-secret")
+# What the engine writes into a row itself.
+ENGINE_SET_FIELDS = ("goals-granted", "caller-repo-default-branch", "caller-repo-calling-branch",
+                     "caller-repo-is-on-default-branch")
+# Plain settings whose -yml spelling is a mistake per environment.
+PLAIN_WITH_YML = ("paths", "paths-ignore", "trigger-events")
+KEYS_DOC = "docs/Configuration-validation.md §3.1"
+
 # Every goal a caller may name: the eight the operation gates read, 'all' for the five standard goals
 # and apply, and the two that let apply and destroy run on a pull request.
 GOALS = values.GOAL_KEYS + ("all", "apply-on-pr", "destroy-on-pr")
@@ -125,6 +144,56 @@ def _boolean(name, field, value):
     if value is False or value == "false":
         return False
     raise ConfigError([f"The environment '{name}' sets '{field}' to {shown(value)}; it must be true or false!"])
+
+
+def _distance(left, right):
+    """The Levenshtein distance between two names."""
+    previous = range(len(right) + 1)
+    for i, char in enumerate(left, 1):
+        current = [i]
+        for j, other in enumerate(right, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (char != other)))
+        previous = current
+    return previous[-1]
+
+
+def near_miss(written, known):
+    """The one known name within two edits of `written`, both lower cased, or None when there is none
+    or two are equally near."""
+    scored = sorted((_distance(written.lower(), name.lower()), name) for name in known)
+    close = [(score, name) for score, name in scored if score <= 2]
+    if not close or (len(close) > 1 and close[0][0] == close[1][0]):
+        return None
+    return close[0][1]
+
+
+def _key_problem(name, key):
+    """The message for an entry key the environment may not hold, or None."""
+    yml = REPLACE_FIELDS + MERGE_FIELDS
+    if key in ENTRY_KEYS or key in yml or key in PER_ENVIRONMENT_INPUTS or key == "path-relevance-enabled":
+        return None
+    if isinstance(key, str) and f"{key}-yml" in yml:
+        return (f"The environment '{name}' sets '{key}', which is not a setting: per environment it is '{key}-yml'. "
+                "Written like this it would have been ignored, and the environment would have run with the global "
+                "value.")
+    if isinstance(key, str) and key.endswith("-yml") and key[:-4] in PLAIN_WITH_YML:
+        return (f"The environment '{name}' sets '{key}', which is not a setting: per environment it is "
+                f"'{key[:-4]}', a list written directly in the entry.")
+    if key in WORKFLOW_ONLY_INPUTS:
+        return (f"The environment '{name}' sets '{key}', which is a workflow input only: it applies to every "
+                "environment at once. Set it in the calling workflow's 'with:'.")
+    if key in ENGINE_SET_FIELDS:
+        return f"The environment '{name}' sets '{key}', which the workflow works out itself; remove it."
+    guess = near_miss(key, ENTRY_KEYS + yml + PER_ENVIRONMENT_INPUTS) if isinstance(key, str) else None
+    hint = f"; did you mean '{guess}'?" if guess else "."
+    return f"The environment '{name}' sets {shown(key)}, which is not a setting{hint} The settings an environment may hold are listed in {KEYS_DOC}."
+
+
+def check_keys(environments):
+    """Every key problem of every entry, in order, for the entries that name themselves."""
+    return [problem for entry in environments
+            if isinstance(entry, dict) and _is_name(entry.get("environment"))
+            for problem in (_key_problem(entry["environment"], key) for key in sorted(entry, key=shown)) if problem]
 
 
 def _goals(name, value):
@@ -290,6 +359,9 @@ def build_rows(document):
     if not isinstance(environments, list):
         raise ConfigError(["The specification for input 'environments-yml' must be a list of environments!"])
 
+    problems = check_keys(environments)
+    if problems:
+        raise ConfigError(problems)
     rows = [build_row(document, globals_, index, environment) for index, environment in enumerate(environments)]
 
     seen = set()

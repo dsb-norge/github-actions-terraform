@@ -113,10 +113,12 @@ class StringInputsTest(unittest.TestCase):
                 self.assertEqual([f"The environment 'env-a' sets 'terraform-version' to {shown}, which is not a string; "
                                   "quote it!"], output["errors"])
 
-    def test_keys_that_are_not_inputs_keep_their_yaml_types(self):
-        output = decide_with({"environment": "env-a", "runs-on": ["self-hosted", "x"], "my-key": {"a": 1}})
-        self.assertEqual([], output["errors"])
-        self.assertEqual((["self-hosted", "x"], {"a": 1}), (row(output)["runs-on"], row(output)["my-key"]))
+    def test_a_setting_keeps_its_yaml_type_and_an_unknown_key_is_refused(self):
+        output = decide_with({"environment": "env-a", "runs-on": ["self-hosted", "x"]})
+        self.assertEqual(([], ["self-hosted", "x"]), (output["errors"], row(output)["runs-on"]))
+        output = decide_with({"environment": "env-a", "my-key": {"a": 1}})
+        self.assertEqual(["The environment 'env-a' sets 'my-key', which is not a setting. The settings an environment "
+                          "may hold are listed in docs/Configuration-validation.md §3.1."], output["errors"])
 
 
 class NamesTest(unittest.TestCase):
