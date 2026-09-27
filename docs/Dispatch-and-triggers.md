@@ -33,7 +33,7 @@ trigger on everything and let the engine decide.
 | D1 | Dispatch inputs are read from `github.event.inputs` inside the reusable workflow. The caller forwards nothing through `with:`. | The `github` context is the caller's event; the caller's only job is to declare the inputs. |
 | D2 | One standard `workflow_dispatch.inputs` block, identical in every repository, shipped in the project template: `environment` (string), `goal` (choice), `reason` (string). | Copy-paste, never drifts when environments are added, validated against reality by the engine. |
 | D3 | `environment` is a `string`, an exact environment name, or empty for every environment. | A `choice` would hold repository-specific names and drift. GitHub's `environment` input type was assessed and rejected: it lists GitHub Environments, which are `github-environment` names rather than `environment` names, includes the `tftest-*` lanes, is empty until a first run creates them, and cannot express "every environment". A caller may switch to either locally. |
-| D4 | `goal` offers `default`, `plan`, `apply`, `destroy-plan`. The input can never add `destroy`. An environment whose own `goals-yml` holds `destroy` still destroys on a default-branch dispatch with `goal: default`, as it does today. | Destroying stays a `goals-yml` decision made in a reviewed commit; the dispatch button cannot introduce it. |
+| D4 | `goal` offers `default`, `plan`, `apply`, `destroy-plan`. The input can never add `destroy`. An environment whose own `goals-yml` holds `destroy` still destroys on a default-branch dispatch with `goal: default`, as it does today, and on no other goal: `apply` leaves the destroy goals out. | Destroying stays a `goals-yml` decision made in a reviewed commit; the dispatch button cannot introduce it. |
 | D5 | The `goal` input is a **cap**: it only removes goals from what the environment's own `goals` would grant on a push to the same ref. `plan` and `destroy-plan` cap; `apply` requires the environment to hold `apply` or `all`. Asking for more is an error, not a silent downgrade. | A validate-only repository must not become an apply target through a dropdown, and a `plan` request must never be silently widened into a plan the environment does not have. |
 | D6 | `apply` by dispatch runs on the default branch only, as apply always has. Asking for it elsewhere is an error, not a silent plan. | A person who asked for an apply and got a plan would not notice until the outage. |
 | D7 | Per-environment `trigger-events`, with a global default input `trigger-events-yml` = `[pull_request, push, workflow_dispatch]`. **`schedule` is opt-in, per environment only**: the global list may not hold it. A run event outside the vocabulary is a validation error. | A survey of every calling repository found two that schedule the workflow, both deliberately, both on a dedicated environment. This is a default change and therefore part of the **v1** major release; the two callers opt in when they move to v1. A scheduled environment holding `apply` is applied unattended, which is a decision about that environment: in the global list it would reach every environment, including one added later or a list copied from another repository. Nobody needs the global form, and allowing it later breaks nothing, where forbidding it later would (maintainer's decision). |
@@ -136,7 +136,7 @@ workflow's gates do today, then applies the `goal` input as a cap:
 |---|---|
 | `default` or empty | Push semantics for the ref: apply on the default branch when the goals hold `apply` or `all`, **destroy on the default branch when the goals hold `destroy`** (as today), plan and destroy-plan elsewhere. |
 | `plan` | The expansion intersected with `init, format, validate, lint, plan`. Never adds `plan` to an environment without it; removes `apply`, `destroy-plan` and `destroy`. |
-| `apply` | As `default`, and an error unless the goals hold `apply` or `all` (`apply-on-pr` alone does not count) and the ref is the default branch (D5, D6). |
+| `apply` | The expansion intersected with the standard goals and `apply`: never `destroy-plan` or `destroy`, so asking for an apply never brings a destroy with it. An error unless the goals hold `apply` or `all` (`apply-on-pr` alone does not count) and the ref is the default branch (D5, D6). |
 | `destroy-plan` | The expansion intersected with `init` and `destroy-plan`; never `destroy`. An error unless the goals hold `destroy-plan`: `all` is the standard goals only and does not include it, and `destroy` alone never plans a destroy (the destroy step runs only after a successful destroy plan), so a cap that granted `destroy-plan` to it would add, not remove (I3). |
 
 The `goal` input never grants `destroy`, `destroy-on-pr` or `apply-on-pr`. The engine's invariants
@@ -244,7 +244,7 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | P5 | A dispatch from the CLI on a non-default `--ref` with `goal: apply`. | Refused. | The error names the branch; run it on `main`. |
 | P6 | Two dispatches of the same environment overlap. | Queued, not raced, by the per-environment concurrency group; a third overlapping run cancels the pending one until `queue: max` lands. | Documented; the queue spec removes the cancel. |
 | P7 | The `reason` input is free text and lands in the summary and a notice. | Anything typed there is on the run page; a line break would end the workflow command early and start another. | Whitespace is collapsed to single spaces, so the reason is one line; nothing else is done with it. |
-| P11 | The workflow's `contains(matrix.vars.goals, …)` reads a list element or a substring of a string, without case. | The granted goals must mirror it exactly, or switching the gates to `goals-granted` changes what runs: `[ALL]` plans, and a scalar `goals-yml: destroy-plan` holds `plan` and `destroy`. | The engine's expansion uses the same semantics; the scalar case is a latent hazard of today's workflow, kept rather than changed silently. |
+| P11 | The v0 gates' `contains(matrix.vars.goals, …)` read a list element or a substring of a string, without case. | A list written without its dashes, `init plan destroy-plan` on separate lines, is one string to YAML; it held `init`, `plan`, `destroy-plan` and `destroy`, so a caller who asked for a destroy preview got a destroy on the next push. | The goals a caller names are a list of known names, a single name written alone is that one goal, and anything else is a validation error (Decision-engine.md rule 1); the gates read `goals-granted`, which holds only the eight goal keys. |
 | P12 | The on-PR gates compare `github.base_ref`, which is the runner's `GITHUB_BASE_REF`, not a payload field. | Reading the payload could disagree with the gate. | The adapter passes `GITHUB_BASE_REF` as `event.base_ref`. |
 
 ## 9. Tests
@@ -285,11 +285,16 @@ AI-assistant configuration files are never in these commits.
 
 ## 12. What implementation taught the spec
 
+- **`apply` is a cap too.** The first rule, "`apply`: as `default`", granted an environment whose
+  goals hold `destroy` its destroy plan and destroy on a dispatch asking for an apply. Only
+  `default` follows `goals-yml` whole now (§4.2, D4).
 - **`destroy-plan` needs the goal itself.** The first rule, "the goals hold `destroy-plan` or
   `destroy`", would have granted a destroy plan to an environment holding only `destroy`, which a
   push never grants: a cap that adds. The error now asks for `destroy-plan` (§4.2).
-- **The expansion mirrors `contains()`**, case and substrings included (P11), because the gates
-  move to `goals-granted` and must keep doing what they did.
+- **The goals are validated, not mirrored** (P11). The first build mirrored the gates' `contains()`,
+  substrings included, so the switch to `goals-granted` changed nothing; that kept a hazard of the
+  old gates, a list without its dashes that destroyed. The goals a caller names are now a list of
+  known names, and everything else is refused.
 - **The dispatch line is a notice and a run-summary line, not a record line**: the record stays one
   line per environment, which the engine's own properties check. The run summary stops saying "no
   environment is affected by this change" on a dispatch or a schedule, which carry no change.
