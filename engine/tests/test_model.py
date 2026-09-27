@@ -35,7 +35,9 @@ class ModelTest(unittest.TestCase):
 
     def test_caller_and_event_need_their_strings(self):
         for section, value in [("caller", {"repository": "o/r"}), ("caller", "o/r"),
-                               ("event", {"name": "push", "ref_name": 1}), ("event", None)]:
+                               ("event", {"name": "push", "ref_name": 1, "ref_type": "branch"}),
+                               ("event", {"name": "push", "ref_name": "main"}),
+                               ("event", {"name": "push", "ref_name": "main", "ref_type": "branches"}), ("event", None)]:
             with self.subTest(section=section, value=value):
                 document = support.document()
                 document[section] = value
@@ -188,13 +190,14 @@ class TestFactsTest(unittest.TestCase):
 
 
 class DispatchShapeTest(unittest.TestCase):
-    MESSAGE = ("input document: 'event.dispatch' needs exactly the boolean 'block' and the strings 'environment', "
-               "'goal' and 'reason'")
+    MESSAGE = ("input document: 'event.dispatch' needs exactly the boolean 'block', the strings 'environment', "
+               "'goal' and 'reason', and the list of strings 'inputs'")
 
     def test_the_dispatch_inputs_have_their_shape(self):
-        good = {"block": True, "environment": "", "goal": "", "reason": ""}
+        good = {"block": True, "environment": "", "goal": "", "reason": "", "inputs": []}
         for bad in (None, [], {}, {**good, "block": "true"}, {**good, "goal": None}, {**good, "environment": 1},
-                    {**good, "reason": False}, {**good, "extra": ""},
+                    {**good, "reason": False}, {**good, "extra": ""}, {**good, "inputs": None},
+                    {**good, "inputs": [1]},
                     {key: value for key, value in good.items() if key != "reason"}):
             with self.subTest(bad=bad):
                 document = support.document()

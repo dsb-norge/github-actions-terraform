@@ -6,7 +6,7 @@ the workflow's operation gates would let through for the goals it names, a list 
 now (environments.py); a dispatch's goal input then caps them, and a cap only ever removes.
 """
 
-from .environments import ConfigError, shown
+from .environments import ConfigError, on_default_branch, shown
 
 EVENTS = ("pull_request", "push", "workflow_dispatch", "schedule")
 DEFAULT_EVENTS = ("pull_request", "push", "workflow_dispatch")
@@ -95,7 +95,7 @@ def expand(document, goals):
     """The goals the workflow's gates grant for this event, ref and branch."""
     event = document["event"]
     default_branch = document["caller"]["default_branch"]
-    on_default = event["ref_name"] == default_branch
+    on_default = on_default_branch(document)
     on_pr = (event["name"] == "pull_request" and event.get("action", "") not in CLOSING_ACTIONS
              and event.get("base_ref", "") == default_branch)
     every = "all" in goals
@@ -117,10 +117,10 @@ def grant(document, rows, entries):
     goal = (dispatch_inputs(document)["goal"] or "default") if event["name"] == DISPATCH else "default"
     if goal not in GOAL_INPUTS:
         raise ConfigError([f"dispatch: unknown goal {shown(goal)}; the goal input is one of {', '.join(GOAL_INPUTS)}"])
-    default_branch = document["caller"]["default_branch"]
-    if goal == "apply" and event["ref_name"] != default_branch:
-        raise ConfigError([f"dispatch: apply is only allowed from the default branch '{default_branch}'; this run is "
-                           f"on '{event['ref_name']}'"])
+    if goal == "apply" and not on_default_branch(document):
+        where = "the tag " if event["ref_type"] == "tag" else ""
+        raise ConfigError([f"dispatch: apply is only allowed from the default branch "
+                           f"'{document['caller']['default_branch']}'; this run is on {where}'{event['ref_name']}'"])
     errors, granted = [], {}
     for index, (row, entry) in enumerate(zip(rows, entries)):
         if entry["verdict"] != "run":
@@ -150,6 +150,12 @@ def lines(document, entries):
         if not inputs["block"]:
             return [f"{who}: the calling workflow declares no dispatch inputs, so every environment runs with its "
                     f"goals; copy the standard block from {DOCS} §3.1 to choose one environment and a goal"]
+        # The standard block always delivers its goal, a choice; without either, the block is another one.
+        if not inputs["environment"] and not inputs["goal"]:
+            delivered = (f"the inputs {', '.join(inputs['inputs'])} but neither 'environment' nor 'goal'"
+                         if inputs["inputs"] else "no inputs")
+            return [f"{who}: this dispatch delivered {delivered}, so every environment runs with its goals; the "
+                    f"standard block is in {DOCS} §3.1"]
         # Free text reaches a workflow command and Markdown: one line, never a second command.
         reason = " ".join(inputs["reason"].split())
         return [f"{who}: environment {inputs['environment'] or '(all)'}, goal {inputs['goal'] or 'default'}, "

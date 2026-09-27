@@ -23,7 +23,7 @@ def _contains(goals, goal):
 def _gate_allows(document, goals, goal):
     """Whether the workflow's own gate for `goal` passes for these raw goals on this event (I1)."""
     event, default = document["event"], document["caller"]["default_branch"]
-    on_default = event["ref_name"] == default
+    on_default = event["ref_type"] == "branch" and event["ref_name"] == default
     on_pr = (event["name"] == "pull_request" and event.get("action", "") not in ("closed", "converted_to_draft")
              and event.get("base_ref", "") == default)
     if goal == "apply":

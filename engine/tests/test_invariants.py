@@ -220,7 +220,7 @@ class RelevantInvariantTest(unittest.TestCase):
 
     def test_a_relevance_skip_marked_relevant(self):
         document = support.document(environments=[{"environment": "a"}])
-        document["event"] = {"name": "push", "ref_name": "main", "push": {"created": False, "forced": False,
+        document["event"] = {"name": "push", "ref_name": "main", "ref_type": "branch", "push": {"created": False, "forced": False,
                                                                           "deleted": False}}
         document["changed_files"] = {"available": True, "truncated": False, "error": None, "api_head_sha": None,
                                      "count": 1, "files": ["README.md"]}
@@ -241,7 +241,7 @@ class GoalInvariantTest(unittest.TestCase):
                                     env_yaml=[{"goals-yml": support.parsed(list(goals))}, {}], ref_name=ref)
         document["event"]["name"] = event
         if dispatch is not None:
-            document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", **dispatch}
+            document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", "inputs": [], **dispatch}
         output = decide.decide(document)
         self.assertEqual([], invariants.check(document, output))
         return document, output
@@ -262,7 +262,7 @@ class GoalInvariantTest(unittest.TestCase):
 
     def test_a_not_taking_part_head_for_an_environment_that_takes_part(self):
         document, output = decided(1)
-        document["event"] = {"name": "pull_request", "ref_name": "main",
+        document["event"] = {"name": "pull_request", "ref_name": "main", "ref_type": "branch",
                              "pull_request": {"number": 1, "head_sha": "a", "is_fork": False}}
         document["run"] = {"id": 1, "attempt": 1}
         output["comments"] = {"heads": [{"kind": "env", "key": "env-0", "state": "not-taking-part"}],

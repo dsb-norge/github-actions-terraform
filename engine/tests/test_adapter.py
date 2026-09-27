@@ -102,7 +102,7 @@ class Runner:
         self.output_file = os.path.join(path, "output.txt")
         open(self.output_file, "w").close()
         self.environ = {"GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main",
-                        "GITHUB_EVENT_PATH": self.event_file, "GITHUB_OUTPUT": self.output_file,
+                        "GITHUB_REF_TYPE": "branch", "GITHUB_EVENT_PATH": self.event_file, "GITHUB_OUTPUT": self.output_file,
                         "GITHUB_RUN_ID": "4711", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_TEMP": os.path.join(path, "temp")}
         os.mkdir(self.environ["RUNNER_TEMP"])
         self.environ.update(environ or {})
@@ -338,14 +338,15 @@ class SourceTextTest(unittest.TestCase):
 
 
 class BuildDocumentTest(unittest.TestCase):
-    FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "workflow_dispatch", "ref_name": "feature/x",
+    FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "workflow_dispatch", "ref_name": "feature/x", "ref_type": "branch",
              "payload": {}, "run": {"id": 4711, "attempt": 1}}
 
     def test_the_document_is_complete_and_valid(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(), lambda path: True)
         self.assertEqual({"schema_version": 1, "caller": {"repository": "o/r", "default_branch": "main"},
-                          "event": {"name": "workflow_dispatch", "ref_name": "feature/x",
-                                    "dispatch": {"block": False, "environment": "", "goal": "", "reason": ""}},
+                          "event": {"name": "workflow_dispatch", "ref_name": "feature/x", "ref_type": "branch",
+                                    "dispatch": {"block": False, "environment": "", "goal": "", "reason": "",
+                                                 "inputs": []}},
                           "workflow_inputs": DEFAULT_INPUTS,
                           "yaml": {"inputs": {"environments-yml": {"ok": True, "value": [{"environment": "env-a"}]}},
                                    "environments": [{}]},
@@ -439,18 +440,21 @@ class EventFactsTest(unittest.TestCase):
     def test_a_dispatch_reports_its_inputs_block(self):
         cases = [
             # No inputs block: the payload's inputs is null (P8), or missing altogether.
-            ({"inputs": None}, {"block": False, "environment": "", "goal": "", "reason": ""}),
-            ({}, {"block": False, "environment": "", "goal": "", "reason": ""}),
-            ({"inputs": "text"}, {"block": False, "environment": "", "goal": "", "reason": ""}),
+            ({"inputs": None}, {"block": False, "environment": "", "goal": "", "reason": "", "inputs": []}),
+            ({}, {"block": False, "environment": "", "goal": "", "reason": "", "inputs": []}),
+            ({"inputs": "text"}, {"block": False, "environment": "", "goal": "", "reason": "", "inputs": []}),
             # Empty string inputs are absent (P9): the block is there, the values are empty.
-            ({"inputs": {"goal": "default"}}, {"block": True, "environment": "", "goal": "default", "reason": ""}),
-            ({"inputs": {}}, {"block": True, "environment": "", "goal": "", "reason": ""}),
-            ({"inputs": {"environment": "staging", "goal": "apply", "reason": "rebuild after incident 42",
-                         "other": "x"}},
-             {"block": True, "environment": "staging", "goal": "apply", "reason": "rebuild after incident 42"}),
+            ({"inputs": {"goal": "default"}},
+             {"block": True, "environment": "", "goal": "default", "reason": "", "inputs": ["goal"]}),
+            ({"inputs": {}}, {"block": True, "environment": "", "goal": "", "reason": "", "inputs": []}),
+            # The delivered inputs are named, sorted, never their values.
+            ({"inputs": {"target": "secret-ish", "environment": "staging", "goal": "apply",
+                         "reason": "rebuild after incident 42", "other": "x"}},
+             {"block": True, "environment": "staging", "goal": "apply", "reason": "rebuild after incident 42",
+              "inputs": ["environment", "goal", "other", "reason", "target"]}),
             # A caller's own input of another type is carried as its JSON text, never dropped silently.
             ({"inputs": {"environment": 7, "goal": True, "reason": None}},
-             {"block": True, "environment": "7", "goal": "true", "reason": ""}),
+             {"block": True, "environment": "7", "goal": "true", "reason": "", "inputs": ["environment", "goal", "reason"]}),
         ]
         for payload, expected in cases:
             with self.subTest(payload=payload):
@@ -458,7 +462,7 @@ class EventFactsTest(unittest.TestCase):
 
 
 class PullRequestFilesTest(unittest.TestCase):
-    EVENT = {"name": "pull_request", "ref_name": "x", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}
+    EVENT = {"name": "pull_request", "ref_name": "x", "ref_type": "branch", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}
 
     def fetch(self, api, event=None):
         tools = FakeTools(api=api)
@@ -557,7 +561,7 @@ class PullRequestFilesTest(unittest.TestCase):
         self.assertIn("'gh' cannot be run on this runner", changed["error"])
 
     def test_a_payload_without_the_pull_request_is_a_fact(self):
-        changed, endpoints = self.fetch({}, event={"name": "pull_request", "ref_name": "x"})
+        changed, endpoints = self.fetch({}, event={"name": "pull_request", "ref_name": "x", "ref_type": "branch"})
         self.assertEqual((unavailable("the event payload carries no pull request number and head commit"), []),
                          (changed, endpoints))
 
@@ -565,7 +569,7 @@ class PullRequestFilesTest(unittest.TestCase):
 class PushFilesTest(unittest.TestCase):
     def fetch(self, api, payload, default="main"):
         tools = FakeTools(api=api)
-        event = {"name": "push", "ref_name": "x", **adapter.event_facts("push", payload)}
+        event = {"name": "push", "ref_name": "x", "ref_type": "branch", **adapter.event_facts("push", payload)}
         return adapter.fetch_changed_files(tools, "o/r", default, event, payload), tools.endpoints()
 
     def test_a_push_is_compared_from_before_to_after(self):
@@ -631,18 +635,18 @@ class PushFilesTest(unittest.TestCase):
         tools = FakeTools()
         for name in ("schedule", "workflow_dispatch"):
             with self.subTest(name=name):
-                self.assertIsNone(adapter.fetch_changed_files(tools, "o/r", "main", {"name": name, "ref_name": "x"}, {}))
+                self.assertIsNone(adapter.fetch_changed_files(tools, "o/r", "main", {"name": name, "ref_name": "x", "ref_type": "branch"}, {}))
         self.assertEqual([], tools.calls)
 
 
 class RelevanceDocumentTest(unittest.TestCase):
-    FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x",
+    FACTS = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x", "ref_type": "branch",
              "payload": {"pull_request": {"number": 87, "head": {"sha": "abc"}}}, "run": {"id": 4711, "attempt": 1}}
     API = {PULL: {"changed_files": 1, "head": {"sha": "abc"}}, page(1): [{"filename": "envs/env-a/main.tf"}]}
 
     def test_the_document_carries_the_event_facts_and_the_changed_files(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(api=self.API), lambda path: True)
-        self.assertEqual({"name": "pull_request", "ref_name": "x", "action": "",
+        self.assertEqual({"name": "pull_request", "ref_name": "x", "ref_type": "branch", "action": "",
                           "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}, document["event"])
         self.assertEqual({"available": True, "truncated": False, "error": None, "api_head_sha": "abc", "count": 1,
                           "files": ["envs/env-a/main.tf"]}, document["changed_files"])
@@ -661,7 +665,7 @@ class RelevanceDocumentTest(unittest.TestCase):
     def test_an_event_without_changed_files_has_no_section(self):
         facts = {**self.FACTS, "event_name": "schedule", "payload": {}}
         document = adapter.build_document(DEFAULT_INPUTS, facts, FakeTools(), lambda path: True)
-        self.assertEqual({"name": "schedule", "ref_name": "x"}, document["event"])
+        self.assertEqual({"name": "schedule", "ref_name": "x", "ref_type": "branch"}, document["event"])
         self.assertNotIn("changed_files", document)
 
     def test_the_actors_and_the_base_ref_come_from_the_runner_when_set(self):
@@ -714,7 +718,7 @@ class RunTest(unittest.TestCase):
         document = json.loads(groups["decision engine input document"])
         self.assertEqual({"available": True, "truncated": False, "error": None, "api_head_sha": None, "count": 2,
                           "files": "2 paths, listed in the group 'changed files'"}, document["changed_files"])
-        self.assertEqual({"name": "push", "ref_name": "main", "push": {"created": False, "forced": False,
+        self.assertEqual({"name": "push", "ref_name": "main", "ref_type": "branch", "push": {"created": False, "forced": False,
                                                                        "deleted": False}}, document["event"])
         self.assertEqual([], [line for line in _outside_verbatim(log) if line.startswith("::warning")])
         self.assertLess(log.index("changed files"), log.index("decision engine input document"))
@@ -761,7 +765,7 @@ class RunTest(unittest.TestCase):
         with open(runner.outputs()["relevance-file"], encoding="utf-8") as handle:
             text = handle.read()
         document = adapter.build_document(DEFAULT_INPUTS, {
-            "repository": "o/r", "default_branch": "main", "event_name": "push", "ref_name": "main",
+            "repository": "o/r", "default_branch": "main", "event_name": "push", "ref_name": "main", "ref_type": "branch",
             "payload": PUSH_PAYLOAD, "run": {"id": 4711, "attempt": 2}}, runner.tools, lambda path: True)
         output = decide.decide(document)
         del output["matrices"], output["errors"]
@@ -772,7 +776,7 @@ class RunTest(unittest.TestCase):
                           git={TEST_PATTERNS: (0, "tests/a.tftest.hcl\0docs/x.tftest.hcl\0", "")})
         runner = Runner(self, inputs={**DEFAULT_INPUTS, "terraform-test-enabled": True},
                         environ={"GITHUB_WORKFLOW": "CI build", "GITHUB_ACTOR": "octocat",
-                                 "GITHUB_TRIGGERING_ACTOR": "hubot", "GITHUB_BASE_REF": "trunk"})
+                                 "GITHUB_TRIGGERING_ACTOR": "hubot", "GITHUB_BASE_REF": "trunk", "GITHUB_REF_TYPE": "tag"})
         self.assertEqual(0, runner.run(tools))
         outputs = runner.outputs()
         matrix = json.loads(outputs["tests-matrix-json"])
@@ -781,9 +785,10 @@ class RunTest(unittest.TestCase):
         self.assertIn("::warning title=create-tf-vars-matrix::test file 'docs/x.tftest.hcl' is misplaced",
                       runner.log.getvalue())
         document = json.loads(_groups(runner.log.getvalue())["decision engine input document"])
-        self.assertEqual(("CI build", "octocat", "hubot", "trunk"),
+        self.assertEqual(("CI build", "octocat", "hubot", "trunk", "tag"),
                          (document["caller"]["workflow_name"], document["event"]["actor"],
-                          document["event"]["triggering_actor"], document["event"]["base_ref"]))
+                          document["event"]["triggering_actor"], document["event"]["base_ref"],
+                          document["event"]["ref_type"]))
 
     def test_the_test_matrix_is_published_compact_sorted_and_unescaped(self):
         tools = FakeTools(api={COMPARE: {"files": []}}, git={TEST_PATTERNS: (0, "tests/å.tftest.hcl\0", "")})
@@ -882,8 +887,8 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("::stop-commands::", runner.log.getvalue())
 
     def test_missing_runner_variables_are_named_before_anything_runs(self):
-        for name in ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
-                     "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP"):
+        for name in ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_REF_TYPE", "GITHUB_OUTPUT",
+                     "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP"):
             with self.subTest(name=name):
                 runner = Runner(self, environ={name: ""})
                 self.assertEqual(1, runner.run())
@@ -894,8 +899,8 @@ class RunTest(unittest.TestCase):
         runner = Runner(self)
         runner.environ = {"GITHUB_OUTPUT": runner.output_file}
         runner.run()
-        self.assertIn("the runner did not set GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF_NAME, GITHUB_RUN_ID, "
-                      "GITHUB_RUN_ATTEMPT, RUNNER_TEMP", runner.log.getvalue())
+        self.assertIn("the runner did not set GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_REF_NAME, GITHUB_REF_TYPE, "
+                      "GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, RUNNER_TEMP", runner.log.getvalue())
 
     def test_the_run_comes_from_the_runner(self):
         runner = Runner(self)
@@ -959,7 +964,7 @@ class TestFactsTest(unittest.TestCase):
     """The committed test files, the directories holding .tf files and the environments' locks."""
 
     def gather(self, tools, inputs=TESTS_ON):
-        facts = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x",
+        facts = {"repository": "o/r", "default_branch": "main", "event_name": "pull_request", "ref_name": "x", "ref_type": "branch",
                   "payload": {}, "run": {"id": 1, "attempt": 1}}
         return adapter.build_document(inputs, facts, tools, lambda path: True)
 

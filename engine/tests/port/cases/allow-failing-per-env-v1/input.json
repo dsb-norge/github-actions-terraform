@@ -15,10 +15,12 @@
       "block": false,
       "environment": "",
       "goal": "",
+      "inputs": [],
       "reason": ""
     },
     "name": "workflow_dispatch",
-    "ref_name": "main"
+    "ref_name": "main",
+    "ref_type": "branch"
   },
   "run": {
     "attempt": 1,
