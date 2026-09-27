@@ -9,6 +9,14 @@ feeds it through the two parsers, and compares the summary-bearing lines
 against the pinned fixtures. A wording change in a new release fails the job
 and names the line.
 
+Each plan is also rendered with `terraform show -json`, as `terraform-plan`'s
+JSON step does it (stdout into the file, stderr apart), and counted a second
+time from that JSON plan through `parse-terraform-plan`'s `plan-json-file`
+input. Those counts must equal the same `expected.json` values. The console's
+`Plan:` line has no segment for moves or removals, and the JSON plan's shape
+can change between releases too, so this is what proves the JSON counting
+under every supported minor.
+
 Spec: [docs/Apply-and-destroy-reporting.md §16](../docs/Apply-and-destroy-reporting.md).
 Workflow: [`.github/workflows/terraform-contract-tests.yml`](../.github/workflows/terraform-contract-tests.yml).
 
@@ -56,7 +64,7 @@ A scenario's `expected.json`:
 |---|---|
 | `operation` | `apply` (plan, then apply the saved plan — the workflow's path), `refresh-only`, `destroy-plan` (a saved `-destroy` plan applied), `destroy` (`terraform destroy`), `prompt-decline` (answer `no` at the approval prompt), `interrupt` (SIGINT five seconds into the apply) |
 | `min-terraform` | optional; the oldest terraform the scenario's language feature exists on (`import` blocks: 1.5, `removed` blocks: 1.7). Below it the scenario is skipped with a one-line note, counted as neither passed nor failed, and listed as skipped in the summary — the window does not stop at 1.7 forever |
-| `plan` | expected `parse-terraform-plan` outputs and the plan's exit code; `null` when the operation has no separate plan console |
+| `plan` | expected `parse-terraform-plan` outputs and the plan's exit code; `null` when the operation has no separate plan console. The same counts and `has-output-only-changes` are expected twice: from the console, and from the JSON plan |
 | `apply` | expected `parse-terraform-apply` outputs and the apply's exit code; `"ticks": true` additionally asserts a real progress-tick line was printed and filtered |
 | `*.fixture` | repo-relative path of the pinned console under the parser's `test-data/` |
 
@@ -72,7 +80,16 @@ A scenario's `expected.json`:
 
 ## What is compared
 
-Only the summary-bearing lines: `Plan:`, `Apply complete!`, `No changes.`,
+Every `expected.json` value against the parsers' outputs; for a plan, twice:
+counted from the console (`counts-source` `console`, `plan-complete` empty)
+and from the JSON plan (`counts-source` `json`, `plan-complete` `true`: no
+scenario targets or defers anything). A JSON-plan mismatch names itself as
+`plan (JSON) <key>-count: expected …, got …`, and a failed
+`terraform show -json` fails the scenario with its stderr kept in the work
+directory as `show-json.err`. The JSON plan is not pinned as a fixture: nothing
+compares its text, only what it counts.
+
+Against the pinned fixtures, only the summary-bearing lines: `Plan:`, `Apply complete!`, `No changes.`,
 `Changes to Outputs:`, every `Warning:` and `Error:` line, the per-resource
 action lines (`will be created`, `has moved to`, …) and the progress-tick shape
 with its elapsed time normalised. Resource ids, durations and the order two
@@ -90,8 +107,13 @@ The `::error` names the scenario and the terraform version, then lists the
 lines that version emits which the fixture lacks and the lines the fixture has
 which that version no longer emits. The last forty lines of each console are
 in the job log right under the failure, and the whole scratch directory —
-consoles, parser logs, state, plan files — is uploaded as the
-`contract-tests-<version>` artifact (kept seven days). Decide which is right:
+consoles, parser logs, state, plan files and JSON plans — is uploaded as the
+`contract-tests-<version>` artifact (kept seven days). Unlike a real JSON plan,
+which the default workflow never uploads, a scenario's holds nothing sensitive:
+every value is a literal in the scenario's own configuration. A mismatch in
+the JSON counts only (`plan (JSON) …`) means the JSON plan's shape changed in
+that version; read `tf-plan-<scenario>.json` in the artifact. Decide which is
+right:
 
 - **Terraform changed its wording and the parser still counts correctly** —
   re-pin: `contract-tests/run.sh --capture <name>` with that terraform version,
