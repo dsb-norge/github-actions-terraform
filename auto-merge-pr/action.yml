@@ -51,18 +51,16 @@ inputs:
   head-sha:
     description: |
       The pull request's head SHA the run planned, `github.event.pull_request.head.sha`. The
-      merge is made only while the head is still this commit. Required for merging: the step
-      fails without it.
-    required: false
-    default: ""
+      merge is made only while the head is still this commit; the step refuses to merge without
+      it.
+    required: true
 
   merge-sha:
     description: |
       The run's `github.sha`, the event's merge commit: the head merged with the base as it was
-      when the run planned it. Its first parent must still be the base branch's tip. Required
-      for merging: the step fails without it.
-    required: false
-    default: ""
+      when the run planned it. Its first parent must still be the base branch's tip; the step
+      refuses to merge without it.
+    required: true
 
 runs:
   using: "composite"
