@@ -18,8 +18,9 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | merged 2026-09-25 | yes |
 | 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | merged 2026-09-26 | yes |
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | draft | no |
-| 5 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
-| 6 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
+| 5 | Hardening of caller configuration and auto-merge (§5) | — | outstanding | no |
+| 6 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
+| 7 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
 ### Outside the road steps
 
@@ -34,7 +35,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | Spec | Decided | Implemented | Verified on the test bed | As built |
 |---|---|---|---|---|
-| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3, 5 and 6 come with steps 3-5 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
+| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3 and 5 came with step 4 (#65), rule 6 comes with step 6 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
 | Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
 | Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 dispatch and schedule rows on pull requests, pushes, dispatches and a schedule (§4) | yes |
@@ -68,10 +69,10 @@ table only says where.
 | Terraform-tests.md | the role that sets environment secrets; the step anchor in the web view | closed 2026-09-25: a write-role account set, updated, listed and deleted environment secrets with `gh`, but could not create, configure or delete the environment; the maintainer confirmed the anchor opens the right step |
 | Terraform-tests.md | isolation end to end; a real environment lane; case in flexible credential `matches` | closed 2026-09-25 in a session with the maintainer, with throwaway identities and a resource group in a sandbox subscription: an environment-only credential refused tokens to jobs outside its environment, the flexible credential granted one only to `tftest-*` jobs, a lane ran a `command = apply` test and cleaned up, and `matches` is case-sensitive |
 | Terraform-tests.md | Dependabot runs and OIDC; fork runs and environment creation | open (spec §12): the first needs a Dependabot pull request, fork creation is blocked by the organisation's fork policy for private repositories; neither changes the design |
-| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 6) |
+| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 7) |
 | Terraform-tests.md | lower-case `TF_VAR_` names from environment secrets; the version floor | decided 2026-09-25 by the maintainer after the test bed showed GitHub upper-casing secret names and 1.12 refusing a test file's `variable` block: environment lanes export a lower-cased copy of every `TF_VAR_*` secret, and the floor is 1.13 |
 | Terraform-tests.md | the copied lock and the runner's platform; the shared plugin-cache key | decided 2026-09-25 by the maintainer: every lock a test job uses must record the runner's platform, checked before init as `lock-platform`; the test job's cache key gets a `-tftest` suffix and falls back to the environment job's |
-| Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 5 |
+| Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 6 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
 | Road-to-v1.md | the module CI workflow on the engine in v1 or after | open |
 
@@ -265,6 +266,45 @@ table only says where.
 
 ## 5. Findings to carry
 
+### Step 5 scope: hardening of caller configuration and auto-merge
+
+An audit during the step-4 review, looking for v0 habits the engine carried over that turn a
+caller's mistake into a different action. #65 fixed the two in its own rules: goals are a list of
+known names (a list written without its dashes had destroyed), and a dispatch's `goal: apply` no
+longer brings the destroy goals. The rest is step 5, each item verified against the code:
+
+1. Unknown keys in an `environments-yml` entry are silently forwarded or dropped. A per-environment
+   `goals:` without `-yml` took the global goals instead (a plan-only intent applied); so did
+   `extra-envs:`, `pr-auto-merge-from-actors:` and the other unsuffixed names. `trigger-events-yml:`,
+   a misspelt `github-environment` (which falls back to a new, unprotected environment) and `path:`
+   are ignored.
+2. Goals whose prerequisite is missing are granted but never run: `apply` without `plan`, `destroy`
+   without `destroy-plan`, `plan` without `init`.
+3. The auto-merge evaluator reads the raw goals, not `goals-granted`; with a string or other-cased
+   goals it skipped every plan limit (the goals rule of #65 removes those shapes, not the reader).
+4. The auto-merge actor list: a string or a list without its dashes never matches, `""`, `~`, `{}`
+   or `0` allow every actor; a per-environment list is added to the global one instead of narrowing
+   it; and the default empty list allows every actor. For the maintainer to decide how it fails.
+5. The auto-merge limits: a misspelt per-environment key is ignored over a permissive global value,
+   and the workflow's comment names `destroy-plan` limits that do not exist.
+6. The merge is not pinned to the evaluated commit (`gh pr merge --admin` without
+   `--match-head-commit`), and a re-run keeps the original actor.
+7. Plan counts are read from the text: an unanchored `No changes.` and the first line holding
+   `Plan: ` let content inside the plan zero every count, which hides the plan in the comment and
+   passes every auto-merge limit. The JSON plan is the reliable source.
+8. "On the default branch" compares the short ref name, so a tag named like the default branch
+   counts as it.
+9. `terraform-init-additional-dirs-yml` as a string (or a list without dashes) inits nothing, and
+   the init loop splits unquoted.
+10. `extra-envs*` values are YAML-coerced (a leading zero dropped, `1.10` read as `1.1`), and `~`
+    is exported as the literal `null`.
+11. A dispatch whose inputs block holds none of the standard names runs every environment with its
+    full goals and says only "environment (all), goal default".
+12. A per-environment `pr-auto-merge-enabled` is accepted and never read; only the global value
+    decides.
+
+### Other findings
+
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
 
 - Run blocks that paste values straight into shell, with no heredoc: `matrix.vars.github-environment`
@@ -276,10 +316,6 @@ Recorded while building, not fixed in the step that found them, each waiting for
 
 - The required-fields list lacks `runs-on` and `format-check-in-root-dir`, which the workflow reads
   (Decision-engine.md §9).
-- A scalar `goals-yml` string is read by the gates' `contains()` as a substring: `goals-yml:
-  destroy-plan` (not a list) holds `plan` and `destroy`, so it destroys on a push to the default
-  branch. The granted goals mirror it on purpose (Dispatch-and-triggers.md P11). For the
-  maintainer to decide whether a scalar string should be one goal, matched exactly.
 - A skipped matrix job shows its unevaluated name: the test job appears as `matrix.test.name` when
   the stage does not run. GitHub does not evaluate a skipped job's matrix name; cosmetic.
 - `ubuntu-latest` moving to ubuntu-26.04 brings Python 3.14 to `create-matrix`; the engine is
