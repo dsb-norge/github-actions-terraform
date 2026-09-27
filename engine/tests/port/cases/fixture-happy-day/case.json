@@ -35,9 +35,9 @@
   ],
   "engine_expected": {
     "exit_code": 2,
-    "deviation": "an environment name must be a string of the safe characters; this fixture's 'also an env' is refused (fixture-happy-day-v1 holds the rest)",
+    "deviation": "the fixture names goals that do not exist ('destroy-plan-on-pr', 'dummy', 'apple') and an environment name outside the name rule ('also an env'); both are refused, the goals first (fixture-happy-day-v1 holds the rest)",
     "errors": [
-      "The environment name 'also an env' must be 1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter or a digit!"
+      "The environment 'my-first-env' has the unknown goal 'destroy-plan-on-pr'; a goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr, one per list item ('- plan' on its own line, or [init, plan])!"
     ]
   }
 }

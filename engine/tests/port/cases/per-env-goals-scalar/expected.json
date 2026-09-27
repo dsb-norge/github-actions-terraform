@@ -40,7 +40,9 @@
           },
           "format-check-in-root-dir": "false",
           "github-environment": "env-a",
-          "goals": "plan",
+          "goals": [
+            "plan"
+          ],
           "goals-granted": [
             "plan"
           ],

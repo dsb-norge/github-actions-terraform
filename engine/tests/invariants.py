@@ -15,11 +15,9 @@ EARLIER_RULES = ("trigger-events:", "dispatch:")
 
 
 def _contains(goals, goal):
-    """The workflow's contains(): list element or substring, without case. Written apart from the
-    engine's, so the invariants do not inherit its mistakes."""
-    if isinstance(goals, str):
-        return goal.lower() in goals.lower()
-    return isinstance(goals, list) and goal.lower() in [item.lower() for item in goals if isinstance(item, str)]
+    """Whether a row's goals name `goal`. A row carries its goals as a list of known names; anything
+    else holds nothing. Written apart from the engine's, so the invariants do not inherit its mistakes."""
+    return isinstance(goals, list) and goal in goals
 
 
 def _gate_allows(document, goals, goal):

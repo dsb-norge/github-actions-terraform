@@ -271,8 +271,7 @@ class MatchingTest(unittest.TestCase):
 
     def test_mutates_on_pr_lists_the_on_pr_goals_in_a_fixed_order(self):
         for goals, expected in ((["destroy-on-pr", "apply-on-pr"], ["apply-on-pr", "destroy-on-pr"]),
-                                (["all"], []), (["apply"], []), ("apply-on-pr", ["apply-on-pr"]), (None, []),
-                                ({"plan": 1}, [])):
+                                (["all"], []), (["apply"], []), ("apply-on-pr", ["apply-on-pr"]), (None, [])):
             with self.subTest(goals=goals):
                 environments = [{"environment": "prod", "goals-yml": goals}]
                 self.assertEqual(expected, run(environments=environments, files=[])["environments"][0]["mutates-on-pr"])

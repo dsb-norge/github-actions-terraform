@@ -1,9 +1,9 @@
 """Trigger events, the dispatch filter and the granted goals: rules 2, 3 and 5 of docs/Decision-engine.md §6.
 
 docs/Dispatch-and-triggers.md §4. An environment takes part in a run when the event is in its
-trigger-events and, on a dispatch naming one environment, it is that one. Its granted goals mirror
-the workflow's operation gates as they read the raw goals, GitHub's contains() included; a
-dispatch's goal input then caps them, and a cap only ever removes.
+trigger-events and, on a dispatch naming one environment, it is that one. It is granted the goals
+the workflow's operation gates would let through for the goals it names, a list of known names by
+now (environments.py); a dispatch's goal input then caps them, and a cap only ever removes.
 """
 
 from .environments import ConfigError, shown
@@ -29,14 +29,6 @@ CAPS = {"plan": STANDARD, "destroy-plan": ("init", "destroy-plan")}
 # The absent block: nothing to filter or cap; its reason is never read.
 NO_INPUTS = {"block": False, "environment": "", "goal": ""}
 DOCS = "docs/Dispatch-and-triggers.md"
-
-
-def holds(goals, goal):
-    """contains(goals, goal) as the workflow evaluates it: an element of a list or a substring of a
-    string, compared without case. Nothing else holds a goal."""
-    if isinstance(goals, list):
-        return any(isinstance(item, str) and item.lower() == goal for item in goals)
-    return isinstance(goals, str) and goal in goals.lower()
 
 
 def dispatch_inputs(document):
@@ -105,23 +97,17 @@ def expand(document, goals):
     on_default = event["ref_name"] == default_branch
     on_pr = (event["name"] == "pull_request" and event.get("action", "") not in CLOSING_ACTIONS
              and event.get("base_ref", "") == default_branch)
-    every = holds(goals, "all")
-    granted = [goal for goal in STANDARD if every or holds(goals, goal)]
-    if ((every or holds(goals, "apply")) and event["name"] in APPLY_EVENTS and on_default
-            or holds(goals, "apply-on-pr") and on_pr):
+    every = "all" in goals
+    granted = [goal for goal in STANDARD if every or goal in goals]
+    if ((every or "apply" in goals) and event["name"] in APPLY_EVENTS and on_default
+            or "apply-on-pr" in goals and on_pr):
         granted.append("apply")
-    if holds(goals, "destroy-plan"):
+    if "destroy-plan" in goals:
         granted.append("destroy-plan")
-    if (holds(goals, "destroy") and event["name"] in DESTROY_EVENTS and on_default
-            or holds(goals, "destroy-on-pr") and on_pr):
+    if ("destroy" in goals and event["name"] in DESTROY_EVENTS and on_default
+            or "destroy-on-pr" in goals and on_pr):
         granted.append("destroy")
     return granted
-
-
-def _listed(goals):
-    if isinstance(goals, list):
-        return ", ".join(str(goal) for goal in goals)
-    return goals if isinstance(goals, str) else shown(goals)
 
 
 def grant(document, rows, entries):
@@ -140,12 +126,12 @@ def grant(document, rows, entries):
             continue
         goals = row["goals"]
         expanded = expand(document, goals)
-        if goal == "apply" and not (holds(goals, "all") or holds(goals, "apply")):
+        if goal == "apply" and not ("all" in goals or "apply" in goals):
             errors.append(f"dispatch: environment '{row['environment']}' does not hold the goal 'apply' "
-                          f"(goals: {_listed(goals)})")
+                          f"(goals: {', '.join(goals)})")
         if goal == "destroy-plan" and "destroy-plan" not in expanded:
             errors.append(f"dispatch: environment '{row['environment']}' does not hold the goal 'destroy-plan' "
-                          f"(goals: {_listed(goals)})")
+                          f"(goals: {', '.join(goals)})")
         granted[index] = [each for each in expanded if goal not in CAPS or each in CAPS[goal]]
     if errors:
         raise ConfigError(errors)
