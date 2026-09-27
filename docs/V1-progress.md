@@ -18,7 +18,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | merged 2026-09-25 | yes |
 | 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | merged 2026-09-26 | yes |
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | merged 2026-09-27 | yes |
-| 5 | Hardening of caller configuration and auto-merge (§5), ending with a thorough docs refresh: flow charts for the engine and many worked examples of usage | — (branch `feat/hardening`) | in progress | no |
+| 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | draft, handed off | no |
 | 6 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
 | 7 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
@@ -35,13 +35,13 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | Spec | Decided | Implemented | Verified on the test bed | As built |
 |---|---|---|---|---|
-| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3 and 5 came with step 4 (#65), rule 6 comes with step 6 | the port, #59 (§4): identical matrices to `@v0` | the port, relevance and the manifest |
+| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3 and 5 came with step 4 (#65), rule 1 whole with step 5 (#66), rule 6 comes with step 6 | the port, #59 (§4): identical matrices to `@v0` | yes, but for ordering; flow charts with #66 |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
 | Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
 | Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 dispatch and schedule rows on pull requests, pushes, dispatches and a schedule (§4) | yes |
 | Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
-| Configuration-validation.md | yes (step 5) | no | no | no |
-| Auto-merge.md | yes (step 5) | no | no | no |
+| Configuration-validation.md | yes (step 5) | yes (#66) | every refused kind in one run, the accepted shapes, a tag, a dispatch block without the standard inputs (§4) | yes |
+| Auto-merge.md | yes (step 5) | yes (#66) | the evaluator on real plans, the merge pins against GitHub (§4) | yes |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
 | apply reporting hardening (#57) | yes | yes | in CI on six Terraform minors | no spec |
 
@@ -77,6 +77,8 @@ table only says where.
 | Configuration-validation.md, Auto-merge.md | auto-merge with no actors; a per-environment actor list; goals whose prerequisite is missing | decided 2026-09-27 by the maintainer: an error that says plainly what is wrong; it replaces the global list; an error |
 | Auto-merge.md | the merge after the base moved; auto-merge for other base branches; the JSON plan artifact | decided 2026-09-27 by the maintainer: refused; default branch only; no longer uploaded |
 | Auto-merge.md | whether a tolerated failure (`allow-failing-terraform-operations`, `allow-failing-terraform-tests`) blocks auto-merge | decided 2026-09-27 by the maintainer, split: a tolerated Terraform operation blocks it; a tolerated test does not (the lever to auto-merge despite a failing lane), and is named in the log and a notice |
+| Auto-merge.md | GitHub's wording for a stale `--match-head-commit` | closed 2026-09-27 on the test bed: `GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)` (spec §13) |
+| Auto-merge.md | whether a `-target` plan, `complete: false`, should count | decided 2026-09-27 while building: counted, with completeness reported apart (`plan-complete`) and required only by auto-merge, so the comment keeps real counts (spec §5.2, §13) |
 | Configuration-validation.md | a `codeowners` value for the actor list, resolved from CODEOWNERS | dropped 2026-09-27 by the maintainer, after the facts: teams resolve only with an organisation Members permission no workflow token has, email owners cannot be mapped, and an owner merging their own change past review defeats it |
 | Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 6 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
@@ -277,11 +279,50 @@ table only says where.
   environment ran; a `goal: apply` dispatch of `destroy-plan-poc` on `main` planned and applied and
   skipped its destroy plan and destroy. The test bed's `main` went back to `@v1` right after.
 
+### Step 5, #66: hardening of caller configuration and auto-merge
+
+- Engine, test first where the rule was new: every message of Configuration-validation.md §3 as a
+  literal, the auto-merge settings both ways, the ref type and the dispatch lines. Gates on the
+  tip: 519 tests, 100 percent of lines and branches, every mutant killed; the first mutation run on
+  the new rules left 17 survivors in 3718 (redundant code removed, untested edges tested, each in
+  the commit that brought it). Every port input gained `ref_type` and a dispatch's `inputs` with no
+  golden changing; the deliberate changes are recorded deviations.
+- Actions: `parse-terraform-plan` 87 tests on seven real Terraform 1.16 captures (the injected
+  summary among them, its console miscount pinned), `terraform-plan` 204, `evaluate-automerge-eligibility`
+  138, `auto-merge-pr` 39. Each agent-built rule was also broken by hand in a scratch copy, and
+  every break failed a test. The contract tests count every plan from its JSON plan on the six
+  newest minors, in CI; no JSON count differed from the console's. F14 was shown failing on the
+  unwired workflow.
+- Test bed through `preview/pr-66`, dsb-norge/azure-terraform-peder-tester#63, every result as the
+  specs say:
+  - one dispatch holding one mistake of each kind reported all ten in one run, in the specs'
+    words (an unsuffixed key, a near miss, a suffixed plain setting, a workflow-only input, goals
+    without dashes, a goal without its prerequisite, an empty init directory, actors without
+    dashes, a quoted and a misspelt limit);
+  - an accepted configuration: a per-environment null removed a global variable, `1.10` and
+    `012345678901` reached the row as written, a single init directory written alone was
+    initialised, a destroy plan ran alone, the inert per-environment `pr-auto-merge-enabled: true`
+    was a warning, and a dispatch through a block of its own named the input it delivered;
+  - from a tag, a dispatched apply was refused naming the tag, and a default dispatch was granted
+    no apply (`caller-repo-is-on-default-branch` false);
+  - pull-request runs with a dummy App, so an eligible pull request stops at resolving the key: an
+    environment out of pull requests the change touched made it ineligible, with all three taking
+    part it was eligible (a lower-cased login matching the actor), and a `-target` plan was
+    counted in the comment and refused as not complete. Counts came from the JSON plan
+    (`counts-source: json`) and no JSON plan artifact was uploaded.
+  - the merger's step, run with the maintainer's token against dsb-norge/azure-terraform-peder-tester#64:
+    a stale head was refused by GitHub and named with both heads, a moved base was refused before
+    any merge call, and the up-to-date pins merged the pull request.
+- The user guide's worked examples were each produced by running the adapter, the evaluator, the
+  conclusion's run block or the step concerned on the configuration shown. Doing so found one
+  engine gap, fixed in the step: a global variable's problem was blamed on the first environment
+  inheriting it.
+
 ## 5. Findings to carry
 
 ### Step 5 scope: hardening of caller configuration and auto-merge
 
-An audit during the step-4 review, looking for v0 habits the engine carried over that turn a
+All fourteen were resolved in #66; the specs record how. An audit during the step-4 review, looking for v0 habits the engine carried over that turn a
 caller's mistake into a different action. #65 fixed the two in its own rules: goals are a list of
 known names (a list written without its dashes had destroyed), and a dispatch's `goal: apply` no
 longer brings the destroy goals. The rest is step 5, each item verified against the code:
@@ -327,6 +368,19 @@ The specs are [Configuration-validation.md](Configuration-validation.md) and
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
 
+- `auto-merge-pr/run_local_step_auto_merge_pr.sh` has carried a private repository's name as its
+  default since the action was added; this repository is public. Found in step 5, left for its own
+  change.
+- `actions/download-artifact@v4` targets Node 20, which the runner now forces onto Node 24 with a
+  deprecation warning on every job that downloads; v5 exists.
+- On a schedule no environment opted into, and on a dispatch, the relevance notice and the
+  conclusion's line still say "nothing to verify for this change", which Dispatch-and-triggers.md
+  §5 keeps out of the run summary only.
+- With the test stage on and no test files, every pull request and push posts one notice per
+  environment without a lock file ("its providers take no part in the test stage").
+- `create-validation-summary`'s mode row reads the raw goals, not `goals-granted`; it can say
+  "applies on PR" for a pull request against another base branch, where nothing applies.
+
 - Run blocks that paste values straight into shell, with no heredoc: `matrix.vars.github-environment`
   (caller-configured, now held to the name rule by #61) in several steps of the default workflow, `matrix.test-file` in module CI and
   `inputs.test-file` in `terraform-test` (file names from the repository under test), and path
@@ -342,8 +396,8 @@ Recorded while building, not fixed in the step that found them, each waiting for
   standard library only, and CI runs its suite on the newest 3.x as well as the 3.12 floor.
 - `verify-terraform-lock`'s test 12 failed once when every suite ran in parallel on one machine and
   passed alone; CI runs each suite in its own job. `capture-matrix-job-meta` did the same in step 3.
-  Five suites (`capture-matrix-job-meta`, `create-validation-summary`,
-  `evaluate-automerge-eligibility`, `parse-terraform-plan`, `verify-terraform-lock`) write step
-  output to a fixed `/tmp/test_output.txt`, so two of them running at once overwrite each other's;
+  Four suites (`capture-matrix-job-meta`, `create-validation-summary`, `parse-terraform-plan`,
+  `verify-terraform-lock`; `evaluate-automerge-eligibility` moved to its own file in step 5) write
+  step output to a fixed `/tmp/test_output.txt`, so two of them running at once overwrite each other's;
   a per-suite `mktemp` would end it. `export-env-vars` failed one test once in step 3 and passed on
   every re-run; its output file is fixed too, though named for the suite.
