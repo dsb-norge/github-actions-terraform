@@ -212,6 +212,24 @@ class InvariantCheckerTest(unittest.TestCase):
         self.assertEqual(["errors present but a relevance block is emitted"], invariants.check(document, output))
 
 
+class RelevantInvariantTest(unittest.TestCase):
+    def test_a_run_environment_marked_not_relevant(self):
+        document, output = decided()
+        output["environments"][0]["relevant"] = False
+        self.assertTrue(any(v.startswith("relevant: 'env-0' runs") for v in invariants.check(document, output)))
+
+    def test_a_relevance_skip_marked_relevant(self):
+        document = support.document(environments=[{"environment": "a"}])
+        document["event"] = {"name": "push", "ref_name": "main", "push": {"created": False, "forced": False,
+                                                                          "deleted": False}}
+        document["changed_files"] = {"available": True, "truncated": False, "error": None, "api_head_sha": None,
+                                     "count": 1, "files": ["README.md"]}
+        output = decide.decide(document)
+        self.assertEqual([], invariants.check(document, output))
+        output["environments"][0]["relevant"] = True
+        self.assertTrue(any(v.startswith("relevant: 'a' is skipped") for v in invariants.check(document, output)))
+
+
 class GoalInvariantTest(unittest.TestCase):
     """I1, I2, I3, I15, I16 and rules 2-3, each against an output broken in one way."""
 

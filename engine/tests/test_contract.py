@@ -21,7 +21,7 @@ READ_BY_THE_ACTIONS = {"environment", "github-environment", "verdict", "reasons"
                        "paths", "paths-ignore"}
 # The decision itself, published beside what the actions read: every entry's trigger events, and the
 # goals a running environment is granted (docs/Decision-engine.md I16).
-DECISION_FIELDS = {"trigger-events"}
+DECISION_FIELDS = {"trigger-events", "relevant"}
 
 
 def written(scenario):

@@ -266,8 +266,23 @@ class MatchingTest(unittest.TestCase):
                           "mutates-on-pr": ["apply-on-pr"], "pr-auto-merge-enabled": "true",
                           "pr-auto-merge-from-actors": ["bot"], "pr-auto-merge-limits": None,
                           "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
-                          "paths-ignore": ["**/*.md"], "trigger-events": ["pull_request", "push", "workflow_dispatch"]},
+                          "paths-ignore": ["**/*.md"], "trigger-events": ["pull_request", "push", "workflow_dispatch"],
+                          "relevant": False},
                          entry)
+
+    def test_relevance_is_published_for_an_environment_an_earlier_rule_dropped(self):
+        # It was never planned on the pull request, so the auto-merge must know whether it was touched.
+        environments = [{"environment": "prod"}, {"environment": "nightly", "trigger-events": ["push", "schedule"]}]
+        touched = run(environments=environments, files=["envs/nightly/main.tf"])
+        self.assertEqual([("skip", False), ("skip", True)],
+                         [(e["verdict"], e["relevant"]) for e in touched["environments"]])
+        self.assertEqual(["trigger-events: pull_request not enabled"], touched["environments"][1]["reasons"])
+        untouched = run(environments=environments, files=["envs/prod/main.tf"])
+        self.assertEqual([("run", True), ("skip", False)],
+                         [(e["verdict"], e["relevant"]) for e in untouched["environments"]])
+        # Mode all fails closed: every environment counts as touched.
+        workflow = run(environments=environments, files=[".github/workflows/ci.yml"])
+        self.assertEqual([True, True], [e["relevant"] for e in workflow["environments"]])
 
     def test_mutates_on_pr_lists_the_on_pr_goals_in_a_fixed_order(self):
         for goals, expected in ((["destroy-on-pr", "apply-on-pr"], ["apply-on-pr", "destroy-on-pr"]),
