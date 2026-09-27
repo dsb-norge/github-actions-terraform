@@ -56,6 +56,7 @@ a rule changed; a caller that does nothing gets the new behaviour.
 | Default branch lookup | a failed lookup gave the string `null` and the run went on | read from the event payload; a failed API fallback stops the run | nothing |
 | Configuration errors | log lines, one of them lost in a command substitution | `::error` annotations, the step exits 2 | nothing |
 | Module CI test files outside `tests/` | a file `terraform test` would not find ran nothing and passed | it fails as `not-discovered`, and the test comment's summary line loses its quotes | move the file into the module's `tests/` directory |
+| Goals | `goals-yml` read by `contains()`: a string was a substring, so `init plan destroy-plan` (a list without its dashes) destroyed, a misspelt goal silently held nothing, and case did not matter | a list of known goal names, a single name written alone being that one goal; any other name, case or shape is a validation error naming the valid goals | nothing for a list of known goals, which every surveyed caller uses; otherwise write the goals as a list |
 | Unsupported run events | ran with whatever the gates allowed | `merge_group`, `pull_request_target`, `release` and other events are a validation error | trigger only on pull request, push, dispatch and schedule |
 
 ## 4. New optional features and recommendations
@@ -115,8 +116,9 @@ early.
 | 2 | Path-relevance.md §15: relevance rules, adapter, seed and aggregator changes, the conclusion rewrite, auto-merge | The conclusion rewrite is what the other stages' `needs` entries depend on, and it fixes the blocked pull request. |
 | 3 | Terraform-tests.md §13: the test stage, lanes, environments, provider sets, summary | Depends on the conclusion table and the engine. |
 | 4 | Dispatch-and-triggers.md §11: trigger events, dispatch, the `goals-granted` gate switch | Depends on the engine; the smallest of the four. |
-| 5 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`relevance.json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
-| 6 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8), including a real OIDC login in a Terraform test lane on the test bed, which step 3 did not gate on ([V1-progress.md](V1-progress.md) §3). |
+| 5 | Hardening of caller configuration and auto-merge: the v0 habits the step-4 review found that turn a caller's mistake into a different action, listed in [V1-progress.md](V1-progress.md) §5 | A per-environment `goals:` without `-yml` silently took the global goals and could apply; plan text could zero the counts auto-merge judges. These are v0 behaviours the engine carried over; fixing them before more features land keeps each later step's review about its own change. |
+| 6 | Environment-ordering.md §10: stage assignment in the engine, the three stage jobs, held-back reporting | Depends on the engine (stage assignment is a rule), on relevance (`relevance.json`, the conclusion rewrite and the auto-merge completeness rule are where a held-back environment surfaces) and on dispatch (a single-environment dispatch is both the bypass and the recovery path for a held-back environment). Last of the graph-changing specs, so the `needs` lists are rewritten once. |
+| 7 | Tag v1 | After every spec's open questions are closed on the test-bed and the specs read as built (§8), including a real OIDC login in a Terraform test lane on the test bed, which step 3 did not gate on ([V1-progress.md](V1-progress.md) §3). |
 
 ## 7. Release mechanics
 
