@@ -37,7 +37,9 @@
     "exit_code": 2,
     "deviation": "the fixture names goals that do not exist ('destroy-plan-on-pr', 'dummy', 'apple') and an environment name outside the name rule ('also an env'); both are refused, the goals first (fixture-happy-day-v1 holds the rest)",
     "errors": [
-      "The environment 'my-first-env' has the unknown goal 'destroy-plan-on-pr'; a goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr, one per list item ('- plan' on its own line, or [init, plan])!"
+      "goals-yml has the goal 'dummy', which is not a goal. A goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr.",
+      "goals-yml has the goal 'apple', which is not a goal; did you mean 'apply'? A goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr.",
+      "The environment 'my-first-env' has the goal 'destroy-plan-on-pr', which is not a goal. A goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr."
     ]
   }
 }

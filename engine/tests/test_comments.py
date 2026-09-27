@@ -57,8 +57,8 @@ class ModeAllTest(unittest.TestCase):
 
     def test_an_environment_that_mutates_on_pull_request_gets_the_short_title_and_the_mode_line(self):
         environments = [{"environment": "a", "goals-yml": ["all", "apply-on-pr"]},
-                        {"environment": "b", "goals-yml": ["destroy-on-pr", "apply-on-pr"]},
-                        {"environment": "c", "goals-yml": ["destroy-on-pr"]}]
+                        {"environment": "b", "goals-yml": ["all", "destroy-plan", "destroy-on-pr", "apply-on-pr"]},
+                        {"environment": "c", "goals-yml": ["init", "destroy-plan", "destroy-on-pr"]}]
         self.assertEqual([
             ("<!-- tf:head:env:a -->", f"### Terraform summary for environment: `a`\n\n{WAIT}\n\n🐙 applies on PR"),
             ("<!-- tf:head:env:b -->",
@@ -69,7 +69,7 @@ class ModeAllTest(unittest.TestCase):
     def test_group_heads_come_first_sorted_and_grouped_environments_get_none(self):
         environments = [{"environment": "a", "pr-comment-group": "zeta"}, {"environment": "b"},
                         {"environment": "c", "pr-comment-group": "alpha"},
-                        {"environment": "d", "pr-comment-group": "zeta", "goals-yml": ["apply-on-pr"]}]
+                        {"environment": "d", "pr-comment-group": "zeta", "goals-yml": ["init", "plan", "apply-on-pr"]}]
         self.assertEqual([
             ("<!-- tf:head:group:alpha -->", f"### Terraform validation summary for group: `alpha`\n\n{WAIT}"),
             ("<!-- tf:head:group:zeta -->", f"### Terraform summary for group: `zeta`\n\n{WAIT}"),
@@ -84,7 +84,7 @@ class ModeAllTest(unittest.TestCase):
     def test_a_non_commenting_member_still_sets_the_group_title(self):
         environments = [{"environment": "a", "pr-comment-group": "g"},
                         {"environment": "b", "pr-comment-group": "g", "add-pr-comment": False,
-                         "goals-yml": ["apply-on-pr"]}]
+                         "goals-yml": ["init", "plan", "apply-on-pr"]}]
         self.assertEqual([("<!-- tf:head:group:g -->", f"### Terraform summary for group: `g`\n\n{WAIT}")],
                          heads(environments))
 
@@ -124,7 +124,7 @@ class NotAffectedTest(unittest.TestCase):
         ], heads(self.ENVS, files=["README.md"], count=3))
 
     def test_the_body_keeps_the_title_says_one_file_and_no_ignore(self):
-        environments = [{"environment": "a", "goals-yml": ["apply-on-pr"], "paths": ["x/**"]}]
+        environments = [{"environment": "a", "goals-yml": ["init", "plan", "apply-on-pr"], "paths": ["x/**"]}]
         body = heads(environments, files=["README.md"])[0][1]
         self.assertEqual("### Terraform summary for environment: `a`\n\n"
                          "➖ Not affected by this pull request: no changed file matches this environment's paths "
