@@ -2606,6 +2606,74 @@ else
 fi
 
 # ============================================================================
+# F14 — the auto-merge evidence and pins are wired (docs/Auto-merge.md D1, D2,
+# D3, D9, D10, D13).
+#
+# Each piece works only when the workflow hands it over: the parse steps count
+# from the JSON plan only when given its file, the merger pins nothing without
+# the head and merge SHAs, and the evaluator names tolerated tests only from
+# downloaded test metadata. The auto-merge job runs for the default branch and
+# the same repository only, and no step uploads the JSON plan, which holds
+# sensitive values in plain text.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F14 - the auto-merge evidence and pins are wired${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f14_out=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+
+workflow = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+jobs = workflow["jobs"]
+problems = []
+steps = {step.get("id"): step for step in jobs["terraform-ci-cd"]["steps"] if step.get("id")}
+for parse, plan in (("parse-plan", "plan"), ("parse-destroy-plan", "destroy-plan")):
+    given = (steps.get(parse, {}).get("with") or {}).get("plan-json-file")
+    if given != f"${{{{ steps.{plan}.outputs.json-output-file }}}}":
+        problems.append(f"the step '{parse}' is given the JSON plan as {given!r}")
+for job_id, job in jobs.items():
+    for step in job.get("steps", []):
+        if "upload-artifact" in str(step.get("uses", "")) and "json-output-file" in str(step.get("with", {})):
+            problems.append(f"the job '{job_id}' uploads the JSON plan")
+automerge = jobs["automerge"]
+condition = " ".join(str(automerge.get("if", "")).split())
+for clause in ("github.base_ref == github.event.repository.default_branch",
+               "github.event.pull_request.head.repo.full_name == github.repository"):
+    if clause not in condition:
+        problems.append(f"the automerge job lacks the condition {clause}")
+names = [step.get("id") or step.get("name") for step in automerge["steps"]]
+by_uses = {str(step.get("uses", "")).split("@")[0].rsplit("/", 1)[-1]: step for step in automerge["steps"]}
+downloads = [index for index, step in enumerate(automerge["steps"])
+             if "download-artifact" in str(step.get("uses", ""))
+             and (step.get("with") or {}).get("pattern") == "terraform-test-meta-*"
+             and (step.get("with") or {}).get("merge-multiple") is True]
+evaluator = names.index("evaluate-automerge")
+if not downloads or downloads[0] > evaluator:
+    problems.append("the automerge job does not download the test metadata before evaluating")
+pattern = (by_uses["evaluate-automerge-eligibility"].get("with") or {}).get("test-metadata-files-pattern")
+if pattern != "terraform-test-meta-*.json":
+    problems.append(f"the evaluator reads the test metadata as {pattern!r}")
+merger = by_uses["auto-merge-pr"].get("with") or {}
+for key, value in (("head-sha", "${{ github.event.pull_request.head.sha }}"), ("merge-sha", "${{ github.sha }}")):
+    if merger.get(key) != value:
+        problems.append(f"the merger is given '{key}' as {merger.get(key)!r}")
+print("checked the JSON plan wiring, the auto-merge scope, the test metadata and the merge pins")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f14_rc=0 || _f14_rc=$?
+if [[ "${_f14_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f14_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f14_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

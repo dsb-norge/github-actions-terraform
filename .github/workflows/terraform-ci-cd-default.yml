@@ -39,7 +39,9 @@ on:
 
           Optional fields are:
             (a bool field takes true or false, quoted or not, and anything else is an error; a string field that
-            overrides a workflow input must be a string, so quote a value YAML reads as a number, ex. terraform-version: "1.10")
+            overrides a workflow input must be a string, so quote a value YAML reads as a number, ex. terraform-version: "1.10".
+            Any other key is a validation error naming the closest known one, so a typo never falls back to the global
+            value silently; the full list is docs/Configuration-validation.md §3.1.)
             - project-dir
                 string, path to a directory to run terraform commands within, the path should be relative to the calling repos root, ex. './envs/dev'.
                 note: if this is omitted the workflow will default to use the directory '[repo root]/envs/[workflow input 'environment']'.
@@ -49,6 +51,10 @@ on:
                 note: the same characters as 'environment', and no two environments may share one (compared without case).
             - url
                 string, a url to display in github's deployment environment UI.
+            - paths, paths-ignore
+                YAML lists of glob patterns deciding which changes the environment is relevant to, see the workflow input 'path-relevance-enabled'.
+            - trigger-events
+                YAML list of the events the environment takes part in, see the workflow input 'trigger-events-yml'. 'schedule' is set here only.
             - add-pr-comment
                 bool, whether to add validation summary as comment on PR, see the workflow input 'add-pr-comment'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
@@ -68,6 +74,14 @@ on:
                 Default behavior (empty string) is unchanged from prior versions — each environment gets its own table+plan comment.
                 See docs/Workflow-pr-comments.md for full details.
                 note: this is a per environment setting, use the workflow input for a global default that applies to all environments.
+            - pr-auto-merge-enabled
+                bool, see the workflow input 'pr-auto-merge-enabled'. false keeps this environment's changes, and with them every pull request of the repository, from auto-merging.
+            - pr-auto-merge-from-actors-yml
+                YAML list of logins, see the workflow input 'pr-auto-merge-from-actors-yml'.
+                note: replaces the global list for this environment, never adds to it.
+            - pr-auto-merge-limits-yml
+                YAML object of limits, see the workflow input 'pr-auto-merge-limits-yml'.
+                note: merged into the global limits, so one limit can be overridden alone.
             - allow-failing-terraform-operations
                 bool, defaults to false, if true: the workflow will not terminate with failure even if job steps fails.
                 This parameter allows for ignoring failing results of terraform operations for select environments.
@@ -136,6 +150,9 @@ on:
           Type: YAML list (as string), one goal per item. A single goal may be written alone ('plan'), which is that one
           goal. Any other name, or a list written without its dashes ('init plan destroy-plan' on separate lines, which
           YAML reads as one string), is a validation error: the old substring reading turned that string into a destroy.
+          So is a goal without the goal it needs, whose stage could never run: 'plan' or 'destroy-plan' without 'init',
+          'apply' or 'apply-on-pr' without 'plan', 'destroy' or 'destroy-on-pr' without 'destroy-plan' ('all' holds
+          'init' and 'plan').
           Example:
             goals-yml: "[init, format, validate]"
 
@@ -148,7 +165,8 @@ on:
           Additional directories to include during the 'init' stage. 'terraform init' will be executed within each of these.
           The path should be relative to the calling repos root, ex. './modules/my-module'.
 
-          Type: YAML array (as string).
+          Type: YAML array (as string), one directory per item; a single directory may be written alone, and a
+          directory holding a space is one directory. An empty item is a validation error.
           Example:
             terraform-init-additional-dirs-yml: |
               - "./main"
@@ -163,8 +181,10 @@ on:
           Key value pairs of environment variables to make available to all stages og all environments.
 
           Type: YAML object:
-            key:    env name
-            value:  value of env
+            key:    env name, letters, digits and underscores, not starting with a digit
+            value:  value of env, as written: 'TF_VAR_version: 1.10' is '1.10' and 'ACCOUNT: 012345678901' keeps its
+                    zero. A null ('~', or the key with no value) means not set, so an environment's null removes a
+                    global variable for that environment. A mapping or a list is a validation error; quote it.
           Example:
             extra-envs-yml: |
               ARM_USE_OIDC: true
@@ -179,8 +199,8 @@ on:
           The value of the environment variables will be retrieved from github secrets.
 
           Type: YAML object:
-            key:    env name
-            value:  secret name to get value from
+            key:    env name, letters, digits and underscores, not starting with a digit
+            value:  secret name to get value from; a null means not set, as in 'extra-envs-yml'
           Example:
             extra-envs-from-secrets-yml: |
               ARM_CLIENT_ID: NAME_OF_GITHUB_SECRET_WITH_SERVICE_PRINCIPAL_CLIENT_ID
@@ -411,9 +431,12 @@ on:
         type: boolean
         description: |
           Whether to enable automatic pull request merging when the workflow is triggered by a pull request event.
-          The configuration for automatic pull request merging is further controlled by the input 'pr-auto-merge-from-actors-yml' and 'pr-auto-merge-limits-yml'
+          The configuration for automatic pull request merging is further controlled by the input 'pr-auto-merge-from-actors-yml' and 'pr-auto-merge-limits-yml'.
+          Only a pull request against the default branch, from the same repository, is ever merged automatically.
 
-          NOTE: This setting applies to all environments, there is no per environment setting for this.
+          NOTE: This switches auto-merge on or off for the whole run. An environment may set 'pr-auto-merge-enabled: false' in
+          'environments-yml', which keeps every pull request of the repository from auto-merging; setting it true there while
+          this input is false changes nothing, and says so in a warning.
         required: false
         default: false
       pr-auto-merge-from-actors-yml:
@@ -426,18 +449,23 @@ on:
           When automatic pull request merging is considered, the input 'pr-auto-merge-limits-yml' is used to evaluate if merging should actually be performed.
 
           Data:
-            Type: YAML array (as string) of github actor names that are allowed to have their pull requests automatically merged.
-            Default (empty array) means that all actors are allowed.
+            Type: YAML array (as string) of the GitHub logins whose pull requests may be merged automatically; a single
+            login may be written alone. Logins compare without case. In a flow list a bot's login must be quoted,
+            since YAML reads its brackets as a list: '["dependabot[bot]", "renovate[bot]"]'.
+            With 'pr-auto-merge-enabled' true, the list in effect for every environment with auto-merge enabled must
+            name someone: an empty list is a validation error, never "everyone".
 
-          NOTE: This setting applies to all environments, there is no per environment setting for this.
+          NOTE: This applies to all environments; an environment's own 'pr-auto-merge-from-actors-yml' replaces it.
         required: false
-        default: "[]" # empty array, means all actors allowed
+        default: "[]" # nobody; name the accounts when 'pr-auto-merge-enabled' is true
       pr-auto-merge-limits-yml:
         type: string
         description: |
           Configuration for when automatic pull request merging should occur. Defines limits that must be met for automatic merging to be performed.
 
-          The various limits are evaluated against terraform plan output for each environment.
+          The various limits are evaluated against the counts of each environment's JSON plan, the plan's and the
+          destroy plan's added together. An environment whose counts are unknown, or whose plan is not the whole plan
+          (a -target plan), is not eligible.
 
           Only if limits are met for all environments automatic merging be performed. Given that, automatic merging is only considered when the workflow is triggered by a pull request event and the input 'pr-auto-merge-enabled' is set to true and the input 'pr-auto-merge-from-actors-yml' allows the actor.
 
@@ -447,7 +475,7 @@ on:
           - For each limit, if the value is set to a positive integer 'N', the corresponding count in the terraform plan must be less than or equal to 'N'.
 
           Data:
-            Type: YAML object with the following fields (all optional):
+            Type: YAML object with the following fields, each an unquoted whole number of -1 or more:
               - plan-max-count-add
                   integer, maximum number of resources to be added allowed in the terraform plan for automatic merging to occur.
               - plan-max-count-change
@@ -465,7 +493,9 @@ on:
 
           NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
 
-          ALSO NOTE: If you specify this input as common for all environments, you must specify all fields. Values can still be overridden per environment.
+          ALSO NOTE: An environment's values are merged into these, so it may override one limit alone; after the merge all
+          six must be set. An absent or empty value means the default above. An unknown limit, a quoted number or a value
+          below -1 is a validation error.
         required: false
         default: |
           plan-max-count-add: 0
@@ -1006,6 +1036,9 @@ jobs:
         uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v1
         with:
           plan-console-file: ${{ steps.plan.outputs.console-output-file }}
+          # The counts come from the JSON plan, which nothing in a resource's values can forge
+          # (docs/Auto-merge.md §5.2); the console feeds the plan extract only.
+          plan-json-file: ${{ steps.plan.outputs.json-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       # Warning extraction — one parse-terraform-warnings invocation per step
@@ -1409,17 +1442,18 @@ jobs:
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
 
       # The step id is load-bearing: evaluate-automerge-eligibility reads
-      # .steps["parse-destroy-plan"].outputs.count-* out of the captured
-      # metadata by this literal name. Before this step existed every
-      # destroy-plan-max-count-* auto-merge limit compared against an empty
-      # string and was never enforced (docs/Apply-and-destroy-reporting.md
-      # §5.1, P7). Renaming it re-breaks that silently.
+      # .steps["parse-destroy-plan"].outputs out of the captured metadata by
+      # this literal name and adds the destroy plan's counts to the plan's
+      # before comparing them with the one set of plan-max-count-* limits
+      # (docs/Auto-merge.md D12). Renaming it hides the destroy plan from
+      # the limits silently.
       - name: "🔍 Parse terraform destroy plan"
         id: parse-destroy-plan
         if: always() && steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
         uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v1
         with:
           plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
+          plan-json-file: ${{ steps.destroy-plan.outputs.json-output-file }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
       - name: "⚠️ Parse destroy-plan warnings"
@@ -2342,7 +2376,10 @@ jobs:
     #   - global setting pr-auto-merge-enabled is true AND
     #   - workflow triggered by pull request event AND
     #   - pull request is not being closed AND
-    #   - pull request is not being converted to draft
+    #   - pull request is not being converted to draft AND
+    #   - pull request is against the default branch, from the same repository (docs/Auto-merge.md D9):
+    #     a fork's run has no secrets and its code is never merged unreviewed; comparing full names
+    #     also holds for a calling repository that is itself a fork, and for a deleted fork's null head.repo
     # !cancelled() replaces the implicit success(), which a skipped matrix would fail (P14).
     if: |
       !cancelled()
@@ -2356,6 +2393,8 @@ jobs:
       && github.event.action != 'closed'
       && github.event.action != 'converted_to_draft'
       && github.event.pull_request.draft != true
+      && github.base_ref == github.event.repository.default_branch
+      && github.event.pull_request.head.repo.full_name == github.repository
     name: "PR auto merger"
     needs: [create-matrix, terraform-ci-cd, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
@@ -2388,6 +2427,13 @@ jobs:
         # A download by name throws when the artifact is missing (P8); the action then behaves as
         # it did before relevance.
         continue-on-error: true
+      - name: "📥 Download test job metadata"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: terraform-test-meta-* # uploaded by the terraform-test job
+          merge-multiple: true
+        # Zero matches is a valid input: a tolerated test is only ever named, never blocking (D13).
+        continue-on-error: true
       - name: "🔍 Evaluate PR auto merge eligibility across all environments"
         id: evaluate-automerge
         uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@v1
@@ -2396,6 +2442,8 @@ jobs:
           # Every affected environment must have its metadata; an unaffected one is judged on
           # its enabled flag and actor allowlist, so a docs-only pull request is never merged blindly.
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
+          # Names every failing test that allow-failing-terraform-tests tolerated.
+          test-metadata-files-pattern: "terraform-test-meta-*.json"
       - name: "🔑 Resolve auto-merge app private key"
         id: resolve-key
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
@@ -2435,3 +2483,7 @@ jobs:
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           github-event-context-json: ${{ toJSON(github.event) }}
+          # The merge is pinned to what the run planned: the head it planned and, through the
+          # merge commit's first parent, the base (docs/Auto-merge.md D2, D3).
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          merge-sha: ${{ github.sha }}
