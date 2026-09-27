@@ -258,7 +258,7 @@ class MatchingTest(unittest.TestCase):
 
     def test_the_entry_carries_what_the_jobs_after_the_matrix_read(self):
         environments = [{"environment": "prod", "github-environment": "gh-prod", "pr-comment-group": "g",
-                         "goals-yml": ["plan", "apply-on-pr"], "pr-auto-merge-enabled": True,
+                         "goals-yml": ["init", "plan", "apply-on-pr"], "pr-auto-merge-enabled": True,
                          "pr-auto-merge-from-actors-yml": ["bot"]}]
         entry = run(environments=environments, files=["README.md"])["environments"][0]
         self.assertEqual({"environment": "prod", "verdict": "skip", "reasons": ["relevance: no changed file matches"],
@@ -285,8 +285,8 @@ class MatchingTest(unittest.TestCase):
         self.assertEqual([True, True], [e["relevant"] for e in workflow["environments"]])
 
     def test_mutates_on_pr_lists_the_on_pr_goals_in_a_fixed_order(self):
-        for goals, expected in ((["destroy-on-pr", "apply-on-pr"], ["apply-on-pr", "destroy-on-pr"]),
-                                (["all"], []), (["apply"], []), ("apply-on-pr", ["apply-on-pr"]), (None, [])):
+        for goals, expected in ((["all", "destroy-plan", "destroy-on-pr", "apply-on-pr"], ["apply-on-pr", "destroy-on-pr"]),
+                                (["all"], []), (["init", "plan", "apply"], []), (None, [])):
             with self.subTest(goals=goals):
                 environments = [{"environment": "prod", "goals-yml": goals}]
                 self.assertEqual(expected, run(environments=environments, files=[])["environments"][0]["mutates-on-pr"])

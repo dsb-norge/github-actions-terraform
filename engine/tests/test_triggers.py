@@ -274,14 +274,15 @@ class GoalInputTest(unittest.TestCase):
         self.assertEqual({"scratch": ["init", "plan", "apply", "destroy-plan", "destroy"]}, granted(output))
 
     def test_apply_needs_apply_or_all_and_apply_on_pr_does_not_count(self):
-        environments = [{"environment": "a", "goals-yml": ["apply"]}, {"environment": "b", "goals-yml": ["all"]},
-                        {"environment": "c", "goals-yml": ["plan", "apply-on-pr"]},
+        environments = [{"environment": "a", "goals-yml": ["init", "plan", "apply"]},
+                        {"environment": "b", "goals-yml": ["all"]},
+                        {"environment": "c", "goals-yml": ["init", "plan", "apply-on-pr"]},
                         {"environment": "d", "goals-yml": ["init"]}]
         output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "apply"}))
-        self.assertEqual(["dispatch: environment 'c' does not hold the goal 'apply' (goals: plan, apply-on-pr)",
+        self.assertEqual(["dispatch: environment 'c' does not hold the goal 'apply' (goals: init, plan, apply-on-pr)",
                           "dispatch: environment 'd' does not hold the goal 'apply' (goals: init)"], output["errors"])
         output = decided(document(environments[:2], event="workflow_dispatch", dispatch={"goal": "apply"}))
-        self.assertEqual({"a": ["apply"], "b": WITH_APPLY}, granted(output))
+        self.assertEqual({"a": ["init", "plan", "apply"], "b": WITH_APPLY}, granted(output))
 
     def test_apply_never_brings_a_destroy_with_it(self):
         output = decided(document(event="workflow_dispatch", dispatch={"environment": "scratch", "goal": "apply"}))
@@ -296,19 +297,19 @@ class GoalInputTest(unittest.TestCase):
                           "'feature/x'"], output["errors"])
 
     def test_destroy_plan_needs_the_goal_itself(self):
-        environments = [{"environment": "a", "goals-yml": ["all", "lint"]}, {"environment": "b", "goals-yml": ["destroy"]},
+        environments = [{"environment": "a", "goals-yml": ["all", "lint"]}, {"environment": "b", "goals-yml": ["init"]},
                         {"environment": "c", "goals-yml": ["init", "destroy-plan"]}]
         output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "destroy-plan"}))
         self.assertEqual(["dispatch: environment 'a' does not hold the goal 'destroy-plan' (goals: all, lint)",
-                          "dispatch: environment 'b' does not hold the goal 'destroy-plan' (goals: destroy)"],
+                          "dispatch: environment 'b' does not hold the goal 'destroy-plan' (goals: init)"],
                          output["errors"])
         output = decided(document(environments[2:], event="workflow_dispatch", dispatch={"goal": "destroy-plan"}))
         self.assertEqual({"c": ["init", "destroy-plan"]}, granted(output))
 
     def test_a_single_goal_written_alone_is_listed_as_one(self):
-        environments = [{"environment": "a", "goals-yml": "plan"}]
-        output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "apply"}))
-        self.assertEqual(["dispatch: environment 'a' does not hold the goal 'apply' (goals: plan)"], output["errors"])
+        environments = [{"environment": "a", "goals-yml": "all"}]
+        output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "destroy-plan"}))
+        self.assertEqual(["dispatch: environment 'a' does not hold the goal 'destroy-plan' (goals: all)"], output["errors"])
 
     def test_a_goal_off_the_default_branch_caps_a_branch_run(self):
         output = decided(document(event="workflow_dispatch", ref="feature/x", dispatch={"goal": "plan"}))
@@ -330,33 +331,38 @@ class ExpansionTest(unittest.TestCase):
         self.assertEqual(STANDARD, self.goals(["all"], ref="feature/x"))
 
     def test_apply_and_destroy_need_the_default_branch_and_their_events(self):
-        goals = ["apply", "destroy"]
-        for event, expected in (("push", ["apply", "destroy"]), ("workflow_dispatch", ["apply", "destroy"]),
-                                ("schedule", ["apply"]), ("pull_request", [])):
+        goals = ["init", "plan", "apply", "destroy-plan", "destroy"]
+        always = ["init", "plan"]
+        for event, expected in (("push", always + ["apply", "destroy-plan", "destroy"]),
+                                ("workflow_dispatch", always + ["apply", "destroy-plan", "destroy"]),
+                                ("schedule", always + ["apply", "destroy-plan"]),
+                                ("pull_request", always + ["destroy-plan"])):
             with self.subTest(event=event):
                 environments = [{"environment": "a", "goals-yml": goals, "trigger-events": [event]}]
                 output = decided(document(environments, event=event, base_ref="main"))
                 self.assertEqual(expected, output["environments"][0]["goals"])
-        self.assertEqual([], self.goals(goals, ref="feature/x"))
+        self.assertEqual(always + ["destroy-plan"], self.goals(goals, ref="feature/x"))
 
     def test_the_on_pr_goals_need_a_pull_request_against_the_default_branch(self):
-        goals = ["apply-on-pr", "destroy-on-pr"]
+        goals = ["init", "plan", "apply-on-pr", "destroy-plan", "destroy-on-pr"]
+        planned = ["init", "plan", "destroy-plan"]
         pull = dict(event="pull_request", base_ref="main")
-        self.assertEqual(["apply", "destroy"], self.goals(goals, **pull))
-        self.assertEqual(["apply", "destroy"], self.goals(goals, ref="87/merge", action="synchronize", **pull))
+        both = ["init", "plan", "apply", "destroy-plan", "destroy"]
+        self.assertEqual(both, self.goals(goals, **pull))
+        self.assertEqual(both, self.goals(goals, ref="87/merge", action="synchronize", **pull))
         for kwargs in (dict(action="closed"), dict(action="converted_to_draft")):
             with self.subTest(kwargs=kwargs):
-                self.assertEqual([], self.goals(goals, **pull, **kwargs))
-        self.assertEqual([], self.goals(goals, event="pull_request", base_ref="develop"))
-        self.assertEqual([], self.goals(goals, event="pull_request"))
-        self.assertEqual([], self.goals(goals, event="push", base_ref="main"))
+                self.assertEqual(planned, self.goals(goals, **pull, **kwargs))
+        self.assertEqual(planned, self.goals(goals, event="pull_request", base_ref="develop"))
+        self.assertEqual(planned, self.goals(goals, event="pull_request"))
+        self.assertEqual(planned, self.goals(goals, event="push", base_ref="main"))
 
     def test_destroy_plan_is_granted_on_every_event(self):
         for event in ("pull_request", "push", "workflow_dispatch", "schedule"):
             with self.subTest(event=event):
-                environments = [{"environment": "a", "goals-yml": ["destroy-plan"], "trigger-events": [event]}]
+                environments = [{"environment": "a", "goals-yml": ["init", "destroy-plan"], "trigger-events": [event]}]
                 output = decided(document(environments, event=event, ref="feature/x"))
-                self.assertEqual(["destroy-plan"], output["environments"][0]["goals"])
+                self.assertEqual(["init", "destroy-plan"], output["environments"][0]["goals"])
 
     def test_no_goals_run_with_none(self):
         output = decided(document([{"environment": "a"}]))
@@ -377,53 +383,131 @@ class ExpansionTest(unittest.TestCase):
 
 
 class GoalsRuleTest(unittest.TestCase):
-    """The goals an environment names are a list of known names; a plain string is one goal."""
+    """The goals an environment names: a list of known names with their prerequisites; a plain string is
+    one goal (docs/Configuration-validation.md §3.2)."""
 
-    VOCABULARY = ("init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr, "
-                  "one per list item ('- plan' on its own line, or [init, plan])!")
+    VOCABULARY = ("A goal is one of init, format, validate, lint, plan, apply, destroy-plan, destroy, all, "
+                  "apply-on-pr, destroy-on-pr.")
 
     def output(self, goals, **kwargs):
         return decided(document([{"environment": "a", "goals-yml": goals}], **kwargs))
 
     def test_a_plain_string_is_one_goal_never_a_substring(self):
-        # The workflow's contains() read 'destroy-plan' as holding plan and destroy too.
-        self.assertEqual({"a": ["destroy-plan"]}, granted(self.output("destroy-plan")))
+        # The old gates read 'destroy-plan' as holding plan and destroy too; as one goal it lacks init.
+        self.assertEqual(["The environment 'a' has the goal 'destroy-plan' without 'init': a destroy plan needs an "
+                          "initialised directory, so it could never run. Add 'init', or use 'all'."],
+                         self.output("destroy-plan")["errors"])
         self.assertEqual({"a": WITH_APPLY}, granted(self.output("all")))
-        self.assertEqual(["destroy-plan"], self.output("destroy-plan")["matrices"]["1"]["include"][0]["vars"]["goals"])
+        self.assertEqual(["init"], self.output("init")["matrices"]["1"]["include"][0]["vars"]["goals"])
 
     def test_a_list_written_without_its_dashes_is_an_error_not_a_destroy(self):
         # 'goals-yml: |' with the goals on separate lines and no dashes parses as one string.
-        for text in ("init plan destroy-plan", "init, plan, destroy-plan", "init plan apply-on-pr"):
+        for text, listed in (("init plan destroy-plan", "init, plan, destroy-plan"),
+                             ("init, plan, destroy-plan", "init, plan, destroy-plan"),
+                             ("init\tplan apply-on-pr", "init, plan, apply-on-pr")):
             with self.subTest(text=text):
-                self.assertEqual([f"The environment 'a' has the unknown goal {text!r}; a goal is one of "
-                                  + self.VOCABULARY], self.output(text)["errors"])
+                self.assertEqual([f"The environment 'a' has the goal {text!r}, which is not a goal. It looks like a "
+                                  "list written without its dashes: YAML reads the lines as one piece of text. Write "
+                                  f"one goal per line starting with '- ', or [{listed}]."], self.output(text)["errors"])
 
-    def test_a_misspelt_or_unknown_goal_is_an_error(self):
-        self.assertEqual(["The environment 'a' has the unknown goal 'aply', 'destroy-plan-on-pr'; a goal is one of "
-                          + self.VOCABULARY],
+    def test_two_goals_and_a_block_s_trailing_newline_are_a_list_without_dashes_too(self):
+        for text, listed in (("init plan", "init, plan"), ("init\nplan\n", "init, plan")):
+            with self.subTest(text=text):
+                self.assertEqual([f"The environment 'a' has the goal {text!r}, which is not a goal. It looks like a "
+                                  "list written without its dashes: YAML reads the lines as one piece of text. Write "
+                                  f"one goal per line starting with '- ', or [{listed}]."], self.output(text)["errors"])
+
+    def test_one_goal_with_a_stray_separator_is_a_near_miss(self):
+        self.assertEqual([f"The environment 'a' has the goal 'plan ', which is not a goal; did you mean 'plan'? "
+                          f"{self.VOCABULARY}"], self.output(["init", "plan "])["errors"])
+
+    def test_all_holds_the_prerequisites_of_plan_apply_and_destroy_plan(self):
+        for goals in (["all", "plan"], ["all", "apply"], ["all", "destroy-plan"], ["all", "apply-on-pr"]):
+            with self.subTest(goals=goals):
+                self.assertEqual([], self.output(goals)["errors"])
+
+    def test_text_that_only_looks_like_a_list_is_an_unknown_goal(self):
+        # A misspelt part means it is not a list of goals without its dashes.
+        self.assertEqual([f"The environment 'a' has the goal 'init plna', which is not a goal. {self.VOCABULARY}"],
+                         self.output(["init plna"])["errors"])
+
+    def test_a_misspelt_unknown_or_other_cased_goal_is_an_error(self):
+        self.assertEqual(["The environment 'a' has the goal 'aply', which is not a goal; did you mean 'apply'? "
+                          + self.VOCABULARY,
+                          "The environment 'a' has the goal 'destroy-plan-on-pr', which is not a goal. " + self.VOCABULARY],
                          self.output(["init", "plan", "aply", "destroy-plan-on-pr"])["errors"])
-        self.assertEqual(["The environment 'a' has the unknown goal 'ALL'; a goal is one of " + self.VOCABULARY],
+        self.assertEqual(["The environment 'a' has the goal 'ALL'; goals are written in lower case: 'all'."],
                          self.output(["ALL"])["errors"])
-        self.assertEqual(["The environment 'a' has the unknown goal 1, null, [\"plan\"]; a goal is one of "
-                          + self.VOCABULARY], self.output([1, None, ["plan"]])["errors"])
+        self.assertEqual(["The environment 'a' has the goal 1, which is not a goal. " + self.VOCABULARY,
+                          "The environment 'a' has the goal null, which is not a goal. " + self.VOCABULARY,
+                          'The environment \'a\' has the goal ["plan"], which is not a goal. ' + self.VOCABULARY],
+                         self.output([1, None, ["plan"]])["errors"])
+
+    def test_a_goal_whose_prerequisite_is_missing_is_an_error(self):
+        cases = [
+            (["plan"], "The environment 'a' has the goal 'plan' without 'init': a plan needs an initialised directory, "
+                       "so it could never run. Add 'init', or use 'all'."),
+            (["init", "apply"], "The environment 'a' has the goal 'apply' without 'plan': an apply deploys the plan, so "
+                                "it could never run. Add 'plan', or use 'all'."),
+            (["init", "apply-on-pr"], "The environment 'a' has the goal 'apply-on-pr' without 'plan': an apply on a pull "
+                                      "request deploys the plan, so it could never run. Add 'plan', or use 'all'."),
+            (["all", "destroy"], "The environment 'a' has the goal 'destroy' without 'destroy-plan': a destroy deploys "
+                                 "the destroy plan, so it could never run. Add 'destroy-plan'."),
+            (["all", "destroy-on-pr"], "The environment 'a' has the goal 'destroy-on-pr' without 'destroy-plan': a "
+                                       "destroy on a pull request deploys the destroy plan, so it could never run. Add "
+                                       "'destroy-plan'."),
+        ]
+        for goals, message in cases:
+            with self.subTest(goals=goals):
+                self.assertEqual([message], self.output(goals)["errors"])
+
+    def test_the_prerequisites_are_met_by_all_or_by_the_goal(self):
+        for goals in (["all", "apply-on-pr"], ["init", "plan", "apply"], ["all", "destroy-plan", "destroy"],
+                      ["init", "destroy-plan", "destroy-on-pr"], ["format", "validate", "lint"]):
+            with self.subTest(goals=goals):
+                self.assertEqual([], self.output(goals)["errors"])
+
+    def test_every_prerequisite_problem_is_reported(self):
+        self.assertEqual(["The environment 'a' has the goal 'plan' without 'init': a plan needs an initialised "
+                          "directory, so it could never run. Add 'init', or use 'all'.",
+                          "The environment 'a' has the goal 'destroy' without 'destroy-plan': a destroy deploys the "
+                          "destroy plan, so it could never run. Add 'destroy-plan'."],
+                         self.output(["plan", "destroy"])["errors"])
 
     def test_other_shapes_are_an_error(self):
         for goals, shown in ((3, "3"), (True, "true"), ({"all": True}, '{"all": true}')):
             with self.subTest(goals=goals):
-                self.assertEqual([f"The environment 'a' has the goals {shown}; they must be a list of goals!"],
+                self.assertEqual([f"The environment 'a' has the goals {shown}; they must be a list of goal names."],
                                  self.output(goals)["errors"])
 
     def test_no_goals_is_an_empty_list(self):
         self.assertEqual({"a": []}, granted(self.output(None)))
         self.assertEqual({"a": []}, granted(self.output([])))
 
-    def test_the_global_goals_are_held_to_the_same_rule(self):
-        doc = document([{"environment": "a"}])
+    def test_the_global_goals_are_reported_once_naming_the_input(self):
+        doc = document([{"environment": "a"}, {"environment": "b"}])
         doc["yaml"]["inputs"]["goals-yml"] = support.parsed("init plan destroy-plan")
-        self.assertEqual(["The environment 'a' has the unknown goal 'init plan destroy-plan'; a goal is one of "
-                          + self.VOCABULARY], decided(doc)["errors"])
-        doc["yaml"]["inputs"]["goals-yml"] = support.parsed("plan")
-        self.assertEqual({"a": ["plan"]}, granted(decided(doc)))
+        self.assertEqual(["goals-yml has the goal 'init plan destroy-plan', which is not a goal. It looks like a list "
+                          "written without its dashes: YAML reads the lines as one piece of text. Write one goal per "
+                          "line starting with '- ', or [init, plan, destroy-plan]."], decided(doc)["errors"])
+        doc["yaml"]["inputs"]["goals-yml"] = support.parsed("all")
+        self.assertEqual({"a": WITH_APPLY, "b": WITH_APPLY}, granted(decided(doc)))
+
+    def test_the_global_goals_are_validated_when_every_environment_sets_its_own(self):
+        doc = document([{"environment": "a", "goals-yml": ["all"]}])
+        doc["yaml"]["inputs"]["goals-yml"] = support.parsed(["aply"])
+        self.assertEqual(["goals-yml has the goal 'aply', which is not a goal; did you mean 'apply'? " + self.VOCABULARY],
+                         decided(doc)["errors"])
+
+    def test_the_global_and_every_environment_are_reported_together(self):
+        doc = document([{"environment": "a", "goals-yml": ["plan"]}, {"environment": "b", "goals-yml": ["ALL"]}])
+        doc["yaml"]["inputs"]["goals-yml"] = support.parsed(["init", "apply"])
+        self.assertEqual(["goals-yml has the goal 'apply' without 'plan': an apply deploys the plan, so it could never "
+                          "run. Add 'plan', or use 'all'.",
+                          "The environment 'a' has the goal 'plan' without 'init': a plan needs an initialised "
+                          "directory, so it could never run. Add 'init', or use 'all'.",
+                          "The environment 'b' has the goal 'ALL'; goals are written in lower case: 'all'."],
+                         decided(doc)["errors"])
 
 
 class LinesTest(unittest.TestCase):

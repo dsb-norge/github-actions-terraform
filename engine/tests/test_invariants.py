@@ -285,7 +285,7 @@ class GoalInvariantTest(unittest.TestCase):
         self.assertViolation(document, output, "I1: 'a' is granted a goal outside the vocabulary")
 
     def test_a_goal_the_gate_would_not_pass(self):
-        for goals, granted in ((("plan",), ["plan", "apply"]), (("apply",), ["destroy"]),
+        for goals, granted in ((("init", "plan"), ["plan", "apply"]), (("init", "plan", "apply"), ["destroy"]),
                                (("init",), ["destroy-plan"]), (("init",), ["lint"])):
             with self.subTest(goals=goals, granted=granted):
                 document, output = self.decide(goals=goals)
@@ -298,13 +298,13 @@ class GoalInvariantTest(unittest.TestCase):
         self.assertViolation(document, output, "I1: 'a' is granted 'apply'")
 
     def test_destroy_on_a_schedule(self):
-        document, output = self.decide(event="schedule", goals=("destroy", "destroy-plan"),
+        document, output = self.decide(event="schedule", goals=("init", "destroy-plan", "destroy"),
                                        trigger_events=["schedule"])
         self.grant(output, ["destroy-plan", "destroy"])
         self.assertViolation(document, output, "I15")
 
     def test_a_dispatch_that_grants_more_than_a_push(self):
-        document, output = self.decide(event="workflow_dispatch", goals=("plan",), dispatch={"goal": "plan"})
+        document, output = self.decide(event="workflow_dispatch", goals=("init", "plan"), dispatch={"goal": "plan"})
         document["event"]["name"] = "workflow_dispatch"
         self.grant(output, ["plan", "apply"])
         self.assertViolation(document, output, "I3")

@@ -196,24 +196,50 @@ def check_keys(environments):
             for problem in (_key_problem(entry["environment"], key) for key in sorted(entry, key=shown)) if problem]
 
 
-def _goals(name, value):
-    """The environment's goals as a list of known names, or a ConfigError.
+# What each goal needs to have been granted too, or its step could never run (the gate of an apply
+# needs a successful plan, of a plan an initialised directory, of a destroy a destroy plan).
+PREREQUISITES = {
+    "plan": (("init", "all"), "a plan needs an initialised directory", "Add 'init', or use 'all'."),
+    "destroy-plan": (("init", "all"), "a destroy plan needs an initialised directory", "Add 'init', or use 'all'."),
+    "apply": (("plan", "all"), "an apply deploys the plan", "Add 'plan', or use 'all'."),
+    "apply-on-pr": (("plan", "all"), "an apply on a pull request deploys the plan", "Add 'plan', or use 'all'."),
+    "destroy": (("destroy-plan",), "a destroy deploys the destroy plan", "Add 'destroy-plan'."),
+    "destroy-on-pr": (("destroy-plan",), "a destroy on a pull request deploys the destroy plan", "Add 'destroy-plan'."),
+}
+GOAL_LIST = ", ".join(GOALS)
 
-    A plain string is one goal. The workflow's contains() once read a string as a substring, so a
-    list written without its dashes, 'init plan destroy-plan', held destroy and destroyed on the next
-    push. A goal outside the vocabulary is an error, never a name that silently holds nothing.
-    """
+
+def _as_goal_list(value):
+    """The goals as a list: a plain string is one goal, never a substring, and none is empty."""
     if value is None:
         return []
-    goals = [value] if isinstance(value, str) else value
+    return [value] if isinstance(value, str) else value
+
+
+def _goal_name_problem(owner, goal):
+    if isinstance(goal, str) and len(parts := [part for part in re.split(r"[\s,]+", goal) if part]) > 1 \
+            and all(part in GOALS for part in parts):
+        return (f"{owner} has the goal {shown(goal)}, which is not a goal. It looks like a list written without its "
+                "dashes: YAML reads the lines as one piece of text. Write one goal per line starting with '- ', or "
+                f"[{', '.join(parts)}].")
+    if isinstance(goal, str) and goal.lower() in GOALS:
+        return f"{owner} has the goal {shown(goal)}; goals are written in lower case: '{goal.lower()}'."
+    guess = near_miss(goal, GOALS) if isinstance(goal, str) else None
+    hint = f"; did you mean '{guess}'?" if guess else "."
+    return f"{owner} has the goal {shown(goal)}, which is not a goal{hint} A goal is one of {GOAL_LIST}."
+
+
+def goal_problems(owner, value):
+    """Every problem of one goals value (docs/Configuration-validation.md §3.2); `owner` begins each message."""
+    goals = _as_goal_list(value)
     if not isinstance(goals, list):
-        raise ConfigError([f"The environment '{name}' has the goals {shown(value)}; they must be a list of goals!"])
-    unknown = [goal for goal in goals if goal not in GOALS]
-    if unknown:
-        raise ConfigError([f"The environment '{name}' has the unknown goal {', '.join(shown(goal) for goal in unknown)}; "
-                           f"a goal is one of {', '.join(GOALS)}, one per list item ('- plan' on its own line, or "
-                           "[init, plan])!"])
-    return goals
+        return [f"{owner} has the goals {shown(value)}; they must be a list of goal names."]
+    problems = [_goal_name_problem(owner, goal) for goal in goals if goal not in GOALS]
+    if problems:
+        return problems
+    return [f"{owner} has the goal '{goal}' without '{needed[0]}': {why}, so it could never run. {fix}"
+            for goal, (needed, why, fix) in PREREQUISITES.items()
+            if goal in goals and not any(each in goals for each in needed)]
 
 
 def _typed_overrides(document, name, environment):
@@ -288,7 +314,7 @@ def build_row(document, globals_, index, environment):
             global_value = globals_[field]
             row[_unsuffixed(field)] = [] if global_value is None else global_value
 
-    row["goals"] = _goals(name, row["goals"])
+    row["goals"] = _as_goal_list(row["goals"])
 
     for field in MERGE_FIELDS:
         if field in row:
@@ -360,6 +386,11 @@ def build_rows(document):
         raise ConfigError(["The specification for input 'environments-yml' must be a list of environments!"])
 
     problems = check_keys(environments)
+    # A global problem is reported once, naming the input, not once per environment that inherits it.
+    problems += goal_problems("goals-yml", globals_["goals-yml"])
+    for index, entry in enumerate(environments):
+        if isinstance(entry, dict) and _is_name(entry.get("environment")) and "goals-yml" in entry:
+            problems += goal_problems(f"The environment '{entry['environment']}'", _env_field(document, index, "goals-yml"))
     if problems:
         raise ConfigError(problems)
     rows = [build_row(document, globals_, index, environment) for index, environment in enumerate(environments)]
