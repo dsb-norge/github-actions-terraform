@@ -133,7 +133,7 @@ logged_document() {
 # Error annotation messages, unescaped as the runner shows them.
 error_messages() {
   sed -n 's/^::error title=create-tf-vars-matrix:://p' "${OUT_FILE}" \
-    | python3 -c 'import sys, json; print(json.dumps([l.rstrip("\n").replace("%0A","\n").replace("%0D","\r").replace("%25","%") for l in sys.stdin], separators=(",", ":")))'
+    | python3 -c 'import sys, json; print(json.dumps([l.rstrip("\n").replace("%0A","\n").replace("%0D","\r").replace("%25","%") for l in sys.stdin], separators=(",", ":"), ensure_ascii=False))'
 }
 
 # Lines of the step's log that are outside every stop-commands block.

@@ -35,5 +35,16 @@
   "default_branch": "main",
   "directories": [
     "envs/env-a"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "a per-environment key named like a stripped field (goals for goals-yml) silently kept the global value and could apply; it is now refused, naming the right spelling",
+    "errors": [
+      "The environment 'env-a' sets 'caller-repo-default-branch', which the workflow works out itself; remove it.",
+      "The environment 'env-a' sets 'environments-yml', which is a workflow input only: it applies to every environment at once. Set it in the calling workflow's 'with:'.",
+      "The environment 'env-a' sets 'extra-envs', which is not a setting: per environment it is 'extra-envs-yml'. Written like this it would have been ignored, and the environment would have run with the global value.",
+      "The environment 'env-a' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.",
+      "The environment 'env-a' sets 'terraform-init-additional-dirs', which is not a setting: per environment it is 'terraform-init-additional-dirs-yml'. Written like this it would have been ignored, and the environment would have run with the global value."
+    ]
+  }
 }
