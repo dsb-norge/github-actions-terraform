@@ -96,6 +96,13 @@ def check(document, output):
             violations.append("I6: mode all but an environment does not run for it")
     if any(entry["verdict"] == "run" and entry["reasons"][0].startswith(EARLIER_RULES) for entry in environments):
         violations.append("rules 2-3: an environment dropped by an earlier rule runs")
+    # Relevance is published for every environment: a run one is relevant, a relevance skip is not.
+    for entry in environments:
+        if entry["verdict"] == "run" and entry.get("relevant") is not True:
+            violations.append(f"relevant: '{entry['environment']}' runs but is not marked relevant")
+        if entry["verdict"] == "skip" and entry["reasons"][:1] == ["relevance: no changed file matches"] \
+                and entry.get("relevant") is not False:
+            violations.append(f"relevant: '{entry['environment']}' is skipped by relevance but marked relevant")
     if relevance is not None and document["workflow_inputs"].get("path-relevance-enabled") is False \
             and relevance["reason"] != "disabled":
         violations.append("I13: relevance switched off but the reason is not 'disabled'")

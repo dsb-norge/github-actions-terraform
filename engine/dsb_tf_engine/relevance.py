@@ -144,8 +144,10 @@ def decide_relevance(document, declared, rows, dropped):
     """The relevance block and one entry per row, or a ConfigError with every rule error.
 
     A row that `dropped` gives a reason for was dropped by an earlier rule (docs/Decision-engine.md
-    §6): it is skipped for that reason and its relevance is not evaluated. Its rules are validated all
-    the same, so a configuration never becomes valid by being run on another event.
+    §6): it is skipped for that reason. Its rules are validated all the same, so a configuration never
+    becomes valid by being run on another event, and whether the change is relevant to it is still
+    published: an environment that takes no part in pull requests was never planned on one, so the
+    auto-merge must not take it for unaffected (docs/Auto-merge.md D6).
     """
     enabled = _enabled(document, declared)
     errors = []
@@ -157,14 +159,15 @@ def decide_relevance(document, declared, rows, dropped):
     changed = document.get("changed_files")
     entries = []
     for row, (included, ignored), earlier in zip(rows, resolved, dropped):
+        rule = None if reason is not None else _first_relevant(changed["files"], included, ignored)
+        relevant = reason is not None or rule is not None
         if earlier is not None:
             verdict, why = "skip", earlier
         elif reason is not None:
             verdict, why = "run", f"relevance: all:{reason}"
         else:
-            rule = _first_relevant(changed["files"], included, ignored)
-            verdict, why = ("run", f"relevance: {rule}") if rule is not None else ("skip", f"relevance: {NO_MATCH}")
-        entry = {"environment": row["environment"], "verdict": verdict, "reasons": [why]}
+            verdict, why = ("run", f"relevance: {rule}") if relevant else ("skip", f"relevance: {NO_MATCH}")
+        entry = {"environment": row["environment"], "verdict": verdict, "reasons": [why], "relevant": relevant}
         entry.update({field: row[field] for field in ENTRY_FIELDS})
         entry["mutates-on-pr"] = _mutates_on_pr(row["goals"])
         entry["paths"] = [rule.pattern for rule in included]
