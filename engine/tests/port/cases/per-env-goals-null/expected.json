@@ -40,7 +40,7 @@
           },
           "format-check-in-root-dir": "false",
           "github-environment": "env-a",
-          "goals": null,
+          "goals": [],
           "goals-granted": [],
           "path-relevance-enabled": "true",
           "pr-auto-merge-app-id": "",

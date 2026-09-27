@@ -79,6 +79,10 @@ NAME_RULE = "1 to 255 of the characters A-Z a-z 0-9 . _ - starting with a letter
 # Maps from goal name to variables, which must hold every goal key.
 PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 
+# Every goal a caller may name: the eight the operation gates read, 'all' for the five standard goals
+# and apply, and the two that let apply and destroy run on a pull request.
+GOALS = values.GOAL_KEYS + ("all", "apply-on-pr", "destroy-on-pr")
+
 # Fields the workflow reads from every row. runs-on and format-check-in-root-dir are read too
 # but were never listed; the port keeps the list as it was.
 REQUIRED_FIELDS = (
@@ -121,6 +125,26 @@ def _boolean(name, field, value):
     if value is False or value == "false":
         return False
     raise ConfigError([f"The environment '{name}' sets '{field}' to {shown(value)}; it must be true or false!"])
+
+
+def _goals(name, value):
+    """The environment's goals as a list of known names, or a ConfigError.
+
+    A plain string is one goal. The workflow's contains() once read a string as a substring, so a
+    list written without its dashes, 'init plan destroy-plan', held destroy and destroyed on the next
+    push. A goal outside the vocabulary is an error, never a name that silently holds nothing.
+    """
+    if value is None:
+        return []
+    goals = [value] if isinstance(value, str) else value
+    if not isinstance(goals, list):
+        raise ConfigError([f"The environment '{name}' has the goals {shown(value)}; they must be a list of goals!"])
+    unknown = [goal for goal in goals if goal not in GOALS]
+    if unknown:
+        raise ConfigError([f"The environment '{name}' has the unknown goal {', '.join(shown(goal) for goal in unknown)}; "
+                           f"a goal is one of {', '.join(GOALS)}, one per list item ('- plan' on its own line, or "
+                           "[init, plan])!"])
+    return goals
 
 
 def _typed_overrides(document, name, environment):
@@ -194,6 +218,8 @@ def build_row(document, globals_, index, environment):
         else:
             global_value = globals_[field]
             row[_unsuffixed(field)] = [] if global_value is None else global_value
+
+    row["goals"] = _goals(name, row["goals"])
 
     for field in MERGE_FIELDS:
         if field in row:

@@ -137,8 +137,7 @@ def _first_relevant(files, included, ignored):
 
 
 def _mutates_on_pr(goals):
-    # As the workflow's contains() reads them: an element of a list, a substring of a string.
-    return [goal for goal in ON_PR_GOALS if isinstance(goals, (list, str)) and goal in goals]
+    return [goal for goal in ON_PR_GOALS if goal in goals]
 
 
 def decide_relevance(document, declared, rows, dropped):

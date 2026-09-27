@@ -8,7 +8,7 @@ import unittest
 
 import invariants
 import support
-from dsb_tf_engine import decide, triggers
+from dsb_tf_engine import decide
 
 STANDARD = ["init", "format", "validate", "lint", "plan"]
 WITH_APPLY = STANDARD + ["apply"]
@@ -274,7 +274,7 @@ class GoalInputTest(unittest.TestCase):
         self.assertEqual({"scratch": ["init", "plan", "apply", "destroy-plan", "destroy"]}, granted(output))
 
     def test_apply_needs_apply_or_all_and_apply_on_pr_does_not_count(self):
-        environments = [{"environment": "a", "goals-yml": ["apply"]}, {"environment": "b", "goals-yml": ["ALL"]},
+        environments = [{"environment": "a", "goals-yml": ["apply"]}, {"environment": "b", "goals-yml": ["all"]},
                         {"environment": "c", "goals-yml": ["plan", "apply-on-pr"]},
                         {"environment": "d", "goals-yml": ["init"]}]
         output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "apply"}))
@@ -290,21 +290,19 @@ class GoalInputTest(unittest.TestCase):
                           "'feature/x'"], output["errors"])
 
     def test_destroy_plan_needs_the_goal_itself(self):
-        environments = [{"environment": "a", "goals-yml": ["all"]}, {"environment": "b", "goals-yml": ["destroy"]},
-                        {"environment": "c", "goals-yml": "init, destroy-plan"}]
+        environments = [{"environment": "a", "goals-yml": ["all", "lint"]}, {"environment": "b", "goals-yml": ["destroy"]},
+                        {"environment": "c", "goals-yml": ["init", "destroy-plan"]}]
         output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "destroy-plan"}))
-        self.assertEqual(["dispatch: environment 'a' does not hold the goal 'destroy-plan' (goals: all)",
+        self.assertEqual(["dispatch: environment 'a' does not hold the goal 'destroy-plan' (goals: all, lint)",
                           "dispatch: environment 'b' does not hold the goal 'destroy-plan' (goals: destroy)"],
                          output["errors"])
         output = decided(document(environments[2:], event="workflow_dispatch", dispatch={"goal": "destroy-plan"}))
         self.assertEqual({"c": ["init", "destroy-plan"]}, granted(output))
 
-    def test_the_goals_listed_in_an_error_are_shown_as_given(self):
-        environments = [{"environment": "a", "goals-yml": {"plan": 1}}, {"environment": "b", "goals-yml": "plan, lint"}]
+    def test_a_single_goal_written_alone_is_listed_as_one(self):
+        environments = [{"environment": "a", "goals-yml": "plan"}]
         output = decided(document(environments, event="workflow_dispatch", dispatch={"goal": "apply"}))
-        self.assertEqual(['dispatch: environment \'a\' does not hold the goal \'apply\' (goals: {"plan": 1})',
-                          "dispatch: environment 'b' does not hold the goal 'apply' (goals: plan, lint)"],
-                         output["errors"])
+        self.assertEqual(["dispatch: environment 'a' does not hold the goal 'apply' (goals: plan)"], output["errors"])
 
     def test_a_goal_off_the_default_branch_caps_a_branch_run(self):
         output = decided(document(event="workflow_dispatch", ref="feature/x", dispatch={"goal": "plan"}))
@@ -315,27 +313,11 @@ class GoalInputTest(unittest.TestCase):
 
 
 class ExpansionTest(unittest.TestCase):
-    """The expansion mirrors the workflow's gates as they read the raw goals."""
+    """The expansion is what the workflow's gates would let through for the goals named."""
 
     def goals(self, goals, **kwargs):
         output = decided(document([{"environment": "a", "goals-yml": goals}], **kwargs))
         return output["environments"][0]["goals"]
-
-    def test_contains_reads_a_list_element_without_case(self):
-        self.assertEqual(["plan"], self.goals(["PLAN"]))
-        self.assertEqual(["init", "plan", "apply"], self.goals(["Init", "plan", "Apply"]))
-        self.assertEqual(["plan"], self.goals([1, None, True, {"plan": 1}, ["plan"], "plan"]))
-        self.assertEqual([], self.goals(["plans"]))
-
-    def test_contains_reads_a_string_as_a_substring_without_case(self):
-        self.assertEqual(WITH_APPLY, self.goals("ALL"))
-        # As the gates read it: the string 'destroy-plan' contains 'plan' and 'destroy'.
-        self.assertEqual(["plan", "destroy-plan", "destroy"], self.goals("destroy-plan"))
-
-    def test_other_shapes_hold_no_goal(self):
-        for goals in (None, 3, True, {"all": True}):
-            with self.subTest(goals=goals):
-                self.assertEqual([], self.goals(goals))
 
     def test_all_is_the_standard_goals_and_apply_not_the_destroy_goals(self):
         self.assertEqual(WITH_APPLY, self.goals(["all"]))
@@ -388,14 +370,54 @@ class ExpansionTest(unittest.TestCase):
         self.assertEqual(("skip", False), (entry["verdict"], "goals" in entry))
 
 
-class HoldsTest(unittest.TestCase):
-    def test_holds(self):
-        self.assertTrue(triggers.holds(["Apply"], "apply"))
-        self.assertTrue(triggers.holds("x-APPLY-y", "apply"))
-        self.assertFalse(triggers.holds(["apply-on-pr"], "apply"))
-        self.assertFalse(triggers.holds([["apply"]], "apply"))
-        self.assertFalse(triggers.holds({"apply": 1}, "apply"))
-        self.assertFalse(triggers.holds(None, "apply"))
+class GoalsRuleTest(unittest.TestCase):
+    """The goals an environment names are a list of known names; a plain string is one goal."""
+
+    VOCABULARY = ("init, format, validate, lint, plan, apply, destroy-plan, destroy, all, apply-on-pr, destroy-on-pr, "
+                  "one per list item ('- plan' on its own line, or [init, plan])!")
+
+    def output(self, goals, **kwargs):
+        return decided(document([{"environment": "a", "goals-yml": goals}], **kwargs))
+
+    def test_a_plain_string_is_one_goal_never_a_substring(self):
+        # The workflow's contains() read 'destroy-plan' as holding plan and destroy too.
+        self.assertEqual({"a": ["destroy-plan"]}, granted(self.output("destroy-plan")))
+        self.assertEqual({"a": WITH_APPLY}, granted(self.output("all")))
+        self.assertEqual(["destroy-plan"], self.output("destroy-plan")["matrices"]["1"]["include"][0]["vars"]["goals"])
+
+    def test_a_list_written_without_its_dashes_is_an_error_not_a_destroy(self):
+        # 'goals-yml: |' with the goals on separate lines and no dashes parses as one string.
+        for text in ("init plan destroy-plan", "init, plan, destroy-plan", "init plan apply-on-pr"):
+            with self.subTest(text=text):
+                self.assertEqual([f"The environment 'a' has the unknown goal {text!r}; a goal is one of "
+                                  + self.VOCABULARY], self.output(text)["errors"])
+
+    def test_a_misspelt_or_unknown_goal_is_an_error(self):
+        self.assertEqual(["The environment 'a' has the unknown goal 'aply', 'destroy-plan-on-pr'; a goal is one of "
+                          + self.VOCABULARY],
+                         self.output(["init", "plan", "aply", "destroy-plan-on-pr"])["errors"])
+        self.assertEqual(["The environment 'a' has the unknown goal 'ALL'; a goal is one of " + self.VOCABULARY],
+                         self.output(["ALL"])["errors"])
+        self.assertEqual(["The environment 'a' has the unknown goal 1, null, [\"plan\"]; a goal is one of "
+                          + self.VOCABULARY], self.output([1, None, ["plan"]])["errors"])
+
+    def test_other_shapes_are_an_error(self):
+        for goals, shown in ((3, "3"), (True, "true"), ({"all": True}, '{"all": true}')):
+            with self.subTest(goals=goals):
+                self.assertEqual([f"The environment 'a' has the goals {shown}; they must be a list of goals!"],
+                                 self.output(goals)["errors"])
+
+    def test_no_goals_is_an_empty_list(self):
+        self.assertEqual({"a": []}, granted(self.output(None)))
+        self.assertEqual({"a": []}, granted(self.output([])))
+
+    def test_the_global_goals_are_held_to_the_same_rule(self):
+        doc = document([{"environment": "a"}])
+        doc["yaml"]["inputs"]["goals-yml"] = support.parsed("init plan destroy-plan")
+        self.assertEqual(["The environment 'a' has the unknown goal 'init plan destroy-plan'; a goal is one of "
+                          + self.VOCABULARY], decided(doc)["errors"])
+        doc["yaml"]["inputs"]["goals-yml"] = support.parsed("plan")
+        self.assertEqual({"a": ["plan"]}, granted(decided(doc)))
 
 
 class LinesTest(unittest.TestCase):

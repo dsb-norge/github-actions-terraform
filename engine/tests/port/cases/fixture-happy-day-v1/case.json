@@ -1,8 +1,8 @@
 {
-  "description": "the bash suite's 'happy_day' fixture with names that follow the name rule",
+  "description": "the bash suite's 'happy_day' fixture with names that follow the name rule and goals that exist",
   "inputs_json": {
-    "environments-yml": "- environment: \"my-first-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  format-check-in-root-dir: false\n  pr-comment-group: \"dev\"\n  terraform-init-additional-dirs-yml:\n    - \"./main\"\n    - \"./modules\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-plan-on-pr, destroy-on-pr]\n- environment: \"my-second-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  pr-comment-group: \"dev\"\n  extra-envs-per-goal-yml:\n    plan:\n      GOMEMLIMIT: 24GiB\n  extra-envs-from-secrets-per-goal-yml:\n    apply:\n      TF_VAR_my_custom: more\n  pr-auto-merge-from-actors-yml:\n    - \"env-actor\"\n  pr-auto-merge-limits-yml:\n    plan-max-count-add: 5\n- environment: \"also-an-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  goals-yml: [init, format, validate, lint]\n",
-    "goals-yml": "[all, dummy, apple]",
+    "environments-yml": "- environment: \"my-first-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  format-check-in-root-dir: false\n  pr-comment-group: \"dev\"\n  terraform-init-additional-dirs-yml:\n    - \"./main\"\n    - \"./modules\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-on-pr]\n- environment: \"my-second-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  pr-comment-group: \"dev\"\n  extra-envs-per-goal-yml:\n    plan:\n      GOMEMLIMIT: 24GiB\n  extra-envs-from-secrets-per-goal-yml:\n    apply:\n      TF_VAR_my_custom: more\n  pr-auto-merge-from-actors-yml:\n    - \"env-actor\"\n  pr-auto-merge-limits-yml:\n    plan-max-count-add: 5\n- environment: \"also-an-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  goals-yml: [init, format, validate, lint]\n",
+    "goals-yml": "[all]",
     "extra-envs-from-secrets-yml": "ARM_CLIENT_ID: ARM_CLIENT_ID_secret\nARM_SUBSCRIPTION_ID: ARM_SUBSCRIPTION_ID_secret\nARM_TENANT_ID: ARM_TENANT_ID_secret\nTF_VAR_my_custom: TF_VAR_my_custom_secret\n",
     "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true\nANOTHER_ENV: \"1 2 3\"",
     "extra-envs-per-goal-yml": "plan:\n  GOMEMLIMIT: 12GiB\n  GOGC: 25\napply:\n  GOMEMLIMIT: ~\nlint:\n  GOGC: 400\n",
@@ -35,7 +35,7 @@
   ],
   "engine_expected": {
     "exit_code": 0,
-    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare",
+    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare; the fixture's goals that do not exist ('dummy', 'apple', 'destroy-plan-on-pr') are left out, since they are now refused",
     "matrix": {
       "environment": [
         "my-first-env",
@@ -54,6 +54,7 @@
             "add-pr-comment": "true",
             "apply-extract-include-outputs": "false",
             "cache-terraform-modules": "true",
+            "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
             "terraform-version": "1.4.4",
             "tflint-version": "v0.46.1",
@@ -65,7 +66,6 @@
               "destroy-plan",
               "destroy",
               "apply-on-pr",
-              "destroy-plan-on-pr",
               "destroy-on-pr"
             ],
             "terraform-init-additional-dirs": [
@@ -126,7 +126,6 @@
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
             "caller-repo-is-on-default-branch": "true",
-            "path-relevance-enabled": "true",
             "goals-granted": [
               "init",
               "format",
@@ -150,6 +149,7 @@
             "apply-extract-include-outputs": "false",
             "cache-terraform-modules": "true",
             "format-check-in-root-dir": "true",
+            "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
             "terraform-version": "1.4.4",
             "tflint-version": "v0.46.1",
@@ -157,9 +157,7 @@
             "github-environment": "my-second-env",
             "allow-failing-terraform-operations": false,
             "goals": [
-              "all",
-              "dummy",
-              "apple"
+              "all"
             ],
             "terraform-init-additional-dirs": [
               "./main",
@@ -222,7 +220,6 @@
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
             "caller-repo-is-on-default-branch": "true",
-            "path-relevance-enabled": "true",
             "goals-granted": [
               "init",
               "format",
@@ -243,6 +240,7 @@
             "apply-extract-include-outputs": "false",
             "cache-terraform-modules": "true",
             "format-check-in-root-dir": "true",
+            "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
             "pr-comment-group": "",
             "terraform-version": "1.4.4",
@@ -315,7 +313,6 @@
             "caller-repo-default-branch": "main",
             "caller-repo-calling-branch": "main",
             "caller-repo-is-on-default-branch": "true",
-            "path-relevance-enabled": "true",
             "goals-granted": [
               "init",
               "format",
