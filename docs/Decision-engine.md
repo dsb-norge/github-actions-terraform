@@ -8,13 +8,12 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **the port (§9), relevance, the test matrix and the comment manifest are built** and are
-what `create-tf-vars-matrix` runs, through the create-matrix adapter (§3): rules 1, 4 and 7 of §6,
-the test rows of `tests.py`, the input and output documents of §4 and §5 in the shape they need,
-the tests of §8 and both gates. Rules 2, 3, 5 and 6 and the `validate` and `render-summary`
-commands are specified here and are built with the features that need them:
-[Terraform-tests.md](Terraform-tests.md), [Path-relevance.md](Path-relevance.md),
-[Dispatch-and-triggers.md](Dispatch-and-triggers.md) and
+Status: **built, but for ordering.** `create-tf-vars-matrix` runs the engine through the
+create-matrix adapter (§3): rules 1 to 5 and 7 of §6 (the configuration's validation as
+[Configuration-validation.md](Configuration-validation.md) specifies it, trigger events, the
+dispatch filter, relevance and the granted goals), the test rows of `tests.py`, the comment
+manifest, the input and output documents of §4 and §5, the tests of §8 and both gates. Rule 6 and
+the `validate` and `render-summary` commands are specified here and are built with
 [Environment-ordering.md](Environment-ordering.md). §13 holds what implementation taught the spec.
 
 ## 1. Why
@@ -62,7 +61,8 @@ engine/
 │   ├── __init__.py           # core: SCHEMA_VERSION
 │   ├── model.py              # core: the input document's shape, checked first
 │   ├── decide.py             # core: the decide command, input document in, output document out
-│   ├── environments.py       # core: environment rows, rule 1 (the port's validation) and rule 7
+│   ├── environments.py       # core: rule 1 (Configuration-validation.md) and rule 7, the rows
+│   ├── triggers.py           # core: rules 2, 3 and 5: trigger events, the dispatch filter, the granted goals, the dispatch lines
 │   ├── values.py             # core: jq-compatible rendering, merge and per-goal normalisation
 │   ├── globs.py              # core: the one glob matcher (Terraform-tests.md §4.4)
 │   ├── relevance.py          # core: rule 4, path relevance (Path-relevance.md §3-§5)
@@ -88,10 +88,27 @@ adapter side (`test_purity.py` checks the imports). **The adapter side** reads t
 the filesystem and the network, runs programs and writes the log, so that the core does not have
 to; it sits under the same coverage and mutation gates.
 
-The remaining features add their modules as their rules are built: on the core side `events.py`
-(event kind, branch facts, the fork and Dependabot rules); `environments.py` gains goals, trigger
-events, dispatch and stages, and `record.py` the rendering for the run summary. Their
-fact-gathering joins the adapter side (§3.1).
+Ordering adds its stages to the core when it is built, and `record.py` the rendering for the run
+summary; its fact-gathering, if any, joins the adapter side (§3.1).
+
+How the pieces meet in one run:
+
+```mermaid
+flowchart LR
+  subgraph job["create-matrix job"]
+    direction TB
+    inputs["toJSON(inputs), through a file"] --> adapter
+    runner["the runner: GITHUB_EVENT_PATH,<br/>GITHUB_REF_NAME, GITHUB_REF_TYPE,<br/>GITHUB_ACTOR, GITHUB_BASE_REF"] --> adapter
+    adapter["adapter.py: yq parses every *-yml,<br/>reads the payload, fetches the changed<br/>files with gh, lists test files and locks<br/>with git, checks the directories"] --> indoc[("input document")]
+    indoc --> core["the pure core: decide()"]
+    core --> outdoc[("output document")]
+    outdoc --> publish["adapter.py publishes: matrix-json,<br/>the counts, tests-matrix-json,<br/>relevance.json, annotations"]
+  end
+  publish --> envs["terraform-ci-cd: one job per<br/>running environment; its gates read<br/>goals-granted"]
+  publish --> tests["terraform-test: one job per test row"]
+  publish --> artifact[("relevance artifact")]
+  artifact --> readers["seed-pr-comments, pr-comment-aggregator,<br/>run-summary, automerge"]
+```
 
 Composite actions call it with the repository checked out at the action's ref, which is always the
 case for an action referenced as `dsb-norge/github-actions-terraform/<action>@<ref>`: GitHub
@@ -189,7 +206,7 @@ The document the port reads:
 {
   "schema_version": 1,
   "caller": { "repository": "owner/repo", "default_branch": "main" },
-  "event": { "name": "pull_request", "ref_name": "feature/x" },
+  "event": { "name": "pull_request", "ref_name": "feature/x", "ref_type": "branch" },
   "workflow_inputs": { "environments-yml": "- environment: prod\n", "goals-yml": "[all]", "add-pr-comment": true, … },
   "yaml": {
     "inputs": { "environments-yml": { "ok": true, "value": [ { "environment": "prod" } ] }, "goals-yml": { "ok": true, "value": ["all"] }, … },
@@ -219,12 +236,13 @@ The features extend it; the full document, as they specify it:
     "name": "pull_request",
     "action": "synchronize",
     "ref_name": "feature/x",
+    "ref_type": "branch",
     "actor": "octocat",
     "triggering_actor": "octocat",
     "base_ref": "main",
     "push": { "created": false, "forced": false, "deleted": false },
     "pull_request": { "number": 87, "head_sha": "…", "is_fork": false, "draft": false },
-    "dispatch": { "block": true, "environment": "", "goal": "", "reason": "" }
+    "dispatch": { "block": true, "environment": "", "goal": "", "reason": "", "inputs": ["environment", "goal", "reason"] }
   },
   "workflow_inputs": { … },
   "yaml": { … },
@@ -242,8 +260,11 @@ The features extend it; the full document, as they specify it:
 - `dispatch` is present on `workflow_dispatch` only. When the caller declares no `inputs:` block
   the payload key is `null`, and a string input left empty is absent from the payload rather than
   `""`; the adapter passes `block` (whether there was a block at all) and all three inputs as text,
-  `""` for each that is missing and a caller's input of another type as its JSON. A dispatch
-  document without the key is read as a dispatch without a block.
+  `""` for each that is missing and a caller's input of another type as its JSON, and `inputs`,
+  the sorted names of the inputs the dispatch delivered, never their values (Configuration-validation.md
+  §3.7). A dispatch document without the key is read as a dispatch without a block.
+- `ref_type` is the runner's `GITHUB_REF_TYPE`, `branch` or `tag`, and required: the default branch
+  is a branch of that name, never a tag (Configuration-validation.md §3.8).
 - `base_ref` is the runner's `GITHUB_BASE_REF`, which the on-PR gates compare, not a payload
   field; `triggering_actor` is `GITHUB_TRIGGERING_ACTOR`. Both, like `actor`, are present only when
   the runner sets them.
@@ -252,7 +273,7 @@ The features extend it; the full document, as they specify it:
   `not-computed`). `run`, `event.action`, `event.push` and `event.pull_request` are optional too;
   when present they are checked whole. As built: `push` holds exactly its three booleans,
   `pull_request` its `number`, `head_sha` and `is_fork`, `changed_files` exactly its six facts,
-  `dispatch` exactly its four keys; `draft` arrives with the rule that reads it.
+  `dispatch` exactly its five keys; `draft` arrives with the rule that reads it.
 - A renamed file is in `files` under both its paths; `count` is what the API counted, one per
   changed file.
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
@@ -284,8 +305,9 @@ goals, the test stage and the comment manifest (the tests block is shown below):
       "github-environment": "prod", "add-pr-comment": "true", "pr-comment-group": "", "mutates-on-pr": [],
       "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": [], "pr-auto-merge-limits": { … },
       "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"],
-      "trigger-events": ["pull_request", "push", "workflow_dispatch"], "goals": ["init", "format", "validate", "lint", "plan"] },
-    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], … }
+      "trigger-events": ["pull_request", "push", "workflow_dispatch"], "relevant": true,
+      "goals": ["init", "format", "validate", "lint", "plan"] },
+    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "relevant": false, … }
   ],
   "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },
   "counts": { "affected": 1, "unaffected": 1 },
@@ -308,13 +330,17 @@ GitHub. Each environment entry carries, besides its verdict, what the jobs after
 for it whether or not it runs: the row's `github-environment`, `add-pr-comment`,
 `pr-comment-group` and resolved `pr-auto-merge-*` values, `mutates-on-pr` (the `apply-on-pr` and
 `destroy-on-pr` goals it holds, read as the workflow's `contains()` reads them), its resolved
-`paths` and `paths-ignore`, and its resolved `trigger-events`. A running environment's entry also
+`paths` and `paths-ignore`, its resolved `trigger-events`, and `relevant`, whether a changed file is
+relevant to it, published whatever its verdict (true in mode `all`), so the auto-merge evaluator can
+tell a change to an environment that takes no part in pull requests (Auto-merge.md D6). A running environment's entry also
 carries its granted `goals`, equal to its row's `goals-granted` (I16), and its reasons end with
 them. An environment dropped by rule 2 or 3 is skipped for that rule's reason, `trigger-events:
 <event> not enabled` or `dispatch: not the requested environment`, and relevance is not evaluated
 for it. `trigger` names the event and holds the lines the run summary quotes and that lead the
-notices: who dispatched what, a dispatch without an inputs block, or a schedule no environment
-takes part in (Dispatch-and-triggers.md §5). The features extend it to the full document:
+notices: who dispatched what, a dispatch without an inputs block or without the standard inputs,
+or a schedule no environment takes part in (Dispatch-and-triggers.md §5). `warnings` holds the
+settings that are valid but change nothing, such as an environment's `pr-auto-merge-enabled: true`
+while the input is false, before the test stage's warnings. The features extend it to the full document:
 
 ```json
 {
@@ -383,12 +409,45 @@ The other specs name the same data under their own output names. The mapping is 
 
 ## 6. The decision procedure
 
+`decide` runs the rules as passes over all environments; a configuration error in any pass stops it
+with every error of that pass, and no matrix:
+
+```mermaid
+flowchart TD
+  doc(["input document"]) --> shape["model.check: the document's shape"]
+  shape -->|malformed| fault(["DocumentError, exit 1"])
+  shape --> r1a["rule 1, as written: every entry's keys; goals and their<br/>prerequisites, init directories, actors and limits, the global<br/>inputs once and then each environment's own"]
+  r1a --> r7["rule 7, the rows: each name checked as its row is built;<br/>generic forwarding, per-environment overrides, booleans<br/>normalised, list settings replaced, maps merged, variables<br/>checked and their nulls dropped"]
+  r7 --> r1b["rule 1, on the rows: duplicate names, shared<br/>github-environments, required fields, directories,<br/>the actor list in effect, all six limits"]
+  r1b --> r23["rules 2 and 3: the event in each environment's<br/>trigger-events; a dispatch's named environment"]
+  r23 --> r4["rule 4: relevance, for every environment;<br/>its paths and paths-ignore validated"]
+  r4 --> r5["rule 5: the granted goals for this event, ref and<br/>branch, capped by a dispatch's goal"]
+  r5 --> t["the test rows"]
+  t --> out["goals-granted into each running row; comments,<br/>record, notices, warnings"]
+  out --> done(["output document, exit 0"])
+  r1a & r7 & r1b & r23 & r4 & r5 & t -->|a configuration error| invalid(["errors, no matrix, exit 2"])
+```
+
+One environment's verdict:
+
+```mermaid
+flowchart TD
+  env(["an environment of environments-yml"]) --> te{"is the event in<br/>its trigger-events?"}
+  te -->|no| s1["skip: trigger-events: EVENT not enabled"]
+  te -->|yes| dn{"does a dispatch name<br/>another environment?"}
+  dn -->|yes| s2["skip: dispatch: not the requested environment"]
+  dn -->|no| rel{"relevance mode all, or<br/>a changed file matches?"}
+  rel -->|no| s3["skip: relevance: no changed file matches"]
+  rel -->|yes| run["run: relevance: RULE, then goals: GRANTED"]
+  s1 & s2 & s3 & run --> entry["its entry in relevance.json: verdict, reasons,<br/>relevant, trigger-events and the row's settings"]
+```
+
 For each environment, in order; the first rule that drops it wins and is recorded, later rules are
 not evaluated:
 
 | # | Rule | Source spec | Reason recorded |
 |---|---|---|---|
-| 1 | Validation of the environment's fields: names, types, goals (a list of known goal names, a single name written alone being that one goal), globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | each spec's validation section | `error: …` |
+| 1 | Validation of the configuration: an entry's keys, goals (a list of known goal names, a single name written alone being that one goal, each with its prerequisite), init directories, variables, the auto-merge actors and limits, names, types, globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | Configuration-validation.md, and each spec's validation section | `error: …` |
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
@@ -415,7 +474,7 @@ test rows agree, with every slug unique.
 
 | # | Invariant |
 |---|---|
-| I1 | `apply` is granted only when (the event is `push`, `workflow_dispatch` or `schedule`, `ref_name` equals the default branch, and the goals hold `apply` or `all`) or (the event is `pull_request`, its action is not `closed` or `converted_to_draft`, `base_ref` equals the default branch, and the goals hold `apply-on-pr`). `destroy` likewise, with `push` and `workflow_dispatch` only and `destroy` or `destroy-on-pr`. The granted vocabulary is the eight goal keys; `all` and the `-on-pr` goals exist only in input. |
+| I1 | `apply` is granted only when (the event is `push`, `workflow_dispatch` or `schedule`, the ref is a branch and `ref_name` equals the default branch, and the goals hold `apply` or `all`) or (the event is `pull_request`, its action is not `closed` or `converted_to_draft`, `base_ref` equals the default branch, and the goals hold `apply-on-pr`). `destroy` likewise, with `push` and `workflow_dispatch` only and `destroy` or `destroy-on-pr`. The granted vocabulary is the eight goal keys; `all` and the `-on-pr` goals exist only in input. |
 | I2 | On `workflow_dispatch` naming an environment, exactly one environment has verdict `run` and it is the named one, or the output carries an error. |
 | I3 | On `workflow_dispatch`, the granted goals are a subset of what the same environment would be granted on a push to the same ref; the `goal` input only removes. |
 | I4 | When secrets are unavailable (fork, Dependabot), no test row has a credentialed lane or a non-empty `github-environment`. Environment rows are unaffected. |
@@ -753,3 +812,14 @@ AI-assistant configuration files are never in these commits.
   derived apart from `triggers.py`, from the raw goals and the event, so they cannot inherit its
   mistakes. The first mutation run on the new module found six survivors: two redundant pieces (an
   unread key, a discarded return value) removed, and four untested cases tested.
+- **Configuration validation joined rule 1 and moved rows only where it meant to.** Every port
+  input gained `event.ref_type` and a dispatch's `inputs`, and no golden changed with them; the
+  variable values became text as written, a per-environment actor list replaced the global one, an
+  empty limits value became the documented default, and each shape now refused became a recorded
+  deviation. Rule 1 runs in two passes, the settings as written before any row and what each
+  environment ends up with after (Configuration-validation.md §12). The first mutation run found 17
+  survivors in 3718 mutants: redundant code (a list copy of the distance table, a null check the
+  list rule had made redundant, a defensive copy of the default limits, now built fresh by a
+  function) and untested edges (two goals written without dashes, a block's trailing newline, a
+  stray separator, `all` as the prerequisite of `plan` and `apply`, the distance itself). Each was
+  removed or tested in the commit that brought it.
