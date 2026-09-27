@@ -20,8 +20,8 @@
           "caller-repo-is-on-default-branch": "true",
           "environment": "env-a",
           "extra-envs": {
-            "ARM_USE_AZUREAD": true,
-            "ARM_USE_OIDC": true
+            "ARM_USE_AZUREAD": "true",
+            "ARM_USE_OIDC": "true"
           },
           "extra-envs-from-secrets": {
             "ARM_CLIENT_ID": "SECRET_C",
@@ -103,8 +103,8 @@
           "caller-repo-is-on-default-branch": "true",
           "environment": "env-b",
           "extra-envs": {
-            "ARM_USE_AZUREAD": true,
-            "ARM_USE_OIDC": true
+            "ARM_USE_AZUREAD": "true",
+            "ARM_USE_OIDC": "true"
           },
           "extra-envs-from-secrets": {
             "ARM_CLIENT_ID": "SECRET_C",
@@ -180,8 +180,8 @@
           "caller-repo-is-on-default-branch": "true",
           "environment": "env-c",
           "extra-envs": {
-            "ARM_USE_AZUREAD": true,
-            "ARM_USE_OIDC": true
+            "ARM_USE_AZUREAD": "true",
+            "ARM_USE_OIDC": "true"
           },
           "extra-envs-from-secrets": {
             "ARM_CLIENT_ID": "SECRET_C",
@@ -257,8 +257,8 @@
           "caller-repo-is-on-default-branch": "true",
           "environment": "env-d",
           "extra-envs": {
-            "ARM_USE_AZUREAD": true,
-            "ARM_USE_OIDC": true
+            "ARM_USE_AZUREAD": "true",
+            "ARM_USE_OIDC": "true"
           },
           "extra-envs-from-secrets": {
             "ARM_CLIENT_ID": "SECRET_C",

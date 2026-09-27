@@ -74,7 +74,7 @@
         "value": [
           {
             "environment": "env-a",
-            "extra-envs-per-goal-yml": false
+            "extra-envs-per-goal-yml": "false"
           }
         ]
       },

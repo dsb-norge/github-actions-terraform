@@ -17,10 +17,10 @@
           "caller-repo-is-on-default-branch": "true",
           "environment": "env-a",
           "extra-envs": {
-            "ARM_USE_AZUREAD": true,
-            "ARM_USE_OIDC": true,
-            "TF_VAR_var_a": false,
-            "TF_VAR_var_b": true
+            "ARM_USE_AZUREAD": "true",
+            "ARM_USE_OIDC": "true",
+            "TF_VAR_var_a": "false",
+            "TF_VAR_var_b": "true"
           },
           "extra-envs-from-secrets": {
             "ARM_CLIENT_ID": "SECRET_C",

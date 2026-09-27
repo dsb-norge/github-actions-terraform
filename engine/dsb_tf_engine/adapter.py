@@ -26,6 +26,27 @@ EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
 
 YQ = ("yq", "e", "-o=json")
 YQ_PROBE_TEXT = "probe: [1]\n"
+# The environment-variable settings are read with every plain scalar as its source text, so 1.10 stays
+# 1.10 and 012 keeps its zero (docs/Configuration-validation.md §3.5); nothing else is read that way, so a
+# per-environment terraform-version: 1.10 is still refused with "quote it".
+VARIABLE_SETTINGS = ("extra-envs-from-secrets-per-goal-yml", "extra-envs-from-secrets-yml", "extra-envs-per-goal-yml",
+                     "extra-envs-yml")
+_TYPED_SCALARS = 'select(tag == "!!int" or tag == "!!float" or tag == "!!bool")'
+# Only scalars inside a mapping: the document itself (false, null) keeps its meaning.
+AS_TEXT = f'(select(tag == "!!map") | .. | {_TYPED_SCALARS}) tag = "!!str"'
+
+
+def _as_text_in_entries(keys):
+    """The rewrite for these keys of every mapping in a list, touching no key that is absent."""
+    chosen = " or ".join(f'key == "{key}"' for key in keys)
+    # Selecting the list first leaves any other document, null included, exactly as yq read it.
+    return (f'(select(tag == "!!seq") | .[] | select(tag == "!!map") | .[] | select({chosen}) | .. | {_TYPED_SCALARS}) '
+            'tag = "!!str"')
+
+
+READ_AS = {**{name: AS_TEXT for name in VARIABLE_SETTINGS},
+           "environments-yml": _as_text_in_entries(VARIABLE_SETTINGS),
+           "terraform-test-lanes-yml": _as_text_in_entries(("extra-envs-yml",))}
 YQ_PROBE_JSON = '{"probe":[1]}'
 REQUIRED_ENVIRONMENT = ("GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF_NAME", "GITHUB_OUTPUT", "GITHUB_RUN_ID",
                         "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP")
@@ -93,9 +114,10 @@ def require_yq(tools):
                            (stderr or stdout).strip()[:500])
 
 
-def parse_yaml(tools, text):
-    """yq's reading of `text` as a parse result {"ok", "value"}; several documents do not parse."""
-    code, stdout, _ = _run(tools, YQ + ("-",), text)
+def parse_yaml(tools, text, expression=None):
+    """yq's reading of `text` as a parse result {"ok", "value"}; several documents do not parse.
+    `expression`, when given, is applied to the document before it becomes JSON."""
+    code, stdout, _ = _run(tools, YQ + ((expression,) if expression else ()) + ("-",), text)
     if code != 0:
         return {"ok": False, "value": None}
     try:
@@ -120,7 +142,7 @@ def field_text(value):
 
 
 def parse_inputs(tools, inputs):
-    return {name: parse_yaml(tools, input_text(value)) for name, value in sorted(inputs.items())
+    return {name: parse_yaml(tools, input_text(value), READ_AS.get(name)) for name, value in sorted(inputs.items())
             if name.endswith("-yml")}
 
 
@@ -128,7 +150,8 @@ def parse_environments(tools, entries):
     """One map of parse results per environment entry, aligned by index; {} for a non-mapping."""
     if not isinstance(entries, list):
         return []
-    return [{key: parse_yaml(tools, field_text(value)) for key, value in sorted(entry.items()) if key.endswith("-yml")}
+    return [{key: parse_yaml(tools, field_text(value), AS_TEXT if key in VARIABLE_SETTINGS else None)
+             for key, value in sorted(entry.items()) if key.endswith("-yml")}
             if isinstance(entry, dict) else {} for entry in entries]
 
 

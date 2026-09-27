@@ -74,7 +74,7 @@
         "value": [
           {
             "environment": "env-a",
-            "extra-envs-yml": 3
+            "extra-envs-yml": "3"
           }
         ]
       },

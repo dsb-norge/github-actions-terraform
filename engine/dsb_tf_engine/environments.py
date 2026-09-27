@@ -242,6 +242,35 @@ def goal_problems(owner, value):
             if goal in goals and not any(each in goals for each in needed)]
 
 
+VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# The job-wide variable maps, merged global then per environment (docs/Configuration-validation.md §3.5).
+JOB_VARIABLES = ("extra-envs", "extra-envs-from-secrets")
+
+
+def _variables(name, field, value):
+    """A job-wide variable map with its nulls dropped, or a ConfigError naming every bad name or value.
+    A null means "not set", so a per-environment null removes a global variable; $GITHUB_ENV cannot unset
+    one, and exporting it would give the job the text 'null'."""
+    if not isinstance(value, dict):
+        return value
+    problems = []
+    for key, each in value.items():
+        where = f"The variable {shown(key)} of the environment '{name}' in '{field}-yml'"
+        if not (isinstance(key, str) and VARIABLE_NAME.fullmatch(key)):
+            problems.append(f"{where} is not a variable name: a name is letters, digits and underscores, not starting "
+                            "with a digit.")
+        elif isinstance(each, (dict, list)):
+            kind = "a mapping" if isinstance(each, dict) else "a list"
+            marks = "braces" if isinstance(each, dict) else "brackets"
+            problems.append(f"{where} is {kind}; a variable's value is text. Quote it if the {marks} are part of the "
+                            "value.")
+        elif each is not None and not isinstance(each, str):
+            problems.append(f"{where} is {shown(each)}, which is not text; quote it.")
+    if problems:
+        raise ConfigError(problems)
+    return {key: each for key, each in value.items() if each is not None}
+
+
 def _typed_overrides(document, name, environment):
     """The environment's own values for workflow inputs, in the types the forwarded ones have."""
     typed = {}
@@ -327,6 +356,9 @@ def build_row(document, globals_, index, environment):
                 ]) from None
         else:
             row[_unsuffixed(field)] = globals_[field]
+
+    for field in JOB_VARIABLES:
+        row[field] = _variables(name, field, row[field])
 
     for field in PER_GOAL_FIELDS:
         if isinstance(row[field], str):

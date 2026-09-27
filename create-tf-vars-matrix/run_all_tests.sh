@@ -206,6 +206,19 @@ else
   fail "the run block no longer has its hardened shape"
 fi
 
+begin "variables: values reach the row as written, and a null means not set"
+make_sandbox "${baseline}"
+jq '.["extra-envs-yml"] = "SKU: 1.10\nACCOUNT: 012345678901\nHEX: 0x1F\nFLAG: true\nDROPPED_HERE: keep\nNOTHING: ~\n"
+    | .["environments-yml"] = "- environment: env-a\n  extra-envs-yml:\n    DROPPED_HERE: ~\n    LOCAL: 1.20\n"' \
+  "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.tmp" && mv "${SANDBOX}/inputs.tmp" "${SANDBOX}/inputs.json"
+run_step
+got="$(matrix_output | jq -S -c '.include[0].vars["extra-envs"]')"
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "${got}" == '{"ACCOUNT":"012345678901","FLAG":"true","HEX":"0x1F","LOCAL":"1.20","SKU":"1.10"}' ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, extra-envs ${got}"
+fi
+
 begin "default branch: a payload without it falls back to the API"
 make_sandbox "${baseline}"
 echo '{}' >"${SANDBOX}/event.json"

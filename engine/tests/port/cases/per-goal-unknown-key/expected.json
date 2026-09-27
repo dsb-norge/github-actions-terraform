@@ -30,7 +30,7 @@
           },
           "extra-envs-per-goal": {
             "all": {
-              "NOPE": 1
+              "NOPE": "1"
             },
             "apply": {},
             "destroy": {},

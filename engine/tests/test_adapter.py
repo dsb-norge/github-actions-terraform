@@ -56,7 +56,9 @@ class FakeTools:
             return self.yq_broken
         if argv == ("yq", "e", "-o=json", "-I=0", "-") and stdin == "probe: [1]\n":
             return 0, '{"probe":[1]}\n', ""
-        if argv != ("yq", "e", "-o=json", "-"):
+        # An expression before '-' is recorded, not emulated: the real yq's reading is the create-matrix
+        # suite's to test; here it is which input is read with which expression.
+        if argv[:3] != ("yq", "e", "-o=json") or argv[-1] != "-" or len(argv) not in (4, 5):
             return 64, "", f"unexpected yq arguments {argv}"
         if stdin.strip() == "":
             return 0, "null\n", ""
@@ -296,6 +298,43 @@ class ReadInputsTest(unittest.TestCase):
     def test_a_missing_file_is_refused(self):
         with self.assertRaises(adapter.AdapterError):
             adapter.read_inputs("/nonexistent/inputs.json")
+
+
+class SourceTextTest(unittest.TestCase):
+    """The environment-variable settings are read with their plain scalars as source text; nothing else is."""
+
+    SCALARS = 'select(tag == "!!int" or tag == "!!float" or tag == "!!bool")'
+
+    def expressions(self, tools):
+        return {stdin: argv[3] if len(argv) == 5 else None for argv, stdin in tools.calls if argv[0] == "yq"}
+
+    def test_each_input_is_read_with_its_expression(self):
+        tools = FakeTools()
+        inputs = {"extra-envs-yml": "{}\n", "extra-envs-from-secrets-yml": "{}\n", "extra-envs-per-goal-yml": "{}\n",
+                  "extra-envs-from-secrets-per-goal-yml": "{}\n", "environments-yml": "[]\n",
+                  "terraform-test-lanes-yml": "[]\n", "goals-yml": "[]\n", "pr-auto-merge-limits-yml": "{}\n"}
+        adapter.parse_inputs(tools, inputs)
+        read = [(argv[3] if len(argv) == 5 else None) for argv, _ in tools.calls]
+        names = sorted(inputs)
+        as_text = f'(select(tag == "!!map") | .. | {self.SCALARS}) tag = "!!str"'
+        entries = ('(select(tag == "!!seq") | .[] | select(tag == "!!map") | .[] | select(key == '
+                   '"extra-envs-from-secrets-per-goal-yml" or '
+                   'key == "extra-envs-from-secrets-yml" or key == "extra-envs-per-goal-yml" or key == '
+                   f'"extra-envs-yml") | .. | {self.SCALARS}) tag = "!!str"')
+        lanes = (f'(select(tag == "!!seq") | .[] | select(tag == "!!map") | .[] | select(key == "extra-envs-yml") | .. | '
+                 f'{self.SCALARS}) tag = "!!str"')
+        expected = {"environments-yml": entries, "extra-envs-from-secrets-per-goal-yml": as_text,
+                    "extra-envs-from-secrets-yml": as_text, "extra-envs-per-goal-yml": as_text,
+                    "extra-envs-yml": as_text, "goals-yml": None, "pr-auto-merge-limits-yml": None,
+                    "terraform-test-lanes-yml": lanes}
+        self.assertEqual([expected[name] for name in names], read)
+
+    def test_an_environments_variable_settings_are_read_as_text_and_nothing_else(self):
+        tools = FakeTools()
+        adapter.parse_environments(tools, [{"environment": "a", "extra-envs-yml": {"A": "1"}, "goals-yml": ["plan"],
+                                            "extra-envs-per-goal-yml": "plan: {}"}])
+        as_text = f'(select(tag == "!!map") | .. | {self.SCALARS}) tag = "!!str"'
+        self.assertEqual({'{"A": "1"}': as_text, '["plan"]': None, "plan: {}": as_text}, self.expressions(tools))
 
 
 class BuildDocumentTest(unittest.TestCase):
