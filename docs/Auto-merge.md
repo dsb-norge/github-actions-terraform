@@ -6,8 +6,8 @@ request is merged without review, from what evidence, and how the merge is tied 
 Its settings are validated as [Configuration-validation.md](Configuration-validation.md) §3.6
 specifies; this spec is what happens with them.
 
-Status: **specification, not yet implemented.** It describes the current pipeline where that is
-kept (§3) and the changes (§4). §13 is reserved for what implementation teaches the spec.
+Status: **implemented.** §3 is the pipeline as kept, §4 what changed from the first auto-merge,
+§12 where each piece lives, §13 what implementation taught the spec.
 
 ## 1. Why
 
@@ -96,23 +96,45 @@ For an affected environment, from its metadata:
 | apply on pull request | `apply` in `goals-granted` (granted on a pull request only through `apply-on-pr`); the apply step's outcome | granted and not `success` |
 | destroy on pull request | `destroy` in `goals-granted`; the destroy step's outcome | granted and not `success` |
 | limits | the counts of §5.2 against the row's `pr-auto-merge-limits` | a count over its limit, or a count unknown |
+| count evidence | `counts-source` and `plan-complete` of the parse step whose counts the limits judge (`parse-plan`, `parse-destroy-plan`) | not `json` and `true`, an absent or empty value included |
 | operations | the outcomes of `init`, `verify-lock`, `fmt`, `validate`, `lint`, `plan`, `apply`, `destroy-plan`, `destroy` | any is `failure` or `cancelled`, a tolerated one included (D13) |
 
 As today, a plan whose apply ran on the pull request is not judged by the plan limits (the apply
-already happened); likewise the destroy plan and a destroy on the pull request. The limits apply to
-the sum of the plan and the destroy plan (D12).
+already happened), and then needs no count evidence either; likewise the destroy plan and a destroy
+on the pull request. The limits apply to the sum of the plan and the destroy plan (D12).
+
+`goals-granted` is read strictly: metadata without it, or holding anything but the eight goal keys,
+is not eligible, and the raw goals are never a fallback. The actor check fails closed the same way:
+an actor list that is empty, null, absent, not a list or without a string login admits nobody.
+
+The reasons, as the evaluator logs them:
+
+- `The plan of 'prod' was not counted from its JSON plan (counts-source: console), so its counts cannot be trusted for auto-merge`
+- `The plan of 'prod' is not complete (a -target plan, or changes deferred to a later plan), so its counts do not cover every change`
+- `The plan of 'prod' does not say it is complete (plan-complete: ?), so its counts may not cover every change`
+- `Terraform operation(s) did not succeed: lint. A failure allow-failing-terraform-operations tolerates still blocks auto-merge, environment is ineligible for PR auto merge`
+- `The actor list that applies to this environment (pr-auto-merge-from-actors) names nobody, so no pull request may auto-merge; name the accounts in pr-auto-merge-from-actors-yml`
+- `The change touches 'nightly', which takes no part in pull requests, so it was never planned, environment is ineligible for PR auto merge`
+
+(`destroy plan` for the destroy plan's evidence.)
 
 An environment skipped by relevance is judged on enabled and actor, and its limits are still
 validated, as defence in depth. An environment skipped because its `trigger-events` lack
 `pull_request` is judged the same way when the change is not relevant to it, and is not eligible
 when it is (D6): `relevance.json` carries, for every environment, whether a changed file is relevant
-to it, whatever its verdict.
+to it, whatever its verdict. A skip counts as out of pull requests when its first reason is a
+`trigger-events:` one or its `trigger-events` lack `pull_request`; an entry of that kind without the
+`relevant` key fails closed, and a skip for any other reason marked relevant is not eligible either.
 
 Test jobs are judged by the conclusion, as today: one that fails untolerated turns it red and the
 auto-merge job does not run. The auto-merge job also downloads the test jobs' metadata
 (`terraform-test-meta-*`) to name every tolerated failing or erroring test in its log and in a
-notice, `auto-merge eligible despite the tolerated failing test tests/int-x.tftest.hcl (lane integration)`;
-they never make the pull request ineligible (D13).
+notice, `auto-merge eligible despite the tolerated failing test tests/int-x.tftest.hcl (lane integration)`
+(when the pull request is not eligible for other reasons: `The tolerated failing test tests/int-x.tftest.hcl (lane integration) does not block auto-merge; the pull request is not eligible for other reasons`;
+an erroring test is `the tolerated erroring test`, and the lane is left out when the row has
+none); they never make the pull request ineligible (D13). The evaluator's input
+`test-metadata-files-pattern` (default `terraform-test-meta-*.json`) finds the files; an untolerated
+failing test is only logged, since the conclusion it turned red keeps the job from running.
 
 ### 5.2 The counts
 
@@ -132,10 +154,21 @@ reading from disk and never through a shell variable (the ARG_MAX rule of CLAUDE
 Data sources (`mode: data`, action `read`) and `no-op` count nowhere. Output-only changes are an
 `output_changes` entry whose actions are not `["no-op"]`, with no resource change. Action
 invocations (Terraform 1.14 and later) are not counted: they ride on a counted create or update.
-When the plan says it is not complete (`complete: false`, deferred changes) or errored, or the file
-is absent or unreadable, every count is unknown (`?`) and the environment is not eligible, as a
-count the text parser could not read is today. A failed `terraform show` therefore degrades to
-not eligible, which is safe.
+
+When the plan errored (`errored: true`), or the file is absent, empty, unreadable or not a Terraform
+JSON plan of format 1.x (one document, a `format_version`, each managed change with a list of
+actions), every count is unknown (`?`) and the environment is not eligible, as a count the text
+parser could not read is today; the console is never a fallback. A failed `terraform show`
+therefore degrades to not eligible, which is safe.
+
+A plan that is not complete is still counted: `complete: false` comes with deferred changes and
+with every `-target` plan, whose counts are what it plans, and a person reading the comment should
+see them. Completeness is reported apart, as the parse step's `plan-complete`: `true` only when the
+JSON says `"complete": true`, `false` when it says `false` or does not say, `?` when the counts are
+`?`, and empty for console counts. The parse step also says where its counts came from,
+`counts-source` (`json` or `console`), and the evaluator judges limits only on `json` and `true`
+(§5.1). Without the JSON file, as the module workflows call it, the parse step counts from the
+console exactly as before.
 
 Terraform's `Plan:` summary line has no segment for moves or removals, so the oracle is the
 repository's contract-test harness: `contract-tests/scenarios/*/expected.json` records all six
@@ -150,13 +183,21 @@ the counts.
 
 ## 6. The merge
 
-`auto-merge-pr` gains two inputs, `head-sha` (`github.event.pull_request.head.sha`) and
-`base-sha` (the first parent of `github.sha`), and before merging reads the base branch's tip
-(`gh api repos/<repo>/branches/<base>`):
+`auto-merge-pr` takes two required inputs, `head-sha` (`github.event.pull_request.head.sha`) and
+`merge-sha` (`github.sha`, the event's merge commit). Before every merge attempt it reads the merge
+commit's first parent (`gh api repos/<repo>/commits/<merge-sha>`), the base the plans saw, and the
+base branch's tip (`gh api repos/<repo>/branches/<base.ref of the event>`); a lookup that fails, or
+an event without `base.ref`, refuses to merge, and so does a `head-sha` or `merge-sha` that is not a
+full hexadecimal SHA, before any `gh` call:
 
-- base tip differs from `base-sha`: not merged, `The base branch 'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>), so the merged result was never planned. The next run, after the pull request is brought up to date, decides.`
+- base tip differs from the merge commit's first parent: not merged, `The base branch 'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>), so the merged result was never planned. The next run, after the pull request is brought up to date, decides.`
 - otherwise `gh pr merge --admin --rebase --delete-branch --match-head-commit <head-sha>`; GitHub
-  refuses a moved head: `The pull request's head moved after this run planned it (planned <sha7>, now <sha7>), so it was not merged; the run for the new head decides.` (the current head read with `gh pr view --json headRefOid`).
+  refuses a moved head: `The pull request's head moved after this run planned it (planned <sha7>, now <sha7>), so it was not merged; the run for the new head decides.` (the current head read with `gh pr view --json headRefOid` after the failed merge; when it cannot be read,
+  GitHub's `Head branch was modified` wording is the sign, and the head is `now unknown`).
+
+Every refusal is an `::error title=Auto-merge refused::` annotation. The retry stops on
+`CONFLICTING` and never repeats a refusal for a moved head or base (D11): another attempt could only
+merge something the run never planned.
 
 A small window remains between the base check and the merge; a merge landing inside it is the
 same race any merge queue closes, and is accepted.
@@ -194,6 +235,19 @@ the repository auto-merges, because every environment of the run must be enabled
 dependabot bump touching only `dev` merges; one touching `nightly`'s directory is not eligible,
 because `nightly` was never planned on the pull request.
 
+**A targeted plan**: `extra-envs-yml` sets `TF_CLI_ARGS_plan: -target=module.app`. The comment shows
+the targeted plan's counts; the pull request is not eligible, because the plan is not complete and
+its counts do not cover every change.
+
+**A tolerated lint failure**: `dev` sets `allow-failing-terraform-operations: true` and its lint
+fails. The check stays green; the pull request is not eligible (D13) and waits for a person.
+
+**A tolerated failing test**: `allow-failing-terraform-tests: true` and one lane's test fails. The
+pull request auto-merges when everything else is eligible, and the auto-merge job's notice names
+the test and its lane.
+
+**A pull request from a fork, or against another branch**: the auto-merge job does not run (D9).
+
 ## 9. Pitfalls
 
 | # | Pitfall | Consequence | Rule |
@@ -212,8 +266,9 @@ because `nightly` was never planned on the pull request.
 ## 10. Tests
 
 - `parse-terraform-plan`: the Terraform 1.16 captures of §5.2 as fixtures, the injected-summary
-  plan among them, each with its expected six counts; `complete: false`, an unreadable file, output
-  changes only, a data-source read.
+  plan among them, each with its expected six counts, the console's results pinned beside them;
+  a `-target` plan (`complete: false`, counted, `plan-complete` false), an errored plan, an
+  unreadable file, output changes only, a data-source read, and each structural refusal.
 - `contract-tests`: the JSON capture and the comparison with every scenario's `expected.json`
   under every supported minor.
 - `evaluate-automerge-eligibility`: `goals-granted` against raw goals that differ; the actor list
@@ -223,8 +278,10 @@ because `nightly` was never planned on the pull request.
 - `auto-merge-pr`: `--match-head-commit` passed; a moved base refused before merging; a moved
   head's message; the retry stopping on `CONFLICTING` and not retrying a refused pin.
 - Engine: relevance published for every environment, whatever its verdict.
-- Structural: the auto-merge job's base-branch and same-repository conditions, the head and base
-  SHA wiring, the JSON file wiring from the plan step to the parse step, no JSON plan artifact.
+- Structural (F14 in `evaluate-automerge-eligibility/run_all_tests.sh`, and `terraform-plan`'s own
+  suite): the auto-merge job's base-branch and same-repository conditions, the head and merge SHA
+  wiring, the JSON file wiring from both plan steps to their parse steps, the test metadata
+  downloaded before the evaluation, no JSON plan artifact.
 - Live, once: `gh pr merge --match-head-commit` with a stale SHA against a test-bed pull request is
   refused by GitHub (the test bed has no merge App; a maintainer's token merges there), recorded in
   §13.
@@ -250,6 +307,36 @@ None; the decisions are the maintainer's (D3, D9, D10, D13).
 9. Test-bed run: the examples of §8 the test bed can reach, and the live `--match-head-commit`
    refusal.
 
+### Where each piece lives
+
+| Piece | Where |
+|---|---|
+| The JSON plan kept on the runner, stderr apart, its path published before anything can fail | `terraform-plan/step_plan_json.sh` |
+| The counts, `plan-complete`, `counts-source` | `parse-terraform-plan/helpers_additional.sh` (`plan-json-counts`), `step_parse_plan_output.sh` |
+| The JSON comparison across the supported minors | `contract-tests/run.sh` |
+| `relevant` for every environment | `engine/dsb_tf_engine/relevance.py` |
+| The checks of §5.1, the tolerated tests | `evaluate-automerge-eligibility/step_evaluate.sh`, `helpers_additional.sh` |
+| The base check, the head pin, the retry | `auto-merge-pr/step_auto_merge_pr.sh` |
+| The wiring and the job's scope | `.github/workflows/terraform-ci-cd-default.yml`, held by F14 |
+
 ## 13. What implementation taught the spec
 
-Reserved.
+- **A `-target` plan is not complete either.** Terraform 1.16 writes `complete: false` for every
+  targeted plan, not only for deferred changes. Refusing to count such plans would have shown `?`
+  in the comment of every caller using `-target`; they are counted, and completeness became its own
+  output that only auto-merge requires.
+- **The evidence says where it came from.** An empty JSON input means console counts, so a wiring
+  mistake would have fed the limits console counts silently. `counts-source` lets the evaluator
+  refuse them outright instead of depending on the wiring.
+- **The merger resolves the base itself.** The workflow passes `github.sha`, and the action reads its
+  first parent, so the workflow needs no step of its own; the input is `merge-sha`, not `base-sha`.
+  The check runs before every attempt, not once, which narrows the window a moving base has.
+- **Every supported minor agrees.** Terraform 1.11 to 1.16 all emit format 1.2 with `complete` and
+  `errored`, and the JSON counts equal the console's on every contract-test scenario. A plan without
+  the `complete` key is counted and reported as not complete.
+- **An errored plan never reaches the parser in this workflow,** since the JSON step runs only after
+  a successful plan; the errored rule is defence in depth for other callers.
+- **The notice has two forms.** The first draft had only "eligible despite"; a pull request that is
+  not eligible for another reason still names its tolerated tests, in the second form (§5.1).
+- **Open until the test bed confirms it:** GitHub's wording for a stale `--match-head-commit`, the
+  fallback when the head cannot be read (§6), is from memory; the live refusal of §10 records it.

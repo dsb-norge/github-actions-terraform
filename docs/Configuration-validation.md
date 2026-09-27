@@ -6,8 +6,8 @@ and what it refuses, with the message it refuses with. It is rule 1 of the engin
 procedure: a configuration is valid or it is not, whatever the event, and nothing is decided until
 it is.
 
-Status: **specification, not yet implemented.** §13 is reserved for what implementation teaches
-the spec.
+Status: **implemented.** §12 says where each rule lives; §13 is what implementation taught the
+spec.
 
 ## 1. Why
 
@@ -76,7 +76,7 @@ Refused, each with its own message:
 | Written | Message |
 |---|---|
 | an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `terraform-init-additional-dirs` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
-| a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml` | `The environment 'prod' sets 'trigger-events-yml'; per environment the setting is 'trigger-events' (the -yml name is the workflow input's).` |
+| a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml` | `The environment 'prod' sets 'trigger-events-yml', which is not a setting: per environment it is 'trigger-events', a list written directly in the entry.` |
 | a workflow-only input | `The environment 'prod' sets 'pr-auto-merge-app-id', which is a workflow input only: it applies to every environment at once. Set it in the calling workflow's 'with:'.` (the existing message for `path-relevance-enabled`, with its `paths: ['**']` advice, is kept) |
 | a value the engine sets itself: `goals-granted`, `caller-repo-default-branch`, `caller-repo-calling-branch`, `caller-repo-is-on-default-branch` | `The environment 'prod' sets 'goals-granted', which the workflow works out itself; remove it.` |
 | any other key | `The environment 'prod' sets 'github_environment', which is not a setting; did you mean 'github-environment'? The settings an environment may hold are listed in docs/Configuration-validation.md §3.1.` |
@@ -138,7 +138,9 @@ Each entry is non-empty text. The init step quotes each directory, so one holdin
 directory.
 
 - `The environment 'prod' has the additional init directory '', which is empty.`
+- `The environment 'prod' has the additional init directory 5, which is not text; quote it.`
 - `The environment 'prod' sets 'terraform-init-additional-dirs-yml' to {"main": true}; it must be a list of directories.`
+- For the global input: `terraform-init-additional-dirs-yml has the additional init directory '', which is empty.` and `terraform-init-additional-dirs-yml is {"main": true}; it must be a list of directories.`
 - A directory that does not exist is reported by the init step, as today.
 
 ### 3.5 Environment variables
@@ -159,7 +161,16 @@ and `extra-envs-from-secrets-per-goal-yml` hold secret names by variable name.
   so a per-environment null removes a global variable for that environment; it is never exported
   as the text `null`. In a per-goal plain map a null unsets the variable for that goal, as it does
   today. In a per-goal secret map and in a test lane, a null stays an error, as today.
-- A mapping or a list as a value is an error: `The environment 'prod' sets the variable 'TAGS' in 'extra-envs-yml' to a mapping; a variable's value is text. Quote it if the braces are part of the value.`
+- A mapping or a list as a value is an error: `The variable 'TAGS' of the environment 'prod' in 'extra-envs-yml' is a mapping; a variable's value is text. Quote it if the braces are part of the value.`
+  (`… is a list; … if the brackets are part of the value.` for a list; `… is 3, which is not text; quote it.`
+  for another value the adapter did not read as text; `… is not a variable name: a name is letters, digits and underscores, not starting with a digit.` for a bad name).
+  For the global input, `The variable 'TAGS' in 'extra-envs-yml' is a mapping; …`, once, whatever
+  the number of environments inheriting it.
+- These rules are the engine's for the two job-wide maps, `extra-envs-yml` and
+  `extra-envs-from-secrets-yml`. The per-goal maps are validated where they are resolved, by
+  `resolve-goal-envs` in each environment's job, as before: an unknown goal key, a value that is
+  not a mapping of variables, a null in a secret map. The engine reads their values as written and
+  gives each map every goal key.
 
 ### 3.6 Auto-merge settings
 
@@ -175,9 +186,13 @@ With the workflow input `pr-auto-merge-enabled: true`, every environment whose e
 - **In YAML, `[` and `]` delimit a flow list, so a bot login inside one must be quoted:**
   `'["dependabot[bot]", "renovate[bot]"]'`, or one `- "dependabot[bot]"` per line.
 - Messages:
-  - `Auto-merge is switched on (pr-auto-merge-enabled), but the actor list that applies to the environment 'prod' names nobody, so there is no one whose pull requests may merge without review. Name the accounts in pr-auto-merge-from-actors-yml, for example ["dependabot[bot]"].` (naming the input instead of the environment when the global list is the one in effect for every environment)
-  - `pr-auto-merge-from-actors-yml holds 'dependabot[bot] renovate[bot]', which is not a login. It looks like a list written without its dashes: write one account per line starting with '- ', or ["dependabot[bot]", "renovate[bot]"].`
+  - When no environment sets its own list, so the global one is in effect everywhere, one message naming the input: `Auto-merge is switched on (pr-auto-merge-enabled), but pr-auto-merge-from-actors-yml names nobody, so there is no one whose pull requests may merge without review. Name the accounts, for example ["dependabot[bot]"].`
+  - Otherwise one per environment whose list in effect is empty: `Auto-merge is switched on (pr-auto-merge-enabled), but the actor list that applies to the environment 'prod' names nobody, so there is no one whose pull requests may merge without review. Name the accounts in pr-auto-merge-from-actors-yml, for example ["dependabot[bot]"].`
+  - `pr-auto-merge-from-actors-yml holds 'dependabot[bot] renovate[bot]', which is not a login. It looks like a list written without its dashes: write one account per line starting with '- ', or ["dependabot[bot]", "renovate[bot]"].` (when the text holds logins separated by spaces or commas)
   - `pr-auto-merge-from-actors-yml holds 7, which is not a login; quote it if it is one.`
+  - `pr-auto-merge-from-actors-yml holds 'a.b', which is not a login: a login is letters, digits and hyphens, up to 39, not starting with a hyphen, and a bot's ends in [bot].`
+  - `pr-auto-merge-from-actors-yml is {"a": 1}; it must be a list of logins.`
+  - Per environment the same, beginning `The pr-auto-merge-from-actors-yml of the environment 'prod' holds …`, and `The environment 'prod' sets 'pr-auto-merge-from-actors-yml' to 3; it must be a list of logins.`
 - An environment whose effective `pr-auto-merge-enabled` is false needs no actors. Such an
   environment makes every pull request of the repository ineligible (Auto-merge.md §5), so it is
   the way to keep one environment's changes, and with them the repository, from auto-merging.
@@ -186,9 +201,11 @@ With the workflow input `pr-auto-merge-enabled: true`, every environment whose e
   exactly the six keys `plan-max-count-add`, `-change`, `-destroy`, `-import`, `-move`, `-remove`,
   each a YAML integer (not a boolean, not a quoted number) of at least `-1`, where `-1` means no
   limit. An absent or empty global value means the input's documented defaults.
-  - `The environment 'prod' sets 'plan-max-count-destory' in 'pr-auto-merge-limits-yml', which is not a limit; did you mean 'plan-max-count-destroy'?`
+  - `The environment 'prod' sets 'plan-max-count-destory' in 'pr-auto-merge-limits-yml', which is not a limit; did you mean 'plan-max-count-destroy'?` (with no near miss: `…, which is not a limit; the six limits are plan-max-count-add, -change, -destroy, -import, -move and -remove.`)
   - `pr-auto-merge-limits-yml sets 'plan-max-count-add' to '5', which is text; a limit is a whole number, written without quotes, and -1 means no limit.`
-  - `pr-auto-merge-limits-yml lacks 'plan-max-count-move'; the six limits are plan-max-count-add, -change, -destroy, -import, -move and -remove.`
+  - `pr-auto-merge-limits-yml sets 'plan-max-count-add' to -2; a limit is a whole number of -1 or more, and -1 means no limit.` (also for a boolean, a fraction and a null)
+  - `pr-auto-merge-limits-yml lacks 'plan-max-count-move'; the six limits are plan-max-count-add, -change, -destroy, -import, -move and -remove.` (once, however many environments inherit it; for an environment that sets its own limits, `The limits of the environment 'prod' lack 'plan-max-count-move'; …`)
+  - `pr-auto-merge-limits-yml is [1]; it must be a mapping of the six limits.`, and per environment `The environment 'prod' sets 'pr-auto-merge-limits-yml' to 'x'; it must be a mapping of the six limits.`
 - A per-environment `pr-auto-merge-enabled: true` while the input is `false` changes nothing,
   because the auto-merge job does not run; it is a warning, not an error, so a repository that
   switched auto-merge off keeps running: `The environment 'prod' sets pr-auto-merge-enabled: true, but auto-merge is switched off for the whole run (the input pr-auto-merge-enabled is false), so it has no effect.`
@@ -199,8 +216,11 @@ Eligibility and the merge are [Auto-merge.md](Auto-merge.md).
 
 A dispatch whose delivered inputs hold neither `environment` nor `goal` runs every environment
 with its goals, as a dispatch always has; its dispatch line says so, naming the inputs it did
-deliver: `dispatched by octocat: this dispatch delivered the inputs target, mode but neither 'environment' nor 'goal', so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1.`
+deliver, sorted: `dispatched by octocat: this dispatch delivered the inputs mode, target but neither 'environment' nor 'goal', so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1`,
+or, with none, `dispatched by octocat: this dispatch delivered no inputs, so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1`.
 A string input dispatched empty is absent from the payload, so only delivered inputs can be named.
+The standard block's `goal` is a choice with a default, which is always delivered, so a dispatch
+that delivers neither comes from another block.
 The adapter passes the names in the dispatch facts (`event.dispatch.inputs`, a list of strings),
 never their values.
 
@@ -210,7 +230,8 @@ never their values.
 `caller-repo-is-on-default-branch` row variable) means the run's ref is a **branch** named like the
 default branch (D8). The adapter passes the runner's `GITHUB_REF_TYPE` as `event.ref_type`, a
 required key of the input document. A run on a tag of that name is not on the default branch:
-`dispatch: apply is only allowed from the default branch 'main'; this run is on the tag 'main'.`
+`dispatch: apply is only allowed from the default branch 'main'; this run is on the tag 'main'` (a
+branch keeps the existing wording, `this run is on 'feature/x'`).
 
 ## 4. Message style
 
@@ -306,7 +327,8 @@ A renovate pull request is not eligible, whatever it touches, because every envi
 must allow its actor and prod allows only dependabot. A dependabot pull request is eligible when
 dev's plan stays within five adds and changes and prod's plan changes nothing.
 
-**Auto-merge switched on with no actors**, refused: `Auto-merge is switched on (pr-auto-merge-enabled), but the actor list that applies to the environment 'dev' names nobody …`
+**Auto-merge switched on with no actors**, refused: `Auto-merge is switched on (pr-auto-merge-enabled), but pr-auto-merge-from-actors-yml names nobody, …`.
+With one environment naming its own actors, the others are named one by one: `… but the actor list that applies to the environment 'dev' names nobody, …`.
 
 ## 6. Interplay with other specs
 
@@ -361,11 +383,15 @@ form.
 
 The expected churn, by category, so a reviewer can tell intended changes from accidents:
 
-- every `input.json` of the port cases gains `event.ref_type` (and a dispatch gains `inputs`);
+- every `input.json` of the port cases gains `event.ref_type` and a dispatch's `inputs`, and no
+  golden changes with it;
 - rows whose variable values were YAML booleans or numbers now hold them as text (15 cases,
   among them the callers 04 to 14, 16 and 17); the exported values are unchanged;
-- a per-environment actor list replaces instead of merging (`fixture-happy-day-v1`);
-- the cases that held a refused shape become errors, each recorded as a deviation.
+- a per-environment actor list replaces instead of merging (`fixture-happy-day-v1`,
+  `merge-arrays-keep-duplicates`);
+- an empty global limits value is the documented default, not null (`merge-global-empty-per-env-absent`);
+- the cases that held a refused shape become errors, each recorded as a deviation
+  (`per-env-goals-scalar`, `per-env-arbitrary-keys`, `per-env-stripped-names`, `merge-array-vs-object`, …).
 
 ## 10. Open questions
 
@@ -387,8 +413,49 @@ None; the decisions are the maintainer's (D3, D5, D6, D10).
 
 ## 12. Implementation notes
 
-Reserved.
+Every rule is core code in `engine/dsb_tf_engine/environments.py`, run by `build_rows` in two passes:
+
+| Pass | What | Functions |
+|---|---|---|
+| as written, before any row | the keys of every entry (§3.1); goals (§3.2), init directories (§3.4), actors and limits (§3.6), the job-wide variables (§3.5), each global value once and then each environment's own | `check_keys`, `_setting_problems` (`goal_problems`, `init_dir_problems`, `actor_problems`, `limit_problems`, `variable_problems`) |
+| per row | the variables' nulls dropped after the merge (§3.5) | `_without_nulls` |
+| what each environment ends up with | the actor list in effect, all six limits (§3.6) | `_auto_merge_problems` |
+| a warning, not an error | `pr-auto-merge-enabled: true` for an environment while the input is false | `setting_warnings`, read by `decide` |
+
+The default branch is `on_default_branch`, the one place the gates' expansion, a dispatched apply
+and `caller-repo-is-on-default-branch` read it. The dispatch line is `triggers.lines`. The adapter
+reads the four variable settings through the `READ_AS` yq expressions (§3.5), `GITHUB_REF_TYPE`
+into `event.ref_type` (a required runner variable), and a dispatch's delivered input names into
+`event.dispatch.inputs`. `terraform-init/step_init.sh` reads the directories as NUL-terminated
+items.
+
+The tests are `engine/tests/test_config.py` (keys, variables, init directories, actors, limits,
+warnings, one run reporting every kind), `test_triggers.py` (goals, the ref type, the dispatch
+lines), `test_adapter.py` (the source text of every scalar form, the runner's ref type, the
+delivered names) and `terraform-init/run_tests_step_init.sh` (a directory holding a space).
 
 ## 13. What implementation taught the spec
 
-Reserved.
+- **The yq rewrite has to be scoped three ways.** Rewriting "every plain scalar under these keys"
+  created the keys where they were absent, turned a null document into `[]`, and turned a bare
+  `false` given for a whole setting into text. The expressions select existing keys by name, only
+  inside a list of mappings for `environments-yml`, and only inside a mapping for the global
+  inputs.
+- **The empty-actor message names the input or the environments, never both.** One message naming
+  the input when no environment sets its own list; otherwise one per environment in need, since the
+  fix can then be in either place.
+- **Two passes, not one.** Every problem of the settings as written is reported in one run, globals
+  first. What an environment ends up with (the actors in effect, the six limits) can only be judged
+  once its row is built, so those come in a following run when the first had other problems.
+- **The variables moved into the first pass.** Checked after the merge, a bad global variable was
+  blamed on the first environment inheriting it, and only that environment's problems were
+  reported; the worked examples of the user guide showed it. Checked as written, a global
+  variable's problem names the input once and every environment's are reported together, and the
+  merge of two valid maps needs no check of its own.
+- **The init-directory rule retired a branch elsewhere.** Path relevance handled a directories value
+  that was not a list; with every row's directories now a list of non-empty text, that branch was
+  unreachable and was removed.
+- **A null inside a per-environment limits mapping is refused as a value.** The merge keeps a null
+  leaf, and a limit of null is neither a limit nor "not set".
+- **Numbers in actor lists are ints only.** A fraction can never be a login, so only a whole number
+  gets the "quote it" advice; anything else gets the login rule.
