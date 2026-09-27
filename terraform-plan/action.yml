@@ -60,7 +60,8 @@ outputs:
     value: ${{ steps.plan-show.outputs.tf-plan-txt-output-file }}
   json-output-file:
     description: |
-      Path of the plan in JSON format, as rendered by 'terraform show -json'. Empty
+      Path of the plan in JSON format, as rendered by 'terraform show -json': what
+      parse-terraform-plan's 'plan-json-file' input counts the changes from. Empty
       when the plan did not succeed (the JSON step does not run). Otherwise always the
       path, and the file exists only when 'terraform show -json' succeeded; the
       command's stderr goes to the log, never into the file.

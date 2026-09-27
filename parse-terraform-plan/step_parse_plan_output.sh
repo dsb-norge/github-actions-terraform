@@ -2,12 +2,24 @@
 #
 # Source for the parse-plan-output step
 #
-# Parses a Terraform plan's console output file to extract resource change counts.
-# Outputs the number of resources to be added, changed, destroyed, imported,
-# moved, and removed, plus a flag for plans that change outputs but no resources.
+# Outputs the number of resources a Terraform plan adds, changes, destroys,
+# imports, moves and removes, plus a flag for plans that change outputs but no
+# resources.
+#
+# The counts come from the JSON plan ('terraform show -json') when one is
+# given, and from the plan's console output otherwise. The console text holds
+# resource values, and a value that reads like a summary line forges the
+# console's counts; nothing in a resource's values can change the JSON plan's.
+# A JSON plan that is absent, unreadable or errored makes every count '?'; it
+# never falls back to the console. An incomplete one ("complete": false, as
+# with -target) is counted, and says so in plan-complete.
 #
 # Required environment variables:
 #   input_plan_console_file  - Path to the plan console output file
+#
+# Optional environment variables:
+#   input_plan_json_file     - Path to the JSON plan. Empty: count from the
+#                              console, as before the JSON plan was read.
 #
 
 set +o nounset # allow unset variables (graceful handling of empty/missing input)
@@ -35,8 +47,76 @@ function main {
   # decide whether to render the plan extract. Determined after the counts are
   # known; see the detection block near the end of main.
   local has_output_only_changes='false'
+  # Which of the two sources the counts came from, published so a consumer that
+  # must not trust console counts (the auto-merge evaluation) can tell.
+  local counts_source='console'
+  local json_outputs_change='false'
+  # Whether the JSON plan is the whole plan: 'true' only when it says
+  # "complete": true, '?' when it could not be counted, empty when the counts
+  # come from the console, which cannot tell. Apart from the counts, so a
+  # targeted plan keeps its real counts in the comment while a consumer that
+  # needs the whole plan (auto-merge) refuses anything but 'true'.
+  local plan_complete=''
 
-  if [ ! -z "${input_plan_console_file:-}" ]; then
+  if [ -n "${input_plan_json_file:-}" ]; then
+    counts_source='json'
+    plan_complete='?'
+    log-info "counting from the JSON plan: ${input_plan_json_file}"
+
+    local json_reason='' json_result='' json_err_file=''
+    if [ ! -e "${input_plan_json_file}" ]; then
+      json_reason="the file does not exist ('terraform show -json' did not write it)"
+    elif [ ! -f "${input_plan_json_file}" ]; then
+      json_reason="it is not a regular file"
+    elif [ ! -r "${input_plan_json_file}" ]; then
+      json_reason="it cannot be read"
+    elif [ ! -s "${input_plan_json_file}" ]; then
+      json_reason="the file is empty"
+    else
+      json_err_file="$(mktemp)"
+      if ! json_result="$(plan-json-counts "${input_plan_json_file}" 2>"${json_err_file}")"; then
+        json_reason="jq failed on it: $(head -c 300 "${json_err_file}")"
+        json_result=''
+      fi
+      rm -f "${json_err_file}"
+    fi
+
+    local json_status='' json_rest=''
+    IFS=$'\t' read -r json_status json_rest <<<"${json_result}"
+    if [ "${json_status}" = 'ok' ]; then
+      local j_add j_change j_destroy j_import j_move j_remove j_outputs j_complete j_count j_well_formed='true'
+      IFS=$'\t' read -r j_add j_change j_destroy j_import j_move j_remove j_outputs j_complete <<<"${json_rest}"
+      for j_count in "${j_add}" "${j_change}" "${j_destroy}" "${j_import}" "${j_move}" "${j_remove}"; do
+        [[ "${j_count}" =~ ^[0-9]+$ ]] || j_well_formed='false'
+      done
+      [[ "${j_outputs}" == 'true' || "${j_outputs}" == 'false' ]] || j_well_formed='false'
+      [[ "${j_complete}" == 'true' || "${j_complete}" == 'false' ]] || j_well_formed='false'
+      if [ "${j_well_formed}" = 'true' ]; then
+        adds="${j_add}"
+        changes="${j_change}"
+        destroys="${j_destroy}"
+        imports="${j_import}"
+        moves="${j_move}"
+        removes="${j_remove}"
+        json_outputs_change="${j_outputs}"
+        plan_complete="${j_complete}"
+        log-info "the JSON plan: ${adds} to add, ${changes} to change, ${destroys} to destroy, ${imports} to import, ${moves} to move, ${removes} to remove; outputs change: ${json_outputs_change}; complete: ${plan_complete}"
+        if [ "${plan_complete}" != 'true' ]; then
+          log-warn "the JSON plan does not say it is complete (as with -target or deferred changes): it may not be the whole plan."
+        fi
+      else
+        json_reason="the counting returned '${json_rest}'"
+      fi
+    elif [ "${json_status}" = 'unknown' ]; then
+      json_reason="${json_rest}"
+    elif [ -z "${json_reason}" ]; then
+      json_reason="the counting returned '${json_result}'"
+    fi
+    if [ -n "${json_reason}" ]; then
+      log-warn "every count is unknown ('?'): the JSON plan '${input_plan_json_file}' cannot be counted: ${json_reason}"
+    fi
+
+  elif [ ! -z "${input_plan_console_file:-}" ]; then
     log-info "parsing plan output file: ${input_plan_console_file}"
 
     if [ -s "${input_plan_console_file}" ]; then
@@ -134,8 +214,13 @@ function main {
     total=$((adds + changes + destroys + imports + moves + removes))
   fi
 
-  # Output-only detection keys off the "Changes to Outputs:" header, not off
-  # Terraform's "…without changing any real infrastructure." sentence.
+  # From the JSON plan, output-only means an output_changes entry that is not
+  # a no-op, and no counted resource change: a data source read counts nowhere,
+  # as below. Gated on total==0 for the same reason as below.
+  #
+  # From the console, output-only detection keys off the "Changes to Outputs:"
+  # header, not off Terraform's "…without changing any real infrastructure."
+  # sentence.
   #
   # That sentence is printed only when the plan holds no resource actions at
   # all. A plan that defers a data source — "# data.x.y will be read during
@@ -151,11 +236,18 @@ function main {
   # non-zero total. The header is anchored because Terraform always prints it
   # unindented, whereas a resource diff can carry the same words indented
   # inside a heredoc or a string attribute.
-  if [ "${total}" = '0' ] && grep -q '^Changes to Outputs:' "${input_plan_console_file}"; then
+  if [ "${counts_source}" = 'json' ]; then
+    if [ "${total}" = '0' ] && [ "${json_outputs_change}" = 'true' ]; then
+      log-info "detected output-only changes in the JSON plan (outputs change, no resource changes)"
+      has_output_only_changes='true'
+    fi
+  elif [ "${total}" = '0' ] && grep -q '^Changes to Outputs:' "${input_plan_console_file}"; then
     log-info "detected output-only changes (outputs change, no resource changes)"
     has_output_only_changes='true'
   fi
 
+  set-output 'counts-source' "${counts_source}"
+  set-output 'plan-complete' "${plan_complete}"
   set-output 'import-count' "${imports}"
   set-output 'add-count' "${adds}"
   set-output 'change-count' "${changes}"
