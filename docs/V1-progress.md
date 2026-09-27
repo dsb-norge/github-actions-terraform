@@ -263,6 +263,13 @@ table only says where.
     test bed's `main` restored to `@v1` right after.
 - Not exercised on the test bed, covered by tests: a dispatch without an inputs block after the
   move (the port cases and the adapter tests), a re-run by another actor, an unsupported event.
+- After the hand-off, on the maintainer's review: goals are a list of known names (a list written
+  without its dashes had held `destroy`), and a dispatch's `goal: apply` no longer brings the
+  destroy goals. Gates: 454 tests, 100 percent of lines and branches, 3210 mutants all killed. On
+  the test bed, a dispatch with `noop-poc`'s goals written as a `|` block without dashes failed in
+  create-matrix naming the string `init plan destroy-plan` and how to list goals, and no
+  environment ran; a `goal: apply` dispatch of `destroy-plan-poc` on `main` planned and applied and
+  skipped its destroy plan and destroy. The test bed's `main` went back to `@v1` right after.
 
 ## 5. Findings to carry
 
