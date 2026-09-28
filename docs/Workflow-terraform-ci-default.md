@@ -325,7 +325,9 @@ A cell lists the goals the environment is granted, which are the steps its job r
 flowchart TD
   cm["create-matrix: decide what runs"]
   seed["seed-pr-comments: reserve the PR comments"]
-  env["terraform-ci-cd: one job per environment that runs"]
+  env["terraform-ci-cd: stage 1, one job per environment"]
+  env2["terraform-ci-cd-2: stage 2"]
+  env3["terraform-ci-cd-3: stage 3"]
   test["terraform-test: one job per test file"]
   agg["pr-comment-aggregator: fill the grouped PR comments"]
   rs["run-summary: one table on the run page"]
@@ -335,29 +337,31 @@ flowchart TD
   cm --> seed
   cm --> env
   seed --> env
+  env --> env2
+  env2 --> env3
   cm --> test
   seed --> test
   cm --> agg
-  env --> agg
+  env3 --> agg
   cm --> rs
-  env --> rs
+  env3 --> rs
   cm --> tsum
   test --> tsum
   cm --> concl
-  env --> concl
+  env3 --> concl
   test --> concl
   cm --> am
-  env --> am
+  env3 --> am
   concl --> am
 ```
 
-An arrow is a `needs:` of the job it points to.
+An arrow is a `needs:` of the job it points to. The jobs after the environments need all three stage jobs; the chart draws the last one only. Without `depends-on`, stage 1 holds every environment and stages 2 and 3 are skipped.
 
 | Job | Runs | Does |
 |---|---|---|
 | `create-matrix` (Create job matrix) | on every run | Validates the configuration and decides which environments run, with which goals, and which test files run. A refused configuration stops the run here. |
 | `seed-pr-comments` (Seed PR comment heads) | on a pull request that is not from a fork | Creates the comment heads at the top of the pull request, in a fixed order. |
-| `terraform-ci-cd` (Terraform) | when at least one environment runs | One job per environment that runs: init, fmt, validate, lint and plan, then apply, destroy plan or destroy as granted. |
+| `terraform-ci-cd`, `terraform-ci-cd-2`, `terraform-ci-cd-3` (Terraform) | when their stage has environments, after the stage before succeeded or was skipped | One job per environment that runs: init, fmt, validate, lint and plan, then apply, destroy plan or destroy as granted. The stages come from `depends-on` ([example 15](#15-ordering-environments-a-test-tenant-before-production)). |
 | `terraform-test` | on a pull request or a push, when the repository has committed test files | One job per test file, in parallel with the environments. |
 | `pr-comment-aggregator` (PR comment aggregator) | on a pull request | Renders the grouped comments ([example 12](#12-grouped-pr-comments)). |
 | `run-summary` (Run summary) | on every run | Writes one table with every environment to the run page. |
@@ -901,6 +905,63 @@ With `modules/net/tests/unit-net.tftest.hcl` and `tests/integration-net.tftest.h
 
 Each file is a job of its own beside the environments, whatever the change touched, a documentation-only pull request included. Tests never run on a dispatch or a schedule, so a recovery never starts them. See [Terraform tests](#terraform-tests) above and [Terraform-tests.md](./Terraform-tests.md).
 
+##### 15. Ordering environments: a test tenant before production
+
+```yaml
+      environments-yml: |
+        - environment: shared
+        - environment: prod
+          github-environment: prod-approval
+          depends-on: [shared]
+        - environment: sandbox
+          goals-yml: [all, apply-on-pr]
+```
+
+`prod` applies only after `shared` has succeeded in the same run. The workflow runs the environments in up to three stages, one job after the other (`Terraform` each, so the check names do not change), and the engine assigns the stages:
+
+| Run | Stage 1 | Stage 2 |
+|---|---|---|
+| push to `main`, a change under `modules/` | `shared`: `init … plan, apply` | `prod` and `sandbox`: `init … plan, apply` |
+| push to `main`, a change only under `envs/prod/` | `prod`: `init … plan, apply` | — |
+| pull request, a change under `modules/` | `shared`: `init … plan` | `prod`: `init … plan`; `sandbox`: `init … plan, apply` |
+| dispatch, `environment: prod`, `goal: apply` | `prod`: `init … plan, apply` | — |
+| dispatch, every environment, `goal: plan` | all three: `init … plan` | — |
+
+- **Stages are used only when something applies or destroys.** A run that only plans puts every environment in stage 1, in parallel, as without `depends-on`. The pull request above is staged because `sandbox` applies on it.
+- **A stage waits for the whole stage before it**, not only for what an environment names: GitHub has no per-job dependencies inside a matrix. If `shared` fails, stage 2 does not run, so `sandbox` is held back too, although it depends on nothing.
+- **An environment with no dependencies and no dependents goes in the last stage**, here `sandbox` in stage 2, so its failure can never hold anything back.
+- **A dependency that is not in the run does not hold anything back.** With a change only under `envs/prod/`, relevance leaves `shared` out and `prod` applies at once. The run says so, because it is the only warning that production applied without its dependency:
+
+  ```text
+  ordering: 'prod' depends on 'shared', which is not in this run (relevance: no changed file matches), so it runs without waiting for it
+  ```
+
+  `depends-on` orders environments within one run. It never checks whether `shared`'s last apply, in some earlier run, succeeded.
+- **A dispatch naming one environment runs it alone.** That is the way to recover an environment a failed stage held back:
+
+  ```text
+  ordering bypassed: 'prod' depends on 'shared', which a single-environment dispatch does not run
+  ```
+
+- **A tolerated failure releases the next stage.** An environment with `allow-failing-terraform-operations: true` ends green even when its apply fails, so the stage after it runs. Do not set it on an environment others depend on.
+- A required reviewer on `prod-approval` holds `prod`'s job, and with it every later stage, until someone approves.
+
+When `shared`'s apply fails, the run is red and says what was held back. The conclusion:
+
+```text
+conclusion: red — stage 1 failed; stage 2 held back (2 environment(s)); environments: 3 affected, 0 not affected (diff: diff); tests: 0
+```
+
+The run summary gives `prod` and `sandbox` a ⏭️ row each and lists the stages under the table:
+
+```text
+_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`, `sandbox`. Stage 1 failed, so stage 2 did not run. Held back: `prod`, `sandbox`._
+```
+
+On a pull request, each held-back environment's comment says `⏭️ Held back: this environment is in stage 2 and stage 1 failed`, with what it depends on; a group comment shows a held-back member's column as ⏭️. After fixing `shared`, re-run the workflow, or dispatch `prod` alone.
+
+The full design is [Environment-ordering.md](./Environment-ordering.md).
+
 #### Mistakes the workflow refuses
 
 A configuration the workflow cannot run as written is refused before any environment job starts. The `Create job matrix` job fails with one error annotation per problem, titled `create-tf-vars-matrix`, and the `Terraform conclusion` check is red:
@@ -1132,6 +1193,31 @@ The environment 'prod' sets 'terraform-version' to 1.1, which is not a string; q
 ```
 
 Unlike the variable settings, a setting that overrides a workflow input is read as YAML, so a version needs its quotes: `terraform-version: "1.10"`.
+
+##### A dependency that does not exist, or a cycle
+
+```yaml
+      environments-yml: |
+        - environment: staging
+        - environment: prod
+          depends-on: [stagng]
+```
+
+```text
+The environment 'prod' depends on 'stagng', which is not an environment of environments-yml; did you mean 'staging'?
+```
+
+Two environments that depend on each other could never run first:
+
+```text
+depends-on forms a cycle, shared → prod → shared, so none of them could ever run first; remove one of the dependencies.
+```
+
+The workflow runs at most three stages, whichever environments a change touches:
+
+```text
+depends-on needs 4 stages, but the workflow runs at most 3: shared → platform → regional → app. Flatten the chain, or split the repository.
+```
 
 ##### Accepted with a warning
 
