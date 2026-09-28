@@ -270,7 +270,9 @@ inside a called workflow `github.event.inputs` is the caller's dispatch inputs, 
 caller declares no block (P8), with empty string inputs absent (P9); on `schedule`, `github.actor`
 and `github.triggering_actor` are the account that last pushed the workflow file carrying the cron
 line. A survey of the calling repositories found no dispatch input named `environment`, `goal` or
-`reason`, so the standard block collides with nothing in use.
+`reason`, so the standard block collides with nothing in use. A re-run by another account, which
+the dispatch line reports as `(re-run by <triggering_actor>)`, needs a second account on the test
+bed and is covered by the engine's tests only.
 
 ## 10. Open questions
 
