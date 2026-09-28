@@ -353,9 +353,11 @@ jobs:
         continue-on-error: false
 
       - name: "🧐 Validation outcome: 🧪 Test"
+        env:
+          TEST_FILE: ${{ matrix.test-file }}
         run: |
           if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
-            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${{ matrix.test-file }}'!"
+            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${TEST_FILE}'!"
             exit 1
           fi
         continue-on-error: false

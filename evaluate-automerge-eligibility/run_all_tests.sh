@@ -2994,6 +2994,74 @@ else
 fi
 
 # ============================================================================
+# F16 — no run: block pastes an input, a matrix value or a step output into its
+# script text.
+#
+# GitHub substitutes an expression into the script before bash parses it, so a
+# value is code: a quote in a path or an environment name ends the string it
+# sits in, and the rest runs as shell. A value read from the step's env: is data
+# whatever it holds. The one place an expression may stand in a script is a
+# heredoc capture, which F9 holds to JSON under a unique quoted delimiter; the
+# runner's own github.action_path and a step's fixed-word outcome are out of
+# scope. Only small scalars go to env:, which reaches every fork's envp;
+# anything large is captured the F9 way (docs/Action-implementation-guide.md,
+# "Step shim pattern — JSON inputs").
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F16 - run blocks read inputs, matrix values and step outputs from env, not pasted${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f16_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, re, sys, yaml
+
+def load(path):
+    with open(path, encoding='utf-8') as fh:
+        return yaml.safe_load(fh) or {}
+
+def run_steps(doc):
+    steps, seen = list(((doc.get('runs') or {}).get('steps')) or []), []
+    for job in (doc.get('jobs') or {}).values():
+        job_steps = job.get('steps') or []
+        # The stage jobs share one step list through a YAML anchor: check it once.
+        if any(job_steps is other for other in seen):
+            continue
+        seen.append(job_steps)
+        steps += job_steps
+    return [step for step in steps if isinstance(step.get('run'), str)]
+
+# F9's heredoc, so a capture is exempt exactly when F9 judges it.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?:\n|$)", re.S)
+EXPR = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.S)
+# The context must start the reference: needs.create-matrix.outputs is not the matrix context.
+PASTED = re.compile(r"(?<![\w.-])(?:inputs\.|matrix\.|steps\.[\w-]+\.outputs\b)")
+problems, checked = [], 0
+files = sorted(glob.glob('*/action.yml') + glob.glob('*/action.yaml') + glob.glob('.github/workflows/*.y*ml'))
+for path in files:
+    for step in run_steps(load(path)):
+        checked += 1
+        script = HEREDOC.sub('\n', step['run'])
+        for expression in EXPR.findall(script):
+            if PASTED.search(expression):
+                problems.append(f"{path} :: step '{step.get('id') or step.get('name')}' pastes "
+                                f"${{{{ {expression} }}}} into its script; read a small scalar from the step's "
+                                "env:, capture anything else through a heredoc (F9)")
+print(f"checked {checked} run block(s) in {len(files)} file(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f16_rc=0 || _f16_rc=$?
+if [[ "${_f16_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f16_out}" | head -n1): nothing pasted outside a heredoc capture"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f16_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

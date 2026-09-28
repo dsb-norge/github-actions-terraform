@@ -58,13 +58,15 @@ runs:
   steps:
     - id: check-prereqs
       shell: bash
+      env:
+        input_terraform_plan_file: ${{ inputs.terraform-plan-file }}
       run: |
         # Make sure the plan file and the terraform binary are available
 
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
         start-group "check prerequisite: plan file"
-        given_path='${{ inputs.terraform-plan-file }}'
+        given_path="${input_terraform_plan_file}"
         log-info "configured plan file path is '${given_path}'"
         if [ ! -f "${given_path}" ]; then
           log-error "the configured plan file does not exists, unable to perform plan!"

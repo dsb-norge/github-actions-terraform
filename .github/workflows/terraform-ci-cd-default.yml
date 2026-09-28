@@ -1328,9 +1328,11 @@ jobs:
 
       - name: "🧐 Validation outcome: ⚙️ Init"
         if: contains(matrix.vars.goals-granted, 'init')
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
-            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
@@ -1344,45 +1346,55 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.verify-lock.outcome }}" == 'success' ]; then
-            echo "::error title=Lock file verification failed::Outcome of lock file verification step was '${{ steps.verify-lock.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Lock file verification failed::Outcome of lock file verification step was '${{ steps.verify-lock.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 🖌 Format"
         if: contains(matrix.vars.goals-granted, 'format')
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
-            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: ✔ Validate"
         if: contains(matrix.vars.goals-granted, 'validate')
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
-            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 🧹 TFLint"
         if: contains(matrix.vars.goals-granted, 'lint')
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
-            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
         continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}
       - name: "🧐 Validation outcome: 📖 Plan"
         if: contains(matrix.vars.goals-granted, 'plan')
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.plan.outcome }}" == 'success' ]; then
-            echo "::error title=Plan failed::Outcome of terraform plan step was '${{ steps.plan.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Plan failed::Outcome of terraform plan step was '${{ steps.plan.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
@@ -1830,9 +1842,11 @@ jobs:
       - name: "🧐 Validation outcome: 🐙 Apply"
         if: |
           always() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.apply.outcome }}" == 'success' ]; then
-            echo "::error title=Apply failed::Outcome of terraform apply step was '${{ steps.apply.outcome }}' for environment '${{ matrix.vars.github-environment }}' — infrastructure may be partially applied!"
+            echo "::error title=Apply failed::Outcome of terraform apply step was '${{ steps.apply.outcome }}' for environment '${ENVIRONMENT_NAME}' — infrastructure may be partially applied!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
@@ -1840,9 +1854,11 @@ jobs:
       - name: "🧐 Validation outcome: ☠📖 Destroy Plan"
         if: |
           always() && steps.destroy-plan.outcome != 'skipped' && steps.destroy-plan.outcome != ''
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.destroy-plan.outcome }}" == 'success' ]; then
-            echo "::error title=Destroy plan failed::Outcome of terraform destroy plan step was '${{ steps.destroy-plan.outcome }}' for environment '${{ matrix.vars.github-environment }}'!"
+            echo "::error title=Destroy plan failed::Outcome of terraform destroy plan step was '${{ steps.destroy-plan.outcome }}' for environment '${ENVIRONMENT_NAME}'!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
@@ -1850,9 +1866,11 @@ jobs:
       - name: "🧐 Validation outcome: ☠ Destroy"
         if: |
           always() && steps.destroy.outcome != 'skipped' && steps.destroy.outcome != ''
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.vars.github-environment }}
         run: |
           if [ ! "${{ steps.destroy.outcome }}" == 'success' ]; then
-            echo "::error title=Destroy failed::Outcome of terraform destroy step was '${{ steps.destroy.outcome }}' for environment '${{ matrix.vars.github-environment }}' — infrastructure may be partially destroyed!"
+            echo "::error title=Destroy failed::Outcome of terraform destroy step was '${{ steps.destroy.outcome }}' for environment '${ENVIRONMENT_NAME}' — infrastructure may be partially destroyed!"
             exit 1
           fi
         # do not terminate if configured to ignore, fromJSON ensures bool
@@ -1875,8 +1893,10 @@ jobs:
       # so cleanup is explicit rather than delegated to runner behavior.
       - name: "🧹 Shred resolved environment files"
         if: always()
+        env:
+          ENVS_DIR: ${{ steps.goal-envs.outputs.envs-dir }}
         run: |
-          dir='${{ steps.goal-envs.outputs.envs-dir }}'
+          dir="${ENVS_DIR}"
           [ -n "${dir}" ] && [ -d "${dir}" ] && rm -rf "${dir}" || :
         continue-on-error: true # never fail the job over cleanup
 
@@ -2568,12 +2588,15 @@ jobs:
     steps:
       - name: "🔐 Validate auto-merge configuration"
         id: validate-automerge-config
+        env:
+          APP_ID: ${{ inputs.pr-auto-merge-app-id }}
+          SECRET_NAME: ${{ inputs.pr-auto-merge-app-private-key-secret }}
         run: |
-          if [ -z "${{ inputs.pr-auto-merge-app-id }}" ]; then
+          if [ -z "${APP_ID}" ]; then
             echo "::error::Auto-merge is enabled but 'pr-auto-merge-app-id' is not set. Please provide the GitHub App ID."
             exit 1
           fi
-          if [ -z "${{ inputs.pr-auto-merge-app-private-key-secret }}" ]; then
+          if [ -z "${SECRET_NAME}" ]; then
             echo "::error::Auto-merge is enabled but 'pr-auto-merge-app-private-key-secret' is not set. Please provide the name of the secret containing the GitHub App private key."
             exit 1
           fi
