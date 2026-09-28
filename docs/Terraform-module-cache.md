@@ -213,12 +213,12 @@ The workflow does an explicit **restore → init → save**, with no `restore-ke
 flowchart TD
     setup["📥 Setup Terraform<br>(terraform on PATH)"]
     resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, additional-dirs-json, environment, test-directory<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
-    restore["🚀 actions/cache/restore@v5<br>path = cache-paths, key = cache-key, no restore-keys"]
+    restore["🚀 actions/cache/restore@v6<br>path = cache-paths, key = cache-key, no restore-keys"]
     snap["📸 terraform-module-cache (phase - snapshot)<br>copies each included dir's modules.json to RUNNER_TEMP"]
     init["⚙️ terraform-init<br>(unchanged)"]
     verify["🔍 terraform-module-cache (phase - verify)<br>digest completeness + save safety gate<br>reads each included dir's modules.json"]
     prune["🧹 terraform-module-cache (phase - prune)<br>drops '.git' from the cache paths<br>gated exactly like the save"]
-    save["💾 actions/cache/save@v5<br>if init succeeded AND key missed AND safe to save"]
+    save["💾 actions/cache/save@v6<br>if init succeeded AND key missed AND safe to save"]
 
     setup --> resolve --> restore --> snap --> init --> verify --> prune --> save
 ```
@@ -1006,6 +1006,6 @@ Genuine follow-ups:
   invocation into one console file with no dir markers, so nothing downstream can
   say which directory a given `Downloading` line came from. Emitting a marker
   would sharpen §4.4.2 and help `parse-terraform-warnings` too.
-- **The provider cache is untouched.** Its combined `actions/cache@v5` step
+- **The provider cache is untouched.** Its combined `actions/cache@v6` step
   evaluates its key before init, so it does not have the §4.2 trap. Migrating it
   to restore/save for save-on-success is a separate, independent change.

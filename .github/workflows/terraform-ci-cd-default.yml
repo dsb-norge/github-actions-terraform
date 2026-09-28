@@ -856,7 +856,7 @@ jobs:
 
       - name: "🚀 Cache Terraform provider plugins"
         if: contains(matrix.vars.goals-granted, 'init')
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.vars.project-dir)) }}"
@@ -904,7 +904,7 @@ jobs:
       - name: "🚀 Restore terraform module cache"
         id: restore-module-cache
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
@@ -997,7 +997,7 @@ jobs:
           && steps.init.outcome == 'success'
           && steps.restore-module-cache.outputs.cache-hit != 'true'
           && steps.post-init-check.outputs.safe-to-save == 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
@@ -2204,7 +2204,7 @@ jobs:
       # for a key, so with the environment job's key the test-only providers would never be cached (P41).
       - name: "🚀 Cache Terraform provider plugins"
         if: steps.copy-lock.outputs.lock-present == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.test.root)) }}-tftest"
@@ -2241,7 +2241,7 @@ jobs:
       - name: "🚀 Restore terraform module cache"
         id: restore-module-cache
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
@@ -2304,7 +2304,7 @@ jobs:
           && steps.init.outcome == 'success'
           && steps.restore-module-cache.outputs.cache-hit != 'true'
           && steps.post-init-check.outputs.safe-to-save == 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ steps.module-cache.outputs.cache-paths }}
           key: ${{ steps.module-cache.outputs.cache-key }}
