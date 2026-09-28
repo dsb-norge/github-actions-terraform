@@ -29,7 +29,7 @@ Seven jobs:
 flowchart LR
     discover --> test["test - matrix fan-out"]
     discover --> python["engine-python - the engine on 3.12 and 3.x"]
-    discover --> shards["engine-mutation - four shards"]
+    discover --> shards["engine-mutation - eight shards"]
     shards --> gate["engine-mutation-gate - merge and judge"]
     test --> summary["summary - PR comment"]
     test --> conclusion["tests-conclusion - required check"]
@@ -494,15 +494,14 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   prints `Mutation gate not run here (ENGINE_MUTATION=shards) …`, and counts one gate test, not
   two. Nothing else reads the variable, and locally it is unset, so `bash engine/run_all_tests.sh`
   still runs both gates.
-- **`engine-mutation`** is a matrix of four shards on Python 3.12, the floor. The mutants' keys are
-  printed by `ast.unparse`, so every shard runs one Python and the keys match
-  `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/4 --out
-  mutation-shard-K.json`: the unmutated baseline first, then every fourth mutant from the K-th,
-  interleaved so each shard holds a share of every module. A shard judges nothing. It exits
-  non-zero only when its baseline fails, and uploads its keys and survivors as
-  `engine-mutation-K`.
+- **`engine-mutation`** is a matrix of N shards, eight today, on Python 3.12, the floor. The
+  mutants' keys are printed by `ast.unparse`, so every shard runs one Python and the keys match
+  `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/N --out
+  mutation-shard-K.json`: the unmutated baseline first, then every N-th mutant from the K-th,
+  interleaved so each shard holds a share of every module. A shard judges nothing. It exits non-zero
+  only when its baseline fails, and uploads its keys and survivors as `engine-mutation-K`.
 - **`engine-mutation-gate`** runs when the shards finish, whatever their result (`!cancelled()`).
-  A shard that failed fails it. Otherwise it downloads the four results and runs
+  A shard that failed fails it. Otherwise it downloads the shards' results and runs
   `mutation.py --merge`, which applies the gate the unsharded run applies: an unexplained
   survivor, a stale equivalent and a listed equivalent that is killed each fail it. Before it
   judges anything it checks that the shards ran every mutant exactly once. A missing shard would

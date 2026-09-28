@@ -594,7 +594,7 @@ the gate fails on an unlisted survivor, on a listed key that no longer exists an
 that is killed, so the list cannot go stale. The package has one equivalent mutant today, the
 environment `ordering.py`'s cycle walk starts from; the first run's equivalents were redundant
 branches, and the code lost them instead. The full gate takes under four minutes on a developer
-machine with twelve cores; CI runs it once, in four parallel shards merged into one verdict
+machine with twelve cores; CI runs it once, in parallel shards merged into one verdict
 (Testing-in-ci.md §14).
 
 **The adapter** is tested like the core, under both gates: `test_adapter.py` stands in for `yq` and
