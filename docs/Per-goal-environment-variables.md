@@ -1,7 +1,7 @@
 # Per-goal environment variables
 
-Status: **implemented**. Living document — see [§13](#13-implementation-notes) for where the
-implementation deviates from what is described above, and why.
+[§13](#13-implementation-notes) records where the implementation deviates from the design below,
+and why.
 
 Lets callers set environment variables (plain and secret-sourced) for a single
 terraform goal rather than for the whole job. Motivating case: `GOMEMLIMIT` and
@@ -120,14 +120,14 @@ Two rules encoded there:
   secret-sourced value for the same key (3 beats 2).
 - **Within one specificity level, secrets win** (2 beats 1, 4 beats 3). This is
   not arbitrary — it preserves today's behavior, where
-  [export-env-vars/action.yml:60-85](../export-env-vars/action.yml#L60-L85) runs
-  the plain loop first and the secrets loop second, so a key present in both
+  [`export-env-vars`](../export-env-vars/step_export_envs.sh) applies the plain
+  values first and the secret-sourced values second, so a key present in both
   global maps already resolves to the secret value. Changing it would be a silent
   behavior change for existing callers.
 
 Per-environment overrides are applied *before* any of this, by the matrix
 builder, and are a **deep** merge — see
-[§9.5](#95-deep-merge-one-existing-field-is-an-array).
+[§9.5](#95-deep-merge-of-the-per-goal-maps).
 
 Worked example from [§2.1](#21-new-workflow-inputs):
 
@@ -194,25 +194,29 @@ a filesystem path, never a payload.** Secret values are therefore absent from
 
 ## 4. Matrix-builder changes
 
-`extra-envs-yml` and `extra-envs-from-secrets-yml` are currently aligned in five
-places. The new pair follows them into all five:
+The matrix builder is the [decision engine](Decision-engine.md). The new pair sits
+beside `extra-envs-yml` and `extra-envs-from-secrets-yml` in
+[engine/dsb_tf_engine/environments.py](../engine/dsb_tf_engine/environments.py):
 
-| location | change |
+| location | what |
 |---|---|
-| [create-tf-vars-matrix/action.yml:33-42](../create-tf-vars-matrix/action.yml#L33-L42) `YML_INPUTS` | add both |
-| [:162-183](../create-tf-vars-matrix/action.yml#L162-L183) `MERGE_INPUT_YML_FIELDS` | add both — **but see [§9.5](#95-deep-merge-one-existing-field-is-an-array)** |
-| [:227-228](../create-tf-vars-matrix/action.yml#L227-L228) `REQ_FIELDS` | add `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal` |
-| [:250-251](../create-tf-vars-matrix/action.yml#L250-L251) `NOT_EMPTY_FIELDS` | **do not add** — `{}` is a legitimate value |
-| workflow inputs + `environments-yml` docs | add both |
+| `YML_INPUTS` | both: parsed as YAML, never forwarded, removed from every row |
+| `MERGE_FIELDS` | both: the environment's map deep-merged into the global one ([§9.5](#95-deep-merge-of-the-per-goal-maps)) |
+| `PER_GOAL_FIELDS` | both: a string is refused, a mapping gets every goal key |
+| `REQUIRED_FIELDS` | `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal` |
+| `NOT_EMPTY_FIELDS` | neither — `{}` is a legitimate value |
+| workflow inputs + `environments-yml` docs | both |
 
-Additionally, the builder **normalizes both maps to contain all eight goal keys**,
-defaulting each to `{}`. Without this, `toJSON(matrix.vars.extra-envs-per-goal.plan)`
-renders the four-character string `null` for an absent key, which then reaches the
-resolver's `jq` as invalid input.
+The builder **normalizes both maps to contain all eight goal keys**,
+defaulting each to `{}` (`normalize_goal_keys` in `values.py`). Without this,
+`toJSON(matrix.vars.extra-envs-per-goal.plan)` renders the four-character string
+`null` for an absent key, which then reaches the resolver's `jq` as invalid input.
+Unknown keys and non-mappings other than a string pass through, for
+`resolve-goal-envs` to reject ([§5.4](#54-validation)).
 
-Test fixtures to update — all three pairs in
-[create-tf-vars-matrix/test_data/](../create-tf-vars-matrix/test_data/):
-`test_input_happy_day_*`, `test_input_minimal_*`, `test_input_fail_yml_spec_*`.
+The port cases in [engine/tests/port/cases/](../engine/tests/port/cases/) pin the
+rows, among them `per-goal-*`, `merge-deep-null-leaf` and
+`caller-13-per-goal-envs-comment-groups`.
 
 ## 5. New action: `resolve-goal-envs`
 
@@ -284,7 +288,7 @@ one site means these are caught once, early, before any terraform runs.
 | check | rationale |
 |---|---|
 | goal key is one of the eight | catches `all:`, `fmt:`, typos |
-| secret name exists in `secrets-json` | **fixes an existing wart** — [export-env-vars/action.yml:83](../export-env-vars/action.yml#L83) resolves a missing secret to the literal string `null` with no warning. Multiplied across eight goal keys this becomes easy to hit and hard to see. |
+| secret name exists in `secrets-json` | a missing secret used to resolve to the literal string `null` with no warning; multiplied across eight goal keys that would be easy to hit and hard to see. `export-env-vars` fails on it too ([§9.4](#94-a-missing-secret-fails-the-step)). |
 | env name matches `[A-Za-z_][A-Za-z0-9_]*` | a name with `=` or a space silently corrupts the consumer |
 | value is string, number, boolean, or null | an object/array is a config error, not a value |
 
@@ -622,74 +626,49 @@ description and in the caller-facing docs, worded so the limitation is obvious
 before someone builds a plan/apply identity split on top of it. 2 remains a
 possible follow-up on the other mechanism; 3 is rejected.
 
-### 9.4 Missing secrets currently resolve to the string `null`
+### 9.4 A missing secret fails the step
 
-[export-env-vars/action.yml:83](../export-env-vars/action.yml#L83) does
-`jq -r '.[$key]'` against the secrets bag with no existence check, so a secret
-name absent from `secrets-json` exports the literal four characters `null`. Today
-that is one mapping per environment and it fails soon after at Azure login.
-Spread across eight goal keys, it becomes easy to typo a name in the `apply` block
-only — `plan` works, `apply` authenticates as nothing, and the error surfaces far
-from its cause.
+`export-env-vars` used to read a mapped secret with `jq -r '.[$key]'` and no
+existence check, so a secret name absent from `secrets-json` exported the literal
+four characters `null`, which failed soon after at Azure login, far from its cause.
+Spread across eight goal keys, it would be easy to typo a name in the `apply` block
+only — `plan` works, `apply` authenticates as nothing.
 
-`resolve-goal-envs` hard-fails on unresolvable names ([§5.4](#54-validation)).
-Fixing the same wart in `export-env-vars` is a small, separable improvement worth
-doing in the same PR.
+`resolve-goal-envs` hard-fails on unresolvable names ([§5.4](#54-validation)), and
+`export-env-vars` does the same for `extra-envs-from-secrets-yml`: it checks that
+the name exists in the secrets bag, and fails naming the secret and the variable
+([export-env-vars/step_export_envs.sh](../export-env-vars/step_export_envs.sh)).
+A secret that exists with an empty or `null` value is exported as it is.
 
-### 9.5 Deep merge: one existing field is an array
+### 9.5 Deep merge of the per-goal maps
 
-`MERGE_INPUT_YML_FIELDS`
-([create-tf-vars-matrix/action.yml:169-183](../create-tf-vars-matrix/action.yml#L169-L183))
-merges with `jq -s 'add'` — a **shallow** merge. Correct for the existing flat
-maps, wrong for a nested goal→envs map, where a per-environment `plan:` block
-would replace the global `plan:` block wholesale instead of merging per key.
+The per-goal maps are nested (goal → variables), so a shallow merge is wrong for
+them: a per-environment `plan:` block would replace the global `plan:` block
+wholesale instead of merging per key. Before this feature the bash builder merged
+with `jq -s 'add'`, which is shallow.
 
-**A blanket switch to `.[0] * .[1]` is a regression.** `pr-auto-merge-from-actors-yml`
-is a YAML **array** (default `"[]"`,
-[:243-248](../.github/workflows/terraform-ci-cd-default.yml#L243-L248)) and it is
-in the merge list. jq's `*` is undefined for arrays:
+The engine's merge (`merge` in
+[engine/dsb_tf_engine/values.py](../engine/dsb_tf_engine/values.py)) is deep for
+every merge field:
 
-```console
-$ echo '["a"] ["b"]' | jq -s 'add'            # current behavior: concatenate
-["a","b"]
-$ echo '["a"] ["b"]' | jq -s '.[0] * .[1]'
-jq: error (at <stdin>:1): array (["a"]) and array (["b"]) cannot be multiplied
-```
+- null on either side yields the other;
+- two objects merge per key, recursively, the environment winning; a `null` leaf
+  on the environment's side survives, which the unset semantics in
+  [§2.4](#24-clear-semantics-null-vs-empty-string) depend on;
+- two arrays concatenate, duplicates kept;
+- any other pairing, two numbers or an object against a string, is refused with
+  "unable to merge …".
 
-Verified per-field behavior across the merge list:
+For the flat maps (`extra-envs-yml`, `extra-envs-from-secrets-yml`,
+`pr-auto-merge-limits-yml`) a deep merge and a shallow one give the same result.
+The one array the bash builder merged, `pr-auto-merge-from-actors-yml`, is no
+longer a merge field: a per-environment actor list replaces the global one
+([Configuration-validation.md](Configuration-validation.md) D6). After the merge,
+the job-wide maps `extra-envs` and `extra-envs-from-secrets` drop their null
+values ([Configuration-validation.md](Configuration-validation.md) §3.5); the
+per-goal maps keep them for `resolve-goal-envs`, where a `null` unsets.
 
-| field | shape | `add` | `*` | affected |
-|---|---|---|---|---|
-| `extra-envs-yml` | flat object of scalars | `{"A":1,"B":3}` | `{"A":1,"B":3}` | no — identical |
-| `extra-envs-from-secrets-yml` | flat object of scalars | identical | identical | no |
-| `pr-auto-merge-limits-yml` | flat object of integers | identical | identical | no |
-| `pr-auto-merge-from-actors-yml` | **array** | concatenates | **errors** | **yes** |
-| `extra-envs-per-goal-yml` *(new)* | nested object | drops sibling keys | merges per key | needs `*` |
-| `extra-envs-from-secrets-per-goal-yml` *(new)* | nested object | drops sibling keys | merges per key | needs `*` |
-
-`*` and `add` are provably identical for every flat scalar object, so only the
-array field forces the dispatch. One expression handles both without branching in
-bash:
-
-```bash
-# 'add' is shallow: correct for flat maps, and the only thing defined for arrays
-# (pr-auto-merge-from-actors-yml). '*' recurses into objects but replaces scalars
-# — required for the nested per-goal maps, where a per-env override of one goal
-# must not discard that goal's other keys.
-MERGED_JSON=$(echo "${GLOBAL_ENVS_JSON} ${ENV_JSON}" \
-  | jq -s 'if (.[0] | type) == "array" then add else .[0] * .[1] end')
-```
-
-Also verified: `*` preserves `null` leaves
-(`{"plan":{"M":"6GiB"}} * {"plan":{"M":null}}` → `{"plan":{"M":null}}`), which the
-unset semantics in [§2.4](#24-clear-semantics-null-vs-empty-string) depend on.
-
-Regression tests required — see [§10](#10-test-scenarios) T31-T35. Note that
-`pr-auto-merge-from-actors-yml` is documented as having *no* per-environment
-setting even though it sits in the merge list, so its array path may be
-unexercised in practice. Do not rely on that: `has-field` will still find it if a
-caller sets it, and an untested path that now hard-errors is worse than one that
-silently concatenates.
+Regression tests: [§10](#10-test-scenarios) T31-T37.
 
 ### 9.6 `helpers.sh` is off-limits, so the helper is duplicated
 
@@ -786,10 +765,10 @@ Array-built invocations ([§6.5](#65-array-built-invocations)), per action:
 - **T29** — Empty `extra-global-args` / `extra-plan-args` produce no empty argv element.
 - **T30** — `terraform-fmt` / `lint-with-tflint`: a discovered directory path containing a space is linted as one directory, not two *(the latent bug this fixes)*.
 
-`create-tf-vars-matrix` — deep-merge regression suite ([§9.5](#95-deep-merge-one-existing-field-is-an-array)):
+The matrix builder — deep-merge regression tests ([§9.5](#95-deep-merge-of-the-per-goal-maps)), in the engine's suite ([§13.4](#134-the-matrix-builder-got-a-ci-facing-test-suite)):
 
 - **T31** — Deep merge — per-env `plan:` block overriding one key preserves the global `plan:` block's other keys (the [§2.3](#23-merge-and-precedence) prod·plan row).
-- **T32** — **`pr-auto-merge-from-actors-yml` set both globally and per-env → arrays concatenate, no jq error** *(the regression the type dispatch exists for)*.
+- **T32** — `pr-auto-merge-from-actors-yml` set both globally and per-env → the environment's list replaces the global one ([Configuration-validation.md](Configuration-validation.md) D6); two arrays in a merge field still concatenate, duplicates kept.
 - **T33** — `pr-auto-merge-limits-yml` set both globally and per-env → per-key override, unchanged from before.
 - **T34** — `extra-envs-yml` / `extra-envs-from-secrets-yml` set both globally and per-env → per-key override, unchanged from before *(guards the three flat fields against the merge change)*.
 - **T35** — Per-goal map with a `null` leaf survives the per-env merge as `null`, not as a dropped key.
@@ -822,12 +801,12 @@ existing suite should pass unchanged, with T27-T29 added.
 
 **3 — matrix builder + inputs**
 Both new workflow inputs, `environments-yml` docs, the five alignment points,
-type-dispatched merge ([§9.5](#95-deep-merge-one-existing-field-is-an-array)),
+type-dispatched merge ([§9.5](#95-deep-merge-of-the-per-goal-maps)),
 goal-key normalization, fixtures. Land the deep-merge regression suite (T31-T35) *with* this change, not after.
 
 **4 — `resolve-goal-envs`**
 The new action plus its full suite. Fold the `export-env-vars` missing-secret fix
-([§9.4](#94-missing-secrets-currently-resolve-to-the-string-null)) in here.
+([§9.4](#94-a-missing-secret-fails-the-step)) in here.
 
 **5 — goal-action inputs + wiring**
 `extra-envs-file` on all six, `apply-extra-envs` in six `helpers_additional.sh`,
@@ -850,20 +829,17 @@ stated plainly. Update this document's status line.
 - **Non-goal steps.** `setup-tflint`, `verify-terraform-lock`, `parse-terraform-*`
   and the PR-comment actions get no per-goal envs. Add keys if a need appears; the
   eight-key list is not load-bearing beyond validation.
-- **Per-goal `extra-plan-args` / `extra-global-args`.** `terraform-plan` already
-  has both inputs and the workflow only uses `extra-plan-args` for `-destroy`
-  ([:980](../.github/workflows/terraform-ci-cd-default.yml#L980)). Exposing them
-  per-goal is a smaller change than this feature and covers some of the same
-  ground — worth doing separately.
-- **`TF_CLI_ARGS_<subcommand>`.** Terraform's own per-subcommand mechanism already
-  works through the existing `extra-envs-yml` with no repo changes, and covers any
-  need expressible as CLI flags. Document it as the cheaper alternative so callers
-  do not reach for per-goal envs unnecessarily. Caveat: it applies to *both* plan
-  invocations, `plan` and `destroy-plan`.
-- **`terraform-test`.** [terraform-test/action.yml:63-71](../terraform-test/action.yml#L63-L71)
-  has the same string-built-command pattern that [§6.5](#65-array-built-invocations)
-  fixes elsewhere, but it is not a goal action and not part of the default
-  workflow. Worth the same treatment eventually; not here.
+- **Per-goal `extra-plan-args` / `extra-global-args`.** `terraform-plan` has
+  both inputs and the workflow uses only `extra-plan-args`, for the destroy plan's
+  `-destroy` ([terraform-ci-cd-default.yml](../.github/workflows/terraform-ci-cd-default.yml)).
+  Exposing them per goal is a smaller change than this feature and covers some of
+  the same ground.
+- **`TF_CLI_ARGS_<subcommand>`.** Terraform's own per-subcommand mechanism works
+  through the existing `extra-envs-yml` with no repo changes, and covers any need
+  expressible as CLI flags. The user guide documents it as
+  [the cheaper alternative](Workflow-terraform-ci-default.md#the-cheaper-alternative),
+  with its caveat: it applies to *both* plan invocations, `plan` and
+  `destroy-plan`.
 
 Settled, recorded so they are not re-litigated:
 
@@ -924,19 +900,12 @@ Same outcome for the workflow, strictly more information in the log.
 
 ### 13.4 The matrix builder got a CI-facing test suite
 
-[§10](#10-test-scenarios) puts T31-T37 in `create-tf-vars-matrix`, which had no
-`run_all_tests.sh` and was excluded from `action-tests` discovery because its only
-harness (`test_action_source.sh`) needs a real tty. Rather than leave the
-deep-merge regressions untested in CI, the action now has a deterministic
-`run_all_tests.sh`: unit tests of `merge-yml-field-json` and
-`normalize-goal-keys-json`, plus fixture-driven runs of the action's real inline
-bash, extracted from `action.yml` by `extract_step_source.py`. The action is no
-longer on the exclusion list. `test_action_source.sh` stays as a manual
-debugging aid.
-
-Both merge-semantics regressions the type dispatch exists to prevent were
-verified to fail this suite before being fixed — shallow `add` breaks the
-deep-merge cases, blanket `*` breaks the array case.
+[§10](#10-test-scenarios) puts T31-T37 in the matrix builder. The builder is the
+[decision engine](Decision-engine.md), so they are its tests, under its coverage
+and mutation gates: [engine/tests/test_values.py](../engine/tests/test_values.py)
+holds the merge and the goal-key normalisation, and the port cases (`merge-*`,
+`per-goal-*`) the rows they produce. `create-tf-vars-matrix/run_all_tests.sh` runs
+every port case through the action's run block.
 
 ### 13.5 Extra validation in `resolve-goal-envs`
 
