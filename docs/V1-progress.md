@@ -21,7 +21,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
-| 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
+| 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
@@ -377,7 +377,7 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | Cases covered by tests only (ordering's overlapping runs, a force push, a push creating a branch, a dispatch without an inputs block, a re-run by another actor) | exercised on the test bed, as specified, but the re-run by another actor, which needs a second account | step 7 |
 | Dependabot runs and OIDC; a fork run creating an environment | bear on nothing in v1: deferred | closed |
 | A single-test-file dispatch input; relevance for tests | after v1 | closed |
-| Suites writing to a fixed `/tmp` file | step 8, with the parallel runs | step 8 |
+| Suites writing to a fixed `/tmp` file | step 8, with the parallel runs: each writes to a `mktemp` file, F18 guards it | step 8 |
 | Module CI's inline actions without suites; the module workflow docs | step 9 | step 9 |
 | Specs' status lines and progress markers; the stale statements the inventory listed (eleven); the self-hosted runner requirements; the secret naming precondition | step 10 | step 10 |
 | The required `tests-conclusion` check on this repository | closed: a merge of #66 was refused while it was pending | closed |
@@ -423,6 +423,39 @@ admin role on its bypass list:
 The re-run by another actor needs a second account and stays covered by tests only. The module
 workflows' own actions (release-please, terraform-docs, the organisation's App-token action) are
 behind their latest major too; they are bumped in step 9, with the module workflows.
+
+### Step 8: CI optimisation
+
+The Action tests workflow took 66 to 78 minutes per pull request. Nearly all of it was the
+engine's mutation gate, which ran in full in three jobs: the discovered engine suite and both
+`engine-python` jobs. The 27 action suites take under a minute each.
+
+- **Where the gate's time went**, from a profile of a tenth of the mutants. Over half went to
+  mutants killed only by test modules the fixed order ran after the two slow modules
+  (`test_triggers`, `test_config`, `test_ordering`). A third went to the fixed 300-second timeout
+  of a hanging mutant. And 46 seconds of serial work went to listing the mutants, which re-parsed
+  each module once per mutant. Now each mutant runs its own module's tests first and
+  `SLOW_LAST` last, a hang is judged after six baseline durations and never before a minute, and
+  each worker builds its own mutant's source.
+  - The keys, lines and mutated sources are byte-identical to the old generator's for all 4,038
+    mutants.
+  - The full gate went from about 22 minutes to 217 seconds on twelve local cores, with the same
+    verdict (4,037 killed, the same one listed as equivalent).
+  - The gate on the intermediate commit, before sharding, gave the same.
+- **Once, sharded**: the suite jobs run coverage only (`ENGINE_MUTATION=shards`), and
+  `engine-mutation` runs interleaved shards on Python 3.12. `engine-mutation-gate` merges them and
+  refuses unless every mutant ran exactly once. `tests-conclusion` requires it. F17 holds the
+  wiring, and each rule was broken by hand once. Locally, the merge refused a missing shard, a
+  repeated shard and a bad shard number, and failed on a survivor put into a shard's result.
+- **CI, as built**: with four shards the run took 6.4 minutes, and the slowest shard, 5.9, was the
+  critical path; runners were not the limit. With eight, 4.3 minutes, with shards between 91 and
+  243 seconds, spread by the few hanging mutants. The merged verdict was the local one both times.
+- **Suites in parallel**: twenty suite scripts wrote to a fixed `/tmp` path, five of them to the
+  same file. Each now writes to a `mktemp` file, the guide's template shows it, and F18 fails on a
+  redirect into a fixed `/tmp` path. All 27 suites pass run side by side, in 39 seconds against
+  139 one after another.
+- **Removed**: nothing. The engine's unit suite runs in about eight seconds, and the duplication
+  that cost the time was the three full gates, not the tests.
 
 ## 5. Findings to carry
 
