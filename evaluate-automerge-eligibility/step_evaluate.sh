@@ -812,6 +812,17 @@ function evaluate_with_relevance {
   log-info "Relevance file lists ${env_count} environment(s), ${RELEVANCE_AFFECTED_COUNT} affected"
   end-group
 
+  # An affected environment a failed stage held back has no metadata either,
+  # because its job never ran. It is not eligible for the same reason as one
+  # that crashed, but the operator is told the truth (docs/Environment-ordering.md §7.5).
+  declare -A held_back_reason_for=()
+  local held_env held_reason
+  read_stage_results
+  while IFS=$'\x1f' read -r held_env held_reason; do
+    [[ -n "${held_env}" ]] && held_back_reason_for["${held_env}"]="${held_reason}"
+  done < <(get_held_back_reasons "${relevance_file}")
+  [[ -n "${STAGE_RESULTS_FILE}" ]] && rm -f "${STAGE_RESULTS_FILE}"
+
   # Index the metadata by github-environment, the key both files share
   start-group "Metadata Matching"
   declare -A metadata_file_for=()
@@ -862,6 +873,12 @@ function evaluate_with_relevance {
         return 1
       fi
       record_environment_result "${ENV_IS_ELIGIBLE}" "${github_env}"
+
+    elif [[ "${verdict}" == "run" && -n "${held_back_reason_for["${github_env}"]:-}" ]]; then
+      start-group "Completeness: ${github_env}"
+      log-warn "${held_back_reason_for["${github_env}"]}"
+      end-group
+      record_environment_result "false" "${github_env}" "(held back)"
 
     elif [[ "${verdict}" == "run" ]]; then
       start-group "Completeness: ${github_env}"

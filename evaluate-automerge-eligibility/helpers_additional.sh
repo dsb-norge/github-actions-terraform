@@ -394,5 +394,61 @@ function validate_relevance_file {
 }
 
 # ============================================================================
+# Environment Ordering (docs/Environment-ordering.md §7.5)
+# ============================================================================
+#
+# Mirror of create-run-summary's and aggregate-validation-summaries' reading of
+# the stage results, kept duplicated per the self-containment convention. When
+# touching one, audit the others.
+
+# The stage results the workflow passes (stage-results-json), normalised to an
+# object of result strings in a temp file whose path is left in
+# STAGE_RESULTS_FILE; empty when the input is absent, blank or not an object,
+# which judges exactly as before ordering. The value is a shell-local the shim
+# captured before allexport; it reaches jq through a here-string, never argv.
+function read_stage_results {
+  STAGE_RESULTS_FILE=""
+  local raw="${input_stage_results_json:-}"
+  [[ "${raw}" =~ ^[[:space:]]*$ ]] && return 0
+  local file
+  file=$(mktemp)
+  if ! jq -ce 'if type == "object" then with_entries(select(.value | type == "string")) else error("not an object") end' \
+    <<<"${raw}" >"${file}" 2>/dev/null; then
+    log-warn "stage-results-json is not a JSON object of stage results, an environment without metadata is reported as cancelled or crashed"
+    rm -f "${file}"
+    return 0
+  fi
+  STAGE_RESULTS_FILE="${file}"
+}
+
+# Why each affected environment a failed stage held back was never planned, one
+# per line: github-environment, the unit separator, the reason. Nothing without
+# stage results. A stage job skipped for having no environments and one skipped
+# because an earlier stage failed both report 'skipped'; only the builder's row
+# count tells them apart (P5). Stage 1 is never held back: nothing runs before
+# it, so a skipped stage 1 is a cancelled run, reported as it always was.
+# Args: $1 = relevance file path
+function get_held_back_reasons {
+  local file="${1}"
+  [[ -z "${STAGE_RESULTS_FILE:-}" ]] && return 0
+  jq -r --slurpfile sr "${STAGE_RESULTS_FILE}" '
+    $sr[0] as $results
+    | (.counts.by_stage // {}) as $by
+    | .environments[]
+    | select(.verdict == "run")
+    | ((.stage // 1) | tonumber? // 1) as $stage
+    | select($stage >= 2
+             and ($results[$stage | tostring] // "") == "skipped"
+             and ((($by[$stage | tostring] // 0) | tonumber? // 0) > 0))
+    | ([range(1; $stage) | select(($results[tostring] // "") as $r | $r == "failure" or $r == "cancelled")] | first) as $cause
+    | (."github-environment" | tostring) as $name
+    | (if $cause == null then "it is in stage \($stage), which did not run"
+       elif $results[$cause | tostring] == "cancelled" then "it is in stage \($stage) and stage \($cause) was cancelled"
+       else "it is in stage \($stage) and stage \($cause) failed" end) as $why
+    | "\($name)\u001f'\''\($name)'\'' was held back: \($why), so it was never planned, environment is ineligible for PR auto merge"' \
+    "${file}" 2>/dev/null || true
+}
+
+# ============================================================================
 
 log-info "'$(basename ${BASH_SOURCE[0]})' loaded."
