@@ -73,6 +73,7 @@ def document(files, environments=None):
         "schema_version": 1,
         "caller": {"repository": "example-org/example-repo", "default_branch": "main"},
         "event": {"name": "pull_request", "ref_name": "feature/x", "ref_type": "branch", "action": "synchronize",
+                  "base_ref": "main",
                   "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
         "workflow_inputs": inputs,
         "yaml": {

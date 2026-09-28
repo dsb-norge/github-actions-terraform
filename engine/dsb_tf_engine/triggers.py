@@ -91,13 +91,18 @@ def participation(document, declared, rows):
     return resolved, dropped
 
 
+def on_pr_goals_granted(document):
+    """Whether this event grants the on-PR goals: an open pull request against the default branch."""
+    event = document["event"]
+    return (event["name"] == "pull_request" and event.get("action", "") not in CLOSING_ACTIONS
+            and event.get("base_ref", "") == document["caller"]["default_branch"])
+
+
 def expand(document, goals):
     """The goals the workflow's gates grant for this event, ref and branch."""
     event = document["event"]
-    default_branch = document["caller"]["default_branch"]
     on_default = on_default_branch(document)
-    on_pr = (event["name"] == "pull_request" and event.get("action", "") not in CLOSING_ACTIONS
-             and event.get("base_ref", "") == default_branch)
+    on_pr = on_pr_goals_granted(document)
     every = "all" in goals
     granted = [goal for goal in STANDARD if every or goal in goals]
     if ((every or "apply" in goals) and event["name"] in APPLY_EVENTS and on_default

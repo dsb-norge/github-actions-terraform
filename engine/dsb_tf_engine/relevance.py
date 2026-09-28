@@ -7,6 +7,7 @@ environment runs when a changed file matches one of its `paths` and none of its 
 
 from . import globs
 from .environments import ConfigError, shown
+from .triggers import on_pr_goals_granted
 
 AUTO = "auto"
 # Nothing in the workflow reads Markdown; a configuration that does sets `paths-ignore: []`.
@@ -135,8 +136,10 @@ def _first_relevant(files, included, ignored):
     return None
 
 
-def _mutates_on_pr(goals):
-    return [goal for goal in ON_PR_GOALS if goal in goals]
+def _mutates_on_pr(document, goals):
+    """The on-PR goals held that this event grants: none off a pull request or on one against another
+    base, where holding `apply-on-pr` applies nothing and a comment saying it does would be false."""
+    return [goal for goal in ON_PR_GOALS if goal in goals] if on_pr_goals_granted(document) else []
 
 
 def decide_relevance(document, declared, rows, dropped):
@@ -168,7 +171,7 @@ def decide_relevance(document, declared, rows, dropped):
             verdict, why = ("run", f"relevance: {rule}") if relevant else ("skip", f"relevance: {NO_MATCH}")
         entry = {"environment": row["environment"], "verdict": verdict, "reasons": [why], "relevant": relevant}
         entry.update({field: row[field] for field in ENTRY_FIELDS})
-        entry["mutates-on-pr"] = _mutates_on_pr(row["goals"])
+        entry["mutates-on-pr"] = _mutates_on_pr(document, row["goals"])
         entry["paths"] = [rule.pattern for rule in included]
         entry["paths-ignore"] = [rule.pattern for rule in ignored]
         entries.append(entry)

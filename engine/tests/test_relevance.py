@@ -22,12 +22,14 @@ def facts(files, **overrides):
     return changed
 
 
-def document(environments=None, files=None, event="pull_request", changed=None, enabled=True, push=None):
+def document(environments=None, files=None, event="pull_request", changed=None, enabled=True, push=None,
+             base_ref="main"):
     environments = [{"environment": "prod"}] if environments is None else environments
     env_yaml = [{key: support.parsed(value) for key, value in e.items() if key.endswith("-yml")} for e in environments]
     doc = support.document(environments=environments, inputs={"path-relevance-enabled": enabled}, env_yaml=env_yaml)
     doc["event"]["name"] = event
     if event == "pull_request":
+        doc["event"]["base_ref"] = base_ref
         doc["event"]["pull_request"] = {"number": 87, "head_sha": "abc", "is_fork": False}
     if event == "push":
         doc["event"]["push"] = {"created": False, "forced": False, "deleted": False, **(push or {})}
@@ -293,6 +295,19 @@ class MatchingTest(unittest.TestCase):
             with self.subTest(goals=goals):
                 environments = [{"environment": "prod", "goals-yml": goals}]
                 self.assertEqual(expected, run(environments=environments, files=[])["environments"][0]["mutates-on-pr"])
+
+    def test_mutates_on_pr_lists_only_what_this_event_grants(self):
+        # Holding apply-on-pr applies nothing off a pull request against the default branch.
+        environments = [{"environment": "prod", "goals-yml": ["all", "apply-on-pr", "destroy-plan", "destroy-on-pr"]}]
+        for kwargs in ({"base_ref": "release"}, {"base_ref": ""}, {"event": "push"}):
+            with self.subTest(**kwargs):
+                output = decide.decide(document(environments=environments, files=["envs/prod/a.tf"], **kwargs))
+                self.assertEqual([], output["environments"][0]["mutates-on-pr"])
+        doc = document(environments=environments, files=["envs/prod/a.tf"])
+        doc["event"]["action"] = "converted_to_draft"
+        self.assertEqual([], decide.decide(doc)["environments"][0]["mutates-on-pr"])
+        doc["event"]["action"] = "reopened"
+        self.assertEqual(["apply-on-pr", "destroy-on-pr"], decide.decide(doc)["environments"][0]["mutates-on-pr"])
 
     def test_the_notice(self):
         self.assertEqual(["relevance diff (diff): 1 of 3 environments affected"],
