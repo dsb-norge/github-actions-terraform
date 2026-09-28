@@ -270,8 +270,12 @@ The `.github/scripts/` files follow the script conventions from [Action-implemen
 When a legacy action gets modernized and gains a `run_all_tests.sh`:
 
 1. Make sure the suite prints the three `Tests run:` / `Tests passed:` / `Tests failed:` lines (§4).
-2. Drop the action name from the §3 exclusion list if it was there.
-3. That's it — discovery picks it up automatically on the next PR run.
+2. Make sure it writes the step's output to a `mktemp` file, never a fixed path under `/tmp`: in CI
+   each suite has a job of its own, but locally every suite can run side by side, and two sharing a
+   file fail at random. The structural test F18 (`evaluate-automerge-eligibility/run_all_tests.sh`)
+   fails on a redirect into a fixed `/tmp` path.
+3. Drop the action name from the §3 exclusion list if it was there.
+4. That's it — discovery picks it up automatically on the next PR run.
 
 ## 10. Removing a test suite
 
@@ -519,6 +523,11 @@ The structural test F17 (`evaluate-automerge-eligibility/run_all_tests.sh`) hold
 - `tests-conclusion` requires the merge.
 
 To change the shard count, change all three places together. F17 fails until they agree.
+
+**Why eight.** With four shards the run took 6.4 minutes, and the slowest shard, 5.9 of them, was
+the critical path; runners were not the limit. With eight it took 4.3 minutes, the shards between
+91 and 243 seconds, the spread set by the few mutants that hang until their timeout. The merged
+verdict was the local one both times.
 
 **What made it fast**, measured on the full gate (4,038 mutants), before and after, on 12 local
 cores: 22 minutes became 3.6, and CI's three full runs of about 66 to 78 minutes each became one
