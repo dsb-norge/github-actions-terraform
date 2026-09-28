@@ -3,18 +3,18 @@
 Authoritative spec for the one place that decides what a run of
 [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) does: which
 environments and test files take part, with which goals, why, and what the pull request, the run
-summary and the conclusion are told about it. Today that logic is spread over bash and `jq` in
-`create-tf-vars-matrix`, `create-tftest-matrix` and step conditions in the workflow. This spec
-moves it into a single Python core with a JSON contract, a decision record as output, a set of
-invariants, and a coverage gate at 100 percent.
+summary and the conclusion are told about it. That logic was spread over bash and `jq` in
+`create-tf-vars-matrix`, `create-tftest-matrix` and step conditions in the workflow; it lives in a
+single Python core with a JSON contract, a decision record as output, a set of invariants, a
+coverage gate at 100 percent and a mutation gate.
 
-Status: **built.** `create-tf-vars-matrix` runs the engine through the create-matrix adapter (§3):
-the seven rules of §6 (the configuration's validation as
-[Configuration-validation.md](Configuration-validation.md) specifies it, trigger events, the
-dispatch filter, relevance, the granted goals and the ordering of
+`create-tf-vars-matrix` runs the engine through the create-matrix adapter (§3): the seven rules of
+§6 (the configuration's validation as [Configuration-validation.md](Configuration-validation.md)
+specifies it, trigger events, the dispatch filter, relevance, the granted goals and the ordering of
 [Environment-ordering.md](Environment-ordering.md)), the test rows of `tests.py`, the comment
 manifest, the input and output documents of §4 and §5, the tests of §8 and both gates. The
-`validate` and `render-summary` commands the first draft specified are not built (§3.2). §13 holds what implementation taught the spec.
+`validate` and `render-summary` commands the first draft specified are not built (§3.2). §13 holds
+what implementation taught the spec.
 
 ## 1. Why
 
@@ -164,9 +164,10 @@ decides in-process, logs the inputs, the changed files, the input document (with
 elided, since it is already in its own group), the decision record and the matrix in collapsed
 groups printed verbatim (P20), turns each validation error into one escaped `::error` annotation
 and each notice into one `::notice`, writes `relevance.json` (the output document without its
-matrices) under `RUNNER_TEMP`, and appends `matrix-json`, the counts, the relevance mode, reason
-and changed count, and the file's path to `$GITHUB_OUTPUT`, each under a random delimiter. Every external program sits behind one `Tools` object, so the tests stand in for
-`yq` and `gh`.
+matrices) under `RUNNER_TEMP`, and appends `matrix-json`, the per-stage matrices and counts, the
+counts, the relevance mode, reason and changed count, the test matrix, count and flag, and the
+file's path to `$GITHUB_OUTPUT`, each under a random delimiter. Every external program sits behind
+one `Tools` object, so the tests stand in for `yq` and `gh`.
 
 ### 3.1 Adapters
 
@@ -394,10 +395,13 @@ while the input is false, before the test stage's warnings. The features extend 
 ```
 
 - Each per-stage matrix and every `vars` object is what the workflow consumed from the bash
-  builder, unchanged in shape and in value types (D9); the port (§9) proves it. Until ordering
-  assigns stages there is one matrix, named `"1"`. A row's `vars` travel in the matrix only;
-  `environments[]` carries the verdict, the reasons and, as the rules arrive, the goals and the
-  stage.
+  builder, unchanged in shape and in value types (D9); the port (§9) proves it. There are three
+  matrices, `"1"` to `"3"`, one per stage job and each present when empty; stage 1 holds every
+  running environment unless `depends-on` orders an apply or a destroy
+  ([Environment-ordering.md](Environment-ordering.md)). The adapter publishes each as
+  `matrix-stage-<n>-json` and their union, in `environments-yml` order, as `matrix-json`. A row's
+  `vars` travel in the matrix only; `environments[]` carries the verdict and the reasons, and for a
+  running environment its goals and its stage.
 - **Held back is not an engine concept.** The engine assigns stages; whether a stage ran is a fact
   of the run graph it never sees. A held-back environment is composed downstream from its `stage`,
   the stage's row count and the stage job's result ([Environment-ordering.md](Environment-ordering.md) §7). The one addition is `vars.goals-granted` (D10), equal
@@ -406,12 +410,12 @@ while the input is false, before the test stage's warnings. The features extend 
   JSON is emitted with sorted keys. Two runs with the same input document produce byte-identical
   output documents (I12).
 - `record` is prose for people; every line is derived from `reasons`, never written separately.
-- What leaves the job as `$GITHUB_OUTPUT`: `matrix-json`, the test matrices, counts, flags and the
-  relevance mode and reason, all small. `environments`, `tests.not_run`, `comments` and `record`
-  travel in `relevance.json`, uploaded as the `relevance` artifact that the seed job, the
-  aggregator, the run summary and the auto-merge evaluator download, never as job outputs: a job
-  output enters every `needs.*.outputs` interpolation downstream, and nothing caps it (the ARG_MAX
-  rule of CLAUDE.md).
+- What leaves the job as `$GITHUB_OUTPUT`: `matrix-json`, the per-stage matrices, the test
+  matrices, counts, flags and the relevance mode and reason, all small. `environments`,
+  `tests.not_run`, `comments` and `record` travel in `relevance.json`, uploaded as the `relevance`
+  artifact that the seed job, the aggregator, the run summary and the auto-merge evaluator
+  download, never as job outputs: a job output enters every `needs.*.outputs` interpolation
+  downstream, and nothing caps it (the ARG_MAX rule of CLAUDE.md).
 
 The other specs name the same data under their own output names. The mapping is normative:
 
@@ -641,8 +645,10 @@ the test-bed repository.
 
 ## 9. The port
 
-The engine decides exactly what the bash `create-tf-vars-matrix` decided, every semantic of it,
-as read from that action and its helpers:
+The engine decides what the bash `create-tf-vars-matrix` decided, every semantic of it, as read
+from that action and its helpers, but for the deviations in the table below, each pinned by a port
+case; the rules of [Configuration-validation.md](Configuration-validation.md) account for most of
+them:
 
 - every `*-yml` input parses as YAML, an empty string parses to `null`, an invalid one is the
   error `The specification for input '<name>' is not valid yaml!`, reported for the first such
@@ -650,45 +656,47 @@ as read from that action and its helpers:
 - every environment has `environment`, else "Missing property 'environment' in
   environments-yml specification!";
 - `project-dir` defaults to `./envs/<environment>`, with the `./` prefix;
-- generic forwarding: every workflow input that is not one of the nine `*-yml` inputs, in sorted
-  order, is copied as a **string** into a row that lacks it (`"true"`, `"5"`, `""` for null, with
-  trailing newlines stripped as the builder's command substitution stripped them); a
-  per-environment value of a boolean input is normalised to `"true"`/`"false"` and must be true or
-  false, as a boolean or a string; a per-environment value of any other input must be a string,
-  kept verbatim (an unquoted `1.10` is a number YAML reads as `1.1`, so it is refused with "quote
-  it"); arbitrary per-environment keys that are not inputs pass through untouched, a key ending in
-  `-yml` included;
+- generic forwarding: every workflow input that is not one of the ten `*-yml` inputs or the test
+  stage's six inputs, in sorted order, is copied as a **string** into a row that lacks it (`"true"`,
+  `"5"`, `""` for null, with trailing newlines stripped as the builder's command substitution
+  stripped them); a per-environment value of a boolean input is normalised to `"true"`/`"false"` and
+  must be true or false, as a boolean or a string; a per-environment value of any other input must
+  be a string, kept verbatim (an unquoted `1.10` is a number YAML reads as `1.1`, so it is refused
+  with "quote it"); a per-environment key that is not a setting of Configuration-validation.md §3.1
+  is refused, a key ending in `-yml` included;
 - `environment`, and `github-environment` when given, follow the name rule of D14;
   `github-environment` defaults to `environment`; `url` defaults to `""`;
 - `allow-failing-terraform-operations`: absent is JSON `false`; present, it must be true or false,
   as a boolean or a string, and anything else (`yes`, `null`, a quoted `True`) is an error, never
   a silent false;
-- replace fields (`goals-yml`, `terraform-init-additional-dirs-yml`): per-environment value, as
-  YAML text or a native value, else the global, else `[]` when the global is null; invalid is
+- replace fields (`goals-yml`, `pr-auto-merge-from-actors-yml`,
+  `terraform-init-additional-dirs-yml`): per-environment value, as YAML text or a native value,
+  else the global; a plain string written alone is its one item, and null is `[]`; invalid is
   `the environment's '<field>' is not valid yaml!`; stored under the name without `-yml`;
 - merge fields (`extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`,
-  `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-from-actors-yml`,
-  `pr-auto-merge-limits-yml`): absent means the global value as is (a global `""` becomes
-  `null`, not `{}`); present means a merge where null on either side yields the other, arrays
-  concatenate with duplicates kept, objects deep-merge with the environment winning and null
-  leaves preserved, and any other pairing is "unable to merge …";
+  `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml`): absent means the global
+  value as is (a global `""` becomes `null`, not `{}`, but for `pr-auto-merge-limits-yml`, whose
+  empty value is its documented defaults); present means a merge where null on either side yields
+  the other, arrays concatenate with duplicates kept, objects deep-merge with the environment
+  winning and null leaves preserved, and any other pairing is "unable to merge …"; the job-wide
+  maps `extra-envs` and `extra-envs-from-secrets` then drop their null values;
 - per-goal maps: every key of `init, format, validate, lint, plan, apply, destroy-plan, destroy`
   defaulted to `{}`; null or `false` yields the full key set; unknown keys pass through; a
   non-object other than a string passes through unchanged;
-- the nine `*-yml` keys are removed from the row; `pr-auto-merge-enabled` is not a `-yml` input
+- the ten `*-yml` keys are removed from the row; `pr-auto-merge-enabled` is not a `-yml` input
   and is forwarded generically; a per-environment key named like a stripped field (`goals`,
-  `extra-envs`, …) is overwritten;
+  `extra-envs`, …) is refused, naming the `-yml` spelling;
 - `caller-repo-default-branch`, `caller-repo-calling-branch` (`ref_name`) and
   `caller-repo-is-on-default-branch` as the strings `"true"` / `"false"`, overwriting any
   per-environment value;
 - row order is `environments-yml` order;
-- validation: the result is a non-empty array; the twenty-four required fields exist (the list
-  lacks `runs-on` and `format-check-in-root-dir` although the workflow reads them; the port keeps
-  the list, and the gap is a recorded finding, not a silent fix); the not-empty fields are not the
-  empty string (`[]`, `{}` and `null` pass), every failure of every environment reported before
-  stopping; then every `project-dir` exists, likewise all reported;
+- validation: the result is a non-empty array; the twenty-seven required fields exist, `runs-on`
+  and `format-check-in-root-dir` among them since the workflow reads both from every row; the
+  twenty-two not-empty fields are not the empty string (`[]`, `{}` and `null` pass), every failure
+  of every environment reported before stopping; then every `project-dir` exists, likewise all reported;
 - the shape `{"environment": [names], "include": [{"environment", "vars"}]}` with `vars` the
-  whole row; the action's only output is `matrix-json`, its only input `inputs-json`.
+  whole row, for each stage's matrix and for `matrix-json`; the action's only input is
+  `inputs-json`.
 
 A port case is a dispatch, which fetches no changed files: every environment has verdict `run`
 with the reason `relevance: all:event`, as before relevance. The deliberate deviations, each
@@ -710,6 +718,12 @@ pinned by a port case with its reason:
 | malformed YAML in a per-environment field | exit 1 with no message: `log-error` ran inside a command substitution and its text became the captured value | "the environment's '<field>' is not valid yaml!" |
 | two numbers in a merge field | multiplied by jq's `*` | "unable to merge …" |
 | a failed default-branch lookup | the string `null` as the default branch | the step fails with the API's answer |
+| a key in an environment entry that is not a setting, or a setting's unsuffixed name (`goals`) | forwarded unread, or overwritten by the stripped field, so the global value applied | an error naming the key and the right spelling (Configuration-validation.md §3.1) |
+| a goal that does not exist, a goals list written without its dashes, a goal whose prerequisite is missing | kept | an error (Configuration-validation.md §3.2) |
+| a per-environment `pr-auto-merge-from-actors-yml` | added to the global list | replaces the global list (Configuration-validation.md D6) |
+| an empty global `pr-auto-merge-limits-yml` | `null` | the input's documented defaults (Configuration-validation.md §3.6) |
+| a null value in `extra-envs-yml` or `extra-envs-from-secrets-yml` | kept, and exported as the text `null` | dropped, so a per-environment null unsets a global variable (Configuration-validation.md §3.5) |
+| a row without `runs-on` or `format-check-in-root-dir` | accepted | a missing required field; GitHub always delivers both inputs |
 
 The port was built in this order, each step reviewable on its own: the goldens pinned while the
 bash still ran and verified against it in CI; the engine and its suite; the discovery pass that
