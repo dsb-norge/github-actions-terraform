@@ -326,6 +326,7 @@ New inputs. All optional; all default to the "absent" sentinel so existing calle
 | Input | Default | Purpose |
 |---|---|---|
 | `goals-json` | `""` | JSON array of the env's goals. Drives the Mode row (§8.1) and the plan-tag banner (§8.5). |
+| `goals-granted-json` | `""` | JSON array of the goals the run granted the env (the matrix's `goals-granted`). On a pull request it narrows `goals-json`'s on-PR goals (§8.2); other events, empty and malformed leave them alone. |
 | `apply-extract-include-outputs` | `false` | §7.6 |
 | `output-file-suffix` | `""` | §7.10. Disambiguates the body files written by the four invocations in one job. |
 
@@ -624,6 +625,8 @@ Rendered from `goals-json`, **independently of any outcome**, so it appears the 
 
 The seed job's placeholder body (`⏳ Awaiting results…`) gains the same line when the env qualifies, so the warning is on the PR before `init` has finished.
 
+**An on-PR goal counts only when this pull request grants it.** It applies or destroys only on an open pull request against the default branch ([Decision-engine.md](Decision-engine.md) §6, I1), so against another base the goals hold `apply-on-pr` while nothing applies, and "applies on PR" would be false. All three renderers therefore narrow the goals by what was granted: `create-validation-summary` counts `apply-on-pr` only when `goals-granted-json` holds `apply`, and `destroy-on-pr` only when it holds `destroy`; the aggregator's group head (§8.8) reads the same from the metadata's `goals-granted`; and the engine's `mutates-on-pr`, which the seed's placeholders and the aggregator's unaffected and held-back members read, lists only the on-PR goals the event grants, none off a pull request against the default branch ([Decision-engine.md](Decision-engine.md) §5). The title (§8.1) follows the Mode row. Where the granted goals are missing, as in an older artifact, or malformed, the goals decide as before: a missing value never hides a warning that may be true.
+
 > **Concern — semantic wrinkle.** "Mode" is not a step, but it sits in a column headed `Step`. Accepted: the alternative — a banner line above the table — does not survive the grouped table's shape (§8.8), and having the marker in exactly one place in both tables is worth more than the column-header purity. Do not rename the column; that is a breaking change to every existing consumer's rendering.
 
 ### 8.3 Details rows — applied/planned delta
@@ -847,6 +850,7 @@ Fixtures under `parse-terraform-apply/test-data/`, mirroring `parse-terraform-pl
 | C21 | should | failed apply | block shape 3 rendered, and it is `<details open>` (§8.6) |
 | C23 | should | grouped mode | head still omits the table; all extracts still produced |
 | C24 | could | destroy-plan extract | uses the plan's five shapes, not apply's |
+| C25 | must | pull request, `goals-json` holds `apply-on-pr`, `goals-granted-json` lacks `apply` | no Mode row, no banner, the "validation summary" title (§8.2) |
 
 ### 10.4 `annotate-terraform-outcome`
 
@@ -900,7 +904,7 @@ Assert on captured stdout and on a temp file bound to `GITHUB_STEP_SUMMARY`.
 | E5 | must | marker namespace | `tf:tag:destroy:` does not match a `tf:tag:destroy-plan:` comment (P8) |
 | E6 | must | four warning counts | each renders its own row, group-wide gated |
 | E7 | should | destroy-plan and destroy rows | same presence rules as Apply |
-| E8 | should | Mode row | per-env value in each column; row omitted when no env in the group mutates on PR |
+| E8 | should | Mode row | per-env value in each column; row omitted when no env in the group mutates on PR; an on-PR goal the metadata's `goals-granted` does not grant counts as none (§8.2) |
 | E9 | could | meta file from an older action version | renders as "no apply", no crash |
 
 ### 10.8 `capture-matrix-job-meta`
