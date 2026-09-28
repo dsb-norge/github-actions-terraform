@@ -64,7 +64,8 @@ its actions. A repository that pins a minor (`@v0.31`) moves to `@v1` the same w
 
 The test job declares `id-token: write` whether or not the repository has test files or logs in
 with OIDC. GitHub does not let a called workflow's job hold a permission the calling job did not
-grant, so without it the run does not start. Keep `secrets: inherit`.
+grant, so without it the run fails at startup, with no job and no check: the conclusion stays
+pending. Keep `secrets: inherit`.
 
 ### 2.3 Path relevance: remove `on.paths`, review what each environment reads
 
