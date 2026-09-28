@@ -288,6 +288,21 @@ For inputs that are simple strings, pass them as environment variables. Use `set
 
 > The sourced script always calls `exit`, which terminates the bash process. No exit code capture is needed — the runner fails the step automatically on non-zero exit.
 
+**Never paste a value into the script text.** GitHub substitutes `${{ … }}` into a `run:` block
+before bash parses it, so a pasted value is code: a quote in a path or an environment name ends
+the string it sits in, and the rest runs as shell. A value read from the step's `env:` is data,
+whatever it holds. Every `${{ inputs.* }}`, `${{ matrix.* }}` and `${{ steps.<id>.outputs.* }}` a
+step needs therefore goes through `env:`, or, when it is large or free text, through the heredoc
+capture below; `${{ github.action_path }}` and a step's fixed-word outcome are the only
+expressions left in script text. The structural test F16 in
+`evaluate-automerge-eligibility/run_all_tests.sh` fails on any other expression in a `run:` block
+outside a heredoc capture, in every action and workflow.
+
+**No non-breaking spaces.** U+00A0 looks like a space and is not one: inside `${{ … }}` it is part
+of the expression, which actionlint rejects, and in YAML it is not indentation. GitHub itself
+evaluated such expressions, so the only symptom was actionlint's refusal. F19 fails on one in any
+workflow or action file.
+
 ### Step shim pattern — JSON inputs
 
 GitHub pastes an expression's value into the `run:` script **before bash parses it**. Two failures
@@ -573,6 +588,13 @@ fi
 - **Use a `reset_defaults` or `create_metadata_file` helper** to reduce boilerplate if many tests share structure.
 - **Cover edge cases**: empty inputs, null values, invalid JSON, missing fields, boundary values.
 - **Exit with code 1 if any test failed** so CI can catch regressions.
+- **Write the step's output to a file of your own** (`_test_output=$(mktemp)`), never a fixed
+  path under `/tmp`: suites can run side by side on one machine, and two suites sharing one file
+  overwrite each other's output and fail at random. F18 fails on a redirect into a fixed `/tmp`
+  path.
+- **Break each new rule by hand once.** Outside the engine there is no mutation gate, so after a
+  rule and its tests are written, break the rule in a scratch copy and confirm a test fails; a rule
+  no break fails is untested, whatever the coverage.
 - **Emit the canonical summary lines** — three lines, exactly: `Tests run:    <N>`, `Tests passed: <N>`, `Tests failed: <N>`. These are parsed by the [action-tests workflow](../.github/workflows/action-tests.yml) to populate per-action and total test counts in the PR comment summary. ANSI color codes around the numbers are fine; the format of the rest of the line must not drift (no "Total tests:", no "Passed:", etc.). See [Testing-in-ci.md §4](Testing-in-ci.md#4-test-count-parsing-contract) for the full parsing contract.
 
 ---
@@ -797,6 +819,7 @@ Use this checklist when creating or converting an action:
 - [ ] `action.yml` steps use the `set -o allexport` + `source` shim (no exit code capture)
 - [ ] Every `run:` block starts with a one-line `#` comment describing what the step does
 - [ ] Only small scalars go through `env:`; free text and large values are captured as `toJSON(inputs.<name>)`, JSON-contract inputs as they are, through a quoted `<ACTION>_<INPUT>_JSON` heredoc, before `allexport`, never exported
+- [ ] No `${{ inputs.* }}`, `${{ matrix.* }}` or step output is pasted into a `run:` block outside a heredoc capture (F16)
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
 - [ ] Multi-step actions have `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
 - [ ] `run_all_tests.sh` covers happy path, edge cases, and error conditions
