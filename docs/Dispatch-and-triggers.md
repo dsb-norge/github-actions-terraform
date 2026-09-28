@@ -309,3 +309,15 @@ AI-assistant configuration files are never in these commits.
 - **Validation before the event**: the trigger-events lists are validated before an unsupported
   event is refused, so a broken configuration is reported whatever the event, as the other rules
   are.
+- **On the test bed it behaved as §6 says**, on three local-backend environments in the roles of
+  prod, staging with `schedule`, and a scratch environment out of pull requests. On a pull request
+  the two taking part planned and the third got the head saying it takes no part in pull requests.
+  From the branch, `goal: apply` was refused naming the default branch, and a fleet-wide
+  `goal: plan` capped all three, the dispatch line the first notice and quoted in the run summary.
+  On the default branch the merge's push applied where granted and destroyed only where `destroy`
+  was held; a recovery dispatch planned and applied one environment alone; `goal: destroy-plan`
+  ran the destroy plan only; a misspelt name and a destroy plan for an environment without it
+  failed with the §4.3 messages. A five-minute schedule planned and applied the opted-in
+  environment alone and skipped the others with `trigger-events: schedule not enabled`, and a
+  dispatch of a calling workflow without an inputs block ran every environment with its goals,
+  staged, its line naming the standard block.
