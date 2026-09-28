@@ -445,8 +445,7 @@ with the unordered output held byte-identical.
 **What tests cannot cover**: that a skipped stage releases the next one and a failed stage does
 not, that an empty matrix behind a false condition does not fail the run, that the anchor resolves
 across a remote reusable-workflow reference, and the queue interleaving of §4.5. All four were
-observed on a test-bed repository during design and are re-verified through a preview ref before
-release.
+observed on a test-bed repository during design and again on the implementation (§14).
 
 ## 13. Open questions
 
@@ -482,5 +481,9 @@ release.
   so the new `stage-1-count` read as undeclared.
 - **The test bed confirmed the four things tests cannot** (§12): a skipped stage released the next
   and a failed one held it back, an empty stage job behind its count was skipped without an error,
-  the anchor resolved across the remote reference, and a single-environment dispatch recovered an
-  environment on its own.
+  and the anchor resolved across the remote reference. The interleaving of §4.5 showed with two
+  pushes four seconds apart, the first touching every environment and the second one environment:
+  the newer run took that environment in its stage 1 while the older run was still in its stage 1,
+  the older run's stage 2 took it after, and both runs were green. A single-environment dispatch
+  recovered an environment on its own, and a push touching only a dependent applied it alone, with
+  the notice and the footer sentence naming the dependency that was not in the run.
