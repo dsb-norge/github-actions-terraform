@@ -88,6 +88,7 @@ An entry may hold exactly these keys:
 | `project-dir`, `github-environment`, `url` | as documented in the workflow |
 | `paths`, `paths-ignore` | [Path-relevance.md](Path-relevance.md) §3 |
 | `trigger-events` | [Dispatch-and-triggers.md](Dispatch-and-triggers.md) §3.2 |
+| `depends-on` | [Environment-ordering.md](Environment-ordering.md) §3; one name written alone is that one name |
 | `allow-failing-terraform-operations` | a per-environment setting only; there is no workflow input of that name |
 | `goals-yml`, `terraform-init-additional-dirs-yml`, `pr-auto-merge-from-actors-yml` | replace the global input for this environment |
 | `extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`, `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml` | merged over the global input, key by key |
@@ -97,15 +98,15 @@ The last row is an explicit list in the engine (`PER_ENVIRONMENT_INPUTS`), and a
 input the workflow declares to one of two classes: per environment (that list) or workflow only
 (`environments-yml`, `trigger-events-yml`, `path-relevance-enabled`, the test stage's inputs,
 `pr-auto-merge-app-id`, `pr-auto-merge-app-private-key-secret`). A new input fails that test until
-someone decides its class. A later spec that adds a key (Environment-ordering's `depends-on`) adds
-it to the first rows.
+someone decides its class. A spec that adds a key adds it to the first rows, as
+Environment-ordering.md's `depends-on` did.
 
 Refused, each with its own message:
 
 | Written | Message |
 |---|---|
 | an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `terraform-init-additional-dirs` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
-| a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml` | `The environment 'prod' sets 'trigger-events-yml', which is not a setting: per environment it is 'trigger-events', a list written directly in the entry.` |
+| a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml`, `depends-on-yml` | `The environment 'prod' sets 'trigger-events-yml', which is not a setting: per environment it is 'trigger-events', a list written directly in the entry.` |
 | a workflow-only input | `The environment 'prod' sets 'pr-auto-merge-app-id', which is a workflow input only: it applies to every environment at once. Set it in the calling workflow's 'with:'.` (the existing message for `path-relevance-enabled`, with its `paths: ['**']` advice, is kept) |
 | a value the engine sets itself: `goals-granted`, `caller-repo-default-branch`, `caller-repo-calling-branch`, `caller-repo-is-on-default-branch` | `The environment 'prod' sets 'goals-granted', which the workflow works out itself; remove it.` |
 | any other key | `The environment 'prod' sets 'github_environment', which is not a setting; did you mean 'github-environment'? The settings an environment may hold are listed in docs/Configuration-validation.md §3.1.` |
@@ -368,7 +369,7 @@ With one environment naming its own actors, the others are named one by one: `�
 | [Auto-merge.md](Auto-merge.md) | Its settings are validated here (§3.6); eligibility and the merge are there. |
 | [Per-goal-environment-variables.md](Per-goal-environment-variables.md) | Its maps' keys are validated by `resolve-goal-envs`, unchanged; their values follow §3.5. |
 | [Terraform-tests.md](Terraform-tests.md) | A lane's `extra-envs-yml` values follow §3.5's text rule; lanes keep their own key validation. |
-| [Environment-ordering.md](Environment-ordering.md) | Its `depends-on` joins §3.1's list when it is built. |
+| [Environment-ordering.md](Environment-ordering.md) | Its `depends-on` is on §3.1's list; the declared graph is validated there (its §5), after this spec's checks. |
 
 ## 7. Breaking changes
 
