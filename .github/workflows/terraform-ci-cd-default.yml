@@ -2109,9 +2109,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.create-matrix.outputs.tests-matrix-json) }}
     # Per file, not per lane: a per-lane group would cancel the rest of this run's own matrix.
+    # GitHub's default queue depth is one: a third run entering the group cancels the pending job
+    # to take its place, and a cancelled test job turns the conclusion red. `queue: max` keeps up
+    # to 100 pending jobs in (best-effort) arrival order instead, as for the stage jobs. It is only
+    # valid together with cancel-in-progress false.
     concurrency:
       group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
       cancel-in-progress: false
+      queue: max
     defaults:
       run:
         shell: bash
