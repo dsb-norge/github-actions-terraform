@@ -23,22 +23,27 @@ Out of scope: the test suites themselves (their layout is described in [Action-i
 
 ## 2. Workflow shape
 
-Five jobs:
+Seven jobs:
 
 ```mermaid
 flowchart LR
     discover --> test["test - matrix fan-out"]
     discover --> python["engine-python - the engine on 3.12 and 3.x"]
+    discover --> shards["engine-mutation - four shards"]
+    shards --> gate["engine-mutation-gate - merge and judge"]
     test --> summary["summary - PR comment"]
     test --> conclusion["tests-conclusion - required check"]
     python --> conclusion
+    gate --> conclusion
 ```
 
-`engine-python` runs the decision engine's suite, both gates included, on the oldest Python it
+`engine-python` runs the decision engine's suite with its coverage gate on the oldest Python it
 supports (3.12, [Decision-engine.md](Decision-engine.md) D1) and on the newest release, installed
 by `actions/setup-python` with the suite's pinned `coverage`. The discovered `engine` suite in the
 `test` matrix runs on the image's `python3`, which moves with `ubuntu-latest`; this job keeps the
 floor tested when it does. It is not part of the PR comment; its result gates `tests-conclusion`.
+The engine's mutation gate runs once, in `engine-mutation` and `engine-mutation-gate` (§14),
+never in the suite jobs.
 
 ### 2.1 `discover`
 
@@ -84,13 +89,13 @@ Steps:
 
 ### 2.4 `tests-conclusion`
 
-Single, no-matrix terminal job. `needs: [discover, test, engine-python]`, with the same fork guard as §7:
+Single, no-matrix terminal job. `needs: [discover, test, engine-python, engine-mutation-gate]`, with the same fork guard as §7:
 
 ```yaml
 if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
 ```
 
-Fails if `needs.discover.result != success`, if `needs.engine-python.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection will be configured to require — independent of which suites exist at any given time.
+Fails if `needs.discover.result != success`, if `needs.engine-python.result != success`, if `needs.engine-mutation-gate.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection will be configured to require — independent of which suites exist at any given time.
 
 ## 3. Discovery rules and exclusions
 
@@ -254,7 +259,8 @@ Path filters: intentionally omitted. Suites are cheap (seconds each), and "did t
 | `.github/scripts/rewrite-internal-refs.sh` | Not part of this workflow — rewrites internal `uses:` refs for [`pr-preview.yml`](../.github/workflows/pr-preview.yml); spec [Preview-refs.md](Preview-refs.md). |
 | `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs as the first step of `pr-preview.yml`, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
-| `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). |
+| `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). In CI it runs with `ENGINE_MUTATION=shards`, which leaves its mutation gate to §14; locally it runs both gates. |
+| `engine/tests/mutation.py` | The engine's mutation gate: `--shard K/N --out <file>` runs one shard, `--merge <files>` judges them (§14). |
 
 The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
 
@@ -476,3 +482,57 @@ When converting a legacy action to gain a `run_all_tests.sh`, run the conformanc
 [`.github/workflows/terraform-contract-tests.yml`](../.github/workflows/terraform-contract-tests.yml) is **not** part of this workflow and is not discovered by §2.1: `contract-tests/` has no `action.yml`. It runs real terraform binaries — the newest `newest-minors` minors (six today), resolved from the HashiCorp releases API at run time — against local-only scenarios, feeds the captured console through `parse-terraform-plan` and `parse-terraform-apply`, and diffs the summary-bearing lines against the fixtures those parsers pin; each plan is counted a second time from its JSON plan (`terraform show -json`) and held to the same expected counts. It needs the network, takes about a minute per version, runs on a path-filtered `pull_request`, on `workflow_dispatch` and **weekly on a schedule**, and is not a required check. Spec: [Apply-and-destroy-reporting.md §16](Apply-and-destroy-reporting.md); runner and version window: [`contract-tests/`](../contract-tests/README.md).
 
 The suites here stay hermetic: every fixture the parsers test against is a file in the repo, and `run_all_tests.sh` never invokes terraform.
+
+## 14. The engine's mutation gate, sharded
+
+The mutation gate ([Decision-engine.md](Decision-engine.md) D12, §8) is nearly all of this workflow's
+cost: every mutant runs the engine's suite in its own copy of `engine/`. It runs **once** per run,
+split across parallel jobs, instead of inside every job that runs the engine suite.
+
+- **The suite jobs leave it out.** The `test` job's engine suite and both `engine-python` jobs run
+  with `ENGINE_MUTATION=shards`. `run_tests.py` then runs the unit tests and the coverage gate,
+  prints `Mutation gate not run here (ENGINE_MUTATION=shards) …`, and counts one gate test, not
+  two. Nothing else reads the variable, and locally it is unset, so `bash engine/run_all_tests.sh`
+  still runs both gates.
+- **`engine-mutation`** is a matrix of four shards on Python 3.12, the floor. The mutants' keys are
+  printed by `ast.unparse`, so every shard runs one Python and the keys match
+  `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/4 --out
+  mutation-shard-K.json`: the unmutated baseline first, then every fourth mutant from the K-th,
+  interleaved so each shard holds a share of every module. A shard judges nothing. It exits
+  non-zero only when its baseline fails, and uploads its keys and survivors as
+  `engine-mutation-K`.
+- **`engine-mutation-gate`** runs when the shards finish, whatever their result (`!cancelled()`).
+  A shard that failed fails it. Otherwise it downloads the four results and runs
+  `mutation.py --merge`, which applies the gate the unsharded run applies: an unexplained
+  survivor, a stale equivalent and a listed equivalent that is killed each fail it. Before it
+  judges anything it checks that the shards ran every mutant exactly once. A missing shard would
+  otherwise hide its survivors, and it would also make every equivalent in it read as stale.
+- **`tests-conclusion`** requires `engine-mutation-gate` to succeed.
+
+The structural test F17 (`evaluate-automerge-eligibility/run_all_tests.sh`) holds this together:
+- every job that runs the engine suite sets `ENGINE_MUTATION=shards`;
+- the shards are 1..N, with the same N in the matrix, the command and the job name;
+- the merge needs the shards and checks their result;
+- `tests-conclusion` requires the merge.
+
+To change the shard count, change all three places together. F17 fails until they agree.
+
+**What made it fast**, measured on the full gate (4,038 mutants), before and after, on 12 local
+cores: 22 minutes became 3.6, and CI's three full runs of about 66 to 78 minutes each became one
+sharded run.
+- **Own tests first.** Each mutant runs the test module of the module it mutates first (`test_x`
+  for `x.py`, `OWN_TESTS` for the two whose name does not say it). Then come the other modules in
+  name order, and last `SLOW_LAST`: `test_generated` and `test_determinism`, which take nearly all
+  of the suite's time. The previous fixed order listed fast modules by hand and left new ones
+  after the slow two. A mutant that only its own module's tests kill therefore ran about eight
+  seconds of unrelated tests first.
+- **A timeout from the baseline.** A mutant that hangs counts as killed after six times the
+  baseline's duration, and never before 60 seconds, instead of after a fixed 300 seconds. A
+  mutant that makes the suite six times slower without failing it counts as killed too; that is
+  the bound's meaning.
+- **Mutants built in the workers.** Listing the mutants re-parsed each module once per mutant, 46
+  seconds of serial work before any mutant ran. The listing now walks each module once, and each
+  worker builds its own mutant's source from its index. The keys, lines and mutated sources are
+  byte-identical to before.
+
+The verdict did not change. The same mutants are killed and the same one is listed as equivalent.

@@ -580,19 +580,22 @@ install fails the gate, because the gate is part of the contract (P4). The packa
 
 **Mutation** (D12): `tests/mutation.py` rewrites the package's syntax tree one fault at a time,
 never touching docstrings, and runs the suite against each mutant in its own copy of `engine/`, in
-parallel, fast modules first, stopping at the first failure. Operators: comparisons flipped
-(`==`/`!=`, `<`/`<=`/`>=`, `is`/`is not`, `in`/`not in`), `and`/`or` swapped, `not` dropped,
-booleans inverted, integers nudged, strings emptied, one element dropped from a constant tuple or
-list, `if`, conditional-expression, `while` and comprehension conditions forced both ways, a return
-value replaced by `None`, a statement deleted, a `raise` replaced by `pass`, an exception type
-dropped from an `except` tuple, a defensive copy (`dict`, `list`, `copy.deepcopy`) replaced by its
-argument. The unmutated copy must pass first, or no mutant is judged, since a copy that fails for
-its own reasons would count every mutant as killed. A surviving mutant that cannot change
-behaviour is listed in `tests/mutation_equivalents.json` with the reason; the gate fails on an
-unlisted survivor, on a listed key that no longer exists and on a listed mutant that is killed, so
-the list cannot go stale. The package has no equivalent mutants today: the first run's
-equivalents were redundant branches, and the code lost them instead. About twenty seconds on a
-developer machine, all cores.
+parallel, the mutated module's own tests first and the two slow modules last, stopping at the first
+failure; a mutant still running after six baseline durations (at least a minute) counts as killed.
+Operators: comparisons flipped (`==`/`!=`, `<`/`<=`/`>=`, `is`/`is not`, `in`/`not in`), `and`/`or`
+swapped, `not` dropped, booleans inverted, integers nudged, strings emptied, one element dropped
+from a constant tuple or list, `if`, conditional-expression, `while` and comprehension conditions
+forced both ways, a return value replaced by `None`, a statement deleted, a `raise` replaced by
+`pass`, an exception type dropped from an `except` tuple, a defensive copy (`dict`, `list`,
+`copy.deepcopy`) replaced by its argument. The unmutated copy must pass first, or no mutant is
+judged, since a copy that fails for its own reasons would count every mutant as killed. A surviving
+mutant that cannot change behaviour is listed in `tests/mutation_equivalents.json` with the reason;
+the gate fails on an unlisted survivor, on a listed key that no longer exists and on a listed mutant
+that is killed, so the list cannot go stale. The package has one equivalent mutant today, the
+environment `ordering.py`'s cycle walk starts from; the first run's equivalents were redundant
+branches, and the code lost them instead. The full gate takes under four minutes on a developer
+machine with twelve cores; CI runs it once, in four parallel shards merged into one verdict
+(Testing-in-ci.md §14).
 
 **The adapter** is tested like the core, under both gates: `test_adapter.py` stands in for `yq` and
 `gh` and covers how each value is read before parsing, parse results, the `yq` probe and every way
