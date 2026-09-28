@@ -5,6 +5,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -61,7 +66,7 @@ run_test() {
   (
     set -o allexport
     source "${action_dir}/step_parse_plan_output.sh"
-  ) > /tmp/test_output.txt 2>&1
+  ) > "${_test_output}" 2>&1
   exit_code=$?
 
   # Assertions
@@ -147,7 +152,7 @@ run_test() {
     echo -e "${RED}✗ FAILED${NC}:"
     echo -e "${failures}"
     echo "--- Step output ---"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     echo "--- End step output ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
@@ -161,13 +166,13 @@ run_test() {
 assert_last_log() {
   TESTS_RUN=$((TESTS_RUN + 1))
   echo -e "${BLUE}TEST ${TESTS_RUN}: ${1}${NC}"
-  if grep -q -E -- "${2}" /tmp/test_output.txt; then
+  if grep -q -E -- "${2}" "${_test_output}"; then
     echo -e "${GREEN}✓ PASSED${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else
     echo -e "${RED}✗ FAILED${NC}: the step's log has no line matching '${2}'"
     echo "--- Step output ---"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     echo "--- End step output ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi

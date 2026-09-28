@@ -473,6 +473,11 @@ exit ${overall_exit}
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -504,7 +509,7 @@ run_test() {
   (
     set -o allexport
     source "${_this_script_dir}/step_<name>.sh"
-  ) > /tmp/test_output.txt 2>&1
+  ) > "${_test_output}" 2>&1
   local exit_code=$?
 
   # Assert on outputs (read from $GITHUB_OUTPUT) or exit code
@@ -516,7 +521,7 @@ run_test() {
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else
     echo -e "${RED}✗ FAILED${NC}: expected '${expected_value}', got '${actual_value}'"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 

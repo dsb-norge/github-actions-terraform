@@ -8,6 +8,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -58,7 +63,7 @@ run_step() {
   (
     set -o allexport
     source "${_this_script_dir}/step_plan_show.sh"
-  ) >/tmp/test_output_show.txt 2>&1
+  ) >"${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -79,7 +84,7 @@ assert() {
   else
     echo -e "${RED}✗ FAILED${NC}"
     echo "--- step output ---"
-    cat /tmp/test_output_show.txt 2>/dev/null || true
+    cat "${_test_output}" 2>/dev/null || true
     echo "--- /step output ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
@@ -182,7 +187,7 @@ run_step
 assert "T17: unset extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: nothing is injected" env_is_unset DSB_TEST_VALUE
 assert "T17: no per-goal group is opened in the log" \
-  bash -c "! grep -q 'applying per-goal environment variables' '/tmp/test_output_show.txt'"
+  bash -c "! grep -q 'applying per-goal environment variables' '${_test_output}'"
 
 setup_workdir
 install_stub_terraform
@@ -191,7 +196,7 @@ export input_extra_envs_file=""
 run_step
 assert "T17: empty extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: empty path is reported as not configured" \
-  grep -q 'no per-goal environment variables file configured' '/tmp/test_output_show.txt'
+  grep -q 'no per-goal environment variables file configured' "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T18 — a path that does not exist is a hard error
@@ -202,7 +207,7 @@ export input_extra_envs_file="${RUNNER_TEMP}/nope/missing.json"
 run_step
 assert "T18: missing file, step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "T18: the error names the path" \
-  grep -q "missing.json' does not exist" '/tmp/test_output_show.txt'
+  grep -q "missing.json' does not exist" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T19 — an empty map is a no-op
@@ -227,9 +232,9 @@ assert "T20: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T20: a string value arrives verbatim" env_eq GOMEMLIMIT '12GiB'
 assert "T20: a JSON number arrives as its decimal text" env_eq GOGC '25'
 assert "T20: a JSON boolean arrives as 'true'" env_eq DSB_TEST_BOOL 'true'
-assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" '/tmp/test_output_show.txt'
+assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" "${_test_output}"
 assert "T20: values are NOT logged" \
-  bash -c "! grep -q '12GiB' '/tmp/test_output_show.txt'"
+  bash -c "! grep -q '12GiB' '${_test_output}'"
 
 # ----------------------------------------------------------------------
 # T21 — a JSON null genuinely unsets, even a variable exported job-wide
@@ -243,7 +248,7 @@ run_step
 assert "T21: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T21: the variable is gone from the invocation's environment" \
   env_is_unset GOMEMLIMIT
-assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" '/tmp/test_output_show.txt'
+assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" "${_test_output}"
 unset GOMEMLIMIT
 
 # Sanity check the other half of T21: without the null it would have been seen.
@@ -327,7 +332,7 @@ use_extra_envs '{ this is not json'
 run_step
 assert "negative: unparseable JSON fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says it is not valid JSON" \
-  grep -q 'is not valid JSON' '/tmp/test_output_show.txt'
+  grep -q 'is not valid JSON' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -336,7 +341,7 @@ use_extra_envs ''
 run_step
 assert "negative: an empty file fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says an object was expected" \
-  grep -q 'must hold a JSON object' '/tmp/test_output_show.txt'
+  grep -q 'must hold a JSON object' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -345,7 +350,7 @@ use_extra_envs '["not","an","object"]'
 run_step
 assert "negative: a JSON array fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the type found" \
-  grep -q "got 'array'" '/tmp/test_output_show.txt'
+  grep -q "got 'array'" "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -354,7 +359,7 @@ use_extra_envs '{"FOO BAR":"x"}'
 run_step
 assert "negative: a variable name with a space fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the offending key" \
-  grep -q "'FOO BAR' is not a valid environment variable name" '/tmp/test_output_show.txt'
+  grep -q "'FOO BAR' is not a valid environment variable name" "${_test_output}"
 
 # 'export FOO=BAR=x' would otherwise assign 'BAR=x' to FOO — a different
 # variable than the caller asked for, silently.
@@ -365,7 +370,7 @@ use_extra_envs '{"FOO=BAR":"x"}'
 run_step
 assert "negative: a variable name containing '=' fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: it is rejected as a name, not silently reinterpreted" \
-  grep -q "'FOO=BAR' is not a valid environment variable name" '/tmp/test_output_show.txt'
+  grep -q "'FOO=BAR' is not a valid environment variable name" "${_test_output}"
 
 # The tool must never have run for the case above: a step that cannot apply its
 # configured environment must not proceed to invoke terraform/tflint.
@@ -384,7 +389,7 @@ export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
 run_step
 assert "negative: a missing working directory fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the directory" \
-  grep -q 'could not be entered' '/tmp/test_output_show.txt'
+  grep -q 'could not be entered' "${_test_output}"
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
 

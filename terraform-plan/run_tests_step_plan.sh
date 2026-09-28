@@ -10,6 +10,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -104,7 +109,7 @@ run_step() {
   (
     set -o allexport
     source "${_this_script_dir}/step_plan.sh"
-  ) >/tmp/test_output_plan.txt 2>&1
+  ) >"${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -128,7 +133,7 @@ assert() {
   else
     echo -e "${RED}✗ FAILED${NC}"
     echo "--- step output ---"
-    cat /tmp/test_output_plan.txt 2>/dev/null || true
+    cat "${_test_output}" 2>/dev/null || true
     echo "--- /step output ---"
     echo "--- GITHUB_OUTPUT ---"
     cat "${GITHUB_OUTPUT}" 2>/dev/null || true
@@ -171,26 +176,26 @@ setup_workdir
     "3599=$(format-duration-mmss 3599)" \
     "7205=$(format-duration-mmss 7205)" \
     "default=$(format-duration-mmss)"
-) >/tmp/test_output_plan.txt 2>&1
+) >"${_test_output}" 2>&1
 
 assert "format-duration-mmss(0) = 0:00" \
-  grep -Fxq "0=0:00" /tmp/test_output_plan.txt
+  grep -Fxq "0=0:00" "${_test_output}"
 assert "format-duration-mmss(1) = 0:01" \
-  grep -Fxq "1=0:01" /tmp/test_output_plan.txt
+  grep -Fxq "1=0:01" "${_test_output}"
 assert "format-duration-mmss(59) = 0:59" \
-  grep -Fxq "59=0:59" /tmp/test_output_plan.txt
+  grep -Fxq "59=0:59" "${_test_output}"
 assert "format-duration-mmss(60) = 1:00" \
-  grep -Fxq "60=1:00" /tmp/test_output_plan.txt
+  grep -Fxq "60=1:00" "${_test_output}"
 assert "format-duration-mmss(61) = 1:01" \
-  grep -Fxq "61=1:01" /tmp/test_output_plan.txt
+  grep -Fxq "61=1:01" "${_test_output}"
 assert "format-duration-mmss(125) = 2:05" \
-  grep -Fxq "125=2:05" /tmp/test_output_plan.txt
+  grep -Fxq "125=2:05" "${_test_output}"
 assert "format-duration-mmss(3599) = 59:59" \
-  grep -Fxq "3599=59:59" /tmp/test_output_plan.txt
+  grep -Fxq "3599=59:59" "${_test_output}"
 assert "format-duration-mmss(7205) = 120:05" \
-  grep -Fxq "7205=120:05" /tmp/test_output_plan.txt
+  grep -Fxq "7205=120:05" "${_test_output}"
 assert "format-duration-mmss() defaults to 0:00" \
-  grep -Fxq "default=0:00" /tmp/test_output_plan.txt
+  grep -Fxq "default=0:00" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Happy path, no changes (terraform exit 0)
@@ -204,7 +209,7 @@ assert "Exit 0: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "Exit 0: tf-plan-exitcode output is '0'" \
   test "$(get_output tf-plan-exitcode)" = "0"
 assert "Exit 0: no-changes log line present" \
-  grep -q "no changes indicated" /tmp/test_output_plan.txt
+  grep -q "no changes indicated" "${_test_output}"
 assert "Exit 0: console output file path is published" \
   test -n "$(get_output tf-plan-console-output-file)"
 assert "Exit 0: console output file exists and contains stub stdout" \
@@ -224,7 +229,7 @@ assert "Exit 2: step exits 0 (success-with-changes normalized)" \
 assert "Exit 2: tf-plan-exitcode publishes raw '2'" \
   test "$(get_output tf-plan-exitcode)" = "2"
 assert "Exit 2: success-with-changes log line present" \
-  grep -q "changes indicated" /tmp/test_output_plan.txt
+  grep -q "changes indicated" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Failure (terraform exit 1 → script exits non-zero)
@@ -238,7 +243,7 @@ assert "Exit 1: step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "Exit 1: tf-plan-exitcode publishes raw '1'" \
   test "$(get_output tf-plan-exitcode)" = "1"
 assert "Exit 1: failure log line present" \
-  grep -q "failed to plan" /tmp/test_output_plan.txt
+  grep -q "failed to plan" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: plan-time on fast plan (sub-second / 1-2s jitter window)
@@ -430,7 +435,7 @@ run_step
 assert "T17: unset extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: nothing is injected" env_is_unset DSB_TEST_VALUE
 assert "T17: no per-goal group is opened in the log" \
-  bash -c "! grep -q 'applying per-goal environment variables' '/tmp/test_output_plan.txt'"
+  bash -c "! grep -q 'applying per-goal environment variables' '${_test_output}'"
 
 setup_workdir
 install_stub_terraform
@@ -439,7 +444,7 @@ export input_extra_envs_file=""
 run_step
 assert "T17: empty extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: empty path is reported as not configured" \
-  grep -q 'no per-goal environment variables file configured' '/tmp/test_output_plan.txt'
+  grep -q 'no per-goal environment variables file configured' "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T18 — a path that does not exist is a hard error
@@ -450,7 +455,7 @@ export input_extra_envs_file="${RUNNER_TEMP}/nope/missing.json"
 run_step
 assert "T18: missing file, step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "T18: the error names the path" \
-  grep -q "missing.json' does not exist" '/tmp/test_output_plan.txt'
+  grep -q "missing.json' does not exist" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T19 — an empty map is a no-op
@@ -475,9 +480,9 @@ assert "T20: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T20: a string value arrives verbatim" env_eq GOMEMLIMIT '12GiB'
 assert "T20: a JSON number arrives as its decimal text" env_eq GOGC '25'
 assert "T20: a JSON boolean arrives as 'true'" env_eq DSB_TEST_BOOL 'true'
-assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" '/tmp/test_output_plan.txt'
+assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" "${_test_output}"
 assert "T20: values are NOT logged" \
-  bash -c "! grep -q '12GiB' '/tmp/test_output_plan.txt'"
+  bash -c "! grep -q '12GiB' '${_test_output}'"
 
 # ----------------------------------------------------------------------
 # T21 — a JSON null genuinely unsets, even a variable exported job-wide
@@ -491,7 +496,7 @@ run_step
 assert "T21: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T21: the variable is gone from the invocation's environment" \
   env_is_unset GOMEMLIMIT
-assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" '/tmp/test_output_plan.txt'
+assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" "${_test_output}"
 unset GOMEMLIMIT
 
 # Sanity check the other half of T21: without the null it would have been seen.
@@ -575,7 +580,7 @@ use_extra_envs '{ this is not json'
 run_step
 assert "negative: unparseable JSON fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says it is not valid JSON" \
-  grep -q 'is not valid JSON' '/tmp/test_output_plan.txt'
+  grep -q 'is not valid JSON' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -584,7 +589,7 @@ use_extra_envs ''
 run_step
 assert "negative: an empty file fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says an object was expected" \
-  grep -q 'must hold a JSON object' '/tmp/test_output_plan.txt'
+  grep -q 'must hold a JSON object' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -593,7 +598,7 @@ use_extra_envs '["not","an","object"]'
 run_step
 assert "negative: a JSON array fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the type found" \
-  grep -q "got 'array'" '/tmp/test_output_plan.txt'
+  grep -q "got 'array'" "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -602,7 +607,7 @@ use_extra_envs '{"FOO BAR":"x"}'
 run_step
 assert "negative: a variable name with a space fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the offending key" \
-  grep -q "'FOO BAR' is not a valid environment variable name" '/tmp/test_output_plan.txt'
+  grep -q "'FOO BAR' is not a valid environment variable name" "${_test_output}"
 
 # 'export FOO=BAR=x' would otherwise assign 'BAR=x' to FOO — a different
 # variable than the caller asked for, silently.
@@ -613,7 +618,7 @@ use_extra_envs '{"FOO=BAR":"x"}'
 run_step
 assert "negative: a variable name containing '=' fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: it is rejected as a name, not silently reinterpreted" \
-  grep -q "'FOO=BAR' is not a valid environment variable name" '/tmp/test_output_plan.txt'
+  grep -q "'FOO=BAR' is not a valid environment variable name" "${_test_output}"
 
 # The tool must never have run for the case above: a step that cannot apply its
 # configured environment must not proceed to invoke terraform/tflint.
@@ -635,7 +640,7 @@ export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
 run_step
 assert "negative: a missing working directory fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the directory" \
-  grep -q 'could not be entered' '/tmp/test_output_plan.txt'
+  grep -q 'could not be entered' "${_test_output}"
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
 

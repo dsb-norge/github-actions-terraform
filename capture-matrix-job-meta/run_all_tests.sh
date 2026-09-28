@@ -6,6 +6,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,7 +61,7 @@ run_test() {
   # test the harness, not the cap.
   (
     source "${_this_script_dir}/step_capture.sh"
-  ) > /tmp/test_output.txt 2>&1
+  ) > "${_test_output}" 2>&1
   local exit_code=$?
 
   # Get the result file path
@@ -76,7 +81,7 @@ run_test() {
     echo -e "${RED}✗ FAILED${NC}: Expected '${expected_result}', got '${actual_result}', exit code=${exit_code}"
     echo ""
     echo "Test output:"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     if [[ -f "${result_file}" ]]; then
       echo ""
       echo "Result file:"
@@ -329,7 +334,7 @@ run_naming_test() {
 
   (
     source "${_this_script_dir}/step_capture.sh"
-  ) > /tmp/test_output.txt 2>&1
+  ) > "${_test_output}" 2>&1
   local exit_code=$?
 
   local result_file artifact_output actual_entity="" ok="false"
@@ -357,7 +362,7 @@ run_naming_test() {
     echo "Expected: basename='${expected_basename}' artifact='${expected_artifact}' entity='${expected_entity}'"
     echo ""
     echo "Test output:"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 
@@ -372,13 +377,13 @@ assert_last_log() {
   echo ""
   echo -e "${BLUE}TEST ${TESTS_RUN}: ${test_name}${NC}"
   local found="absent"
-  grep -qF -- "${pattern}" /tmp/test_output.txt && found="present"
+  grep -qF -- "${pattern}" "${_test_output}" && found="present"
   if [[ "${found}" == "${want}" ]]; then
     echo -e "${GREEN}✓ PASSED${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
   else
     echo -e "${RED}✗ FAILED${NC}: expected '${pattern}' ${want} in the step output"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 }
@@ -437,14 +442,14 @@ TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}TEST ${TESTS_RUN}: names: neither name gives matching unknown-XXXXXX file and artifact names${NC}"
 export GITHUB_OUTPUT=$(mktemp) RUNNER_TEMP=$(mktemp -d) GITHUB_ACTION_PATH="${_this_script_dir}"
-( source "${_this_script_dir}/step_capture.sh" ) > /tmp/test_output.txt 2>&1
+( source "${_this_script_dir}/step_capture.sh" ) > "${_test_output}" 2>&1
 _rc=$?
 _file=$(grep "^result-json-file=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
 _art=$(grep "^artifact-name=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
 if [[ "${_rc}" -eq 0 && "${_art}" =~ ^matrix-job-meta-unknown-[a-zA-Z0-9]{6}$ && "$(basename "${_file}")" == "${_art}.json" ]]; then
   echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
 else
-  echo -e "${RED}✗ FAILED${NC}: exit=${_rc} file='${_file}' artifact='${_art}'"; cat /tmp/test_output.txt
+  echo -e "${RED}✗ FAILED${NC}: exit=${_rc} file='${_file}' artifact='${_art}'"; cat "${_test_output}"
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 rm -f "${GITHUB_OUTPUT}"; rm -rf "${RUNNER_TEMP}"

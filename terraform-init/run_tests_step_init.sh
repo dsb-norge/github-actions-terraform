@@ -10,6 +10,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -107,7 +112,7 @@ run_step() {
     set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_init.sh"
-  ) >/tmp/test_output_init.txt 2>&1
+  ) >"${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -128,7 +133,7 @@ assert() {
   else
     echo -e "${RED}✗ FAILED${NC}"
     echo "--- step output ---"
-    cat /tmp/test_output_init.txt 2>/dev/null || true
+    cat "${_test_output}" 2>/dev/null || true
     echo "--- /step output ---"
     echo "--- GITHUB_OUTPUT ---"
     cat "${GITHUB_OUTPUT}" 2>/dev/null || true
@@ -212,7 +217,7 @@ export MOCK_TF_STDOUT="Error: failed to init"
 run_step
 assert "Failure: step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "Failure: error log line present" \
-  grep -q "init exited with code '1'" /tmp/test_output_init.txt
+  grep -q "init exited with code '1'" "${_test_output}"
 assert "Failure: console-output-file still captured" \
   test -s "$(get_output tf-init-console-output-file)"
 
@@ -232,7 +237,7 @@ declare -x "MOCK_TF_EXIT_${_chdir_hash}=1"
 run_step
 assert "Mixed: step exits non-zero overall" test "${LAST_EXIT}" -ne 0
 assert "Mixed: failure log mentions exit code 1" \
-  grep -q "init exited with code '1'" /tmp/test_output_init.txt
+  grep -q "init exited with code '1'" "${_test_output}"
 unset "MOCK_TF_EXIT_${_chdir_hash}"
 
 # ----------------------------------------------------------------------
@@ -245,7 +250,7 @@ export MOCK_TF_EXIT=0
 run_step
 assert "Missing dir: step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "Missing dir: log mentions does-not-exist" \
-  grep -q "does not exist" /tmp/test_output_init.txt
+  grep -q "does not exist" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Empty additional-dirs JSON falls back to project-only init
@@ -260,7 +265,7 @@ assert "Empty JSON: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "Empty JSON: terraform invoked exactly once" \
   bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 1 ]]"
 assert "Empty JSON: no-additional-dirs log line present" \
-  grep -q "no additional directories" /tmp/test_output_init.txt
+  grep -q "no additional directories" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Environment name appears in console-output-file path
@@ -327,7 +332,7 @@ run_step
 assert "T17: unset extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: nothing is injected" env_is_unset DSB_TEST_VALUE
 assert "T17: no per-goal group is opened in the log" \
-  bash -c "! grep -q 'applying per-goal environment variables' '/tmp/test_output_init.txt'"
+  bash -c "! grep -q 'applying per-goal environment variables' '${_test_output}'"
 
 setup_workdir
 install_stub_terraform
@@ -336,7 +341,7 @@ export input_extra_envs_file=""
 run_step
 assert "T17: empty extra-envs-file, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T17: empty path is reported as not configured" \
-  grep -q 'no per-goal environment variables file configured' '/tmp/test_output_init.txt'
+  grep -q 'no per-goal environment variables file configured' "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T18 — a path that does not exist is a hard error
@@ -347,7 +352,7 @@ export input_extra_envs_file="${RUNNER_TEMP}/nope/missing.json"
 run_step
 assert "T18: missing file, step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "T18: the error names the path" \
-  grep -q "missing.json' does not exist" '/tmp/test_output_init.txt'
+  grep -q "missing.json' does not exist" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # T19 — an empty map is a no-op
@@ -372,9 +377,9 @@ assert "T20: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T20: a string value arrives verbatim" env_eq GOMEMLIMIT '12GiB'
 assert "T20: a JSON number arrives as its decimal text" env_eq GOGC '25'
 assert "T20: a JSON boolean arrives as 'true'" env_eq DSB_TEST_BOOL 'true'
-assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" '/tmp/test_output_init.txt'
+assert "T20: keys are logged" grep -q "setting 'GOMEMLIMIT'" "${_test_output}"
 assert "T20: values are NOT logged" \
-  bash -c "! grep -q '12GiB' '/tmp/test_output_init.txt'"
+  bash -c "! grep -q '12GiB' '${_test_output}'"
 
 # ----------------------------------------------------------------------
 # T21 — a JSON null genuinely unsets, even a variable exported job-wide
@@ -388,7 +393,7 @@ run_step
 assert "T21: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "T21: the variable is gone from the invocation's environment" \
   env_is_unset GOMEMLIMIT
-assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" '/tmp/test_output_init.txt'
+assert "T21: the unset is logged" grep -q "unsetting 'GOMEMLIMIT'" "${_test_output}"
 unset GOMEMLIMIT
 
 # Sanity check the other half of T21: without the null it would have been seen.
@@ -495,7 +500,7 @@ use_extra_envs '{ this is not json'
 run_step
 assert "negative: unparseable JSON fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says it is not valid JSON" \
-  grep -q 'is not valid JSON' '/tmp/test_output_init.txt'
+  grep -q 'is not valid JSON' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -504,7 +509,7 @@ use_extra_envs ''
 run_step
 assert "negative: an empty file fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error says an object was expected" \
-  grep -q 'must hold a JSON object' '/tmp/test_output_init.txt'
+  grep -q 'must hold a JSON object' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -513,7 +518,7 @@ use_extra_envs '["not","an","object"]'
 run_step
 assert "negative: a JSON array fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the type found" \
-  grep -q "got 'array'" '/tmp/test_output_init.txt'
+  grep -q "got 'array'" "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -522,7 +527,7 @@ use_extra_envs '{"FOO BAR":"x"}'
 run_step
 assert "negative: a variable name with a space fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the offending key" \
-  grep -q "'FOO BAR' is not a valid environment variable name" '/tmp/test_output_init.txt'
+  grep -q "'FOO BAR' is not a valid environment variable name" "${_test_output}"
 
 # 'export FOO=BAR=x' would otherwise assign 'BAR=x' to FOO — a different
 # variable than the caller asked for, silently.
@@ -533,7 +538,7 @@ use_extra_envs '{"FOO=BAR":"x"}'
 run_step
 assert "negative: a variable name containing '=' fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: it is rejected as a name, not silently reinterpreted" \
-  grep -q "'FOO=BAR' is not a valid environment variable name" '/tmp/test_output_init.txt'
+  grep -q "'FOO=BAR' is not a valid environment variable name" "${_test_output}"
 
 # The tool must never have run for the case above: a step that cannot apply its
 # configured environment must not proceed to invoke terraform/tflint.
@@ -555,7 +560,7 @@ export input_working_directory="${RUNNER_TEMP}/no-such-project-dir"
 run_step
 assert "negative: a missing working directory fails the step" test "${LAST_EXIT}" -ne 0
 assert "negative: the error names the directory" \
-  grep -q 'could not be entered' '/tmp/test_output_init.txt'
+  grep -q 'could not be entered' "${_test_output}"
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
 
@@ -574,7 +579,7 @@ run_step
 assert "auth: no token, step exits 0" test "${LAST_EXIT}" -eq 0
 assert "auth: no token injects no git config" env_is_unset GIT_CONFIG_COUNT
 assert "auth: no token is reported in the log" \
-  grep -q "module clones will be unauthenticated" '/tmp/test_output_init.txt'
+  grep -q "module clones will be unauthenticated" "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -591,11 +596,11 @@ assert "auth: terraform saw the config (it is what runs git)" \
   bash -c "[ -s '${MOCK_ENV_FILE}' ]"
 assert "auth: the encoded credential is masked" \
   grep -qF "::add-mask::$(printf 'x-access-token:%s' ghs_testtoken | base64 -w0)" \
-  '/tmp/test_output_init.txt'
+  "${_test_output}"
 # The runner masks the token itself, but only where it appears verbatim; the
 # step must not be what puts it in the log.
 assert "auth: the raw token is never logged" \
-  bash -c "! grep -qF 'ghs_testtoken' '/tmp/test_output_init.txt'"
+  bash -c "! grep -qF 'ghs_testtoken' '${_test_output}'"
 
 # The guard: three shapes of runner-level github.com credential, each of which
 # a preemptive header would override. A repository that clones private modules
@@ -612,7 +617,7 @@ for _guard in \
   run_step
   assert "auth guard (${_guard%%|*}): nothing is injected" env_is_unset GIT_CONFIG_COUNT
   assert "auth guard (${_guard%%|*}): the skip is logged" \
-    grep -q "already has git credentials configured for github.com" '/tmp/test_output_init.txt'
+    grep -q "already has git credentials configured for github.com" "${_test_output}"
 done
 
 # actions/checkout writes its extraheader into the workspace repository's LOCAL
@@ -671,11 +676,11 @@ run_step
 assert "refused clone: the step still fails" test "${LAST_EXIT}" -ne 0
 assert "refused clone: an error annotation is emitted" \
   grep -q '::error title=Module clone refused for want of credentials::' \
-  '/tmp/test_output_init.txt'
+  "${_test_output}"
 assert "refused clone: the annotation names the host" \
-  grep -q "credentials for 'https://github.com'" '/tmp/test_output_init.txt'
+  grep -q "credentials for 'https://github.com'" "${_test_output}"
 assert "refused clone: the annotation explains the per-IP budget" \
-  grep -q '60/hour' '/tmp/test_output_init.txt'
+  grep -q '60/hour' "${_test_output}"
 
 setup_workdir
 install_stub_terraform
@@ -683,16 +688,16 @@ export MOCK_TF_STDOUT="fatal: could not read Username for 'https://github.com': 
 run_step
 assert "refused clone: init exiting 0 downgrades it to a warning" \
   grep -q '::warning title=Module clone refused for want of credentials::' \
-  '/tmp/test_output_init.txt'
+  "${_test_output}"
 assert "refused clone: and no error annotation is emitted" \
-  bash -c "! grep -q '::error title=Module clone refused' '/tmp/test_output_init.txt'"
+  bash -c "! grep -q '::error title=Module clone refused' '${_test_output}'"
 
 setup_workdir
 install_stub_terraform
 export MOCK_TF_STDOUT="Terraform has been successfully initialized!"
 run_step
 assert "refused clone: a clean init emits no annotation" \
-  bash -c "! grep -q 'Module clone refused' '/tmp/test_output_init.txt'"
+  bash -c "! grep -q 'Module clone refused' '${_test_output}'"
 
 setup_workdir
 install_stub_terraform
@@ -703,7 +708,7 @@ export MOCK_TF_EXIT=1
 run_step
 assert "refused clone: every distinct host is listed once" \
   grep -q "credentials for 'https://github.com https://gitlab.com'" \
-  '/tmp/test_output_init.txt'
+  "${_test_output}"
 
 # ======================================================================
 # Backend, lock-file mode and the plugin cache's lock rules for the
@@ -823,9 +828,9 @@ for _bad in \
   run_step
   assert "invalid ${_input} '${_value}': step exits non-zero" test "${LAST_EXIT}" -ne 0
   assert "invalid ${_input} '${_value}': the error names the input and the value" \
-    grep -qF "input '${_input}' must be" '/tmp/test_output_init.txt'
+    grep -qF "input '${_input}' must be" "${_test_output}"
   assert "invalid ${_input} '${_value}': the error quotes the value" \
-    grep -qF "got '${_value}'" '/tmp/test_output_init.txt'
+    grep -qF "got '${_value}'" "${_test_output}"
   assert "invalid ${_input} '${_value}': terraform was never invoked" \
     bash -c "[ ! -s '${MOCK_TF_ARGV_FILE}' ]"
 done

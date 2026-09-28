@@ -5,6 +5,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -15,7 +20,7 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_RUN=0
 
-OUT_FILE=/tmp/test_output_get_config.txt
+OUT_FILE="${_test_output}"
 
 setup_workdir() {
   export GITHUB_OUTPUT=$(mktemp)
