@@ -3213,6 +3213,44 @@ else
 fi
 
 # ============================================================================
+# F19 — no workflow or action file holds a non-breaking space.
+#
+# U+00A0 looks like a space and is not one: inside `${{ … }}` it is part of the
+# expression, which actionlint rejects, and in YAML it is not indentation. One
+# sat in the module workflow's secret expressions for two years, pasted from a
+# document.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F19 - no workflow or action file holds a non-breaking space${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f19_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, sys
+
+files = sorted(glob.glob('*/action.y*ml') + glob.glob('.github/workflows/*.y*ml'))
+problems = []
+for path in files:
+    with open(path, encoding='utf-8') as fh:
+        for number, line in enumerate(fh, 1):
+            if ' ' in line:
+                problems.append(f"{path}:{number} holds U+00A0 (a non-breaking space); replace it with a space")
+print(f"checked {len(files)} file(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f19_rc=0 || _f19_rc=$?
+if [[ "${_f19_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f19_out}" | head -n1): no non-breaking space"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f19_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
