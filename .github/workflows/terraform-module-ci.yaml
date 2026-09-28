@@ -152,7 +152,7 @@ jobs:
           working-directory: ${{ github.workspace }}
 
       - name: "🚀 Cache Terraform provider plugins"
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
@@ -284,7 +284,7 @@ jobs:
           terraform_wrapper: false
 
       - name: "🚀 Cache Terraform provider plugins"
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ needs.validate-project.outputs.plugin-cache-directory }}
           key: ${{ needs.validate-project.outputs.plugin-cache-key-monthly-rolling }}
