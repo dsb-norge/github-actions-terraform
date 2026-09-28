@@ -59,7 +59,7 @@ my-action/
 └── run_all_tests.sh            # automated tests using subshells + GITHUB_OUTPUT capture
 ```
 
-Legacy actions (e.g. `terraform-validate/`, `terraform-init/`, `setup-tflint/`) still embed bash in `action.yml`. **When touching one of these for non-trivial work, convert it to the modern layout** following the guide. Cherry-pick `helpers.sh` from a reference action without modifying it.
+Legacy actions (`terraform-docs/`, `create-tftest-matrix/`, `setup-terraform-plugin-cache/`, all used by module CI) still embed bash in `action.yml`. **When touching one of these for non-trivial work, convert it to the modern layout** following the guide. Cherry-pick `helpers.sh` from a reference action without modifying it.
 
 For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` — never `return`. GitHub Actions sources the script in a `bash -eo pipefail` shell, so `exit` terminates the sourced process cleanly and the runner fails the step on non-zero. Tests run the script in a `( subshell )`, so `exit` terminates only the subshell.
 
