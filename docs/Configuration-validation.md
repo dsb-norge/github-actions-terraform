@@ -49,6 +49,35 @@ shorthand (a single goal written alone), the shorthand is spelled out here.
 
 ## 3. The rules
 
+How a configuration is checked, before anything else is decided:
+
+```mermaid
+flowchart TD
+  cfg(["the calling workflow's with: and environments-yml"]) --> parse["the adapter parses every *-yml with yq,<br/>the four variable settings as written (§3.5)"]
+  parse --> keys{"every entry's keys known? (§3.1)"}
+  keys -->|no| stop
+  keys -->|yes| written{"every setting valid as written?<br/>each global input once, then each environment's own:<br/>goals and prerequisites (§3.2), init directories (§3.4),<br/>variables (§3.5), actors and limits (§3.6)"}
+  written -->|no| stop
+  written -->|yes| rows["the rows: list settings replaced, maps merged,<br/>the variables' nulls dropped, booleans normalised"]
+  rows --> ends{"valid as each environment ends up?<br/>names, required fields, directories,<br/>the actor list in effect, all six limits"}
+  ends -->|no| stop
+  ends -->|yes| warn["warnings for the settings that change nothing"]
+  warn --> next(["the other rules: trigger events, dispatch,<br/>relevance, the granted goals"])
+  stop(["every problem of that pass, one annotation each;<br/>no environment job runs"])
+```
+
+Where an environment's value for a setting comes from:
+
+```mermaid
+flowchart LR
+  q{"does the environment<br/>set it?"} -->|"no"| g["the global input's value;<br/>absent: the input's default"]
+  q -->|"yes: a list setting (goals,<br/>init directories, actors)"| own["its own value, replacing the global one"]
+  q -->|"yes: a map (variables,<br/>limits)"| m["merged over the global one, key by key"]
+  q -->|"yes: a plain input<br/>(§3.1's last row)"| p["its own value, in the input's type"]
+  g & own --> list["a list setting: a single string written<br/>alone is its one item; none is empty"]
+  m --> nulls["variables: a null means not set, so it<br/>removes the global variable"]
+```
+
 ### 3.1 The keys of an `environments-yml` entry
 
 An entry may hold exactly these keys:
