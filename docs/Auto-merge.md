@@ -6,8 +6,8 @@ request is merged without review, from what evidence, and how the merge is tied 
 Its settings are validated as [Configuration-validation.md](Configuration-validation.md) §3.6
 specifies; this spec is what happens with them.
 
-Status: **implemented.** §3 is the pipeline as kept, §4 what changed from the first auto-merge,
-§12 where each piece lives, §13 what implementation taught the spec.
+§3 is the pipeline as kept, §4 what changed from the first auto-merge, §12 where each piece lives,
+§13 what implementation taught the spec.
 
 ## 1. Why
 
