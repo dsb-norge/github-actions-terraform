@@ -211,7 +211,7 @@ table only says where.
   (`export-env-vars`, `terraform-test`) had its behaviour pinned as goldens in the commit before
   its conversion, goldens untouched by the conversion. `terraform-test`'s classifier replays JSON
   logs captured from a real Terraform 1.16.2.
-- Test bed through `preview/pr-64`, pull request dsb-norge/azure-terraform-peder-tester#61, 17
+- Test bed through `preview/pr-64`, test-bed pull request #61, 17
   test jobs in seven lanes over two provider sets (a new environment pins `random` older than
   `outputs-kept-poc` and lacks `linux_amd64`). The first run reported `lock-platform` for every
   job: `verify-terraform-lock` needs an initialised directory and checks the directory's
@@ -256,7 +256,7 @@ table only says where.
   redundant pieces removed, four cases tested). Every port golden changed only by `goals-granted`.
   Structural test F13 was shown failing on a gate put back on the raw goals and on a destroy gate
   that accepted schedule.
-- Test bed through `preview/pr-65`, pull request dsb-norge/azure-terraform-peder-tester#62, the
+- Test bed through `preview/pr-65`, test-bed pull request #62, the
   spec's roles on local-backend environments (`outputs-kept-poc` prod with `[all, destroy-plan]`,
   `noop-poc` staging with `[all]` and schedule, `destroy-plan-poc` scratch with the destroy goals
   and no pull requests), every result as the spec says:
@@ -298,7 +298,7 @@ table only says where.
   every break failed a test. The contract tests count every plan from its JSON plan on the six
   newest minors, in CI; no JSON count differed from the console's. F14 was shown failing on the
   unwired workflow.
-- Test bed through `preview/pr-66`, dsb-norge/azure-terraform-peder-tester#63, every result as the
+- Test bed through `preview/pr-66`, test-bed pull request #63, every result as the
   specs say:
   - one dispatch holding one mistake of each kind reported all ten in one run, in the specs'
     words (an unsuffixed key, a near miss, a suffixed plain setting, a workflow-only input, goals
@@ -315,7 +315,7 @@ table only says where.
     part it was eligible (a lower-cased login matching the actor), and a `-target` plan was
     counted in the comment and refused as not complete. Counts came from the JSON plan
     (`counts-source: json`) and no JSON plan artifact was uploaded.
-  - the merger's step, run with the maintainer's token against dsb-norge/azure-terraform-peder-tester#64:
+  - the merger's step, run with the maintainer's token against test-bed pull request #64:
     a stale head was refused by GitHub and named with both heads, a moved base was refused before
     any merge call, and the up-to-date pins merged the pull request.
 - The user guide's worked examples were each produced by running the adapter, the evaluator, the
@@ -339,7 +339,7 @@ table only says where.
   Each renderer's rules were broken by hand in scratch copies; every break failed a test but one
   the report explains (a lookup skipped for a held-back member, which cannot change output).
 - Test bed through a hand-published tag, which runs no CI in this repository, on
-  dsb-norge/azure-terraform-peder-tester#65 and its `main`, every result as the spec says:
+  test-bed pull request #65 and its `main`, every result as the spec says:
   - no depends-on: stage 1 alone, the other two stage jobs skipped, the conclusion's line as before;
   - a pull request whose stage 1 failed an apply on the pull request: stage 2 held back, the
     conclusion `stage 1 failed; stage 2 held back (3 environment(s))`, the run summary's ⏭️ rows and
@@ -388,7 +388,7 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | `actions/create-github-app-token@v2` in the auto-merge job (Node 20; the runner forces it onto Node 24 with a deprecation warning) | found on the test bed. The maintainer: always on the latest, no permission needed. v3, passing the App ID as `client-id` (v3 deprecates `app-id`, which reads the same value) and setting `NODE_USE_ENV_PROXY=1`, which keeps v2's proxy handling on a caller's self-hosted runner; with it `actions/checkout@v7` and `actions/cache@v6`, the other actions behind their latest major | step 7 |
 
 Test bed, through the hand-published tag `test/step7-81c7372`, on
-dsb-norge/azure-terraform-peder-tester#66, #67 and its `main`, whose ruleset requires a pull
+the test-bed repository's pull requests #66 and #67 and its `main`, whose ruleset requires a pull
 request, an approval and `tf / Terraform conclusion`, with the test bed's App and the repository
 admin role on its bypass list:
 
@@ -410,12 +410,12 @@ admin role on its bypass list:
   diffed against the default branch (D13), no changed file, `nothing to verify for this change`;
   a dispatch of a workflow without an inputs block: the trigger line naming the standard block,
   every environment with its goals, staged.
-- the mode row's granted goals, on dsb-norge/azure-terraform-peder-tester#68, a pull request
+- the mode row's granted goals, on test-bed pull request #68, a pull request
   against a base other than the default branch with `apply-on-pr` held by an ungrouped
   environment and by a group member: the seed's placeholders, the environment's head and the
   group head all titled "Terraform validation summary", with no Mode row and no "applies on PR".
 
-- the action bumps, through `test/step7-b6416cf`: dsb-norge/azure-terraform-peder-tester#69, a
+- the action bumps, through `test/step7-b6416cf`: test-bed pull request #69, a
   docs-only pull request, merged by the App with a token from `create-github-app-token@v3`, and
   a push applying all three environments with `actions/checkout@v7` and `actions/cache@v6`; no
   run printed a warning, the Node 20 deprecation included.

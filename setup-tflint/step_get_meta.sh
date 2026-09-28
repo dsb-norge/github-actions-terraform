@@ -54,8 +54,7 @@ function main {
     # Benefits over the pre-v0.24 unconditional API call:
     #   - No network dependency on the GitHub Releases API for specific
     #     versions → eliminates the curl-exit-92 / HTTP/2 stream-error
-    #     class of transient failures (real-world repro:
-    #     dsb-infra/azure-terraform-ikt-operations run 26083928306).
+    #     class of transient failures (seen in a calling repository's run).
     #   - When the binary is already in actions/cache, the action completes
     #     with zero outbound network calls.
     #   - Faster — no 3 MB releases?per_page=100 download just to look up
