@@ -7,8 +7,8 @@ name: "DSB Terraform Module CI"
 #     pull-requests: write  # required for commenting on PRs
 #
 # The following secrets must be available in the github 'secrets' context:
-#   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
-#   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
+#   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
+#   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
 #   - secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL <-- ID of the Entra ID service principal with access to the Azure subscription
 #   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY                 <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
 #
@@ -49,8 +49,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 env:
-  ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
   ARM_CLIENT_ID: ${{ secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL }}
   ARM_USE_OIDC: true
   ARM_USE_AZUREAD: true
