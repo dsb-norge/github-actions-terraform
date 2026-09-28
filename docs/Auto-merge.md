@@ -332,8 +332,8 @@ the test and its lane.
   wiring, the JSON file wiring from both plan steps to their parse steps, the test metadata
   downloaded before the evaluation, no JSON plan artifact.
 - Live, once: `gh pr merge --match-head-commit` with a stale SHA against a test-bed pull request is
-  refused by GitHub (the test bed has no merge App; a maintainer's token merges there), recorded in
-  §13.
+  refused by GitHub, run with a maintainer's token, and the whole path through a GitHub App on a
+  test-bed repository whose default branch requires an approval; both recorded in §13.
 
 ## 11. Open questions
 
@@ -396,3 +396,10 @@ None; the decisions are the maintainer's (D3, D9, D10, D13).
   the pull request's old merge commit for minutes, so the same merge commit is refused on every
   attempt; the next run, after the pull request is brought up to date, has a merge commit on the
   new base.
+- **End to end through a GitHub App.** On a test-bed repository whose default branch's ruleset
+  requires a pull request, an approval and `tf / Terraform conclusion`, with the App on the
+  ruleset's bypass list, the App's token from `actions/create-github-app-token@v3` merged a
+  documentation-only pull request past the approval rule. A pull request planning one add against
+  its environment's limit of one ran while that merge landed, and was refused with `The base branch
+  'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>) …`; its next
+  run, after the branch was brought up to date, merged it.
