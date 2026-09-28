@@ -205,6 +205,8 @@ Never add protection rules to a `tftest-*` environment.
 
 **Keeping plan and apply identities out of reach** of a test job takes two things: plan and apply credentials are environment secrets of the Terraform environments, never repository or organisation secrets; and a plan or apply identity trusts only its environments' subjects, never `pull_request` or a branch. Client IDs are not secret; only the subject an identity trusts keeps a test job from minting its token.
 
+**Choosing lanes and settings.** One lane per identity. Keep unit tests in a lane with no credentials and name their files `unit-*`, as in the example above. Leave `terraform-test-runs-on` at `ubuntu-latest`, and set `runs-on` on a lane only when its tests must reach a restricted network. Keep timeouts short: a test killed by its timeout leaves the objects it created, and nothing can destroy them, since the test's state lived in the job. Use `allow-failing-terraform-tests` only while a lane is being brought up. Leave a lane's `providers-from` unset, so each file runs against every distinct lock set the environments hold; narrow it only for a lane whose module only one environment uses. If test files have been placed in environment directories and should not run in the stage, exclude them with `terraform-test-exclude-paths-yml: ["envs/**"]`.
+
 **Two callers.** When a repository calls this workflow from two workflows on the same pull request, both would run the same tests: set `terraform-test-enabled: false` in all but one. Environment secrets reach the test jobs only with `secrets: inherit` on the caller, as everything else does.
 
 #### Variables and secrets
@@ -843,7 +845,7 @@ Auto-merge merges a pull request past the required reviews, with a GitHub App's 
             plan-max-count-change: 0
 ```
 
-The App needs write access to the repository's contents and pull requests. A run that Dependabot triggered sees Dependabot secrets, not Actions secrets, so the key must be a Dependabot secret as well, and so must any repository secret the environments read. Each limit applies to an environment's plan and destroy plan counted together, from Terraform's JSON plan, and `-1` means no limit.
+The App needs write access to the repository's contents and pull requests. It merges with `gh pr merge --admin`, so where a ruleset on the default branch requires an approval, put the App on that ruleset's bypass list; that is what lets it merge past the approval. A run that Dependabot triggered sees Dependabot secrets, not Actions secrets, so the key must be a Dependabot secret as well, and so must any repository secret the environments read. Each limit applies to an environment's plan and destroy plan counted together, from Terraform's JSON plan, and `-1` means no limit.
 
 A pull request that changes `modules/net/versions.tf` plans all three environments. What the evaluator decides:
 
