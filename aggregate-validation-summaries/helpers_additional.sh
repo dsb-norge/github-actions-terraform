@@ -348,3 +348,125 @@ function _render_not_affected_line {
 # blocks on every plan-only environment in the first real run — breaking the
 # byte-identical invariant (docs/Apply-and-destroy-reporting.md §2, P30).
 function _op_ran { [ -n "${1:-}" ] && [ "${1}" != 'skipped' ]; }
+
+# ============================================================================
+# Environment ordering (docs/Environment-ordering.md §7.4)
+# ============================================================================
+#
+# Mirror of create-run-summary's and evaluate-automerge-eligibility's reading of
+# the stage results — kept duplicated per the self-containment convention.
+# When touching one, audit the others.
+
+# The stage results the workflow passes (stage-results-json), normalised to an
+# object of result strings in a temp file whose path is left in
+# STAGE_RESULTS_FILE; empty when the input is absent, blank or not an object,
+# which renders exactly as before ordering. The value is a shell-local the shim
+# captured before allexport; it reaches jq through a here-string, never argv.
+function _read_stage_results {
+  STAGE_RESULTS_FILE=""
+  local raw="${input_stage_results_json:-}"
+  [[ "${raw}" =~ ^[[:space:]]*$ ]] && return 0
+  local file
+  file=$(mktemp)
+  if ! jq -ce 'if type == "object" then with_entries(select(.value | type == "string")) else error("not an object") end' \
+    <<<"${raw}" >"${file}" 2>/dev/null; then
+    log-warn "stage-results-json is not a JSON object of stage results — rendering without ordering."
+    rm -f "${file}"
+    return 0
+  fi
+  STAGE_RESULTS_FILE="${file}"
+}
+
+# The run entries of a relevance file that a skipped stage held back, one per
+# line in the file's order, fields joined by the unit separator:
+# github-environment, pr-comment-group, add-pr-comment, mutates-on-pr and the
+# declared depends-on (each space-joined; names cannot hold a space), stage,
+# the stage that held it back and that stage's result (both empty when no
+# earlier stage failed or was cancelled), and the stages in use. Nothing
+# without stage results.
+#
+# A stage job skipped for having no environments and one skipped because an
+# earlier stage failed both report 'skipped'; only the builder's row count
+# tells them apart (P5). Stage 1 is never held back: nothing runs before it, so
+# a skipped stage 1 is a cancelled run, which leaves heads as it always did.
+# depends-on names environments; heads and columns are labelled by
+# github-environment, so each name is mapped to its label.
+function _held_back_entries {
+  local relevance_file="${1}"
+  [ -z "${STAGE_RESULTS_FILE:-}" ] && return 0
+  jq -r --slurpfile sr "${STAGE_RESULTS_FILE}" '
+    $sr[0] as $results
+    | (.counts.by_stage // {}) as $by
+    | ((.ordering.stages_used // 1) | tonumber? // 1) as $used
+    | (reduce .environments[] as $e ({}; .[($e.environment // "" | tostring)] = ($e["github-environment"] // $e.environment // "" | tostring))) as $label
+    | .environments[]
+    | select(.verdict == "run")
+    | ((.stage // 1) | tonumber? // 1) as $stage
+    | select($stage >= 2
+             and ($results[$stage | tostring] // "") == "skipped"
+             and ((($by[$stage | tostring] // 0) | tonumber? // 0) > 0))
+    | ([range(1; $stage) | select(($results[tostring] // "") as $r | $r == "failure" or $r == "cancelled")] | first) as $cause
+    | [(.["github-environment"] // .environment // "" | tostring),
+       (.["pr-comment-group"] // "" | tostring),
+       (.["add-pr-comment"] | tostring),
+       (if (.["mutates-on-pr"] | type) == "array" then .["mutates-on-pr"] | map(tostring) | join(" ") else "" end),
+       (if (.["depends-on"] | type) == "array" then .["depends-on"] | map(tostring | $label[.] // .) | join(" ") else "" end),
+       ($stage | tostring),
+       (if $cause then ($cause | tostring) else "" end),
+       (if $cause then $results[$cause | tostring] else "" end),
+       ($used | tostring)]
+    | join("\u001f")' "${relevance_file}" 2>/dev/null || true
+}
+
+# 'stage 1 failed' or 'stage 1 was cancelled'.
+#   $1 stage, $2 its result
+function _stage_outcome_phrase {
+  if [ "${2}" = 'cancelled' ]; then printf 'stage %s was cancelled' "${1}"; else printf 'stage %s failed' "${1}"; fi
+}
+
+# Every cell of a held-back member's column: 'held back: stage 2; stage 1
+# failed', or 'held back: stage 2' when the results name no cause. A dash
+# would read as "not affected", the opposite of the truth (§7.1).
+#   $1 stage, $2 the stage that held it back (may be empty), $3 that stage's result
+function _held_back_cell {
+  local title="held back: stage ${1}"
+  [ -n "${2}" ] && title+="; $(_stage_outcome_phrase "${2}" "${3}")"
+  echo "<span title=\"${title}\">⏭️</span>"
+}
+
+# The footer line naming a group's held-back members, structured as the
+# not-affected line; nothing when there are none.
+#   $@ environment names
+function _render_held_back_line {
+  [ ${#} -eq 0 ] && return 0
+  local out="" name
+  for name in "${@}"; do
+    out+="${out:+, }\`${name}\`"
+  done
+  echo "⏭️ Held back: ${out}"
+}
+
+# The final body of a held-back environment's own head. Its matrix job never
+# runs, so nothing else replaces the seed's "Awaiting results" (P12). The title
+# follows the seed's rule, so the head never renames itself.
+#   $1 github-environment, $2 mutates-on-pr (space-joined), $3 depends-on labels
+#   (space-joined), $4 stage, $5 the stage that held it back, $6 its result,
+#   $7 stages in use
+function _render_held_back_head {
+  local name="${1}" mutates="${2}" deps="${3}" stage="${4}" cause="${5}" result="${6}" used="${7}"
+  local title="Terraform validation summary"
+  [ -n "${mutates}" ] && title="Terraform summary"
+  local why="this environment is in stage ${stage}, which did not run"
+  [ -n "${cause}" ] && why="this environment is in stage ${stage} and $(_stage_outcome_phrase "${cause}" "${result}")"
+  # Held back with nothing declared is a free-standing environment, which D3
+  # moves to the last stage: an environment with dependents is never after one.
+  local depends="none; free-standing environments run in the last stage" dep
+  if [ -n "${deps}" ]; then
+    depends=""
+    for dep in ${deps}; do depends+="${depends:+, }\`${dep}\`"; done
+  fi
+  local stage_line="Stage: ${stage} of ${used}"
+  [ -n "${cause}" ] && stage_line+=" · stage ${cause} result: ${result}"
+  printf '### %s for environment: `%s`\n\n⏭️ Held back: %s (run #%s attempt #%s).\n\n<details><summary>Ordering</summary>\n\nDepends on: %s\n%s\n\n</details>' \
+    "${title}" "${name}" "${why}" "${GITHUB_RUN_ID:-0}" "${GITHUB_RUN_ATTEMPT:-1}" "${depends}" "${stage_line}"
+}
