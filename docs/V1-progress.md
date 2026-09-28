@@ -21,8 +21,8 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | — (branch `feat/environment-ordering`) | draft, handed off | no |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed | — | outstanding | no |
-| 8 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
-| 9 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
+| 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
+| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
@@ -87,7 +87,7 @@ table only says where.
 | Environment-ordering.md | held-back finalisation; hand-off latency | closed 2026-09-28 on the test bed: the aggregator finalised a held-back head and group columns; three seconds between stages, uncontended (spec §13) |
 | Environment-ordering.md | a strict opt-in for tolerated failures | deferred by the spec: not in v1 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
-| Road-to-v1.md | the module CI workflow on the engine in v1 or after | decided 2026-09-28 by the maintainer: in v1, as step 8 |
+| Road-to-v1.md | the module CI workflow on the engine in v1 or after | decided 2026-09-28 by the maintainer: in v1, as step 9, after CI optimisation (step 8) |
 
 ## 4. Validation log
 
@@ -406,7 +406,7 @@ Recorded while building, not fixed in the step that found them, each waiting for
   repository without depends-on; like the skipped test job's unevaluated name, cosmetic. For the
   v1 changes document.
 - CI time: on #66 the engine job on the newest Python took 67 minutes, the one on 3.12 38; the
-  mutation gate is the long pole (step 9).
+  mutation gate is the long pole (step 8).
 
 - `auto-merge-pr/run_local_step_auto_merge_pr.sh` has carried a private repository's name as its
   default since the action was added; this repository is public. Found in step 5, left for its own
