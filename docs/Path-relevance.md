@@ -454,7 +454,7 @@ runs its tests, and a failing one is red.
 conclusion:
   if: always()
   name: "Terraform conclusion"
-  needs: [create-matrix, terraform-ci-cd]
+  needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3, terraform-test]
   permissions: {}
   steps:
     - name: "🛑 Verify everything that should have run, ran and passed"
@@ -464,18 +464,25 @@ conclusion:
         UNAFFECTED_COUNT:     ${{ needs.create-matrix.outputs.unaffected-count }}
         RELEVANCE_MODE:       ${{ needs.create-matrix.outputs.relevance-mode }}
         RELEVANCE_REASON:     ${{ needs.create-matrix.outputs.relevance-reason }}
-        ENVIRONMENTS_RESULT:  ${{ needs.terraform-ci-cd.result }}
+        STAGE_1_RESULT:       ${{ needs.terraform-ci-cd.result }}
+        STAGE_1_COUNT:        ${{ needs.create-matrix.outputs.stage-1-count }}
+        # … STAGE_2_* and STAGE_3_* likewise, for terraform-ci-cd-2 and terraform-ci-cd-3
+        TESTS_ACTIVE:         ${{ needs.create-matrix.outputs.tests-active }}
+        TESTS_COUNT:          ${{ needs.create-matrix.outputs.tests-count }}
+        TESTS_RESULT:         ${{ needs.terraform-test.result }}
+        EVENT_NAME:           ${{ github.event_name }}
       run: |
         # Judge the run from the named results and the builder's counts
 ```
 
 Named results in `env:`, one `case` per row of §7.2, one summary line to the log, the step summary
 and a `::notice` or `::error`, for example `conclusion: green — nothing to verify for this change;
-environments: 0 affected, 3 not affected (diff: diff)` or `conclusion: red — the environments
-should have run but were skipped; environments: 2 affected, 1 not affected (diff: diff)`. The test
-stage adds its jobs to `needs`, its results and active flags to `env:` and its rows of §7.2 with
-[Terraform-tests.md](Terraform-tests.md). The structural test in
-[`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts the `needs` list,
+environments: 0 affected, 3 not affected (diff: diff)` or `conclusion: red — the environments should
+have run but were skipped; environments: 2 affected, 1 not affected (diff: diff)`. The test stage's
+result and active flag, and each stage job's result with its count
+([Environment-ordering.md](Environment-ordering.md) §7.3), are judged the same way; with one stage,
+as on every run of a repository without `depends-on`, the line is the one above. The structural test
+in [`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts the `needs` list,
 the named results, and that no `contains(needs.*.result, …)` remains.
 
 `run-summary` and `pr-comment-aggregator` stay out of `needs`; a reporting job must never redden a
