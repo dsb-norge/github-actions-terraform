@@ -503,37 +503,51 @@ run.
 
 ## 8. Auto-merge with zero affected environments
 
-Two defects in the current wiring would otherwise make D8 a dead letter.
+Two pieces of wiring make D8 work.
 
-1. The `automerge` job's `if:` has no status function, so GitHub prepends `success()` and the job
-   is skipped whenever `terraform-ci-cd` is skipped. It becomes:
+1. The `automerge` job's `if:` starts with `!cancelled()`: without a status function GitHub
+   prepends `success()`, and the job would be skipped whenever a stage job is. Each stage job must
+   have succeeded, or been skipped for having no environments:
 
    ```yaml
    automerge:
-     needs: [create-matrix, terraform-ci-cd, conclusion]
+     needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3, conclusion]
      if: |
        !cancelled()
        && needs.conclusion.result == 'success'
        && (
          needs.terraform-ci-cd.result == 'success'
-         || (needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0')
+         || (needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.stage-1-count == '0')
+       )
+       && (
+         needs.terraform-ci-cd-2.result == 'success'
+         || (needs.terraform-ci-cd-2.result == 'skipped' && needs.create-matrix.outputs.stage-2-count == '0')
+       )
+       && (
+         needs.terraform-ci-cd-3.result == 'success'
+         || (needs.terraform-ci-cd-3.result == 'skipped' && needs.create-matrix.outputs.stage-3-count == '0')
        )
        && inputs.pr-auto-merge-enabled == true
        && github.event_name == 'pull_request'
        && github.event.action != 'closed'
        && github.event.action != 'converted_to_draft'
        && github.event.pull_request.draft != true
+       && github.base_ref == github.event.repository.default_branch
+       && github.event.pull_request.head.repo.full_name == github.repository
    ```
 
+   The last two lines keep auto-merge to pull requests against the default branch from the same
+   repository ([Auto-merge.md](Auto-merge.md) D9).
+
 2. `evaluate-automerge-eligibility` evaluates every check, including `pr-auto-merge-enabled` and
-   the actor allowlist, per metadata file; with zero files it returns not eligible. Returning
-   eligible blindly would auto-merge any actor's docs-only pull request in a repository that
-   restricts auto-merge to a bot. The rule, with a new optional `relevance-file` input:
+   the actor allowlist, per metadata file, and with zero metadata files it would have nothing to
+   judge. Returning eligible blindly would auto-merge any actor's docs-only pull request in a
+   repository that restricts auto-merge to a bot. The rule, with the `relevance-file` input:
 
    - Completeness: every affected environment must have exactly one metadata file. A missing one
-     means the job was cancelled or crashed before capture: not eligible, reason named. Stricter
-     than today, where a missing environment is invisible.
-   - Affected environments: today's checks, unchanged.
+     means the job was cancelled or crashed before capture: not eligible, reason named. Without the
+     file a missing environment would be invisible.
+   - Affected environments: the per-metadata checks.
    - Unaffected environments: configuration validation, `pr-auto-merge-enabled` and actor
      authorisation from the resolved values in `relevance.json`; the plan-based checks are recorded
      as `NOT AFFECTED`.
