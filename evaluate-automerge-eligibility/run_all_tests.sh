@@ -2143,11 +2143,16 @@ def resolve(uses):
 problems, checked = [], 0
 for wf in sorted(glob.glob('.github/workflows/*.y*ml')):
     doc = load(wf)
-    call_sites = []
+    call_sites, seen_steps = [], []
     for job_name, job in (doc.get('jobs') or {}).items():
         if isinstance(job.get('uses'), str):
             call_sites.append((job_name, job['uses'], job.get('with') or {}))
-        for step in (job.get('steps') or []):
+        steps = job.get('steps') or []
+        # The stage jobs share one step list through a YAML anchor, which loads as one list: check it once.
+        if any(steps is seen for seen in seen_steps):
+            continue
+        seen_steps.append(steps)
+        for step in steps:
             if isinstance(step.get('uses'), str):
                 call_sites.append((job_name, step['uses'], step.get('with') or {}))
     for job_name, uses, given in call_sites:
@@ -2229,9 +2234,15 @@ def load(path):
         return yaml.safe_load(fh) or {}
 
 def run_blocks(doc):
-    steps = list(((doc.get('runs') or {}).get('steps')) or [])
+    steps, seen = list(((doc.get('runs') or {}).get('steps')) or []), []
     for job in (doc.get('jobs') or {}).values():
-        steps += job.get('steps') or []
+        job_steps = job.get('steps') or []
+        # The stage jobs share one step list through a YAML anchor; counted once per alias, its
+        # delimiters would read as used three times.
+        if any(job_steps is other for other in seen):
+            continue
+        seen.append(job_steps)
+        steps += job_steps
     return [step['run'] for step in steps if isinstance(step.get('run'), str)]
 
 # JSON-contract inputs named before the -json suffix was the rule; each documents a JSON object.
@@ -2321,8 +2332,10 @@ fi
 # the seed's result (a broken seed skipped every environment while the
 # conclusion stayed green) and keeps an empty matrix away from GitHub; and the
 # automerge job carries a status function, or the implicit success() skips it
-# whenever the matrix is skipped. The conclusion's script is also run, one case
-# per row of §7.2.
+# whenever a stage job is skipped. The conclusion's script is also run, one case
+# per row of §7.2, and with the environments in stages: every case of one stage
+# must read exactly as it did before stages existed, and a held-back stage is
+# named with its count (docs/Environment-ordering.md §7.3).
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
@@ -2345,23 +2358,31 @@ if set(matrix.get("needs", [])) != {"create-matrix", "seed-pr-comments"}:
     problems.append(f"terraform-ci-cd needs {matrix.get('needs')}, expected create-matrix and seed-pr-comments")
 condition = " ".join(str(matrix.get("if", "")).split())
 for clause in ("!cancelled()", "needs.create-matrix.result == 'success'",
-               "needs.create-matrix.outputs.affected-count != '0'"):
+               "needs.create-matrix.outputs.stage-1-count != '0'"):
     if clause not in condition:
         problems.append(f"terraform-ci-cd's if lacks {clause}")
 if "seed-pr-comments.result" in condition:
     problems.append("terraform-ci-cd's if tests the seed's result")
+if (matrix.get("strategy") or {}).get("matrix") != "${{ fromJSON(needs.create-matrix.outputs.matrix-stage-1-json) }}":
+    problems.append(f"terraform-ci-cd's matrix is {(matrix.get('strategy') or {}).get('matrix')!r}, expected stage 1's")
 
 conclusion = jobs["conclusion"]
 if str(conclusion.get("if")).strip() != "always()":
     problems.append(f"conclusion's if is {conclusion.get('if')!r}, expected always()")
-if conclusion.get("needs") != ["create-matrix", "terraform-ci-cd", "terraform-test"]:
-    problems.append(f"conclusion needs {conclusion.get('needs')}, expected [create-matrix, terraform-ci-cd, terraform-test]")
+if conclusion.get("needs") != ["create-matrix", "terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3", "terraform-test"]:
+    problems.append(f"conclusion needs {conclusion.get('needs')}, expected [create-matrix, terraform-ci-cd, "
+                    "terraform-ci-cd-2, terraform-ci-cd-3, terraform-test]")
 steps = conclusion.get("steps", [])
 env = steps[0].get("env", {}) if steps else {}
 expected_env = {
     "CREATE_MATRIX_RESULT": "${{ needs.create-matrix.result }}",
     "AFFECTED_COUNT": "${{ needs.create-matrix.outputs.affected-count }}",
-    "ENVIRONMENTS_RESULT": "${{ needs.terraform-ci-cd.result }}",
+    "STAGE_1_RESULT": "${{ needs.terraform-ci-cd.result }}",
+    "STAGE_1_COUNT": "${{ needs.create-matrix.outputs.stage-1-count }}",
+    "STAGE_2_RESULT": "${{ needs.terraform-ci-cd-2.result }}",
+    "STAGE_2_COUNT": "${{ needs.create-matrix.outputs.stage-2-count }}",
+    "STAGE_3_RESULT": "${{ needs.terraform-ci-cd-3.result }}",
+    "STAGE_3_COUNT": "${{ needs.create-matrix.outputs.stage-3-count }}",
     "TESTS_ACTIVE": "${{ needs.create-matrix.outputs.tests-active }}",
     "TESTS_RESULT": "${{ needs.terraform-test.result }}",
 }
@@ -2370,11 +2391,15 @@ for name, value in expected_env.items():
         problems.append(f"conclusion's step env {name} is {env.get(name)!r}, expected {value!r}")
 
 automerge = jobs["automerge"]
-if set(automerge.get("needs", [])) != {"create-matrix", "terraform-ci-cd", "conclusion"}:
-    problems.append(f"automerge needs {automerge.get('needs')}, expected create-matrix, terraform-ci-cd, conclusion")
+if set(automerge.get("needs", [])) != {"create-matrix", "terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3",
+                                       "conclusion"}:
+    problems.append(f"automerge needs {automerge.get('needs')}, expected create-matrix, the three stage jobs, conclusion")
 condition = " ".join(str(automerge.get("if", "")).split())
-for clause in ("!cancelled()", "needs.conclusion.result == 'success'", "needs.terraform-ci-cd.result == 'success'",
-               "(needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0')"):
+clauses = ["!cancelled()", "needs.conclusion.result == 'success'"]
+for stage, job_id in ((1, "terraform-ci-cd"), (2, "terraform-ci-cd-2"), (3, "terraform-ci-cd-3")):
+    clauses.append(f"( needs.{job_id}.result == 'success' || (needs.{job_id}.result == 'skipped' "
+                   f"&& needs.create-matrix.outputs.stage-{stage}-count == '0') )")
+for clause in clauses:
     if clause not in condition:
         problems.append(f"automerge's if lacks {clause}")
 
@@ -2390,8 +2415,20 @@ if downloads != 5:
     problems.append(f"{downloads} relevance downloads, expected the seed, the aggregator, the run summary, automerge "
                     "and the tests summary")
 
-# The conclusion's script, one case per row of §7.2.
+# The conclusion's script, one case per row of §7.2. Stages 2 and 3 are empty, as on every run of a
+# repository without depends-on; a matrix that was not built publishes no counts.
 script = steps[0]["run"] if steps else "exit 3"
+
+
+def conclude(**facts):
+    with tempfile.NamedTemporaryFile("w+") as summary:
+        run_env = dict(os.environ, UNAFFECTED_COUNT="1", RELEVANCE_MODE="diff", RELEVANCE_REASON="diff",
+                       TESTS_COUNT="3" if facts.get("TESTS_ACTIVE") == "true" else "0", GITHUB_STEP_SUMMARY=summary.name)
+        run_env.update(facts)
+        done = subprocess.run(["bash", "-e", "-c", script], env=run_env, capture_output=True, text=True)
+        return done, open(summary.name, encoding="utf-8").read()
+
+
 cases = [
     ("failure", "", "skipped", "skipped", "", 1), ("cancelled", "", "skipped", "skipped", "", 1),
     ("skipped", "", "skipped", "skipped", "", 1),
@@ -2404,13 +2441,10 @@ cases = [
     ("success", "2", "success", "skipped", "true", 1), ("success", "0", "skipped", "failure", "true", 1),
 ]
 for create_matrix, affected, environments, tests, active, expected in cases:
-    with tempfile.NamedTemporaryFile("w+") as summary:
-        run_env = dict(os.environ, CREATE_MATRIX_RESULT=create_matrix, AFFECTED_COUNT=affected, UNAFFECTED_COUNT="1",
-                       RELEVANCE_MODE="diff", RELEVANCE_REASON="diff", ENVIRONMENTS_RESULT=environments,
-                       TESTS_RESULT=tests, TESTS_ACTIVE=active, TESTS_COUNT="3" if active == "true" else "0",
-                       GITHUB_STEP_SUMMARY=summary.name)
-        done = subprocess.run(["bash", "-e", "-c", script], env=run_env, capture_output=True, text=True)
-        written = open(summary.name, encoding="utf-8").read()
+    empty = "0" if create_matrix == "success" else ""
+    done, written = conclude(CREATE_MATRIX_RESULT=create_matrix, AFFECTED_COUNT=affected, STAGE_1_RESULT=environments,
+                             STAGE_1_COUNT=affected, STAGE_2_RESULT="skipped", STAGE_2_COUNT=empty,
+                             STAGE_3_RESULT="skipped", STAGE_3_COUNT=empty, TESTS_RESULT=tests, TESTS_ACTIVE=active)
     verdict = "green" if expected == 0 else "red"
     annotation = "::notice title=Terraform conclusion::" if expected == 0 else "::error title=Terraform conclusion::"
     label = f"create-matrix={create_matrix} affected={affected or '-'} environments={environments} tests={tests}/{active}"
@@ -2419,7 +2453,52 @@ for create_matrix, affected, environments, tests, active, expected in cases:
     if f"conclusion: {verdict} — " not in written or annotation + f"conclusion: {verdict} — " not in done.stdout:
         problems.append(f"conclusion does not report {verdict} in the step summary and an annotation for {label}")
 
-print(f"checked the conclusion, the matrix gate, automerge, the relevance downloads and {len(cases)} conclusion cases")
+# The line itself. With one stage it reads exactly as before stages existed, for every repository
+# without depends-on; with more, each stage that has environments is named, a held-back one with its
+# count. Each fact overrides a green two-environment run of one stage.
+one_stage = dict(CREATE_MATRIX_RESULT="success", AFFECTED_COUNT="2", STAGE_1_RESULT="success", STAGE_1_COUNT="2",
+                 STAGE_2_RESULT="skipped", STAGE_2_COUNT="0", STAGE_3_RESULT="skipped", STAGE_3_COUNT="0",
+                 TESTS_RESULT="skipped", TESTS_ACTIVE="false")
+two_stages = dict(one_stage, AFFECTED_COUNT="3", STAGE_1_COUNT="1", STAGE_2_RESULT="success", STAGE_2_COUNT="2")
+three_stages = dict(two_stages, AFFECTED_COUNT="4", STAGE_2_COUNT="1", STAGE_3_RESULT="success", STAGE_3_COUNT="2")
+lines = [
+    (one_stage, "green — environments: 2 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, AFFECTED_COUNT="0", STAGE_1_RESULT="skipped", STAGE_1_COUNT="0"),
+     "green — nothing to verify for this change; environments: 0 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, STAGE_1_RESULT="skipped"),
+     "red — the environments should have run but were skipped; environments: 2 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, STAGE_1_RESULT="failure"),
+     "red — the environments' result is failure; environments: 2 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, CREATE_MATRIX_RESULT="failure", AFFECTED_COUNT="", STAGE_1_COUNT="", STAGE_2_COUNT="",
+          STAGE_3_COUNT=""), "red — the matrix could not be built (failure)"),
+    (dict(one_stage, TESTS_RESULT="failure", TESTS_ACTIVE="true"),
+     "red — the tests' result is failure; environments: 2 affected, 1 not affected (diff: diff); tests: 3"),
+    (two_stages, "green — stage 1 succeeded; stage 2 succeeded; environments: 3 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(two_stages, STAGE_1_RESULT="failure", STAGE_2_RESULT="skipped"),
+     "red — stage 1 failed; stage 2 held back (2 environment(s)); environments: 3 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(two_stages, STAGE_2_RESULT="failure"),
+     "red — stage 1 succeeded; stage 2 failed; environments: 3 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(two_stages, TESTS_RESULT="failure", TESTS_ACTIVE="true"),
+     "red — the tests' result is failure; stage 1 succeeded; stage 2 succeeded; environments: 3 affected, 1 not affected (diff: diff); tests: 3"),
+    (three_stages, "green — stage 1 succeeded; stage 2 succeeded; stage 3 succeeded; environments: 4 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(three_stages, STAGE_2_RESULT="failure", STAGE_3_RESULT="skipped"),
+     "red — stage 1 succeeded; stage 2 failed; stage 3 held back (2 environment(s)); environments: 4 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(three_stages, STAGE_1_RESULT="cancelled", STAGE_2_RESULT="skipped", STAGE_3_RESULT="skipped"),
+     "red — stage 1's result is cancelled; stage 2 held back (1 environment(s)); stage 3 held back (2 environment(s)); environments: 4 affected, 1 not affected (diff: diff); tests: 0"),
+    # An empty stage in the middle is left out and holds nothing back.
+    (dict(three_stages, AFFECTED_COUNT="3", STAGE_2_RESULT="skipped", STAGE_2_COUNT="0"),
+     "green — stage 1 succeeded; stage 3 succeeded; environments: 3 affected, 1 not affected (diff: diff); tests: 0"),
+]
+for facts, expected_line in lines:
+    done, written = conclude(**facts)
+    line = f"conclusion: {expected_line}"
+    green = expected_line.startswith("green")
+    annotation = ("::notice" if green else "::error") + f" title=Terraform conclusion::{line}"
+    if done.returncode != (0 if green else 1) or written != line + "\n" or annotation not in done.stdout.splitlines():
+        problems.append(f"conclusion reads {written.strip()!r} (exit {done.returncode}), expected {line!r}")
+
+print(f"checked the conclusion, the matrix gate, automerge, the relevance downloads, {len(cases)} conclusion cases "
+      f"and {len(lines)} conclusion lines")
 for problem in problems:
     print(f"PROBLEM {problem}")
 sys.exit(1 if problems else 0)
@@ -2458,8 +2537,9 @@ jobs = yaml.safe_load(open(workflow, encoding="utf-8"))["jobs"]
 problems = []
 
 create = jobs["create-matrix"]
-names = ["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason", "changed-count",
-         "tests-matrix-json", "tests-count", "tests-active"]
+names = ["matrix-json", "affected-count", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
+         "stage-1-count", "stage-2-count", "stage-3-count", "unaffected-count", "relevance-mode", "relevance-reason",
+         "changed-count", "tests-matrix-json", "tests-count", "tests-active"]
 if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
@@ -2626,7 +2706,7 @@ action = yaml.safe_load(open(os.path.join(os.path.dirname(sys.argv[1]), "..", ".
                              encoding="utf-8"))
 declared = set((action.get("outputs") or {}))
 for name, value in (jobs["create-matrix"].get("outputs") or {}).items():
-    match = re.fullmatch(r"\$\{\{ steps\.create-matrix\.outputs\.([a-z-]+) \}\}", str(value))
+    match = re.fullmatch(r"\$\{\{ steps\.create-matrix\.outputs\.([a-z0-9-]+) \}\}", str(value))
     if match is None or match.group(1) not in declared:
         problems.append(f"create-matrix's output '{name}' reads an output create-tf-vars-matrix does not declare")
 print("checked the test job's name, environment, permissions, needs, lock check, gates and step ids, the tests summary, and create-matrix's outputs")
@@ -2667,8 +2747,14 @@ workflow = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 jobs = workflow["jobs"]
 problems = []
 gated = []
+seen = []
 for job_id, job in jobs.items():
-    for step in job.get("steps", []):
+    job_steps = job.get("steps") or []
+    # The stage jobs share one step list through a YAML anchor: check it once.
+    if any(job_steps is other for other in seen):
+        continue
+    seen.append(job_steps)
+    for step in job_steps:
         condition = " ".join(str(step.get("if", "")).split())
         label = f"{job_id}/{step.get('id') or step.get('name')}"
         if re.search(r"matrix\.vars\.goals\b(?!-)", condition):

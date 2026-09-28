@@ -55,6 +55,11 @@ on:
                 YAML lists of glob patterns deciding which changes the environment is relevant to, see the workflow input 'path-relevance-enabled'.
             - trigger-events
                 YAML list of the events the environment takes part in, see the workflow input 'trigger-events-yml'. 'schedule' is set here only.
+            - depends-on
+                YAML list of environment names; one name written alone is that one. When the run applies or destroys, this
+                environment runs in a later stage than every environment named, and a stage waits for the whole stage before
+                it. At most three stages. Within one run only: it never checks a dependency's earlier runs.
+                See docs/Environment-ordering.md.
             - add-pr-comment
                 bool, whether to add validation summary as comment on PR, see the workflow input 'add-pr-comment'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
@@ -556,6 +561,14 @@ jobs:
     outputs:
       matrix-json: ${{ steps.create-matrix.outputs.matrix-json }}
       affected-count: ${{ steps.create-matrix.outputs.affected-count }}
+      # One matrix and one count per stage job (docs/Environment-ordering.md §10). matrix-json stays
+      # the union of the three and affected-count their total.
+      matrix-stage-1-json: ${{ steps.create-matrix.outputs.matrix-stage-1-json }}
+      matrix-stage-2-json: ${{ steps.create-matrix.outputs.matrix-stage-2-json }}
+      matrix-stage-3-json: ${{ steps.create-matrix.outputs.matrix-stage-3-json }}
+      stage-1-count: ${{ steps.create-matrix.outputs.stage-1-count }}
+      stage-2-count: ${{ steps.create-matrix.outputs.stage-2-count }}
+      stage-3-count: ${{ steps.create-matrix.outputs.stage-3-count }}
       unaffected-count: ${{ steps.create-matrix.outputs.unaffected-count }}
       relevance-mode: ${{ steps.create-matrix.outputs.relevance-mode }}
       relevance-reason: ${{ steps.create-matrix.outputs.relevance-reason }}
@@ -655,25 +668,39 @@ jobs:
           gc-yml: ${{ steps.compose.outputs.gc-yml }}
         continue-on-error: true # never fail the workflow over PR comment seeding
 
+  # The environments run in up to three stage jobs, one after the other: terraform-ci-cd, then
+  # terraform-ci-cd-2, then terraform-ci-cd-3 (docs/Environment-ordering.md §4.2). The engine puts
+  # every environment in stage 1 unless some environment declares depends-on and the run grants a
+  # mutating goal, so a repository without depends-on runs stage 1 alone and skips the other two.
+  #
+  # The three share one step list through the YAML anchor below. The anchor carries the steps
+  # only: every other job field is written out in each stage job, since sharing more would need
+  # a merge key, which GitHub does not support (docs/Environment-ordering.md P13, P14). Every
+  # stage job is named "Terraform": the aggregator finds a job's link by that name, and callers
+  # see the same check names as before (docs/Environment-ordering.md D7, P7).
   terraform-ci-cd:
     name: "Terraform"
     # seed-pr-comments is in needs for ordering only: the heads must exist before any matrix job
     # upserts them. Its result is deliberately not tested: its steps never fail the job, it is
     # skipped on every event but pull_request, and a broken seed must not skip the matrix while
     # the conclusion stays green (docs/Path-relevance.md §5.3, P3). The status function
-    # !cancelled() replaces the implicit success(), which a skipped seed would fail.
+    # !cancelled() replaces the implicit success(), which a skipped seed would fail; !failure()
+    # would not do, since it is transitive over every ancestor, the seed included.
     #
     # The count keeps an empty matrix away from GitHub, which rejects one: a false job-level
-    # condition is evaluated before the matrix, so no sentinel row is needed (P13).
+    # condition is evaluated before the matrix, so no sentinel row is needed
+    # (docs/Path-relevance.md P13). An empty matrix that reached GitHub would fail the run with no
+    # annotation and no job record (docs/Environment-ordering.md P4). Every stage job carries
+    # its own count test for that reason.
     needs: [create-matrix, seed-pr-comments]
     if: |
       !cancelled()
       && needs.create-matrix.result == 'success'
-      && needs.create-matrix.outputs.affected-count != '0'
+      && needs.create-matrix.outputs.stage-1-count != '0'
     runs-on: ${{ matrix.vars.runs-on }}
     strategy:
       fail-fast: false # Allow jobs to continue even though one more env(s) fail
-      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-json) }}
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-stage-1-json) }}
     environment:
       name: ${{ matrix.vars.github-environment }}
       url: ${{ matrix.vars.url }}
@@ -693,7 +720,9 @@ jobs:
     defaults:
       run:
         shell: bash
-    steps:
+    # The anchor is shared by terraform-ci-cd-2 and terraform-ci-cd-3: a change here is a change to
+    # every stage.
+    steps: &environment-steps
       - name: "⬇ Checkout"
         uses: actions/checkout@v6
 
@@ -1850,12 +1879,89 @@ jobs:
           [ -n "${dir}" ] && [ -d "${dir}" ] && rm -rf "${dir}" || :
         continue-on-error: true # never fail the job over cleanup
 
+  # Stage 2: the environments whose dependencies in the run are in stage 1, and the free-standing
+  # ones when stage 2 is the last stage in use (docs/Environment-ordering.md §4.1). Everything but
+  # the guard, the needs and the matrix source is stage 1's, field by field.
+  terraform-ci-cd-2:
+    name: "Terraform"
+    # The guard is stage 1's, plus its predecessor's result. A predecessor that succeeded or was
+    # skipped releases this stage: skipped means it had no environments (or the matrix was not
+    # built, which the create-matrix clause catches), so there is nothing to wait for and an empty
+    # stage never holds anything back. One that failed or was cancelled holds this stage back,
+    # which is the whole point of ordering (docs/Environment-ordering.md §4.2, §4.3). The results
+    # are tested by name under !cancelled(): a condition of only needs.*.result comparisons would
+    # get an implicit success(), and !failure() would also hold back on a failed seed
+    # (docs/Environment-ordering.md P2, P3).
+    #
+    # The seed is in needs for ordering only and its result is not tested, as in stage 1. The
+    # count test keeps an empty matrix away from GitHub, as in stage 1
+    # (docs/Environment-ordering.md P4).
+    needs: [create-matrix, seed-pr-comments, terraform-ci-cd]
+    if: |
+      !cancelled()
+      && needs.create-matrix.result == 'success'
+      && (needs.terraform-ci-cd.result == 'success' || needs.terraform-ci-cd.result == 'skipped')
+      && needs.create-matrix.outputs.stage-2-count != '0'
+    runs-on: ${{ matrix.vars.runs-on }}
+    strategy:
+      fail-fast: false # Allow jobs to continue even though one more env(s) fail
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-stage-2-json) }}
+    environment:
+      name: ${{ matrix.vars.github-environment }}
+      url: ${{ matrix.vars.url }}
+    # As in stage 1: one job at a time per environment, queued rather than cancelled. An
+    # environment is in exactly one stage, so a run takes its group once.
+    concurrency:
+      group: ${{ matrix.vars.github-environment }}
+      cancel-in-progress: false # never cancel an in-progress apply
+      queue: max
+    defaults:
+      run:
+        shell: bash
+    steps: *environment-steps
+
+  # Stage 3: the environments with a dependency in stage 2, and the free-standing ones when stage 3
+  # is in use. Three is the engine's cap (docs/Environment-ordering.md D6); a fourth stage would be
+  # one more job like this one, and one more entry wherever the stage jobs are listed below.
+  terraform-ci-cd-3:
+    name: "Terraform"
+    # The guard of stage 2, with both predecessors tested by name (docs/Environment-ordering.md
+    # §4.2). A stage 2 held back by a failed stage 1 reports skipped, exactly as an empty one
+    # does, so testing stage 2 alone would release this stage after a failure in stage 1.
+    needs: [create-matrix, seed-pr-comments, terraform-ci-cd, terraform-ci-cd-2]
+    if: |
+      !cancelled()
+      && needs.create-matrix.result == 'success'
+      && (needs.terraform-ci-cd.result == 'success' || needs.terraform-ci-cd.result == 'skipped')
+      && (needs.terraform-ci-cd-2.result == 'success' || needs.terraform-ci-cd-2.result == 'skipped')
+      && needs.create-matrix.outputs.stage-3-count != '0'
+    runs-on: ${{ matrix.vars.runs-on }}
+    strategy:
+      fail-fast: false # Allow jobs to continue even though one more env(s) fail
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.matrix-stage-3-json) }}
+    environment:
+      name: ${{ matrix.vars.github-environment }}
+      url: ${{ matrix.vars.url }}
+    # As in stage 1.
+    concurrency:
+      group: ${{ matrix.vars.github-environment }}
+      cancel-in-progress: false # never cancel an in-progress apply
+      queue: max
+    defaults:
+      run:
+        shell: bash
+    steps: *environment-steps
+
   # Reconciles per-group PR comments according to the desired set computed from
   # matrix-job-meta-*.json artifacts. Runs unconditionally on PR events (not gated
   # on whether any env declares a pr-comment-group) so that toggling grouping off
   # for an env reliably cleans up its stale group comment on the very next run.
   # See docs/Workflow-pr-comments.md §4.6 for the reconcile algorithm and the
   # cost discussion behind the unconditional gate.
+  #
+  # Every stage job is in needs so the aggregator runs after the last of them.
+  # always() runs it whatever they concluded, a skipped stage included, which is
+  # every run of a repository without depends-on for stages 2 and 3.
   pr-comment-aggregator:
     if: |
       always()
@@ -1863,7 +1969,7 @@ jobs:
       && github.event.action != 'closed'
       && github.event.action != 'converted_to_draft'
     name: "PR comment aggregator"
-    needs: [create-matrix, terraform-ci-cd]
+    needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3]
     runs-on: ${{ inputs.runs-on }} # global setting
     permissions:
       pull-requests: write # PATCH the per-group head comment
@@ -1895,6 +2001,10 @@ jobs:
           metadata-files-pattern: "matrix-job-meta-*.json"
           # Groups whose members are all unaffected have no metadata; the file keeps them rendered.
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
+          # A stage skipped with environments in it was held back; only its result, joined with
+          # the stage's count in the relevance file, tells that from an empty stage
+          # (docs/Environment-ordering.md §7.1, §7.4).
+          stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
           pr-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
         continue-on-error: true # never fail the workflow over PR comment rendering
@@ -1910,10 +2020,13 @@ jobs:
   # would then run on push). Must never fail the workflow: continue-on-error
   # on every step, and deliberately NOT in conclusion's needs (P20).
   # See docs/Apply-and-destroy-reporting.md §7.9.
+  #
+  # Every stage job is in needs, and always() runs the summary whatever they
+  # concluded, a skipped stage included.
   run-summary:
     if: always()
     name: "Run summary"
-    needs: [create-matrix, terraform-ci-cd]
+    needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3]
     runs-on: ${{ inputs.runs-on }} # global setting
     # No pull-requests permission — this job never touches the PR.
     permissions: {}
@@ -1941,6 +2054,8 @@ jobs:
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
+          # Held-back rows and the ordering footer (docs/Environment-ordering.md §7.2).
+          stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
         continue-on-error: true # never fail the workflow over run-page reporting
 
   # One job per test file (and provider set), in parallel with the environments; nothing waits for
@@ -2306,10 +2421,16 @@ jobs:
   # It reads named results and the matrix builder's counts, because "skipped" alone cannot tell
   # "nothing to verify" from "something upstream broke". Reporting jobs stay out of needs: they
   # must never redden a run.
+  #
+  # Every stage job is in needs, each judged on its own result and row count: a stage skipped with
+  # environments in it was held back by a failed earlier stage, and one skipped with none had
+  # nothing to do (docs/Environment-ordering.md §7.1, §7.3). always() runs the job whatever the
+  # stages concluded, so stages 2 and 3 skipped, as on every run of a repository without
+  # depends-on, change nothing.
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [create-matrix, terraform-ci-cd, terraform-test]
+    needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3, terraform-test]
     runs-on: ${{ inputs.runs-on }} # global setting
     permissions: {}
     defaults:
@@ -2323,29 +2444,60 @@ jobs:
           UNAFFECTED_COUNT: ${{ needs.create-matrix.outputs.unaffected-count }}
           RELEVANCE_MODE: ${{ needs.create-matrix.outputs.relevance-mode }}
           RELEVANCE_REASON: ${{ needs.create-matrix.outputs.relevance-reason }}
-          ENVIRONMENTS_RESULT: ${{ needs.terraform-ci-cd.result }}
+          STAGE_1_RESULT: ${{ needs.terraform-ci-cd.result }}
+          STAGE_1_COUNT: ${{ needs.create-matrix.outputs.stage-1-count }}
+          STAGE_2_RESULT: ${{ needs.terraform-ci-cd-2.result }}
+          STAGE_2_COUNT: ${{ needs.create-matrix.outputs.stage-2-count }}
+          STAGE_3_RESULT: ${{ needs.terraform-ci-cd-3.result }}
+          STAGE_3_COUNT: ${{ needs.create-matrix.outputs.stage-3-count }}
           TESTS_ACTIVE: ${{ needs.create-matrix.outputs.tests-active }}
           TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
           TESTS_RESULT: ${{ needs.terraform-test.result }}
         run: |
-          # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2, docs/Terraform-tests.md §7)
+          # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2, docs/Environment-ordering.md §7.3, docs/Terraform-tests.md §7)
           set -euo pipefail
           environments="environments: ${AFFECTED_COUNT:-?} affected, ${UNAFFECTED_COUNT:-?} not affected (${RELEVANCE_MODE:-?}: ${RELEVANCE_REASON:-?})"
           verdict=red
           if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
             why="the matrix could not be built (${CREATE_MATRIX_RESULT})"
           else
-            case "${ENVIRONMENTS_RESULT}" in
-              success) verdict=green why="${environments}" ;;
-              skipped)
-                if [ "${AFFECTED_COUNT}" = "0" ]; then
-                  verdict=green why="nothing to verify for this change; ${environments}"
-                else
-                  why="the environments should have run but were skipped; ${environments}"
-                fi
-                ;;
-              *) why="the environments' result is ${ENVIRONMENTS_RESULT}; ${environments}" ;;
-            esac
+            if [ "${STAGE_2_COUNT}" = "0" ] && [ "${STAGE_3_COUNT}" = "0" ]; then
+              # One stage, as on every run of a repository without depends-on: stage 1 holds every
+              # affected environment, and the verdict and the line are the ones from before stages.
+              case "${STAGE_1_RESULT}" in
+                success) verdict=green why="${environments}" ;;
+                skipped)
+                  if [ "${AFFECTED_COUNT}" = "0" ]; then
+                    verdict=green why="nothing to verify for this change; ${environments}"
+                  else
+                    why="the environments should have run but were skipped; ${environments}"
+                  fi
+                  ;;
+                *) why="the environments' result is ${STAGE_1_RESULT}; ${environments}" ;;
+              esac
+            else
+              # More than one stage, each judged on its own result and count. Skipped with
+              # environments in it means an earlier stage held it back; an empty stage is fine and
+              # left out of the line. The counts stand in for names, which this job does not have.
+              verdict=green stages=""
+              for stage in 1 2 3; do
+                result_name="STAGE_${stage}_RESULT" count_name="STAGE_${stage}_COUNT"
+                result="${!result_name:-}" count="${!count_name:-}"
+                case "${result}" in
+                  success) part="stage ${stage} succeeded" ;;
+                  skipped)
+                    if [ "${count}" = "0" ]; then
+                      continue
+                    fi
+                    verdict=red part="stage ${stage} held back (${count:-?} environment(s))"
+                    ;;
+                  failure) verdict=red part="stage ${stage} failed" ;;
+                  *) verdict=red part="stage ${stage}'s result is ${result:-?}" ;;
+                esac
+                stages="${stages:+${stages}; }${part}"
+              done
+              why="${stages}; ${environments}"
+            fi
             # The tests are judged independently of the environments: skipped is fine only while the
             # stage is inactive (switched off, no test files, an event tests do not run on).
             case "${TESTS_RESULT}" in
@@ -2372,7 +2524,8 @@ jobs:
   automerge:
     # job runs when:
     #   - the conclusion is green AND
-    #   - the environments succeeded, or none was affected (docs/Path-relevance.md §8) AND
+    #   - every stage job succeeded, or was skipped for having no environments
+    #     (docs/Path-relevance.md §8, docs/Environment-ordering.md §7.5) AND
     #   - global setting pr-auto-merge-enabled is true AND
     #   - workflow triggered by pull request event AND
     #   - pull request is not being closed AND
@@ -2380,13 +2533,23 @@ jobs:
     #   - pull request is against the default branch, from the same repository (docs/Auto-merge.md D9):
     #     a fork's run has no secrets and its code is never merged unreviewed; comparing full names
     #     also holds for a calling repository that is itself a fork, and for a deleted fork's null head.repo
-    # !cancelled() replaces the implicit success(), which a skipped matrix would fail (P14).
+    # !cancelled() replaces the implicit success(), which a skipped stage job would fail
+    # (docs/Path-relevance.md P14). Stages 2 and 3 are skipped on every run of a repository without
+    # depends-on, so without it auto-merge would never run there (docs/Environment-ordering.md P6).
     if: |
       !cancelled()
       && needs.conclusion.result == 'success'
       && (
         needs.terraform-ci-cd.result == 'success'
-        || (needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0')
+        || (needs.terraform-ci-cd.result == 'skipped' && needs.create-matrix.outputs.stage-1-count == '0')
+      )
+      && (
+        needs.terraform-ci-cd-2.result == 'success'
+        || (needs.terraform-ci-cd-2.result == 'skipped' && needs.create-matrix.outputs.stage-2-count == '0')
+      )
+      && (
+        needs.terraform-ci-cd-3.result == 'success'
+        || (needs.terraform-ci-cd-3.result == 'skipped' && needs.create-matrix.outputs.stage-3-count == '0')
       )
       && inputs.pr-auto-merge-enabled == true
       && github.event_name == 'pull_request'
@@ -2396,7 +2559,7 @@ jobs:
       && github.base_ref == github.event.repository.default_branch
       && github.event.pull_request.head.repo.full_name == github.repository
     name: "PR auto merger"
-    needs: [create-matrix, terraform-ci-cd, conclusion]
+    needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3, conclusion]
     runs-on: ${{ inputs.runs-on }} # global setting
     defaults:
       run:
@@ -2417,7 +2580,7 @@ jobs:
         id: download-metadata
         uses: actions/download-artifact@v4
         with:
-          pattern: matrix-job-meta-* # uploaded by capture-matrix-job-meta step in terraform-ci-cd job
+          pattern: matrix-job-meta-* # uploaded by the capture-matrix-job-meta step of every stage job
           merge-multiple: true
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v4
@@ -2444,6 +2607,9 @@ jobs:
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
           # Names every failing test that allow-failing-terraform-tests tolerated.
           test-metadata-files-pattern: "terraform-test-meta-*.json"
+          # A held-back environment has no metadata; the stage results let the reason say held
+          # back instead of cancelled or crashed (docs/Environment-ordering.md §7.5).
+          stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
       - name: "🔑 Resolve auto-merge app private key"
         id: resolve-key
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
