@@ -2386,6 +2386,7 @@ expected_env = {
     "STAGE_3_COUNT": "${{ needs.create-matrix.outputs.stage-3-count }}",
     "TESTS_ACTIVE": "${{ needs.create-matrix.outputs.tests-active }}",
     "TESTS_RESULT": "${{ needs.terraform-test.result }}",
+    "EVENT_NAME": "${{ github.event_name }}",
 }
 for name, value in expected_env.items():
     if env.get(name) != value:
@@ -2423,8 +2424,10 @@ script = steps[0]["run"] if steps else "exit 3"
 
 def conclude(**facts):
     with tempfile.NamedTemporaryFile("w+") as summary:
+        # EVENT_NAME is set, never inherited: every case is a pull request unless it says otherwise.
         run_env = dict(os.environ, UNAFFECTED_COUNT="1", RELEVANCE_MODE="diff", RELEVANCE_REASON="diff",
-                       TESTS_COUNT="3" if facts.get("TESTS_ACTIVE") == "true" else "0", GITHUB_STEP_SUMMARY=summary.name)
+                       TESTS_COUNT="3" if facts.get("TESTS_ACTIVE") == "true" else "0", GITHUB_STEP_SUMMARY=summary.name,
+                       EVENT_NAME="pull_request")
         run_env.update(facts)
         done = subprocess.run(["bash", "-e", "-c", script], env=run_env, capture_output=True, text=True)
         return done, open(summary.name, encoding="utf-8").read()
@@ -2466,6 +2469,13 @@ lines = [
     (one_stage, "green — environments: 2 affected, 1 not affected (diff: diff); tests: 0"),
     (dict(one_stage, AFFECTED_COUNT="0", STAGE_1_RESULT="skipped", STAGE_1_COUNT="0"),
      "green — nothing to verify for this change; environments: 0 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, AFFECTED_COUNT="0", STAGE_1_RESULT="skipped", STAGE_1_COUNT="0", EVENT_NAME="push"),
+     "green — nothing to verify for this change; environments: 0 affected, 1 not affected (diff: diff); tests: 0"),
+    # A schedule or a dispatch has no change to verify; pull requests and pushes read as before.
+    (dict(one_stage, AFFECTED_COUNT="0", STAGE_1_RESULT="skipped", STAGE_1_COUNT="0", EVENT_NAME="schedule"),
+     "green — nothing to run; environments: 0 affected, 1 not affected (diff: diff); tests: 0"),
+    (dict(one_stage, AFFECTED_COUNT="0", STAGE_1_RESULT="skipped", STAGE_1_COUNT="0", EVENT_NAME="workflow_dispatch"),
+     "green — nothing to run; environments: 0 affected, 1 not affected (diff: diff); tests: 0"),
     (dict(one_stage, STAGE_1_RESULT="skipped"),
      "red — the environments should have run but were skipped; environments: 2 affected, 1 not affected (diff: diff); tests: 0"),
     (dict(one_stage, STAGE_1_RESULT="failure"),

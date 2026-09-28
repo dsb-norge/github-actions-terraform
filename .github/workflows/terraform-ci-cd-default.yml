@@ -2485,6 +2485,7 @@ jobs:
           TESTS_ACTIVE: ${{ needs.create-matrix.outputs.tests-active }}
           TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
           TESTS_RESULT: ${{ needs.terraform-test.result }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2, docs/Environment-ordering.md §7.3, docs/Terraform-tests.md §7)
           set -euo pipefail
@@ -2500,7 +2501,11 @@ jobs:
                 success) verdict=green why="${environments}" ;;
                 skipped)
                   if [ "${AFFECTED_COUNT}" = "0" ]; then
-                    verdict=green why="nothing to verify for this change; ${environments}"
+                    # A schedule or a dispatch carries no change to verify.
+                    case "${EVENT_NAME:-}" in
+                      schedule | workflow_dispatch) verdict=green why="nothing to run; ${environments}" ;;
+                      *) verdict=green why="nothing to verify for this change; ${environments}" ;;
+                    esac
                   else
                     why="the environments should have run but were skipped; ${environments}"
                   fi
