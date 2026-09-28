@@ -3142,6 +3142,14 @@ else:
     runs = ' '.join(step.get('run') or '' for step in steps('engine-mutation-gate'))
     if '--merge' not in runs or 'needs.engine-mutation.result' not in str(gate):
         problems.append("engine-mutation-gate must check the shards' result and apply the gate with --merge")
+    # It reports like a suite, so the PR comment's totals cannot read green over a red gate.
+    reports = [step for step in steps('engine-mutation-gate')
+               if str(step.get('uses', '')).startswith('actions/upload-artifact@')
+               and str(step.get('with', {}).get('name', '')).startswith('test-result-')]
+    if len(reports) != 1 or reports[0].get('if') != 'always()':
+        problems.append("engine-mutation-gate must upload a test-result-* artifact, always()")
+    if 'engine-mutation-gate' not in needs('summary'):
+        problems.append("summary must need engine-mutation-gate, so the PR comment includes the gate")
 
 conclusion = jobs.get('tests-conclusion', {})
 if 'engine-mutation-gate' not in needs('tests-conclusion'):

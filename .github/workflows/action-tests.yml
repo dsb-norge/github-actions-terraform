@@ -244,6 +244,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read   # for gh api .../jobs lookup (job URL resolution)
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v7
@@ -260,23 +261,56 @@ jobs:
           merge-multiple: true
           path: _mutation
 
+      # The gate is one test, as the engine suite counts it locally, and reports like a suite
+      # (§5), so the PR comment's totals include it.
       - name: "🧬 Apply the gate"
         env:
           SHARDS_RESULT: ${{ needs.engine-mutation.result }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
         run: |
-          # Merge the shards and fail on any unexplained survivor or stale equivalent
+          # Merge the shards, fail on any unexplained survivor or stale equivalent, and report
+          start_ts=$(date +%s)
+          gate_exit=0
           if [[ "${SHARDS_RESULT}" != "success" ]]; then
             echo "::error title=Engine mutation shards failed::a shard's result was '${SHARDS_RESULT}'; its mutants were not all run"
-            exit 1
-          fi
-          if ! python3 -B engine/tests/mutation.py --merge _mutation/mutation-shard-*.json; then
+            gate_exit=1
+          elif ! python3 -B engine/tests/mutation.py --merge _mutation/mutation-shard-*.json; then
             echo "::error title=Engine mutation gate failed::an injected fault went unnoticed by every test, or the equivalents list is stale (see the log)"
-            exit 1
+            gate_exit=1
           fi
+
+          job_url="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+          if api_jobs=$(gh api --paginate "/repos/${REPO}/actions/runs/${RUN_ID}/jobs" 2>/dev/null); then
+            resolved=$(jq -r '.jobs[] | select(.name == "🧬 Engine mutation gate") | .html_url' <<<"${api_jobs}" | head -n1)
+            [[ -n "${resolved}" ]] && job_url="${resolved}"
+          fi
+          mkdir -p _artifact
+          jq -n \
+            --arg     outcome  "$([[ ${gate_exit} -eq 0 ]] && echo success || echo failure)" \
+            --argjson passed   "$([[ ${gate_exit} -eq 0 ]] && echo 1 || echo 0)" \
+            --argjson duration "$(( $(date +%s) - start_ts ))" \
+            --arg     job_url  "${job_url}" \
+            '{action: "engine-mutation-gate", outcome: $outcome, "tests-run": 1, "tests-passed": $passed,
+              "tests-failed": (1 - $passed), "duration-seconds": $duration, "job-url": $job_url}' \
+            > _artifact/result-engine-mutation-gate.json
+          cat _artifact/result-engine-mutation-gate.json
+          exit "${gate_exit}"
+
+      - name: "📤 Upload result artifact"
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-result-engine-mutation-gate
+          path: _artifact/result-engine-mutation-gate.json
+          if-no-files-found: warn
+          retention-days: 7
 
   summary:
     name: "📝 Aggregate summary"
-    needs: [discover, test]
+    needs: [discover, test, engine-mutation-gate]
     if: |
       !cancelled() &&
       github.event_name == 'pull_request' &&
