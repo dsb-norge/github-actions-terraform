@@ -302,6 +302,10 @@ class MatchingTest(unittest.TestCase):
         self.assertEqual(["relevance all (event): 3 of 3 environments affected"],
                          [notice for notice in run(environments=ENVS, event="workflow_dispatch")["notices"]
                           if notice.startswith("relevance")])
+        # A schedule or a dispatch has no change, so nothing is said about one.
+        self.assertEqual(["relevance all (event): 0 of 3 environments affected; nothing to run"],
+                         [notice for notice in run(environments=ENVS, event="schedule")["notices"]
+                          if notice.startswith("relevance")])
         self.assertEqual(["relevance diff (diff): 1 of 1 environment affected"],
                          run(files=["envs/prod/a.tf"])["notices"])
 

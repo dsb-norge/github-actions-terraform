@@ -183,4 +183,7 @@ def notice(block, entries):
     total = len(entries)
     text = (f"relevance {block['mode']} ({block['reason']}): {affected} of {total} "
             f"environment{'' if total == 1 else 's'} affected")
-    return text + ("; nothing to verify for this change" if affected == 0 else "")
+    if affected:
+        return text
+    # A dispatch or a schedule has no change to speak of: its reason is 'event'.
+    return text + ("; nothing to run" if block["reason"] == "event" else "; nothing to verify for this change")
