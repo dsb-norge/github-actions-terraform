@@ -101,3 +101,116 @@ function destroy_cell {
   [ "${completed}" = 'true' ] || d='?'
   printf '`💥 %s/%s`' "$(count_or_q "${d}")" "$(count_or_q "${pd}")"
 }
+
+# ----------------------------------------------------------------------------
+# Environment ordering (docs/Environment-ordering.md §7)
+# ----------------------------------------------------------------------------
+
+# The stage results the workflow passes (stage-results-json), normalised to an
+# object of result strings in a temp file whose path is left in
+# STAGE_RESULTS_FILE; empty when the input is absent, blank or not an object,
+# which renders exactly as before ordering. The value is a shell-local the shim
+# captured before allexport; it reaches jq through a here-string, never argv.
+function read_stage_results {
+  STAGE_RESULTS_FILE=""
+  local raw="${input_stage_results_json:-}"
+  [[ "${raw}" =~ ^[[:space:]]*$ ]] && return 0
+  local file
+  file=$(mktemp)
+  if ! jq -ce 'if type == "object" then with_entries(select(.value | type == "string")) else error("not an object") end' \
+    <<<"${raw}" >"${file}" 2>/dev/null; then
+    log-warn "stage-results-json is not a JSON object of stage results; rendering without ordering" 1>&2
+    rm -f "${file}"
+    return 0
+  fi
+  STAGE_RESULTS_FILE="${file}"
+}
+
+# The run entries of a relevance file that a skipped stage held back, one per
+# line in the file's order: github-environment, stage, and the stage that held
+# it back with that stage's result (both empty when no earlier stage failed or
+# was cancelled), joined by the unit separator. Nothing without stage results.
+#
+# A stage job skipped for having no environments and one skipped because an
+# earlier stage failed both report 'skipped'; only the builder's row count
+# tells them apart (P5). Stage 1 is never held back: nothing runs before it, so
+# a skipped stage 1 is a cancelled run, reported as it always was.
+function held_back_entries {
+  local relevance_file="${1}"
+  [ -z "${STAGE_RESULTS_FILE:-}" ] && return 0
+  jq -r --slurpfile sr "${STAGE_RESULTS_FILE}" '
+    $sr[0] as $results
+    | (.counts.by_stage // {}) as $by
+    | .environments[]
+    | select(.verdict == "run")
+    | ((.stage // 1) | tonumber? // 1) as $stage
+    | select($stage >= 2
+             and ($results[$stage | tostring] // "") == "skipped"
+             and ((($by[$stage | tostring] // 0) | tonumber? // 0) > 0))
+    | ([range(1; $stage) | select(($results[tostring] // "") as $r | $r == "failure" or $r == "cancelled")] | first) as $cause
+    | [(.["github-environment"] // .environment // "" | tostring), ($stage | tostring),
+       (if $cause then ($cause | tostring) else "" end), (if $cause then $results[$cause | tostring] else "" end)]
+    | join("\u001f")' "${relevance_file}" 2>/dev/null || true
+}
+
+# 'stage 1 failed' or 'stage 1 was cancelled'.
+#   $1 stage, $2 its result
+function stage_outcome_phrase {
+  if [ "${2}" = 'cancelled' ]; then printf 'stage %s was cancelled' "${1}"; else printf 'stage %s failed' "${1}"; fi
+}
+
+# The held-back outcome cell's tooltip: 'held back: stage 2; stage 1 failed',
+# or 'held back: stage 2' when the results name no cause.
+#   $1 stage, $2 the stage that held it back (may be empty), $3 that stage's result
+function held_back_title {
+  local title="held back: stage ${1}"
+  [ -n "${2}" ] && title+="; $(stage_outcome_phrase "${2}" "${3}")"
+  printf '%s' "${title}"
+}
+
+# 'stage 2', 'stages 2 and 3', 'stages 1, 2 and 3'.
+#   $@ stage numbers, ascending
+function stage_list {
+  if [ ${#} -eq 1 ]; then printf 'stage %s' "${1}"; return 0; fi
+  local -a all=("${@}")
+  local last="${all[-1]}" head="" s
+  for s in "${all[@]:0:${#all[@]}-1}"; do head+="${head:+, }${s}"; done
+  printf 'stages %s and %s' "${head}" "${last}"
+}
+
+# Names backticked and joined with ', '.
+function backtick_join {
+  local out="" name
+  for name in "${@}"; do out+="${out:+, }\`${name}\`"; done
+  printf '%s' "${out}"
+}
+
+# True when the metadata shows a Terraform operation that failed while
+# allow-failing-terraform-operations was set: the failure that keeps the job
+# green, and so releases the next stage (D5, P10).
+function tolerated_failure {
+  jq -e '
+    (.matrix_context.vars["allow-failing-terraform-operations"] // false) as $allow
+    | ($allow == true or $allow == "true")
+      and any(("init", "verify-lock", "fmt", "validate", "lint", "plan", "apply", "destroy-plan", "destroy") as $s
+              | (.steps[$s] // {}) | if type == "object" then (.outcome // "") else "" end; . == "failure")' \
+    "${1}" >/dev/null 2>&1
+}
+
+# The declared dependencies left out of the run, for every run entry granted
+# apply or destroy, one per line: the entry's github-environment, the
+# dependency's github-environment, and the engine's reason for leaving it out.
+# The engine names a dependency by its environment; every row here is labelled
+# by github-environment, so the name is mapped to the label its row carries.
+function missing_dependencies {
+  jq -r '
+    (reduce .environments[] as $e ({}; .[($e.environment // "" | tostring)] = ($e["github-environment"] // $e.environment // "" | tostring))) as $label
+    | .environments[]
+    | select(.verdict == "run" and ((.goals // []) | type == "array" and any(.[]; . == "apply" or . == "destroy")))
+    | (.["github-environment"] // .environment // "" | tostring) as $me
+    | (.reasons // [])[]
+    | strings
+    | capture("^ordering: depends-on '\''(?<dep>.*)'\'' not in this run \\((?<why>.*)\\)$")
+    | [$me, ($label[.dep] // .dep), .why]
+    | join("\u001f")' "${1}" 2>/dev/null || true
+}

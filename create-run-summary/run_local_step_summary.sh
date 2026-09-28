@@ -41,6 +41,9 @@ EOF
 export input_relevance_file="${RUNNER_TEMP}/relevance.json"
 
 (
+  # A shell-local before allexport, as the shim captures it. Every environment
+  # is in stage 1 here; set stages in relevance.json to see held-back rows.
+  input_stage_results_json='{"1": "failure", "2": "skipped", "3": "skipped"}'
   set -o allexport
   source "${_this_script_dir}/step_summary.sh"
 )
