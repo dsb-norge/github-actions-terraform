@@ -11,21 +11,29 @@ Some mutants cannot change behaviour (they are equivalent to the original); each
 mutation_equivalents.json with the reason. The gate fails on a surviving mutant that is not
 listed, and on a listed one that no longer exists, so the list cannot go stale.
 
+Each mutant runs the tests of the module it mutates first, then every other fast module, then the
+two slow ones, stopping at the first failure: most mutants die within a second. A mutant still
+running after six times the unmutated suite's duration (at least a minute) counts as killed: it
+hangs, or slows the suite past anything a real run could be.
+
 Usage:
-  mutation.py              run every mutant, print survivors, exit 1 if the gate fails
-  mutation.py --list       print every mutant's key without running anything
-  mutation.py --run-suite  (internal) run the suite of the engine copy in the working directory,
-                           fast modules first, stopping at the first failure
+  mutation.py                    run every mutant, print survivors, exit 1 if the gate fails
+  mutation.py --list             print every mutant's key without running anything
+  mutation.py --run-suite [MODULE]
+                                 (internal) run the suite of the engine copy in the working
+                                 directory, the tests of MODULE first, stopping at the first failure
 """
 
 import ast
 import concurrent.futures
+import itertools
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,10 +42,13 @@ PACKAGE_DIR = os.path.join(ENGINE_DIR, "dsb_tf_engine")
 EQUIVALENTS_FILE = os.path.join(TESTS_DIR, "mutation_equivalents.json")
 REPO_GITHUB_DIR = os.path.join(os.path.dirname(ENGINE_DIR), ".github")
 
-# Fastest first, so most mutants die within a second; the subprocess-heavy modules run last.
-SUITE_ORDER = ("test_values", "test_globs", "test_workflow", "test_purity", "test_model", "test_validation", "test_environments",
-               "test_invariants", "test_relevance", "test_comments", "test_tests", "test_adapter", "test_port", "test_cli", "test_entry", "test_generated",
-               "test_determinism")
+# Every other module takes a fraction of a second; these two take nearly all of the suite's time,
+# so they run last and a mutant rarely reaches them.
+SLOW_LAST = ("test_generated", "test_determinism")
+# A module's own tests, where the name does not say it.
+OWN_TESTS = {"__main__.py": "test_cli", "__init__.py": "test_model"}
+# A hung mutant counts as killed after this many baseline durations, and never before the floor.
+TIMEOUT_FACTOR, TIMEOUT_FLOOR, BASELINE_TIMEOUT = 6, 60, 300
 
 COMPARE_SWAPS = {
     ast.Eq: [ast.NotEq], ast.NotEq: [ast.Eq], ast.Lt: [ast.LtE, ast.GtE], ast.LtE: [ast.Lt, ast.Gt],
@@ -152,86 +163,114 @@ class _Apply(ast.NodeTransformer):
         return self.factory(node) if node is self.target else node
 
 
+def _source(name):
+    with open(os.path.join(PACKAGE_DIR, name), encoding="utf-8") as handle:
+        return handle.read()
+
+
 def mutants():
-    """Yield (key, relative path, line, mutated source) for every mutant, in a stable order."""
+    """Yield (key, module file, line, index) for every mutant, in a stable order: one walk of each
+    module's unmutated tree, which gives every candidate's key; the mutated source is built from the
+    index where the mutant runs (mutated_source)."""
     for name in sorted(os.listdir(PACKAGE_DIR)):
         if not name.endswith(".py"):
             continue
-        path = os.path.join(PACKAGE_DIR, name)
-        with open(path, encoding="utf-8") as handle:
-            source = handle.read()
         seen = {}
-        count = sum(1 for _ in _candidates(ast.parse(source)))
-        for index in range(count):
-            tree = ast.parse(source)
-            node, operator, factory = list(_candidates(tree))[index]
+        for index, (node, operator, _factory) in enumerate(_candidates(ast.parse(_source(name)))):
             snippet = " ".join(ast.unparse(node).split())[:80]
             base = f"{name}: {operator}: {snippet}"
             seen[base] = seen.get(base, 0) + 1
             key = base if seen[base] == 1 else f"{base} #{seen[base]}"
-            line = getattr(node, "lineno", 0)
-            mutated = ast.fix_missing_locations(_Apply(node, factory).visit(tree))
-            yield key, name, line, ast.unparse(mutated)
+            yield key, name, getattr(node, "lineno", 0), index
+
+
+def mutated_source(name, index):
+    """The module's source with its index-th candidate mutated, from a fresh tree."""
+    tree = ast.parse(_source(name))
+    node, _operator, factory = next(itertools.islice(_candidates(tree), index, None))
+    return ast.unparse(ast.fix_missing_locations(_Apply(node, factory).visit(tree)))
 
 
 def _run_mutant(args):
-    key, name, line, source = args
+    """(key, module, line, killed, seconds); the baseline is (key, None, 0, None, timeout)."""
+    key, name, line, index, timeout = args
+    started = time.monotonic()
     work = tempfile.mkdtemp()
     try:
         copy_dir = os.path.join(work, "engine")
         shutil.copytree(ENGINE_DIR, copy_dir, ignore=shutil.ignore_patterns("__pycache__", ".coverage"))
         # The workflow-contract tests read the repository's workflow beside engine/.
         os.symlink(REPO_GITHUB_DIR, os.path.join(work, ".github"))
-        if source is not None:
+        command = [sys.executable, "-B", os.path.join(copy_dir, "tests", "mutation.py"), "--run-suite"]
+        if name is not None:
             with open(os.path.join(copy_dir, "dsb_tf_engine", name), "w", encoding="utf-8") as handle:
-                handle.write(source)
+                handle.write(mutated_source(name, index))
+            command.append(name)
         try:
-            proc = subprocess.run([sys.executable, "-B", os.path.join(copy_dir, "tests", "mutation.py"), "--run-suite"],
-                                  cwd=copy_dir, capture_output=True, timeout=300,
+            proc = subprocess.run(command, cwd=copy_dir, capture_output=True, timeout=timeout,
                                   env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             killed = proc.returncode != 0
         except subprocess.TimeoutExpired:
             killed = True
-        return key, name, line, killed
+        return key, name, line, killed, time.monotonic() - started
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def run_suite():
+def suite_order(discovered, mutated=None):
+    """The mutated module's own tests first, then the fast modules, then the slow ones."""
+    own = OWN_TESTS.get(mutated, f"test_{mutated[:-3]}") if mutated else None
+    first = [own] if own in discovered else []
+    fast = sorted(discovered - set(first) - set(SLOW_LAST))
+    return first + fast + [module for module in SLOW_LAST if module in discovered]
+
+
+def run_suite(mutated=None):
     sys.path[:0] = [ENGINE_DIR, TESTS_DIR]
     loader = unittest.defaultTestLoader
     discovered = {name[:-3] for name in os.listdir(TESTS_DIR) if name.startswith("test_") and name.endswith(".py")}
-    order = [m for m in SUITE_ORDER if m in discovered] + sorted(discovered - set(SUITE_ORDER))
-    suite = unittest.TestSuite(loader.loadTestsFromName(module) for module in order)
+    suite = unittest.TestSuite(loader.loadTestsFromName(module) for module in suite_order(discovered, mutated))
     with open(os.devnull, "w") as devnull:
         result = unittest.TextTestRunner(stream=devnull, failfast=True).run(suite)
     return 0 if result.wasSuccessful() else 1
 
 
+def _run(selected, label):
+    """Run the selected mutants; the survivors as (key, module, line), or None without a passing
+    baseline, since then every mutant would count as killed for a reason no mutant caused."""
+    _key, _name, _line, failed, seconds = _run_mutant(("baseline", None, 0, None, BASELINE_TIMEOUT))
+    if failed:
+        print("mutation: the unmutated engine fails its suite in a copy; no mutant can be judged")
+        return None
+    timeout = max(TIMEOUT_FLOOR, TIMEOUT_FACTOR * seconds)
+    workers = max(1, os.cpu_count() or 1)
+    print(f"mutation: {len(selected)} mutants of dsb_tf_engine{label}, {workers} workers, "
+          f"baseline {seconds:.1f}s, timeout {timeout:.0f}s", flush=True)
+    survivors = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+        for key, name, line, killed, _seconds in pool.map(
+                _run_mutant, [(key, name, line, index, timeout) for key, name, line, index in selected]):
+            if not killed:
+                survivors.append((key, name, line))
+    return survivors
+
+
 def main(argv):
     if "--run-suite" in argv:
-        return run_suite()
+        rest = argv[argv.index("--run-suite") + 1:]
+        return run_suite(rest[0] if rest else None)
     every = list(mutants())
     if "--list" in argv:
         for key, *_ in every:
             print(key)
         return 0
 
+    survivors = _run(every, "")
+    if survivors is None:
+        return 1
+
     with open(EQUIVALENTS_FILE, encoding="utf-8") as handle:
         equivalents = json.load(handle)
-
-    # Without a passing baseline every mutant would count as killed, for a reason no mutant caused.
-    if _run_mutant(("baseline", None, 0, None))[3]:
-        print("mutation: the unmutated engine fails its suite in a copy; no mutant can be judged")
-        return 1
-    workers = max(1, os.cpu_count() or 1)
-    print(f"mutation: {len(every)} mutants of dsb_tf_engine, {workers} workers", flush=True)
-    survivors = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-        for key, name, line, killed in pool.map(_run_mutant, every):
-            if not killed:
-                survivors.append((key, name, line))
-
     keys = {key for key, *_ in every}
     unexplained = [s for s in survivors if s[0] not in equivalents]
     stale = sorted(k for k in equivalents if k not in keys)
