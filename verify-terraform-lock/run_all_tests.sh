@@ -8,6 +8,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -87,12 +92,12 @@ EOF
 }
 
 # Run the step in a subshell. Captures exit code into $LAST_EXIT.
-# Captures combined stdout/stderr into /tmp/test_output.txt.
+# Captures combined stdout/stderr into "${_test_output}".
 run_step() {
   (
     set -o allexport
     source "${_this_script_dir}/step_verify_lock.sh"
-  ) >/tmp/test_output.txt 2>&1
+  ) >"${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -116,7 +121,7 @@ assert() {
   else
     echo -e "${RED}✗ FAILED${NC}"
     echo "--- step output ---"
-    cat /tmp/test_output.txt 2>/dev/null || true
+    cat "${_test_output}" 2>/dev/null || true
     echo "--- /step output ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
@@ -165,7 +170,7 @@ run_step
 assert "Missing lock file fails" \
   test "${LAST_EXIT}" -ne 0
 assert "Missing lock file emits error annotation" \
-  grep -q "::error title=No lock file" /tmp/test_output.txt
+  grep -q "::error title=No lock file" "${_test_output}"
 
 # Test 4: Missing .terraform directory (init was not run)
 setup_workdir
@@ -175,7 +180,7 @@ run_step
 assert "Missing .terraform fails" \
   test "${LAST_EXIT}" -ne 0
 assert "Missing .terraform emits error annotation" \
-  grep -q "::error title=No .terraform directory" /tmp/test_output.txt
+  grep -q "::error title=No .terraform directory" "${_test_output}"
 
 # Test 5: Missing working directory
 setup_workdir
@@ -193,7 +198,7 @@ run_step
 assert "Empty platforms input fails" \
   test "${LAST_EXIT}" -ne 0
 assert "Empty platforms emits error annotation" \
-  grep -q "::error title=No platforms specified" /tmp/test_output.txt
+  grep -q "::error title=No platforms specified" "${_test_output}"
 
 # Test 7: Whitespace-only / blank line platforms are tolerated
 setup_workdir
@@ -379,7 +384,7 @@ input_lock_only="false"
 install_stub_noop
 run_step
 assert "lock-only false still requires .terraform" \
-  grep -q "::error title=No .terraform directory" /tmp/test_output.txt
+  grep -q "::error title=No .terraform directory" "${_test_output}"
 
 # --------------------------------------------------------------------------
 # Summary

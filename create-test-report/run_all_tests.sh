@@ -16,6 +16,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -27,7 +32,7 @@ TESTS_FAILED=0
 TESTS_RUN=0
 
 DATA_DIR="${_this_script_dir}/test-data"
-OUT_FILE=/tmp/test_output_create_test_report.txt
+OUT_FILE="${_test_output}"
 
 # --------------------------------------------------------------------------
 # Harness

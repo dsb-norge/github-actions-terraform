@@ -4,6 +4,11 @@
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
 _test_data_dir="${_this_script_dir}/test-data"
 
 RED='\033[0;31m'
@@ -31,7 +36,7 @@ run_step() {
   (
     set -o allexport
     source "${_this_script_dir}/step_parse_warnings.sh"
-  ) >/tmp/test_output_parse_warnings.txt 2>&1
+  ) >"${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -52,7 +57,7 @@ assert() {
   else
     echo -e "${RED}✗ FAILED${NC}"
     echo "--- step output ---"
-    cat /tmp/test_output_parse_warnings.txt 2>/dev/null || true
+    cat "${_test_output}" 2>/dev/null || true
     echo "--- GITHUB_OUTPUT ---"
     cat "${GITHUB_OUTPUT}" 2>/dev/null || true
     echo "--- markdown ---"
@@ -66,7 +71,7 @@ count_annotations() {
   # Counts ::warning lines in the step's stdout. grep -c always prints a
   # number; it exits 1 when count is 0, hence the '|| true' rather than
   # '|| echo 0' which would emit a second "0" line.
-  grep -c '^::warning' /tmp/test_output_parse_warnings.txt 2>/dev/null || true
+  grep -c '^::warning' "${_test_output}" 2>/dev/null || true
 }
 
 echo ""
@@ -95,11 +100,11 @@ assert "t02: exits 0" test "${LAST_EXIT}" -eq 0
 assert "t02: warning-count is 1" test "$(get_output warning-count)" = "1"
 assert "t02: one ::warning emitted" test "$(count_annotations)" -eq 1
 assert "t02: annotation has file=" \
-  grep -q "::warning file=.terraform/modules/foo/main.tf" /tmp/test_output_parse_warnings.txt
+  grep -q "::warning file=.terraform/modules/foo/main.tf" "${_test_output}"
 assert "t02: annotation has line=176" \
-  grep -q "line=176" /tmp/test_output_parse_warnings.txt
+  grep -q "line=176" "${_test_output}"
 assert "t02: annotation title includes step label" \
-  grep -q "title=terraform plan warning" /tmp/test_output_parse_warnings.txt
+  grep -q "title=terraform plan warning" "${_test_output}"
 assert "t02: markdown contains source line" \
   grep -q "source: .*main.tf:176" "$(get_output warnings-markdown-file)"
 assert "t02: markdown contains step header" \
@@ -116,9 +121,9 @@ assert "t03: exits 0" test "${LAST_EXIT}" -eq 0
 assert "t03: warning-count is 1" test "$(get_output warning-count)" = "1"
 assert "t03: one ::warning emitted" test "$(count_annotations)" -eq 1
 assert "t03: annotation has NO file=" \
-  bash -c "! grep -q '::warning file=' /tmp/test_output_parse_warnings.txt"
+  bash -c "! grep -q '::warning file=' ${_test_output}"
 assert "t03: annotation has title=" \
-  grep -q "::warning title=terraform init warning" /tmp/test_output_parse_warnings.txt
+  grep -q "::warning title=terraform init warning" "${_test_output}"
 assert "t03: markdown step header reflects init label" \
   grep -q "### From terraform init" "$(get_output warnings-markdown-file)"
 
@@ -156,7 +161,7 @@ assert "t05: markdown contains '---' separators between blocks" \
 # the code-excerpt line were being collected as part of the message.)
 # ----------------------------------------------------------------------
 assert "t05 regression: second annotation does not contain 'with module'" \
-  bash -c "! grep -q 'with module' /tmp/test_output_parse_warnings.txt"
+  bash -c "! grep -q 'with module' ${_test_output}"
 
 # ----------------------------------------------------------------------
 # t06: Warning followed by Error — error body should NOT bleed in
@@ -167,7 +172,7 @@ run_step
 assert "t06: warning-count is 1" test "$(get_output warning-count)" = "1"
 assert "t06: exactly 1 ::warning emitted" test "$(count_annotations)" -eq 1
 assert "t06: annotation does NOT include error text" \
-  bash -c "! grep -q 'undeclared resource' /tmp/test_output_parse_warnings.txt"
+  bash -c "! grep -q 'undeclared resource' ${_test_output}"
 assert "t06: markdown body does NOT contain 'Reference to undeclared resource'" \
   bash -c "! grep -q 'undeclared resource' '$(get_output warnings-markdown-file)'"
 
@@ -202,10 +207,10 @@ export input_console_output_file="${_test_data_dir}/t09_init_provider_deprecatio
 run_step
 assert "t09: warning-count is 1" test "$(get_output warning-count)" = "1"
 assert "t09: annotation has file=" \
-  grep -q "::warning file=" /tmp/test_output_parse_warnings.txt
+  grep -q "::warning file=" "${_test_output}"
 assert "t09: file path is providers.tf" \
-  grep -q "providers.tf" /tmp/test_output_parse_warnings.txt
-assert "t09: line is 8" grep -q "line=8" /tmp/test_output_parse_warnings.txt
+  grep -q "providers.tf" "${_test_output}"
+assert "t09: line is 8" grep -q "line=8" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # t09 regression: the init success line is an end-of-operation terminator.
@@ -230,9 +235,9 @@ assert "t10: exits 0" test "${LAST_EXIT}" -eq 0
 assert "t10: warning-count is 4 (1 shown + 3 suppressed)" test "$(get_output warning-count)" = "4"
 assert "t10: one ::warning emitted" test "$(count_annotations)" -eq 1
 assert "t10: annotation title carries the 'apply' label" \
-  grep -q "title=terraform apply warning" /tmp/test_output_parse_warnings.txt
+  grep -q "title=terraform apply warning" "${_test_output}"
 assert "t10: annotation has file=main.tf,line=14" \
-  grep -q "::warning file=main.tf,line=14" /tmp/test_output_parse_warnings.txt
+  grep -q "::warning file=main.tf,line=14" "${_test_output}"
 assert "t10: markdown step header is 'From terraform apply'" \
   grep -q "### From terraform apply" "$(get_output warnings-markdown-file)"
 assert "t10: markdown file name carries the label (no collision with plan's)" \
@@ -246,7 +251,7 @@ assert "t10: body does NOT contain the Outputs header" \
 assert "t10: body does NOT leak any output value (P3)" \
   bash -c "! grep -q 'SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK' '$(get_output warnings-markdown-file)' && ! grep -q 'blob.core.windows.net' '$(get_output warnings-markdown-file)'"
 assert "t10: annotation does NOT leak any output value either" \
-  bash -c "! grep -q 'SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK' /tmp/test_output_parse_warnings.txt"
+  bash -c "! grep -q 'SECRET_LOOKING_OUTPUT_VALUE_MUST_NOT_LEAK' ${_test_output}"
 
 # ----------------------------------------------------------------------
 # t11: destroy console — 'Destroy complete!' terminates the body.
@@ -257,7 +262,7 @@ export input_console_output_file="${_test_data_dir}/t11_destroy_warning_then_sum
 run_step
 assert "t11: warning-count is 1" test "$(get_output warning-count)" = "1"
 assert "t11: annotation title carries the 'destroy' label" \
-  grep -q "title=terraform destroy warning" /tmp/test_output_parse_warnings.txt
+  grep -q "title=terraform destroy warning" "${_test_output}"
 assert "t11: body does NOT contain 'Destroy complete!'" \
   bash -c "! grep -q 'Destroy complete' '$(get_output warnings-markdown-file)'"
 assert "t11: body holds the real message" \
@@ -273,7 +278,7 @@ run_step
 assert "destroy-plan: markdown file is tf-warnings-<env>-destroy-plan.md" \
   bash -c "[[ '$(get_output warnings-markdown-file)' == *'/tf-warnings-testenv-destroy-plan.md' ]]"
 assert "destroy-plan: header and title carry the label" \
-  bash -c "grep -q '### From terraform destroy-plan' '$(get_output warnings-markdown-file)' && grep -q 'title=terraform destroy-plan warning' /tmp/test_output_parse_warnings.txt"
+  bash -c "grep -q '### From terraform destroy-plan' '$(get_output warnings-markdown-file)' && grep -q 'title=terraform destroy-plan warning' ${_test_output}"
 
 # ----------------------------------------------------------------------
 # Missing input_console_output_file → count=0, no crash

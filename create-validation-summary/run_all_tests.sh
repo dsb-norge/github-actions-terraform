@@ -5,6 +5,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 # Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -166,7 +171,7 @@ run_test() {
   local exit_code
   (
     source "${_this_script_dir}/step_create_validation_summary.sh"
-  ) > /tmp/test_output.txt 2>&1
+  ) > "${_test_output}" 2>&1
   exit_code=$?
 
   local failed=0
@@ -211,7 +216,7 @@ ${actual_plan}"
     echo -e "${RED}✗ FAILED${NC}:"
     echo -e "${failures}"
     echo "--- Step output ---"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     echo "--- End step output ---"
     echo "--- GITHUB_OUTPUT ---"
     cat "${GITHUB_OUTPUT}"
@@ -2135,7 +2140,7 @@ test_c16_suffix_isolation() {
     export RUNNER_TEMP="${shared_tmp}"
     export GITHUB_ACTION_PATH="${_this_script_dir}"
     export GITHUB_WORKSPACE="${_this_script_dir}"
-    ( source "${_this_script_dir}/step_create_validation_summary.sh" ) > /tmp/test_output.txt 2>&1 || { echo "  invocation '${sfx}' failed"; rm -rf "${shared_tmp}"; return 1; }
+    ( source "${_this_script_dir}/step_create_validation_summary.sh" ) > "${_test_output}" 2>&1 || { echo "  invocation '${sfx}' failed"; rm -rf "${shared_tmp}"; return 1; }
     rm -f "${GITHUB_OUTPUT}"
   done
   local fails=""

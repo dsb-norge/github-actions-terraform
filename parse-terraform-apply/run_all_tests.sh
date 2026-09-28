@@ -11,6 +11,11 @@
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# The step's output, one file per run of this suite: a fixed path in /tmp is
+# shared with every other suite that uses it, and suites run in parallel.
+_test_output=$(mktemp)
+trap 'rm -f "${_test_output}"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -37,7 +42,7 @@ run_step() {
   (
     set -o allexport
     source "${_this_script_dir}/step_parse_apply_output.sh"
-  ) > /tmp/test_output_parse_apply.txt 2>&1
+  ) > "${_test_output}" 2>&1
   LAST_EXIT=$?
 }
 
@@ -95,7 +100,7 @@ run_count_test() {
   else
     echo -e "${RED}✗ FAILED${NC}:"
     echo -e "${failures}"
-    echo "--- Step output ---"; cat /tmp/test_output_parse_apply.txt; echo "--- End step output ---"
+    echo "--- Step output ---"; cat "${_test_output}"; echo "--- End step output ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
   cleanup
@@ -110,7 +115,7 @@ assert() {
     echo -e "${GREEN}✓ PASSED${NC}"; TESTS_PASSED=$((TESTS_PASSED + 1))
   else
     echo -e "${RED}✗ FAILED${NC}"
-    echo "--- Step output ---"; cat /tmp/test_output_parse_apply.txt; echo "--- GITHUB_OUTPUT ---"; cat "${GITHUB_OUTPUT}"; echo "--- End ---"
+    echo "--- Step output ---"; cat "${_test_output}"; echo "--- GITHUB_OUTPUT ---"; cat "${GITHUB_OUTPUT}"; echo "--- End ---"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 }
@@ -155,13 +160,13 @@ TESTS_RUN=$((TESTS_RUN + 1))
 echo -e "${BLUE}TEST ${TESTS_RUN}: B14: unknown segment is logged as a warning${NC}"
 export input_apply_console_file="${DATA_DIR}/apply_complete_unknown_segment.log"
 run_step
-if grep -q "unrecognised segment" /tmp/test_output_parse_apply.txt &&
-   grep -q "2 forgotten" /tmp/test_output_parse_apply.txt; then
+if grep -q "unrecognised segment" "${_test_output}" &&
+   grep -q "2 forgotten" "${_test_output}"; then
   echo -e "${GREEN}  PASS${NC}"
   TESTS_PASSED=$((TESTS_PASSED + 1))
 else
   echo -e "${RED}  FAIL${NC} expected a warning naming '2 forgotten'"
-  sed -n '1,12p' /tmp/test_output_parse_apply.txt | sed 's/^/       /'
+  sed -n '1,12p' "${_test_output}" | sed 's/^/       /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
@@ -233,7 +238,7 @@ cleanup
 # The parser never decides the outcome; given the exit code it names the
 # one mismatch worth a human look, as a ::warning on the run page.
 # --------------------------------------------------------------------------
-warning_count() { grep -c '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt 2>/dev/null || true; }
+warning_count() { grep -c '^::warning title=Terraform output not recognised::' "${_test_output}" 2>/dev/null || true; }
 
 # exit 0 + no summary line → success is the step's call; counts '?'; ONE warning
 run_count_test "§14: exit 0 + no summary line → counts '?' (the outcome is the step's)" \
@@ -243,9 +248,9 @@ run_step
 assert "§14: exit 0 + no summary line → exactly one 'Terraform output not recognised' warning" \
   test "$(warning_count)" -eq 1
 assert "§14: … the warning asks for the console to be reported and names the file" \
-  bash -c "grep '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt | grep -q 'Please report the apply console output (${input_apply_console_file})'"
+  bash -c "grep '^::warning title=Terraform output not recognised::' ${_test_output} | grep -q 'Please report the apply console output (${input_apply_console_file})'"
 assert "§14: … and says the apply is still reported as succeeded" \
-  bash -c "grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q 'reported as succeeded'"
+  bash -c "grep '^::warning' ${_test_output} | grep -q 'reported as succeeded'"
 assert "§14: … the step still exits 0" test "${LAST_EXIT}" -eq 0
 cleanup
 
@@ -268,7 +273,7 @@ run_count_test "§14: exit 1 + a complete summary line → counts are terraform'
 export input_apply_console_file="${DATA_DIR}/apply_adds_only.log"; export input_apply_exitcode="1"
 run_step
 assert "§14: exit 1 + a complete summary line → no warning; the log names the split" \
-  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && grep -q 'the counts are terraform.s, the outcome is the step.s' /tmp/test_output_parse_apply.txt"
+  bash -c "[ \$(grep -c '^::warning' ${_test_output} 2>/dev/null || true) -eq 0 ] && grep -q 'the counts are terraform.s, the outcome is the step.s' ${_test_output}"
 cleanup
 
 # exit 0 + unknown verb → completed, known verbs counted, ONE warning naming the verb
@@ -277,7 +282,7 @@ run_count_test "§14: exit 0 + unknown verb → completed, known verbs counted" 
 export input_apply_console_file="${DATA_DIR}/apply_complete_unknown_segment.log"; export input_apply_exitcode="0"
 run_step
 assert "§14: exit 0 + unknown verb → exactly one warning, naming '2 forgotten'" \
-  bash -c "[ \$(grep -c '^::warning title=Terraform output not recognised::' /tmp/test_output_parse_apply.txt) -eq 1 ] && grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q \"'2 forgotten'\""
+  bash -c "[ \$(grep -c '^::warning title=Terraform output not recognised::' ${_test_output}) -eq 1 ] && grep '^::warning' ${_test_output} | grep -q \"'2 forgotten'\""
 cleanup
 
 # the unknown-verb warning does not need the exit code: the line proves the apply finished
@@ -291,7 +296,7 @@ _pct_dir=$(mktemp -d); _pct_file="${_pct_dir}/100%25done.log"; cp "${DATA_DIR}/a
 export input_apply_console_file="${_pct_file}"; export input_apply_exitcode="0"
 run_step
 assert "§14: '%' in the console path is escaped as %25 in the warning" \
-  bash -c "grep '^::warning' /tmp/test_output_parse_apply.txt | grep -q '100%2525done.log'"
+  bash -c "grep '^::warning' ${_test_output} | grep -q '100%2525done.log'"
 cleanup; rm -rf "${_pct_dir}"
 export input_apply_exitcode=""
 
@@ -309,16 +314,16 @@ run_count_test "B16: 'Actions: 2 invoked.' after the resource counts" \
 export input_apply_console_file="${DATA_DIR}/apply_complete_with_actions.log"; export input_apply_exitcode="0"
 run_step
 assert "B16: … is not an unknown segment and raises no warning" \
-  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' /tmp/test_output_parse_apply.txt"
+  bash -c "[ \$(grep -c '^::warning' ${_test_output} 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' ${_test_output}"
 assert "B16: … the ignored trailer is named in the log" \
-  grep -q "ignoring what follows the resource counts on the summary line: Actions: 2 invoked." /tmp/test_output_parse_apply.txt
+  grep -q "ignoring what follows the resource counts on the summary line: Actions: 2 invoked." "${_test_output}"
 cleanup
 run_count_test "B17: 'Actions: 2 invoked, 1 failed.' — the failed count is not a resource count" \
                                                         apply_complete_with_actions_failed.log        1   0   0  true  apply "" 1
 export input_apply_console_file="${DATA_DIR}/apply_complete_with_actions_failed.log"; export input_apply_exitcode="1"
 run_step
 assert "B17: … no warning, no unknown segment" \
-  bash -c "[ \$(grep -c '^::warning' /tmp/test_output_parse_apply.txt 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' /tmp/test_output_parse_apply.txt"
+  bash -c "[ \$(grep -c '^::warning' ${_test_output} 2>/dev/null || true) -eq 0 ] && ! grep -q 'unrecognised segment' ${_test_output}"
 cleanup
 export input_apply_exitcode=""
 

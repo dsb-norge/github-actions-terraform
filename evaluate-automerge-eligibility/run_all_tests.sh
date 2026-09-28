@@ -363,7 +363,7 @@ run_error_test() {
     echo -e "${RED}✗ FAILED${NC}: Script should have exited with error"
     echo ""
     echo "Test output:"
-    cat /tmp/test_output.txt
+    cat "${_test_output}"
     TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 
@@ -3161,6 +3161,46 @@ if [[ "${_f17_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f17_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F18 — no test suite writes to a fixed path under /tmp.
+#
+# Suites run side by side (a local parallel run, two checkouts on one machine),
+# and a fixed file is shared by every run that uses it: one suite then reads
+# another's output. Each suite writes to a file of its own from mktemp
+# (docs/Action-implementation-guide.md, the test runner template).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F18 - no test suite writes to a fixed path under /tmp${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f18_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, re, sys
+
+# A redirect or tee into /tmp/<name>, the name written out.
+FIXED = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*['\"]?/tmp/[\w.-]")
+files = sorted(glob.glob('*/run_*.sh') + glob.glob('.github/scripts/test-*.sh'))
+problems = []
+for path in files:
+    with open(path, encoding='utf-8') as fh:
+        for number, line in enumerate(fh, 1):
+            if not line.lstrip().startswith('#') and FIXED.search(line):
+                problems.append(f"{path}:{number} writes to a fixed /tmp path: {line.strip()[:100]}")
+print(f"checked {len(files)} suite script(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f18_rc=0 || _f18_rc=$?
+if [[ "${_f18_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f18_out}" | head -n1): every output goes to a file of its own"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f18_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
