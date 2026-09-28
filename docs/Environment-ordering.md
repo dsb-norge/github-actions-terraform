@@ -54,7 +54,7 @@ all three:
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `depends-on` | list of environment names, per environment in `environments-yml` | `[]` | This environment runs in a later stage than every environment named here. |
+| `depends-on` | list of environment names, per environment in `environments-yml`; one name written alone is that one name, as for the other list settings (Configuration-validation.md §3.2) | `[]` | This environment runs in a later stage than every environment named here. |
 
 ```yaml
 environments-yml: |
@@ -118,7 +118,6 @@ terraform-ci-cd:            # stage 1, keeps today's job id
   if: |
     !cancelled()
     && needs.create-matrix.result == 'success'
-    && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
     && needs.create-matrix.outputs.stage-1-count != '0'
   strategy:
     fail-fast: false
@@ -132,7 +131,6 @@ terraform-ci-cd-2:          # stage 2
   if: |
     !cancelled()
     && needs.create-matrix.result == 'success'
-    && (needs.seed-pr-comments.result == 'success' || needs.seed-pr-comments.result == 'skipped')
     && (needs.terraform-ci-cd.result == 'success' || needs.terraform-ci-cd.result == 'skipped')
     && needs.create-matrix.outputs.stage-2-count != '0'
   strategy:
@@ -149,8 +147,9 @@ Four properties of that guard, each load-bearing:
   contains no status-check function, so GitHub prepends an implicit success check and the job is
   skipped even when the comparisons are true.
 - **`!failure()` must not be used.** It is transitive over every ancestor, so a failed
-  `seed-pr-comments`, which the environment job deliberately tolerates today, would hold back every
-  stage.
+  `seed-pr-comments`, which the environment job deliberately tolerates (Path-relevance.md §5.3),
+  would hold back every stage. The seed's result is not tested at all, as today: it is in `needs`
+  for ordering only.
 - **A predecessor that was `skipped` releases the next stage; one that `failed` or was `cancelled`
   holds it back.** That is the whole mechanism, and it is why an empty stage in the middle is
   harmless.
@@ -195,12 +194,17 @@ runs against each other; the concurrency groups do that, per environment.
 
 Each stops the run in `create-matrix` with a red conclusion and one message.
 
+The messages follow Configuration-validation.md's style (its D9): what was written, why it cannot
+be used, and how to write what was probably meant.
+
 | Situation | Message |
 |---|---|
-| unknown name | `environments-yml: environment 'prod': depends-on names 'stagng', which is not a declared environment` |
-| self-reference | `environments-yml: environment 'prod': depends-on names itself` |
-| cycle | `environments-yml: depends-on forms a cycle: shared → prod → shared` |
-| deeper than the cap | `environments-yml: depends-on needs 4 stages but this workflow supports 3. Longest chain: shared → platform → regional → app. Flatten the chain or split the repository.` |
+| unknown name | `The environment 'prod' depends on 'stagng', which is not an environment of environments-yml; did you mean 'staging'?` (with no near miss: `… The environments are shared, staging, prod.`) |
+| self-reference | `The environment 'prod' depends on itself, so it could never run; remove 'prod' from its depends-on.` |
+| cycle | `depends-on forms a cycle, shared → prod → shared, so none of them could ever run first; remove one of the dependencies.` |
+| deeper than the cap | `depends-on needs 4 stages, but the workflow runs at most 3: shared → platform → regional → app. Flatten the chain, or split the repository.` |
+| not a list of names | `The environment 'prod' sets 'depends-on' to {"shared": true}; it must be a list of environment names.` |
+| a name that is not text | `The environment 'prod' depends on 7, which is not an environment name; quote it if it is one.` |
 
 ## 6. Bypass and recovery
 
@@ -334,6 +338,17 @@ is why it is not optional.
 | GitHub Environments | A required reviewer on a deployment environment now blocks every later stage while it waits, which is arguably correct and is documented. |
 
 ## 10. Actions and workflow changes
+
+The contract between the pieces:
+
+| Where | What |
+|---|---|
+| engine output | `matrices` holds `"1"`, `"2"` and `"3"`, each `{"environment": [...], "include": [...]}`, empty when the stage has no environment. `counts.by_stage` is `{"1": n, "2": n, "3": n}`. `ordering` is `{"declared": <whether any environment declares depends-on>, "stages_used": <1 to 3>, "cap": 3, "bypass": null or "single-environment-dispatch"}`. Every entry of `environments[]` carries `depends-on`, the declared list (so a renderer can say what a held-back environment waits for); a `run` entry carries `stage`, 1 to 3. |
+| reasons | a `run` entry's reasons gain, after its relevance reason and before its goals, `ordering: stage <n>` when more than one stage is in use, one `ordering: depends-on '<name>' not in this run (<that environment's first reason>)` per declared dependency left out, and `ordering: single-environment dispatch, stage 1` for the bypass |
+| notices | the bypass, when the dispatched environment declares dependencies; and, when a mutating goal is granted, each declared dependency that is not in the run (§8) |
+| `create-tf-vars-matrix` outputs | `matrix-stage-1-json`, `matrix-stage-2-json`, `matrix-stage-3-json` and `stage-1-count`, `stage-2-count`, `stage-3-count`; `matrix-json` stays, the union of the three; `affected-count` stays the total |
+| `relevance.json` | the entries and `ordering` as above, since it is the output document without its matrices |
+| the stage results | the jobs after the stages receive them as `stage-results-json`, `{"1": "<result>", "2": "<result>", "3": "<result>"}`, built in the workflow from `needs.<stage job>.result` |
 
 - **Decision engine**: the ordering rule, the stage fields and per-stage matrices in its output, the
   invariants of its §7, and `depends-on` as a dimension of its generated cases.
