@@ -458,6 +458,13 @@ class ProviderSetTest(unittest.TestCase):
         self.assertIn("the environment 'staging' has no .terraform.lock.hcl; its providers take no part in the test "
                       "stage", output["notices"])
 
+    def test_a_missing_lock_is_mentioned_only_when_a_test_takes_the_locks(self):
+        lockless = "the environment 'staging' has no .terraform.lock.hcl; its providers take no part in the test stage"
+        locks = {"envs/prod": LOCK_A, "envs/staging": None}
+        self.assertNotIn(lockless, decided([], locks=locks)["notices"])
+        self.assertNotIn(lockless, decided(["envs/prod/tests/unit.tftest.hcl"], locks=locks)["notices"])
+        self.assertIn(lockless, decided([self.FILE], locks=locks)["notices"])
+
     def test_no_lock_at_all_runs_each_file_once_without_a_copy(self):
         row = rows([self.FILE], locks={"envs/prod": None, "envs/staging": None})[0]["test"]
         self.assertEqual(("", "", []), (row["provider-set"], row["provider-set-lock"], row["provider-set-environments"]))
