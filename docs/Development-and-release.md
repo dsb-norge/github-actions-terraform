@@ -72,7 +72,46 @@ last minor and takes fixes only. A v0 fix is made on the `release/v0` branch, cu
 last v0 minor's commit (`git switch -c release/v0 v0.33`) when the first fix is needed, where
 every internal ref still says `@v0`. It is released as a `v0.<n>` minor that moves `v0`, in
 the same way as below. The branch is not named `v0`: a branch and a tag of the same name make
-every `v0` reference ambiguous to git.
+every `v0` reference ambiguous to git. v0 takes no features, and its support ends when the last
+caller has moved to v1.
+
+**While v1 has no callers, only `v1` moves.** There are no `v1.<n>` minors or patches: after each
+v1 pull request merges, `v1` is force-moved to the merge's tip on `main`, and one block for that
+pull request is appended to its annotation, the pull request's number and title followed by its
+commit subjects:
+
+```bash
+git fetch origin --tags -f
+old=$(git for-each-ref --format='%(contents)' refs/tags/v1)   # empty the first time
+new_block="#<PR>: <PR title>
+  - <commit subject>
+  - <commit subject>"
+combined="${old:+${old}
+}${new_block}"
+# --cleanup=verbatim: the default cleanup drops every line that starts with '#', the block header too
+git tag -f -a --cleanup=verbatim v1 -m "${combined}" origin/main
+git push -f origin refs/tags/v1
+```
+
+Once callers move to v1, v1 releases follow the minor release procedure below, as v0 releases did.
+
+**A major tag's annotation is an append-only changelog.** Every block already in it is kept when
+the tag is force-recreated. `git tag -f -a <tag>` without `-m` opens an empty annotation, and
+saving it replaces the whole changelog, so read the old annotation and append to it:
+
+```bash
+old=$(git for-each-ref --format='%(contents)' refs/tags/v0)
+new_block="v0.<n>:
+  - <commit subject>"
+git tag -a "v0.<n>" -m "${new_block}"
+git tag -f -a v0 -m "${old}
+${new_block}"
+git push origin "refs/tags/v0.<n>"
+git push -f origin refs/tags/v0
+```
+
+A minor's block is `v<major>.<minor>:` followed by the commit subjects since the previous minor,
+lightly rephrased where a literal subject would be confusing as a release note.
 
 ### Minor release
 
@@ -89,8 +128,8 @@ git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tag
 git log v0..HEAD --pretty=format:"%s"
 git tag -a 'v0.33'
 # you are prompted for the tag annotation (change description)
-git tag -f -a 'v0.33'
-# you are prompted for the tag annotation
+git tag -f -a 'v0'
+# you are prompted for the tag annotation: keep every earlier block (see "Release lines")
 git push origin 'refs/tags/v0.33'
 git push -f origin 'refs/tags/v0'
 ```
