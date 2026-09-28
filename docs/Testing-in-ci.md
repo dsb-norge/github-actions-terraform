@@ -12,7 +12,7 @@ Out of scope: the test suites themselves (their layout is described in [Action-i
 
 - Run every modern `run_all_tests.sh` suite automatically on each PR, in parallel.
 - Surface the result as a single PR comment so reviewers see at a glance which actions were exercised and which aren't.
-- Expose a single, stable status check (`tests-conclusion`) that can later be required by branch protection — independent of how the matrix grows.
+- Expose a single, stable status check (`tests-conclusion`) that branch protection requires — independent of how the matrix grows.
 - Make the not-tested set visible too, so the comment doubles as a nudge toward modernization.
 
 ### Non-goals
@@ -95,7 +95,7 @@ Single, no-matrix terminal job. `needs: [discover, test, engine-python, engine-m
 if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
 ```
 
-Fails if `needs.discover.result != success`, if `needs.engine-python.result != success`, if `needs.engine-mutation-gate.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection will be configured to require — independent of which suites exist at any given time.
+Fails if `needs.discover.result != success`, if `needs.engine-python.result != success`, if `needs.engine-mutation-gate.result != success`, or if `needs.test.result` is `failure` or `cancelled`. Treats `success` and `skipped` as passing (`skipped` happens when `tests-matrix` is empty). This is the stable check name that branch protection requires — independent of which suites exist at any given time.
 
 ## 3. Discovery rules and exclusions
 
@@ -105,7 +105,7 @@ Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. Dire
 |---|---|
 | *(none)* | — |
 
-`export-env-vars` gets a suite without being converted to the modern layout first: its `extract_step_source.py` extracts the step source from `action.yml` and runs it against fixtures — useful for any action whose logic is still inline bash.
+Two suites run a step's `run:` block from `action.yml` itself: `export-env-vars` and `terraform-apply` each carry an `extract_step_source.py` that extracts the block with its expressions substituted as literal text, as GitHub does, and runs it against fixtures. For `export-env-vars` that tests the shim and, through it, `step_export_envs.sh`; for `terraform-apply`, the prerequisite check that stays inline.
 
 `.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`; the second pass skips `.github/` and `.git/` explicitly. `contract-tests/` holds no `run_all_tests.sh` and is therefore not discovered; it has its own workflow (§13).
 
