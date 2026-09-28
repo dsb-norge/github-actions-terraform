@@ -44,7 +44,7 @@ jobs:
       pull-requests: write # sticky comment
     steps:
       - name: "📥 Checkout PR head"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The head, not the merge commit: the generated commit's parent must be the PR head
           # so provenance is one `git log` away and does not move when main moves.
@@ -237,7 +237,7 @@ jobs:
       # The PR head commit outlives the branch (GitHub keeps refs/pull/<N>/head), and it is
       # the copy of pr-comment that wrote the comment.
       - name: "📥 Checkout PR head (for pr-comment)"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false

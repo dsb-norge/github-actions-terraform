@@ -55,7 +55,7 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "🔎 Resolve the newest minors from the releases API"
         id: resolve
@@ -74,7 +74,7 @@ jobs:
         terraform: ${{ fromJSON(needs.resolve-versions.outputs.matrix) }}
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "🔧 Setup terraform ${{ matrix.terraform }}"
         uses: hashicorp/setup-terraform@v4
