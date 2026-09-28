@@ -507,11 +507,16 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   judges anything it checks that the shards ran every mutant exactly once. A missing shard would
   otherwise hide its survivors, and it would also make every equivalent in it read as stale.
 - **`tests-conclusion`** requires `engine-mutation-gate` to succeed.
+- **The PR comment includes the gate.** `engine-mutation-gate` writes `result-engine-mutation-gate.json`
+  in the §5 shape, one test as the engine suite counts it locally, and uploads it as
+  `test-result-engine-mutation-gate` whatever its result. `summary` needs the gate, so a red gate
+  is a red row and the totals cannot read green over it.
 
 The structural test F17 (`evaluate-automerge-eligibility/run_all_tests.sh`) holds this together:
 - every job that runs the engine suite sets `ENGINE_MUTATION=shards`;
 - the shards are 1..N, with the same N in the matrix, the command and the job name;
-- the merge needs the shards and checks their result;
+- the merge needs the shards, checks their result and reports a `test-result-*` artifact, which
+  `summary` waits for;
 - `tests-conclusion` requires the merge.
 
 To change the shard count, change all three places together. F17 fails until they agree.
