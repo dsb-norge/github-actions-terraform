@@ -77,7 +77,7 @@ run: |
   set -o allexport
   source "${{ github.action_path }}/step_<name>.sh"   # input_body="$(jq -r '. // ""' <<<"${input_body_json}")"; export -n input_body
 ```
-The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository. The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces it. **Check the history before moving a value into envp**: the May 2026 fixes (`f9594c2`, `07eeddd`, `4fedab9`, `8cd5d63`, `8aafc32`) took large values out of it after production E2BIG failures.
+The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository. The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces it. **Never paste `${{ inputs.* }}`, `${{ matrix.* }}` or a step output into a `run:` block's text** outside such a capture: read it from the step's `env:` (F16). No non-breaking space in a workflow or action file (F19). **Check the history before moving a value into envp**: the May 2026 fixes (`f9594c2`, `07eeddd`, `4fedab9`, `8cd5d63`, `8aafc32`) took large values out of it after production E2BIG failures.
 
 ### Watch for ARG_MAX in step scripts
 
@@ -170,3 +170,4 @@ Minor and major releases both use annotated tags. Critical points beyond the doc
 - **Commit messages:** lowercase semantic prefix (`feat:`, `fix:`, `chore:`, `refactor:`, `docs:`, `test:`), subject ≤70 chars, body separated by blank line, body lines not wrapped.
 - **PR descriptions:** focus on motivation/context and a summary of changes. Don't include QA checklists or testing instructions.
 - **Comments in step scripts:** explain *why* (non-obvious constraints, intentional side-effects, references to past incidents); never *what* a well-named identifier already says. Don't reference current PR/task numbers since those rot.
+- **Docs:** specs are written as built, with no progress markers, nothing internal (this repository is public), and worked examples produced by running the code; actions stay on their latest major. `docs/Development-and-release.md` → "Documentation", "Validating on a test-bed repository", "Keeping actions current".
