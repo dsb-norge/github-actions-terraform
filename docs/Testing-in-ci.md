@@ -191,14 +191,13 @@ Body layout (red example shown; on a green run the row table is all ✅ and the 
 | parse-terraform-plan | ❌ Fail | 5 / 7 | [job log](…) |
 | … | … | … | … |
 
-**Not tested yet (10)** — modernization candidates
+**Not tested yet (3)** — modernization candidates
 
 <details><summary>Show list</summary>
 
-- create-tf-vars-matrix
-- export-env-vars
-- terraform-init
-- …
+- create-tftest-matrix
+- setup-terraform-plugin-cache
+- terraform-docs
 
 </details>
 
