@@ -19,6 +19,11 @@ hangs, or slows the suite past anything a real run could be.
 Usage:
   mutation.py                    run every mutant, print survivors, exit 1 if the gate fails
   mutation.py --list             print every mutant's key without running anything
+  mutation.py --shard K/N --out FILE
+                                 run the K-th of N interleaved shards and write its survivors to
+                                 FILE, judging nothing (CI runs the shards in parallel jobs)
+  mutation.py --merge FILE...    apply the gate to the shards' files, which must cover every
+                                 mutant exactly once
   mutation.py --run-suite [MODULE]
                                  (internal) run the suite of the engine copy in the working
                                  directory, the tests of MODULE first, stopping at the first failure
@@ -255,6 +260,33 @@ def _run(selected, label):
     return survivors
 
 
+def _shard(value):
+    number, _, total = value.partition("/")
+    if not (number.isdigit() and total.isdigit() and 1 <= int(number) <= int(total)):
+        raise SystemExit(f"mutation: --shard takes K/N with 1 <= K <= N, not {value!r}")
+    return int(number), int(total)
+
+
+def _merge(files, every):
+    """The survivors of every shard, or None when the shards do not cover every mutant once."""
+    ran, survivors = [], []
+    for path in files:
+        with open(path, encoding="utf-8") as handle:
+            shard = json.load(handle)
+        ran += shard["keys"]
+        survivors += [tuple(survivor) for survivor in shard["survivors"]]
+    keys = [key for key, *_ in every]
+    if sorted(ran) != sorted(keys):
+        missing = sorted(set(keys) - set(ran))
+        extra = sorted(set(key for key in ran if key not in keys or ran.count(key) > 1))
+        print(f"mutation: the shards ran {len(ran)} mutants of {len(keys)}, "
+              f"{len(missing)} missing and {len(extra)} unknown or repeated; nothing is judged")
+        for key in (missing + extra)[:20]:
+            print(f"  {key}")
+        return None
+    return survivors
+
+
 def main(argv):
     if "--run-suite" in argv:
         rest = argv[argv.index("--run-suite") + 1:]
@@ -265,7 +297,22 @@ def main(argv):
             print(key)
         return 0
 
-    survivors = _run(every, "")
+    if "--shard" in argv:
+        number, total = _shard(argv[argv.index("--shard") + 1])
+        # Interleaved, so every shard holds a share of every module and of its slow mutants.
+        selected = every[number - 1::total]
+        survivors = _run(selected, f", shard {number}/{total}")
+        if survivors is None:
+            return 1
+        with open(argv[argv.index("--out") + 1], "w", encoding="utf-8") as handle:
+            json.dump({"keys": [key for key, *_ in selected], "survivors": survivors}, handle)
+        print(f"mutation: shard {number}/{total}: {len(selected) - len(survivors)} killed, "
+              f"{len(survivors)} survived; judged when the shards are merged")
+        return 0
+    if "--merge" in argv:
+        survivors = _merge(argv[argv.index("--merge") + 1:], every)
+    else:
+        survivors = _run(every, "")
     if survivors is None:
         return 1
 

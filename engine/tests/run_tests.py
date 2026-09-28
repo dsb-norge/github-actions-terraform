@@ -10,6 +10,9 @@ coverage is not preinstalled on the hosted runners, and `pip install --user` is 
 (externally managed environment), so it runs through the preinstalled pipx at a pinned
 version; `python3 -m coverage` is used where it is importable, such as a developer's venv.
 A missing coverage fails the gate: the gate is part of the contract.
+
+ENGINE_MUTATION=shards leaves the mutation gate out and says so: CI runs it once, split across
+parallel jobs, and merges their results (docs/Testing-in-ci.md §14). Anything else runs it here.
 """
 
 import importlib.util
@@ -81,10 +84,13 @@ def main():
             result = {"run": 0, "failed": 0}
             shortfalls.append("  the unit runner did not report a result")
 
-        mutation_failed = run([sys.executable, "-B", os.path.join(TESTS_DIR, "mutation.py")], env) != 0
+        mutation = os.environ.get("ENGINE_MUTATION", "") != "shards"
+        mutation_failed = mutation and run([sys.executable, "-B", os.path.join(TESTS_DIR, "mutation.py")], env) != 0
 
     print("")
-    if mutation_failed:
+    if not mutation:
+        print("Mutation gate not run here (ENGINE_MUTATION=shards): CI runs it in its own sharded jobs.")
+    elif mutation_failed:
         print("MUTATION GATE FAILED: an injected fault went unnoticed by every test (listed above).")
     else:
         print("Mutation gate passed: every injected fault fails a test.")
@@ -94,7 +100,7 @@ def main():
     else:
         print("Coverage gate passed: 100 percent of lines and branches.")
 
-    tests_run = result["run"] + 2
+    tests_run = result["run"] + 1 + (1 if mutation else 0)
     tests_failed = result["failed"] + (1 if shortfalls else 0) + (1 if mutation_failed else 0)
     print("")
     print(f"Tests run:    {tests_run}")
