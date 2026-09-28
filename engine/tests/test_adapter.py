@@ -79,6 +79,7 @@ DEFAULT_INPUTS = {
     "add-pr-comment": True, "apply-extract-include-outputs": False, "cache-terraform-modules": True,
     "pr-auto-merge-enabled": False, "pr-comment-group": "", "terraform-version": "latest",
     "tflint-version": "latest", "verify-lock-file": True, "path-relevance-enabled": True,
+    "format-check-in-root-dir": False, "runs-on": "ubuntu-latest",
 }
 
 

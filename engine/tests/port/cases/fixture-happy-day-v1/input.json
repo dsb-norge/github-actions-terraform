@@ -47,6 +47,7 @@
     "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
     "pr-comment-group": "",
+    "runs-on": "ubuntu-latest",
     "terraform-init-additional-dirs-yml": "- \"./main\"\n- \"./module/1\"\n- \"./module/2\"\n",
     "terraform-test-enabled": true,
     "terraform-test-exclude-paths-yml": "",

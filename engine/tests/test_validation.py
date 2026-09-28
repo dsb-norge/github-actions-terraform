@@ -18,7 +18,7 @@ WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(support.TESTS_DIR)),
 
 # Keys the workflow reads from a row that the required-field list does not name. A recorded
 # finding (docs/Decision-engine.md §9): the port keeps the list as the bash builder had it.
-READ_BUT_NOT_REQUIRED = {"runs-on", "format-check-in-root-dir"}
+READ_BUT_NOT_REQUIRED = set()
 # Set by the engine on every row it puts in a matrix (rule 7), never read from the caller; I16 holds it.
 SET_BY_THE_ENGINE = {"goals-granted"}
 

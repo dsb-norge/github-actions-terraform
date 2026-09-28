@@ -49,6 +49,12 @@ class EnvironmentsTest(unittest.TestCase):
         self.assertEqual({}, output["matrices"])
         self.assertEqual([], output["environments"])
 
+    def test_runs_on_and_the_format_check_are_required(self):
+        document = support.document()
+        del document["workflow_inputs"]["runs-on"], document["workflow_inputs"]["format-check-in-root-dir"]
+        self.assertEqual(["Missing property 'format-check-in-root-dir' in environment specification!",
+                          "Missing property 'runs-on' in environment specification!"], decide.decide(document)["errors"])
+
     def test_the_output_document_has_exactly_its_keys(self):
         keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record"}
         output = decide.decide(support.document())

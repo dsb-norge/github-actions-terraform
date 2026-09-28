@@ -114,11 +114,21 @@ class StringInputsTest(unittest.TestCase):
                                   "quote it!"], output["errors"])
 
     def test_a_setting_keeps_its_yaml_type_and_an_unknown_key_is_refused(self):
-        output = decide_with({"environment": "env-a", "runs-on": ["self-hosted", "x"]})
-        self.assertEqual(([], ["self-hosted", "x"]), (output["errors"], row(output)["runs-on"]))
+        output = decide_with({"environment": "env-a", "url": 5})
+        self.assertEqual(([], 5), (output["errors"], row(output)["url"]))
+        # runs-on is a workflow input, so an environment's value is a string like the input's.
+        self.assertEqual(["The environment 'env-a' sets 'runs-on' to [\"self-hosted\", \"x\"], which is not a string; "
+                          "quote it!"], decide_with({"environment": "env-a", "runs-on": ["self-hosted", "x"]})["errors"])
         output = decide_with({"environment": "env-a", "my-key": {"a": 1}})
         self.assertEqual(["The environment 'env-a' sets 'my-key', which is not a setting. The settings an environment "
                           "may hold are listed in docs/Configuration-validation.md §3.1."], output["errors"])
+
+
+class FieldOrderTest(unittest.TestCase):
+    def test_of_two_bad_values_the_first_key_is_reported(self):
+        # Key order and value order differ here, so the report depends on which one is sorted.
+        self.assertEqual(["The environment 'env-a' sets 'terraform-version' to 1, which is not a string; quote it!"],
+                         decide_with({"environment": "env-a", "tflint-version": 0, "terraform-version": 1})["errors"])
 
 
 class NamesTest(unittest.TestCase):
