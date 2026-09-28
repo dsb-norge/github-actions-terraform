@@ -374,17 +374,48 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | A private repository's name in `auto-merge-pr/run_local_step_auto_merge_pr.sh` | removed | step 7 |
 | The engine's `validate` and `render-summary` commands, specified but not built | dropped from the spec; P12 described as built | step 7 |
 | Contradictory caller advice on `cancel-in-progress` (the PR-comments spec against the user guide) | the user guide's warning holds | step 7 |
-| Cases covered by tests only (ordering's overlapping runs, a force push, a push creating a branch, a dispatch without an inputs block, a re-run by another actor) | exercised on the test bed | step 7 |
+| Cases covered by tests only (ordering's overlapping runs, a force push, a push creating a branch, a dispatch without an inputs block, a re-run by another actor) | exercised on the test bed, as specified, but the re-run by another actor, which needs a second account | step 7 |
 | Dependabot runs and OIDC; a fork run creating an environment | bear on nothing in v1: deferred | closed |
 | A single-test-file dispatch input; relevance for tests | after v1 | closed |
 | Suites writing to a fixed `/tmp` file | step 8, with the parallel runs | step 8 |
 | Module CI's inline actions without suites; the module workflow docs | step 9 | step 9 |
 | Specs' status lines and progress markers; the stale statements the inventory listed (eleven); the self-hosted runner requirements; the secret naming precondition | step 10 | step 10 |
 | The required `tests-conclusion` check on this repository | closed: a merge of #66 was refused while it was pending | closed |
-| The mode row's raw goals elsewhere: the engine's seed placeholder (`comments.py`) and the aggregator's group head (`_extract_goal_flag`) | found while fixing the per-environment row; the same fix, what was granted on a pull request | step 7, still to do |
+| The mode row's raw goals elsewhere: the engine's seed placeholder (`comments.py`) and the aggregator's group head (`_extract_goal_flag`) | found while fixing the per-environment row; the same fix: the engine's `mutates-on-pr` lists only the on-PR goals the event grants, and the aggregator narrows by the metadata's `goals-granted` | step 7 |
 | Non-breaking spaces inside `${{ secrets.… }}` in `terraform-module-ci.yaml` (actionlint flags them) | may break those expressions | step 9 |
 | A per-environment `runs-on` written as a list of runner labels is refused as not a string (the rule of #61 for string inputs); no surveyed caller writes one | for the migration guide | step 10 |
-| The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | needs the maintainer's Azure session for the first; the rest through a hand-published tag | step 7, still to do |
+| The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | through a hand-published tag; all but the OIDC lane done (below). The lane waits for a directory role to register its throwaway identity | step 7, the OIDC lane still to do |
+| `actions/create-github-app-token@v2` in the auto-merge job (Node 20; the runner forces it onto Node 24 with a deprecation warning) | found on the test bed; v3 is Node 24, and its breaking change is proxy handling (`NODE_USE_ENV_PROXY`), which reaches callers because the job runs on their `runs-on` | for the maintainer |
+
+Test bed, through the hand-published tag `test/step7-81c7372`, on
+dsb-norge/azure-terraform-peder-tester#66, #67 and its `main`, whose ruleset requires a pull
+request, an approval and `tf / Terraform conclusion`, with the test bed's App and the repository
+admin role on its bypass list:
+
+- auto-merge through the App: a docs-only pull request (every environment not affected) merged by
+  the App, past the approval rule; a pull request planning one add against its environment's
+  limit of one was refused while its base had moved (the docs-only merge landed during its run:
+  `The base branch 'main' moved after this run planned the pull request (planned on d422a63, now
+  6c619e0) …`), and merged by the App on its next run after the branch was brought up to date;
+- `download-artifact@v8`: every by-pattern download with no match (`matrix-job-meta-*`,
+  `terraform-test-meta-*`, four jobs) reported `Total of 0 artifact(s) downloaded` and succeeded;
+- the within-limits merge's push applied `outputs-kept-poc` alone and said so: ``_Ordering: 1 stage.
+  `outputs-kept-poc` applied; its dependency `noop-poc` was not in this run (relevance: no
+  changed file matches)._``, with the notice;
+- overlapping ordered runs (Environment-ordering.md §4.5): a push touching every environment and,
+  four seconds later, one touching `outputs-kept-poc` alone; the newer run took `outputs-kept-poc`
+  in its stage 1 while the older was still in its stage 1, and the older run's stage 2 took it
+  after; both green;
+- a force push to `main`: mode `all: forced`, two stages; a push creating a branch at `main`'s tip:
+  diffed against the default branch (D13), no changed file, `nothing to verify for this change`;
+  a dispatch of a workflow without an inputs block: the trigger line naming the standard block,
+  every environment with its goals, staged.
+- the mode row's granted goals, on dsb-norge/azure-terraform-peder-tester#68, a pull request
+  against a base other than the default branch with `apply-on-pr` held by an ungrouped
+  environment and by a group member: the seed's placeholders, the environment's head and the
+  group head all titled "Terraform validation summary", with no Mode row and no "applies on PR".
+
+The re-run by another actor needs a second account and stays covered by tests only.
 
 ## 5. Findings to carry
 
@@ -454,6 +485,8 @@ Recorded while building, not fixed in the step that found them, each waiting for
   environment without a lock file ("its providers take no part in the test stage").
 - `create-validation-summary`'s mode row reads the raw goals, not `goals-granted`; it can say
   "applies on PR" for a pull request against another base branch, where nothing applies.
+- `actions/create-github-app-token@v2` in the auto-merge job targets Node 20; the runner forces it
+  onto Node 24 with a deprecation warning. `pr-preview.yml` already uses v3.
 
 - Run blocks that paste values straight into shell, with no heredoc: `matrix.vars.github-environment`
   (caller-configured, now held to the name rule by #61) in several steps of the default workflow, `matrix.test-file` in module CI and
