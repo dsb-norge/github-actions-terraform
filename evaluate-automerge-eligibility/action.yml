@@ -44,7 +44,9 @@ description: |
   - Affected environment (`verdict: run`) with exactly one metadata file: checks 1-11 above,
     from the metadata, unchanged.
   - Affected environment without a metadata file: not eligible. Its job was cancelled or failed
-    before capturing metadata.
+    before capturing metadata, or, with `stage-results-json`, it was held back: its stage was
+    skipped although it has environments, because an earlier stage failed. The reason then says
+    so and names the stage that held it back (docs/Environment-ordering.md §7.5).
   - Unaffected environment (`verdict: skip`) without a metadata file: checks 1-3 from the resolved
     `pr-auto-merge-enabled`, `pr-auto-merge-from-actors` and `pr-auto-merge-limits` in the file;
     checks 4-10 are recorded as NOT AFFECTED.
@@ -107,6 +109,16 @@ inputs:
       affected. No matching file names nothing; empty skips the step.
     required: false
     default: "terraform-test-meta-*.json"
+  stage-results-json:
+    description: |
+      The result of each stage job, as a JSON object:
+      {"1": "<result>", "2": "<result>", "3": "<result>"}, each one of success, failure,
+      cancelled or skipped. With relevance-file it tells an affected environment a failed stage
+      held back from one whose job crashed; both are not eligible, and only the reason differs.
+      Empty, or not such an object: every affected environment without metadata is reported as
+      cancelled or crashed, as without it.
+    required: false
+    default: ""
 outputs:
   is-eligible:
     description: |
@@ -128,6 +140,14 @@ runs:
         input_test_metadata_files_pattern: ${{ inputs.test-metadata-files-pattern }}
       run: |
         # Evaluate whether every environment is eligible for auto-merge
+
+        # A JSON-contract input through a quoted heredoc, before allexport, so it
+        # is never exported; step_evaluate.sh reads it as a shell-local.
+        input_stage_results_json=$(cat <<'EVALUATE_AUTOMERGE_ELIGIBILITY_STAGE_RESULTS_JSON'
+        ${{ inputs.stage-results-json }}
+        EVALUATE_AUTOMERGE_ELIGIBILITY_STAGE_RESULTS_JSON
+        )
+
         set -o allexport
         source "${{ github.action_path }}/step_evaluate.sh"
         exit_code=$?

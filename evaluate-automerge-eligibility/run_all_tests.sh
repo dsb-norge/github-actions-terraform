@@ -283,8 +283,10 @@ run_test() {
   export input_relevance_file="${TEST_RELEVANCE_FILE:-}"
   export input_test_metadata_files_pattern="${TEST_TEST_METADATA_PATTERN-terraform-test-meta-*.json}"
 
-  # Run the step_evaluate.sh script in a subshell
+  # Run the step_evaluate.sh script in a subshell. TEST_STAGE_RESULTS is the stage-results-json
+  # input, a shell-local captured before allexport as the shim does, empty when not given.
   (
+    input_stage_results_json="${TEST_STAGE_RESULTS:-}"
     set -o allexport
     source "${_this_script_dir}/step_evaluate.sh"
   ) > "${_test_output}" 2>&1
@@ -1771,6 +1773,115 @@ run_test "Relevance: a tolerated failing test is named, the test metadata is no 
   "✅ prod (not affected)" "!not in the relevance file" \
   "::notice title=Auto-merge::auto-merge eligible despite the tolerated failing test modules/rg/tests/int-rg.tftest.hcl (lane integration)"
 unset TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# ============================================================================
+# Tests O1-O6: Environment ordering (docs/Environment-ordering.md §7.5). An affected environment a
+# failed stage held back has no metadata, which is not eligible as before; only the reason
+# changes. TEST_STAGE_RESULTS is the stage-results-json input.
+# ============================================================================
+# Give a relevance file stages as the engine writes them: each run entry's stage (1 unless named),
+# counts.by_stage counted from them, depends-on on every entry and the ordering block.
+# Usage: stage_relevance_file <file> <stages used> [<github-environment>:<stage>]...
+stage_relevance_file() {
+  local file="${1}" used="${2}"
+  shift 2
+  local stages='{}' spec
+  for spec in "$@"; do
+    stages=$(jq -c --arg e "${spec%%:*}" --argjson s "${spec##*:}" '.[$e] = $s' <<<"${stages}")
+  done
+  jq --argjson st "${stages}" --argjson used "${used}" '
+    .environments |= map(. + {"depends-on": []} | if .verdict == "run" then .stage = ($st[."github-environment"] // 1) else . end)
+    | .environments as $envs
+    | def in_stage($n): [$envs[] | select(.verdict == "run" and .stage == $n)] | length;
+      .counts.by_stage = {"1": in_stage(1), "2": in_stage(2), "3": in_stage(3)}
+    | .ordering = {"declared": true, "stages_used": $used, "cap": 3, "bypass": null}' "${file}" >"${file}.tmp" &&
+    mv "${file}.tmp" "${file}"
+}
+# shared in stage 1, with metadata; prod in stage 2, without
+held_back_setup() {
+  setup_test_dir
+  export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+  create_relevance_file "${TEST_RELEVANCE_FILE}" "$(relevance_entry shared run)" "$(relevance_entry prod run)"
+  stage_relevance_file "${TEST_RELEVANCE_FILE}" 2 prod:2
+  create_metadata_file "matrix-job-meta-shared.json" "shared"
+}
+
+held_back_setup
+export TEST_STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_test "Ordering O1: a held-back environment is not eligible, and the reason says it was held back" "false" \
+  "'prod' was held back: it is in stage 2 and stage 1 failed, so it was never planned, environment is ineligible for PR auto merge" \
+  "❌ prod (held back)" "✅ shared" \
+  "!No metadata file for affected environment 'prod'" "!cancelled or failed"
+export TEST_STAGE_RESULTS='{"1": "cancelled", "2": "skipped", "3": "skipped"}'
+run_test "Ordering O2: held back by a cancelled stage" "false" \
+  "'prod' was held back: it is in stage 2 and stage 1 was cancelled, so it was never planned, environment is ineligible for PR auto merge"
+export TEST_STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+run_test "Ordering O2: held back with no earlier stage to blame (a run cancelled between stages)" "false" \
+  "'prod' was held back: it is in stage 2, which did not run, so it was never planned, environment is ineligible for PR auto merge"
+# Held back told apart from crashed: prod's stage ran, so its job left no metadata for another reason
+export TEST_STAGE_RESULTS='{"1": "success", "2": "failure", "3": "skipped"}'
+run_test "Ordering O3: an environment whose stage ran and left no metadata crashed, as before" "false" \
+  "No metadata file for affected environment 'prod': its job was cancelled or failed before capturing metadata" \
+  "❌ prod (affected, no metadata)" "!held back"
+unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# O4: the lowest earlier stage that failed or was cancelled is the one named; a stage the builder
+# counts no environment in holds nothing back, whatever an entry says
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" "$(relevance_entry hub run)" "$(relevance_entry spoke run)" "$(relevance_entry app run)"
+stage_relevance_file "${TEST_RELEVANCE_FILE}" 3 spoke:2 app:3
+export TEST_STAGE_RESULTS='{"1": "failure", "2": "cancelled", "3": "skipped"}'
+run_test "Ordering O4: held back by the lowest failed stage" "false" \
+  "'app' was held back: it is in stage 3 and stage 1 failed" "❌ spoke (affected, no metadata)"
+jq '.counts.by_stage["3"] = 0' "${TEST_RELEVANCE_FILE}" >"${TEST_RELEVANCE_FILE}.tmp" && mv "${TEST_RELEVANCE_FILE}.tmp" "${TEST_RELEVANCE_FILE}"
+run_test "Ordering O4: a stage with a row count of 0 holds nothing back" "false" \
+  "❌ app (affected, no metadata)" "!was held back"
+unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# O5: an environment with metadata ran, whatever its stage's result says: judged on its metadata
+held_back_setup
+create_metadata_file "matrix-job-meta-prod.json" "prod"
+export TEST_STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_test "Ordering O5: metadata wins over a skipped stage" "true" "✅ prod" "!held back"
+unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
+cleanup_test_dir
+
+# O6: without stage results (absent, blank, or not an object of results), and with every
+# environment in stage 1, an affected environment without metadata is reported as before
+for _o6_results in "" " " '{not json' '["failure"]'; do
+  held_back_setup
+  export TEST_STAGE_RESULTS="${_o6_results}"
+  run_test "Ordering O6: stage results '${_o6_results}' → reported as cancelled or crashed, as before" "false" \
+    "No metadata file for affected environment 'prod': its job was cancelled or failed before capturing metadata" \
+    "❌ prod (affected, no metadata)" "!held back"
+  unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
+  cleanup_test_dir
+done
+for _o6_results in '{not json' '["failure"]'; do
+  held_back_setup
+  export TEST_STAGE_RESULTS="${_o6_results}"
+  run_test "Ordering O6: the unusable value '${_o6_results}' is warned about" "false" \
+    "stage-results-json is not a JSON object of stage results"
+  unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
+  cleanup_test_dir
+done
+setup_test_dir
+export TEST_RELEVANCE_FILE="${TEST_DIR}/relevance.json"
+create_relevance_file "${TEST_RELEVANCE_FILE}" "$(relevance_entry shared run)" "$(relevance_entry prod run)"
+stage_relevance_file "${TEST_RELEVANCE_FILE}" 1
+create_metadata_file "matrix-job-meta-shared.json" "shared"
+for _o6_results in '{"1": "failure", "2": "skipped", "3": "skipped"}' '{"1": "skipped", "2": "skipped", "3": "skipped"}'; do
+  export TEST_STAGE_RESULTS="${_o6_results}"
+  run_test "Ordering O6: everything in stage 1, results ${_o6_results} → as before" "false" \
+    "❌ prod (affected, no metadata)" "!held back"
+  # run_test removes the metadata after each run
+  create_metadata_file "matrix-job-meta-shared.json" "shared"
+done
+unset TEST_STAGE_RESULTS TEST_RELEVANCE_FILE
 cleanup_test_dir
 
 # ============================================================================
