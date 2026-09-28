@@ -677,7 +677,8 @@ jobs:
   # only: every other job field is written out in each stage job, since sharing more would need
   # a merge key, which GitHub does not support (docs/Environment-ordering.md P13, P14). Every
   # stage job is named "Terraform": the aggregator finds a job's link by that name, and callers
-  # see the same check names as before (docs/Environment-ordering.md D7, P7).
+  # see the same check names as before (docs/Environment-ordering.md D7, P7). A structural test,
+  # F15 in evaluate-automerge-eligibility/run_all_tests.sh, holds the three to one shape.
   terraform-ci-cd:
     name: "Terraform"
     # seed-pr-comments is in needs for ordering only: the heads must exist before any matrix job
