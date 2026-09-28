@@ -1207,6 +1207,9 @@ jobs:
           # of the very first render — the warning is on the PR before the
           # apply has happened (docs/Apply-and-destroy-reporting.md §8.2).
           goals-json: ${{ toJSON(matrix.vars.goals) }}
+          # On a pull request against another base nothing applies, whatever the goals say; the
+          # granted goals tell the two apart.
+          goals-granted-json: ${{ toJSON(matrix.vars.goals-granted) }}
           # Distinct per invocation within the job — see the upsert-head
           # step's fallback and docs/Apply-and-destroy-reporting.md P12.
           output-file-suffix: phase1
@@ -1284,6 +1287,7 @@ jobs:
           # row branch in render_head_summary.
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
           goals-json: ${{ toJSON(matrix.vars.goals) }}
+          goals-granted-json: ${{ toJSON(matrix.vars.goals-granted) }}
           output-file-suffix: phase1-final
         continue-on-error: true
 
@@ -1608,6 +1612,7 @@ jobs:
           warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
           goals-json: ${{ toJSON(matrix.vars.goals) }}
+          goals-granted-json: ${{ toJSON(matrix.vars.goals-granted) }}
           # --- the operation blocks (docs/Apply-and-destroy-reporting.md §7.4) ---
           status-apply: ${{ steps.apply.outcome }}
           apply-time: ${{ steps.apply.outputs.apply-time }}
@@ -1743,6 +1748,7 @@ jobs:
           warnings-markdown-file: ${{ steps.concat-warnings-md.outputs.warnings-markdown-file }}
           plan-tag-comment-id: ${{ steps.post-plan-tag.outputs.comment-id }}
           goals-json: ${{ toJSON(matrix.vars.goals) }}
+          goals-granted-json: ${{ toJSON(matrix.vars.goals-granted) }}
           status-apply: ${{ steps.apply.outcome }}
           apply-time: ${{ steps.apply.outputs.apply-time }}
           apply-count-import: ${{ steps.parse-apply.outputs.count-import }}
