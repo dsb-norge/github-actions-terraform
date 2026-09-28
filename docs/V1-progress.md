@@ -19,7 +19,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | merged 2026-09-26 | yes |
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | merged 2026-09-27 | yes |
 | 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
-| 6 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — (branch `feat/environment-ordering`) | in progress | no |
+| 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | — (branch `feat/environment-ordering`) | draft, handed off | no |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed | — | outstanding | no |
 | 8 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
 | 9 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
@@ -39,11 +39,11 @@ Changes the road does not list, made on the v1 line because a step's review surf
 
 | Spec | Decided | Implemented | Verified on the test bed | As built |
 |---|---|---|---|---|
-| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3 and 5 came with step 4 (#65), rule 1 whole with step 5 (#66), rule 6 comes with step 6 | the port, #59 (§4): identical matrices to `@v0` | yes, but for ordering; flow charts with #66 |
+| Decision-engine.md | yes | the port (#59); rule 4 and the comment manifest (#62); rules 2, 3 and 5 came with step 4 (#65), rule 1 whole with step 5 (#66), rule 6 with step 6 | the port, #59 (§4): identical matrices to `@v0`; ordering, step 6 (§4) | yes; flow charts with #66 and step 6 |
 | Path-relevance.md | yes | yes (#62) | the §9 scenarios on pull requests and pushes (§4); auto-merge by tests only | yes |
 | Terraform-tests.md | yes; D20 (discovery in the create-matrix adapter) and D21 (one test job) added 2026-09-25 | yes (step 3) | open-question probes (§3); every classification, lanes, an environment, two provider sets and the summary, through #64's preview ref (§4) | yes |
 | Dispatch-and-triggers.md | yes; schedule per environment only (D7) decided 2026-09-26 | yes (step 4) | dispatch inputs inside a called workflow, `schedule` actor; the §6 dispatch and schedule rows on pull requests, pushes, dispatches and a schedule (§4) | yes |
-| Environment-ordering.md | yes | no | mechanics (anchors across matrix jobs, guard conditions) | no |
+| Environment-ordering.md | yes | yes (step 6) | mechanics during design; every held-back surface, the bypass and a cycle through a test tag (§4) | yes |
 | Configuration-validation.md | yes (step 5) | yes (#66) | every refused kind in one run, the accepted shapes, a tag, a dispatch block without the standard inputs (§4) | yes |
 | Auto-merge.md | yes (step 5) | yes (#66) | the evaluator on real plans, the merge pins against GitHub (§4) | yes |
 | concurrency queueing (#56) | yes | yes | yes | no spec |
@@ -84,7 +84,8 @@ table only says where.
 | Auto-merge.md | GitHub's wording for a stale `--match-head-commit` | closed 2026-09-27 on the test bed: `GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)` (spec §13) |
 | Auto-merge.md | whether a `-target` plan, `complete: false`, should count | decided 2026-09-27 while building: counted, with completeness reported apart (`plan-complete`) and required only by auto-merge, so the comment keeps real counts (spec §5.2, §13) |
 | Configuration-validation.md | a `codeowners` value for the actor list, resolved from CODEOWNERS | dropped 2026-09-27 by the maintainer, after the facts: teams resolve only with an organisation Members permission no workflow token has, email owners cannot be mapped, and an owner merging their own change past review defeats it |
-| Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 6 |
+| Environment-ordering.md | held-back finalisation; hand-off latency | closed 2026-09-28 on the test bed: the aggregator finalised a held-back head and group columns; three seconds between stages, uncontended (spec §13) |
+| Environment-ordering.md | a strict opt-in for tolerated failures | deferred by the spec: not in v1 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
 | Road-to-v1.md | the module CI workflow on the engine in v1 or after | decided 2026-09-28 by the maintainer: in v1, as step 8 |
 
@@ -322,6 +323,35 @@ table only says where.
   engine gap, fixed in the step: a global variable's problem was blamed on the first environment
   inheriting it.
 
+### Step 6: environment ordering
+
+- Engine, test first: every case of the spec's §12 and every message of §5, 600 generated graphs
+  across events, goals, changed files and dispatches, and the invariants I18 to I24 derived apart
+  from `ordering.py`. The first mutation run left 11 survivors, all in `ordering.py`: two untested
+  edges (a run that only destroys, a bypass naming two dependencies) now tested, and search
+  optimisations no test could see, replaced by a cycle search without them. One mutant is listed as
+  equivalent, the first in the list: the environment a cycle's walk starts from, which the
+  rotation to the first-declared member makes irrelevant. Without depends-on every port golden is
+  unchanged.
+- Actions: `create-run-summary` 152 tests, `aggregate-validation-summaries` 91,
+  `evaluate-automerge-eligibility` 154 (F15 new, F10 pinning the conclusion's lines, F12 fixed for
+  output names with digits). The conclusion's old and new scripts agreed on 20,736 one-stage cases.
+  Each renderer's rules were broken by hand in scratch copies; every break failed a test but one
+  the report explains (a lookup skipped for a held-back member, which cannot change output).
+- Test bed through a hand-published tag, which runs no CI in this repository, on
+  dsb-norge/azure-terraform-peder-tester#65 and its `main`, every result as the spec says:
+  - no depends-on: stage 1 alone, the other two stage jobs skipped, the conclusion's line as before;
+  - a pull request whose stage 1 failed an apply on the pull request: stage 2 held back, the
+    conclusion `stage 1 failed; stage 2 held back (3 environment(s))`, the run summary's ⏭️ rows and
+    stage listing, the held-back environment's own head and the group head's columns finalised;
+  - a cycle refused in create-matrix, named from its first-declared member;
+  - pushes to `main`: two stages in order (stage 2 started three seconds after stage 1 ended); a
+    failed stage 1 holding stage 2 back; a tolerated failure releasing it, named in the footer; a
+    change to one environment alone leaving its dependency out, with the notice and the footer
+    sentence;
+  - a single-environment dispatch with `goal: apply` bypassing its dependency, with the notice.
+  The test bed's `main` went back to `@v1`, identical to before, and the tag was deleted.
+
 ## 5. Findings to carry
 
 ### Step 5 scope: hardening of caller configuration and auto-merge
@@ -371,6 +401,12 @@ The specs are [Configuration-validation.md](Configuration-validation.md) and
 ### Other findings
 
 Recorded while building, not fixed in the step that found them, each waiting for its own change:
+
+- With three stage jobs, every run shows two more `Terraform` entries in its checks, skipped for a
+  repository without depends-on; like the skipped test job's unevaluated name, cosmetic. For the
+  v1 changes document.
+- CI time: on #66 the engine job on the newest Python took 67 minutes, the one on 3.12 38; the
+  mutation gate is the long pole (step 9).
 
 - `auto-merge-pr/run_local_step_auto_merge_pr.sh` has carried a private repository's name as its
   default since the action was added; this repository is public. Found in step 5, left for its own
