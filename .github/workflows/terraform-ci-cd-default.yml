@@ -617,7 +617,7 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download the relevance decision"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: relevance
           path: ${{ runner.temp }}/relevance
@@ -2001,7 +2001,7 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download matrix job metadata"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: matrix-job-meta-*
           merge-multiple: true
@@ -2009,7 +2009,7 @@ jobs:
         # needs to run to clean up any orphan group comments).
         continue-on-error: true
       - name: "📥 Download the relevance decision"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: relevance
           path: ${{ runner.temp }}/relevance
@@ -2056,14 +2056,14 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download matrix job metadata"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: matrix-job-meta-*
           merge-multiple: true
         # No artifacts (matrix skipped) is a valid input.
         continue-on-error: true
       - name: "📥 Download the relevance decision"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: relevance
           path: ${{ runner.temp }}/relevance
@@ -2378,13 +2378,13 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download test job metadata"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: terraform-test-meta-*
           merge-multiple: true
         continue-on-error: true # zero matches is a valid input
       - name: "📥 Download the relevance decision"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: relevance
           path: ${{ runner.temp }}/relevance
@@ -2602,12 +2602,12 @@ jobs:
           fi
       - name: "📥 Download matrix job metadata"
         id: download-metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: matrix-job-meta-* # uploaded by the capture-matrix-job-meta step of every stage job
           merge-multiple: true
       - name: "📥 Download the relevance decision"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: relevance
           path: ${{ runner.temp }}/relevance
@@ -2615,7 +2615,7 @@ jobs:
         # it did before relevance.
         continue-on-error: true
       - name: "📥 Download test job metadata"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: terraform-test-meta-* # uploaded by the terraform-test job
           merge-multiple: true
