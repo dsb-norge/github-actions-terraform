@@ -36,6 +36,22 @@ inputs:
       See docs/Path-relevance.md §6.5.
     required: false
     default: ""
+  stage-results-json:
+    description: |
+      The result of each stage job, as a JSON object:
+      {"1": "<result>", "2": "<result>", "3": "<result>"}, each one of
+      success, failure, cancelled or skipped. With relevance-file, an
+      affected environment of a skipped stage that has environments was
+      held back: its row's outcome is "⏭️" with a tooltip naming what held
+      it back, the headline gains `· H held back` before `failed`, and a
+      footer line below the table lists the computed stages when more than
+      one is in use, then names the held-back environments, a tolerated
+      failure that released a later stage, and a declared dependency that
+      was not in the run for an environment granted apply or destroy (that
+      last one at one stage too). Empty, or not such an object: rendered
+      exactly as without it. See docs/Environment-ordering.md §7.2.
+    required: false
+    default: ""
 outputs:
   environment-count:
     description: |
@@ -55,5 +71,13 @@ runs:
         input_relevance_file: ${{ inputs.relevance-file }}
       run: |
         # Write the run-level rollup of every environment to the job summary
+
+        # A JSON-contract input through a quoted heredoc, before allexport, so it
+        # is never exported; step_summary.sh reads it as a shell-local.
+        input_stage_results_json=$(cat <<'CREATE_RUN_SUMMARY_STAGE_RESULTS_JSON'
+        ${{ inputs.stage-results-json }}
+        CREATE_RUN_SUMMARY_STAGE_RESULTS_JSON
+        )
+
         set -o allexport
         source "${{ github.action_path }}/step_summary.sh"

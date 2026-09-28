@@ -69,6 +69,12 @@ ops_destroy() { # <outcome> <completed> <d> <planned-d> <time>
 
 run_step() {
   (
+    # As production runs it: GitHub sources the shim under 'bash -eo pipefail', so a failing
+    # command the harness would tolerate kills the step there.
+    set -eo pipefail
+    # As the shim does: stage-results-json is a shell-local captured before allexport, never
+    # exported, and empty when the caller passes nothing.
+    input_stage_results_json="${STAGE_RESULTS:-}"
     set -o allexport
     source "${_this_script_dir}/step_summary.sh"
   ) >"${OUT_FILE}" 2>&1
@@ -554,6 +560,409 @@ assert "R9: a pull request has no trigger line" bash -c "! grep -q '^> ' '${GITH
 assert "R9: and still says nothing needed verifying" grep -q 'Nothing needed verifying' "${GITHUB_STEP_SUMMARY}"
 unset input_relevance_file
 teardown
+
+# ----------------------------------------------------------------------
+# O — environment ordering (docs/Environment-ordering.md §7.2): held-back rows, the headline term,
+# the ordering footer. The stage results arrive as STAGE_RESULTS, the stage-results-json input.
+# ----------------------------------------------------------------------
+# staged_entry <environment> <run|skip> [--genv=<github-environment>] [--stage=<n>]
+#              [--depends-on=<a,b>] [--goals=<a,b>] [--reason=<text>]...
+# One environments[] entry as the engine writes it with ordering: the declared depends-on on every
+# entry; on a run entry its stage, the granted goals, and --reason texts between the relevance
+# reason and the goals reason.
+staged_entry() {
+  local env="${1}" verdict="${2}"; shift 2
+  local genv="${env}" stage="1" deps="" goals="init,format,validate,lint,plan" extra='[]'
+  while [ $# -gt 0 ]; do
+    case "${1}" in
+      --genv=*) genv="${1#*=}" ;;
+      --stage=*) stage="${1#*=}" ;;
+      --depends-on=*) deps="${1#*=}" ;;
+      --goals=*) goals="${1#*=}" ;;
+      --reason=*) extra=$(jq -c --arg r "${1#*=}" '. + [$r]' <<<"${extra}") ;;
+    esac
+    shift
+  done
+  jq -nc --arg e "${env}" --arg ge "${genv}" --arg v "${verdict}" --argjson s "${stage}" \
+    --arg d "${deps}" --arg g "${goals}" --argjson extra "${extra}" '
+    ($d | split(",") | map(select(. != ""))) as $deps
+    | ($g | split(",") | map(select(. != ""))) as $goals
+    | {"environment": $e, "github-environment": $ge, "verdict": $v, "depends-on": $deps,
+       "add-pr-comment": "true", "pr-comment-group": ""}
+      + if $v == "run" then
+          {"stage": $s, "goals": $goals,
+           "reasons": (["relevance: envs/\($e)/**"] + $extra + ["goals: \($goals | join(", "))"])}
+        else {"reasons": ["relevance: no changed file matches"]} end'
+}
+# write_staged_relevance <stages-used> <entry-json>...
+# The engine's counts.by_stage from the entries, and `ordering: stage <n>` second on every run
+# entry when more than one stage is in use, as the engine writes it.
+write_staged_relevance() {
+  local used="${1}"; shift
+  printf '%s\n' "$@" | jq -s --argjson used "${used}" '
+    (if $used > 1 then map(if .verdict == "run" then .stage as $s | .reasons |= (.[:1] + ["ordering: stage \($s)"] + .[1:]) else . end)
+     else . end) as $envs
+    | def in_stage($n): [$envs[] | select(.verdict == "run" and .stage == $n)] | length;
+    {schema_version: 1, relevance: {mode: "diff", reason: "diff", changed_count: 3},
+     ordering: {declared: true, stages_used: $used, cap: 3, bypass: null},
+     counts: {affected: ([$envs[] | select(.verdict == "run")] | length),
+              unaffected: ([$envs[] | select(.verdict == "skip")] | length),
+              by_stage: {"1": in_stage(1), "2": in_stage(2), "3": in_stage(3)}},
+     environments: $envs, comments: {}, notices: [], record: []}' >"${RUNNER_TEMP}/relevance.json"
+  export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+}
+# A metadata file's row under allow-failing-terraform-operations, a JSON boolean as the engine writes it.
+allow_failing() {
+  local f="${RUNNER_TEMP}/matrix-job-meta-${1}.json"
+  jq '.matrix_context.vars["allow-failing-terraform-operations"] = true' "${f}" >"${f}.tmp" && mv "${f}.tmp" "${f}"
+}
+HELD_BY_FAILURE='<span title="held back: stage 2; stage 1 failed">⏭️</span>'
+ordering_lines() { grep -c '^_Ordering:' "${GITHUB_STEP_SUMMARY}"; }
+# The ordering line, whole; empty when there is none.
+ordering_line() { grep '^_Ordering:' "${GITHUB_STEP_SUMMARY}" || true; }
+
+# The §7.2 run: shared failed in stage 1, so stage 2 (prod, which depends on it, and sandbox, a
+# free-standing environment in the last stage) never ran
+held_back_fixture() {
+  write_staged_relevance 2 \
+    "$(staged_entry shared run --stage=1 --goals=init,format,validate,lint,plan,apply)" \
+    "$(staged_entry prod run --stage=2 --depends-on=shared --goals=init,format,validate,lint,plan,apply)" \
+    "$(staged_entry sandbox run --stage=2 --goals=init,format,validate,lint,plan,apply)"
+  write_meta "shared" success "2:0:0" "0:54" "$(ops_apply failure false '?' '?' '?' 0:20)"
+}
+
+# O1 — a held-back row, the headline term and the footer, byte for byte
+setup
+held_back_fixture
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "O1: headline counts the held-back environments, not as failed or not reported" \
+  grep -qxF '**3 environments · 3 affected · 0 not affected · 0 applied · 2 held back · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+assert "O1: a held-back row is the held-back outcome and dashes, byte for byte" \
+  test "$(row prod)" = "| \`prod\` | ${HELD_BY_FAILURE} | — | — | — | — | — |"
+assert "O1: … for every environment of the stage" \
+  test "$(row sandbox)" = "| \`sandbox\` | ${HELD_BY_FAILURE} | — | — | — | — | — |"
+assert "O1: the environment that failed renders from its metadata" \
+  row_has shared '| <span title="a step failed or was cancelled">❌</span> | `💫 2` `🛠️ 0` `💥 0` | `💫 ?/2`'
+assert "O1: the footer lists the stages, then names the failed stage and the held-back environments, in environments-yml order" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`, `sandbox`. Stage 1 failed, so stage 2 did not run. Held back: `prod`, `sandbox`._'
+assert "O1: one ordering line, directly below the table" \
+  bash -c "[ \"\$(grep -c '^_Ordering:' '${GITHUB_STEP_SUMMARY}')\" = 1 ] && grep -A2 -F '| \`sandbox\` |' '${GITHUB_STEP_SUMMARY}' | tail -n1 | grep -q '^_Ordering:'"
+assert "O1: environment-count counts every environment, failed-count only the failure" \
+  bash -c "[ \"\$(grep '^environment-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 3 ] && [ \"\$(grep '^failed-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 1 ]"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O2 — held back told apart from crashed: an affected environment without metadata in a stage that
+# ran is today's ❔ row, not reported, never held back
+setup
+held_back_fixture
+write_meta "shared" success "0:0:0" "0:10" "$(ops_apply success true 0 0 0 0:20)"
+write_meta "sandbox" success "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "success", "2": "failure", "3": "skipped"}'
+run_step
+assert "O2: the environment that left no metadata in a stage that ran is the ❔ row" \
+  test "$(row prod)" = "| \`prod\` ${MISSING_ROW_TAIL}"
+assert "O2: headline counts it as not reported, and nothing as held back" \
+  grep -qxF '**3 environments · 3 affected · 0 not affected · 1 applied · 0 failed · 1 not reported**' "${GITHUB_STEP_SUMMARY}"
+assert "O2: nothing held back or failed in ordering's terms: the listing stands alone" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`, `sandbox`._'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O3 — held back told apart from an empty stage: stage 3 skipped with no environment in it holds
+# nothing back, and a cancelled stage is named as cancelled
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared)"
+STAGE_RESULTS='{"1": "cancelled", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O3: a cancelled stage is named in the tooltip" \
+  test "$(row prod)" = '| `prod` | <span title="held back: stage 2; stage 1 was cancelled">⏭️</span> | — | — | — | — | — |'
+assert "O3: … and in the footer; the empty stage 3 is not mentioned" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`. Stage 1 was cancelled, so stage 2 did not run. Held back: `prod`._'
+assert "O3: the cancelled environment without metadata is still the ❔ row" \
+  test "$(row shared)" = "| \`shared\` ${MISSING_ROW_TAIL}"
+assert "O3: headline" \
+  grep -qxF '**2 environments · 2 affected · 0 not affected · 0 applied · 1 held back · 0 failed · 1 not reported**' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O4 — three stages: a failure in stage 1 holds back both later stages, and one held back by stage
+# 2's failure names stage 2
+setup
+write_staged_relevance 3 \
+  "$(staged_entry hub run --stage=1)" \
+  "$(staged_entry spoke run --stage=2 --depends-on=hub)" \
+  "$(staged_entry app run --stage=3 --depends-on=spoke)"
+write_meta "hub" failure "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O4: stage 3 names stage 1, the lowest failed stage, not the skipped stage 2" \
+  test "$(row app)" = '| `app` | <span title="held back: stage 3; stage 1 failed">⏭️</span> | — | — | — | — | — |'
+assert "O4: three stages listed in order, then one sentence for both held-back stages" \
+  test "$(ordering_line)" = '_Ordering: 3 stages. Stage 1: `hub`. Stage 2: `spoke`. Stage 3: `app`. Stage 1 failed, so stages 2 and 3 did not run. Held back: `spoke`, `app`._'
+rm -f "${RUNNER_TEMP}"/matrix-job-meta-*.json
+write_meta "hub" success "0:0:0" "0:10"
+write_meta "spoke" failure "0:0:0" "0:10"
+: >"${GITHUB_STEP_SUMMARY}"
+STAGE_RESULTS='{"1": "success", "2": "failure", "3": "skipped"}'
+run_step
+assert "O4: held back by stage 2" \
+  test "$(row app)" = '| `app` | <span title="held back: stage 3; stage 2 failed">⏭️</span> | — | — | — | — | — |'
+assert "O4: … and the footer says so" \
+  test "$(ordering_line)" = '_Ordering: 3 stages. Stage 1: `hub`. Stage 2: `spoke`. Stage 3: `app`. Stage 2 failed, so stage 3 did not run. Held back: `app`._'
+: >"${GITHUB_STEP_SUMMARY}"
+STAGE_RESULTS='{"1": "failure", "2": "cancelled", "3": "skipped"}'
+run_step
+assert "O4: what held a stage back is the lowest earlier stage that failed or was cancelled" \
+  test "$(row app)" = '| `app` | <span title="held back: stage 3; stage 1 failed">⏭️</span> | — | — | — | — | — |'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O4b — a skipped stage the builder counts no environment in holds nothing back, whatever an
+# entry says: its matrix was empty, so the entry's job never existed and it is not reported
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared)"
+jq '.counts.by_stage["2"] = 0' "${RUNNER_TEMP}/relevance.json" >"${RUNNER_TEMP}/x.json" && mv "${RUNNER_TEMP}/x.json" "${RUNNER_TEMP}/relevance.json"
+write_meta "shared" failure "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O4b: a stage with a row count of 0 holds nothing back" test "$(row prod)" = "| \`prod\` ${MISSING_ROW_TAIL}"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O5 — a skipped stage with nothing before it that failed (a run cancelled between stages): held
+# back all the same, without a cause the results cannot give
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared)"
+write_meta "shared" success "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O5: the tooltip names the stage only" \
+  test "$(row prod)" = '| `prod` | <span title="held back: stage 2">⏭️</span> | — | — | — | — | — |'
+assert "O5: the footer says the stage did not run" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`. Stage 2 did not run. Held back: `prod`._'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O6 — a declared dependency that was not in the run (§7.2, §8): named for an environment granted
+# apply, with the engine's reason for leaving the dependency out and the environment's label
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared skip --genv=shared-gh)" \
+  "$(staged_entry net run --stage=1)" \
+  "$(staged_entry prod run --genv=prod-gh --stage=1 --depends-on=shared --goals=init,format,validate,lint,plan,apply \
+      --reason="ordering: depends-on 'shared' not in this run (relevance: no changed file matches)")" \
+  "$(staged_entry app run --stage=2 --depends-on=net)"
+write_meta "net" success "0:0:0" "0:10"
+write_meta "prod-gh" success "1:0:0" "0:10" "$(ops_apply success true 1 0 0 0:20)"
+write_meta "app" success "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "success", "2": "success", "3": "skipped"}'
+run_step
+assert "O6: the dependency line, labelled by github-environment" \
+  test "$(ordering_line)" = "_Ordering: 2 stages. Stage 1: \`net\`, \`prod-gh\`. Stage 2: \`app\`. \`prod-gh\` applied; its dependency \`shared-gh\` was not in this run (relevance: no changed file matches)._"
+assert "O6: no held-back term in the headline when nothing was held back" \
+  grep -qxF '**4 environments · 3 affected · 1 not affected · 1 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O7 — §8's own case: one stage, because relevance left the dependency out. The line is the only
+# warning an operator gets, so it is not dropped with the stages; a plan-only environment, which
+# changed nothing, is not named
+setup
+write_staged_relevance 1 \
+  "$(staged_entry shared skip)" \
+  "$(staged_entry prod run --stage=1 --depends-on=shared --goals=init,format,validate,lint,plan,apply \
+      --reason="ordering: depends-on 'shared' not in this run (relevance: no changed file matches)")" \
+  "$(staged_entry audit run --stage=1 --depends-on=shared \
+      --reason="ordering: depends-on 'shared' not in this run (relevance: no changed file matches)")" \
+  "$(staged_entry gone run --stage=1 --depends-on=shared --goals=init,plan,destroy-plan,destroy \
+      --reason="ordering: depends-on 'shared' not in this run (relevance: no changed file matches)")"
+write_meta "prod" success "0:0:0" "0:10" "$(ops_apply failure false '?' '?' '?' 0:20)"
+write_meta "audit" success "0:0:0" "0:10"
+write_meta "gone" success "0:0:0" "0:10" "$(ops_destroy success true 1 1 0:10)"
+STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O7: one stage in the prefix; an apply that did not succeed 'ran', a destroy 'destroyed'" \
+  grep -qxF "_Ordering: 1 stage. \`prod\` ran; its dependency \`shared\` was not in this run (relevance: no changed file matches). \`gone\` destroyed; its dependency \`shared\` was not in this run (relevance: no changed file matches)._" "${GITHUB_STEP_SUMMARY}"
+assert "O7: the plan-only environment is not named" bash -c "! grep '^_Ordering:' '${GITHUB_STEP_SUMMARY}' | grep -q audit"
+assert "O7: one stage lists no stages" bash -c "! grep '^_Ordering:' '${GITHUB_STEP_SUMMARY}' | grep -q 'Stage 1:'"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O8 — a tolerated failure that released the next stage (D5, P10)
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared run --stage=1 --goals=init,format,validate,lint,plan,apply)" \
+  "$(staged_entry net run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared --goals=init,format,validate,lint,plan,apply)"
+write_meta "shared" success "1:0:0" "0:10" "$(ops_apply failure false '?' '?' '?' 0:20)"
+allow_failing shared
+write_meta "net" success "0:0:0" "0:10"
+write_meta "prod" success "1:0:0" "0:10" "$(ops_apply success true 1 0 0 0:20)"
+STAGE_RESULTS='{"1": "success", "2": "success", "3": "skipped"}'
+run_step
+assert "O8: the release is named, with the environment that failed under the flag" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`, `net`. Stage 2: `prod`. Stage 1 released stage 2; `shared` failed but allows failing operations._'
+assert "O8: the tolerated failure still counts as failed" \
+  grep -qxF '**3 environments · 3 affected · 0 not affected · 1 applied · 1 failed**' "${GITHUB_STEP_SUMMARY}"
+allow_failing net
+jq '.steps.plan.outcome = "failure"' "${RUNNER_TEMP}/matrix-job-meta-net.json" >"${RUNNER_TEMP}/x.json" && mv "${RUNNER_TEMP}/x.json" "${RUNNER_TEMP}/matrix-job-meta-net.json"
+: >"${GITHUB_STEP_SUMMARY}"
+run_step
+assert "O8: several are listed, with the plural verb" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`, `net`. Stage 2: `prod`. Stage 1 released stage 2; `shared`, `net` failed but allow failing operations._'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O9 — a failure the flag does not tolerate, or one in the last stage, releases nothing
+setup
+write_staged_relevance 2 \
+  "$(staged_entry shared run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared)"
+write_meta "shared" success "0:0:0" "0:10"
+write_meta "prod" failure "0:0:0" "0:10"
+allow_failing prod
+STAGE_RESULTS='{"1": "success", "2": "success", "3": "skipped"}'
+run_step
+assert "O9: a tolerated failure in the last stage released nothing: the listing alone" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`._'
+rm -f "${RUNNER_TEMP}"/matrix-job-meta-*.json
+write_meta "shared" failure "0:0:0" "0:10"
+write_meta "prod" success "0:0:0" "0:10"
+: >"${GITHUB_STEP_SUMMARY}"
+run_step
+assert "O9: a failure without allow-failing-terraform-operations is not named as tolerated" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`._'
+allow_failing shared
+: >"${GITHUB_STEP_SUMMARY}"
+rm -f "${RUNNER_TEMP}/matrix-job-meta-prod.json"
+STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O9: a stage that did not run was released by nothing" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`. Stage 2 did not run. Held back: `prod`._'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O9b — a held-back environment did nothing, so its missing dependency is not named; the held-back
+# sentence says all there is
+setup
+write_staged_relevance 2 \
+  "$(staged_entry legacy skip)" \
+  "$(staged_entry shared run --stage=1)" \
+  "$(staged_entry prod run --stage=2 --depends-on=shared,legacy --goals=init,format,validate,lint,plan,apply \
+      --reason="ordering: depends-on 'legacy' not in this run (relevance: no changed file matches)")"
+write_meta "shared" failure "0:0:0" "0:10"
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O9b: only the held-back sentence" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`. Stage 1 failed, so stage 2 did not run. Held back: `prod`._'
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O10 — an ordered run where nothing went wrong says nothing about ordering, and an environment
+# with metadata renders from it whatever its stage's result says
+setup
+held_back_fixture
+write_meta "shared" success "0:0:0" "0:10" "$(ops_apply success true 0 0 0 0:20)"
+write_meta "prod" success "0:0:0" "0:10" "$(ops_apply success true 0 0 0 0:20)"
+write_meta "sandbox" success "0:0:0" "0:10" "$(ops_apply success true 0 0 0 0:20)"
+STAGE_RESULTS='{"1": "success", "2": "success", "3": "skipped"}'
+run_step
+assert "O10: a clean ordered run has the listing alone, below the table" \
+  test "$(ordering_line)" = '_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`, `sandbox`._'
+assert "O10: … and today's headline" \
+  grep -qxF '**3 environments · 3 affected · 0 not affected · 3 applied · 0 failed**' "${GITHUB_STEP_SUMMARY}"
+: >"${GITHUB_STEP_SUMMARY}"
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O10: metadata wins over a skipped stage: not held back" \
+  bash -c "! grep -q 'held back' '${GITHUB_STEP_SUMMARY}'"
+unset input_relevance_file STAGE_RESULTS
+teardown
+
+# O11 — without the stage results (absent, empty, or not an object of results), and with every
+# environment in stage 1, the summary is byte for byte today's
+O11_DIR=$(mktemp -d)
+setup
+held_back_fixture
+run_step
+cp "${GITHUB_STEP_SUMMARY}" "${O11_DIR}/absent.md"; cp "${GITHUB_OUTPUT}" "${O11_DIR}/absent.out"
+unset input_relevance_file
+teardown
+assert "O11: absent → a held-back-shaped run renders today's ❔ rows" \
+  grep -qF "| \`prod\` ${MISSING_ROW_TAIL}" "${O11_DIR}/absent.md"
+assert "O11: absent → nothing about ordering" bash -c "! grep -qE 'Ordering|held back' '${O11_DIR}/absent.md'"
+for o11_value in '' ' ' '{not json' '["failure"]' '"failure"'; do
+  setup
+  held_back_fixture
+  STAGE_RESULTS="${o11_value}"
+  run_step
+  assert "O11: stage results '${o11_value}' → summary byte-identical to absent" cmp -s "${O11_DIR}/absent.md" "${GITHUB_STEP_SUMMARY}"
+  assert "O11: stage results '${o11_value}' → outputs identical to absent" cmp -s "${O11_DIR}/absent.out" "${GITHUB_OUTPUT}"
+  unset input_relevance_file STAGE_RESULTS
+  teardown
+done
+for o11_value in '{not json' '["failure"]' '"failure"'; do
+  setup
+  held_back_fixture
+  STAGE_RESULTS="${o11_value}"
+  run_step
+  assert "O11: the unusable value '${o11_value}' is warned about" grep -q 'stage-results-json is not a JSON object' "${OUT_FILE}"
+  unset input_relevance_file STAGE_RESULTS
+  teardown
+done
+# The unordered caller: every environment in stage 1, stages 2 and 3 skipped for being empty, and a
+# stage-1 failure holds nothing back
+setup
+write_staged_relevance 1 \
+  "$(staged_entry prod skip)" \
+  "$(staged_entry staging run --stage=1)" \
+  "$(staged_entry sandbox run --stage=1)"
+write_meta "staging" failure "0:0:0" "0:10"
+run_step
+cp "${GITHUB_STEP_SUMMARY}" "${O11_DIR}/stage1.md"
+for o11_value in '{"1": "success", "2": "skipped", "3": "skipped"}' '{"1": "failure", "2": "skipped", "3": "skipped"}' \
+  '{"1": "skipped", "2": "skipped", "3": "skipped"}'; do
+  : >"${GITHUB_STEP_SUMMARY}"
+  STAGE_RESULTS="${o11_value}"
+  run_step
+  assert "O11: everything in stage 1, results ${o11_value} → byte-identical to absent" cmp -s "${O11_DIR}/stage1.md" "${GITHUB_STEP_SUMMARY}"
+done
+unset input_relevance_file STAGE_RESULTS
+teardown
+# The unordered caller with today's relevance file, which has no stages at all
+setup
+write_relevance diff diff 1 prod:prod:skip staging:staging:run sandbox:sandbox:run
+write_meta "staging" success "1:0:0" "0:04" "$(ops_apply success true 1 0 0 1:07)"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+cp "${GITHUB_STEP_SUMMARY}" "${O11_DIR}/unordered.md"
+: >"${GITHUB_STEP_SUMMARY}"
+STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O11: an unordered caller's summary is byte-identical with the stage results" cmp -s "${O11_DIR}/unordered.md" "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file STAGE_RESULTS
+teardown
+# Without a relevance file there is nothing to join the results with
+setup
+render_g1_fixture
+run_step
+cp "${GITHUB_STEP_SUMMARY}" "${O11_DIR}/nofile.md"
+: >"${GITHUB_STEP_SUMMARY}"
+STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+run_step
+assert "O11: no relevance file → byte-identical with the stage results" cmp -s "${O11_DIR}/nofile.md" "${GITHUB_STEP_SUMMARY}"
+unset STAGE_RESULTS
+teardown
+rm -rf "${O11_DIR}"
 
 # ----------------------------------------------------------------------
 # Summary

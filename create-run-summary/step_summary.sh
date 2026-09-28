@@ -22,6 +22,11 @@
 #   input_relevance_file - Path of the matrix builder's relevance.json. Empty,
 #                          missing on disk or unreadable → rendered exactly as
 #                          without it (docs/Path-relevance.md §6.5, P8)
+#   input_stage_results_json - {"1": <result>, "2": ..., "3": ...}, the stage
+#                          jobs' results; a shell-local, never exported. With
+#                          the relevance file it tells a held-back environment
+#                          from one that crashed; absent or blank → rendered
+#                          exactly as without it (docs/Environment-ordering.md §7.2)
 #
 # Standard GitHub environment variables used:
 #   GITHUB_STEP_SUMMARY - the job summary file; unset → rendered to the log only
@@ -50,6 +55,7 @@ function render_summary {
   declare -A worst_by_env=()
   declare -A applied_by_env=()
   declare -A destroyed_by_env=()
+  declare -A tolerated_by_env=()
   local file env rid
   for file in "${files[@]}"; do
     if ! jq -e '.' "${file}" >/dev/null 2>&1; then
@@ -83,6 +89,11 @@ function render_summary {
     # and a headline that says only "1 applied" hides the teardown entirely.
     if [ "$(meta_step_outcome "${file}" destroy)" = 'success' ]; then
       destroyed_by_env["${env}"]="true"
+    fi
+    # Only read with stage results: it names a tolerated failure that released a
+    # later stage, which nothing without them can see.
+    if [ -n "${STAGE_RESULTS_FILE:-}" ] && tolerated_failure "${file}"; then
+      tolerated_by_env["${env}"]="true"
     fi
 
     local time_cell
@@ -167,23 +178,38 @@ function usable_relevance_file {
 # order the metadata artifacts cannot provide.
 function render_with_relevance {
   local file="${1}" run_url="${2}"
-  local n_env=0 n_affected=0 n_unaffected=0 n_missing=0 n_applied=0 n_destroyed=0 n_failed=0
+  local n_env=0 n_affected=0 n_unaffected=0 n_missing=0 n_held=0 n_applied=0 n_destroyed=0 n_failed=0
   local rows_file
   rows_file=$(mktemp)
   declare -A listed=()
 
-  local verdict genv
+  # Environments a skipped stage held back (docs/Environment-ordering.md §7.1),
+  # keyed by github-environment; empty without stage results.
+  declare -A held_stage=() held_cause=() held_result=()
+  local -a held_names=() row_names=()
+  declare -A env_stage=()
+  local h_genv h_stage h_cause h_result
+  while IFS=$'\x1f' read -r h_genv h_stage h_cause h_result; do
+    [ -z "${h_genv}" ] && continue
+    held_stage["${h_genv}"]="${h_stage}"
+    held_cause["${h_genv}"]="${h_cause}"
+    held_result["${h_genv}"]="${h_result}"
+  done < <(held_back_entries "${file}")
+
+  local verdict genv stage
   # Metadata is keyed by github-environment (the workflow passes it as the
   # capture's environment name), so rows are matched and labelled by it,
   # exactly as today's rows are.
   # Unit separator, not tab: tab is IFS whitespace, so `read` would collapse an
   # empty verdict field and shift the name into it.
-  while IFS=$'\x1f' read -r verdict genv; do
+  while IFS=$'\x1f' read -r verdict genv stage; do
     if [ -z "${genv}" ]; then
       log-warn "skipping a relevance entry without github-environment" 1>&2
       continue
     fi
     listed["${genv}"]="true"
+    row_names+=("${genv}")
+    [ "${verdict}" = 'run' ] && env_stage["${genv}"]="${stage}"
     n_env=$((n_env + 1))
     if [ "${verdict}" = 'skip' ]; then
       n_unaffected=$((n_unaffected + 1))
@@ -197,6 +223,14 @@ function render_with_relevance {
     if [ -n "${row_by_env[${genv}]:-}" ]; then
       printf '%s\n' "${row_by_env[${genv}]}" >>"${rows_file}"
       count_env "${genv}"
+    elif [ -n "${held_stage[${genv}]:-}" ]; then
+      # Its stage never ran because an earlier one failed: no job, nothing
+      # crashed, and nothing to report but why. The dashes are the unaffected
+      # row's, without its "not affected" tooltip, which would be false here.
+      n_held=$((n_held + 1))
+      held_names+=("${genv}")
+      printf '| `%s` | <span title="%s">⏭️</span> | — | — | — | — | — |\n' "${genv}" \
+        "$(held_back_title "${held_stage[${genv}]}" "${held_cause[${genv}]}" "${held_result[${genv}]}")" >>"${rows_file}"
     else
       # The matrix job was cancelled or crashed before its metadata upload.
       # Not counted as failed — nothing says it failed — but never absent:
@@ -205,7 +239,7 @@ function render_with_relevance {
       printf '| `%s` | <span title="affected, but its job left no metadata: cancelled, crashed or not uploaded">❔</span> | — | — | — | — | [run](%s) |\n' \
         "${genv}" "${run_url}" >>"${rows_file}"
     fi
-  done < <(jq -r '.environments[] | [(.verdict // "" | tostring), (.["github-environment"] // .environment // "" | tostring)] | join("\u001f")' "${file}" 2>/dev/null)
+  done < <(jq -r '.environments[] | [(.verdict // "" | tostring), (.["github-environment"] // .environment // "" | tostring), (.stage // "" | tostring)] | join("\u001f")' "${file}" 2>/dev/null)
 
   # Metadata for an environment the file does not list cannot happen when both
   # come from the same run's matrix builder. Render it rather than drop it, and
@@ -238,6 +272,7 @@ function render_with_relevance {
   # Destroyed and not-reported appear only when non-zero, like today's
   # destroyed counter: permanent zeros would be noise on almost every run.
   [ "${n_destroyed}" -gt 0 ] && headline="${headline} · ${n_destroyed} destroyed"
+  [ "${n_held}" -gt 0 ] && headline="${headline} · ${n_held} held back"
   headline="${headline} · ${n_failed} failed"
   [ "${n_missing}" -gt 0 ] && headline="${headline} · ${n_missing} not reported"
 
@@ -264,6 +299,7 @@ function render_with_relevance {
   printf '|---|:---:|---|---|---|---|---|\n'
   cat "${rows_file}"
   rm -f "${rows_file}"
+  render_ordering_line "${file}"
   print_footer
   # A tooltip does not show on a phone, where this page is often read.
   if [ "${n_unaffected}" -gt 0 ] && { [ "${event}" = 'workflow_dispatch' ] || [ "${event}" = 'schedule' ]; }; then
@@ -271,6 +307,113 @@ function render_with_relevance {
   elif [ "${n_unaffected}" -gt 0 ]; then
     printf '\n_Rows of `—`: not affected by this change, so not planned._\n'
   fi
+}
+
+# The ordering footer (docs/Environment-ordering.md §7.2): one line below the
+# table naming what ordering did to this run. Uses render_with_relevance's
+# held_*, row_names and env_stage and render_summary's *_by_env maps (bash
+# dynamic scope).
+#
+# With more than one stage it opens with the computed stages, so the effective
+# ordering is read, not derived from the configuration (D1, §4.4): a stage
+# waits for every environment of the one before, which the declarations do not
+# show. Then three sentences: the stages a failure held back, with the
+# environments in them; a tolerated failure that released a later stage (D5,
+# P10); and a declared dependency left out of the run, for an environment
+# granted apply or destroy. The last is the only warning an operator gets that
+# a dependency was not verified first (§8), and relevance leaving the
+# dependency out is exactly what collapses a run to one stage, so it is not
+# dropped with the stages. At one stage, without that sentence, there is no line.
+function render_ordering_line {
+  local file="${1}"
+  [ -z "${STAGE_RESULTS_FILE:-}" ] && return 0
+  local -a sentences=()
+  declare -A result_of=()
+  local s used name
+  for s in 1 2 3; do
+    result_of[${s}]=$(jq -r --arg s "${s}" '.[$s] // ""' "${STAGE_RESULTS_FILE}")
+  done
+  used=$(jq -r '(.ordering.stages_used // 1) | tonumber? // 1' "${file}" 2>/dev/null || echo 1)
+
+  # The computed stages, each environment by its row's label in row order. A
+  # stage with no environment is left out: it holds nothing and waits for nothing.
+  local -a members=()
+  if [ "${used}" -gt 1 ]; then
+    for s in 1 2 3; do
+      members=()
+      for name in "${row_names[@]}"; do
+        [ "${env_stage[${name}]:-}" = "${s}" ] && members+=("${name}")
+      done
+      [ ${#members[@]} -gt 0 ] && sentences+=("Stage ${s}: $(backtick_join "${members[@]}").")
+    done
+  fi
+
+  # Held back. One sentence per failed stage; in practice there is one, since a
+  # failure holds back every later stage and so no later one can fail.
+  if [ ${#held_names[@]} -gt 0 ]; then
+    declare -A stages_by_cause=()
+    local key
+    for name in "${held_names[@]}"; do
+      key="${held_cause[${name}]}|${held_result[${name}]}"
+      [[ " ${stages_by_cause[${key}]:-} " == *" ${held_stage[${name}]} "* ]] ||
+        stages_by_cause["${key}"]+="${stages_by_cause[${key}]:+ }${held_stage[${name}]}"
+    done
+    local cause result phrase
+    local -a stages=()
+    while IFS= read -r key; do
+      cause="${key%%|*}"; result="${key#*|}"
+      read -r -a stages <<<"$(tr ' ' '\n' <<<"${stages_by_cause[${key}]}" | sort -n | tr '\n' ' ')"
+      phrase=$(stage_list "${stages[@]}")
+      if [ -n "${cause}" ]; then
+        phrase="$(stage_outcome_phrase "${cause}" "${result}"), so ${phrase} did not run."
+      else
+        phrase="${phrase} did not run."
+      fi
+      sentences+=("${phrase^}")
+    done < <(printf '%s\n' "${!stages_by_cause[@]}" | sort -t'|' -k1,1n)
+    sentences+=("Held back: $(backtick_join "${held_names[@]}").")
+  fi
+
+  # Released by a tolerated failure: the job was green, so the next stage that
+  # ran, ran after it. A stage that did not run was released by nothing, and an
+  # empty one is always skipped, so the result alone decides.
+  local t released verb
+  local -a tolerated=()
+  for s in 1 2; do
+    tolerated=()
+    for name in "${row_names[@]}"; do
+      [ "${env_stage[${name}]:-}" = "${s}" ] && [ "${tolerated_by_env[${name}]:-}" = 'true' ] && tolerated+=("${name}")
+    done
+    [ ${#tolerated[@]} -eq 0 ] && continue
+    released=""
+    for ((t = s + 1; t <= 3; t++)); do
+      if [[ "${result_of[${t}]}" =~ ^(success|failure|cancelled)$ ]]; then
+        released="${t}"
+        break
+      fi
+    done
+    [ -z "${released}" ] && continue
+    verb="allows"; [ ${#tolerated[@]} -gt 1 ] && verb="allow"
+    sentences+=("Stage ${s} released stage ${released}; $(backtick_join "${tolerated[@]}") failed but ${verb} failing operations.")
+  done
+
+  # A declared dependency not in the run. A held-back environment did nothing,
+  # so there is nothing to warn about.
+  local me dep why did
+  while IFS=$'\x1f' read -r me dep why; do
+    [ -z "${me}" ] && continue
+    [ -n "${held_stage[${me}]:-}" ] && [ -z "${row_by_env[${me}]:-}" ] && continue
+    did="ran"
+    if [ "${applied_by_env[${me}]:-}" = 'true' ]; then did="applied"
+    elif [ "${destroyed_by_env[${me}]:-}" = 'true' ]; then did="destroyed"; fi
+    sentences+=("\`${me}\` ${did}; its dependency \`${dep}\` was not in this run (${why}).")
+  done < <(missing_dependencies "${file}")
+
+  [ ${#sentences[@]} -eq 0 ] && return 0
+  local stage_word="stages"; [ "${used}" = '1' ] && stage_word="stage"
+  local line="" sentence
+  for sentence in "${sentences[@]}"; do line+="${line:+ }${sentence}"; done
+  printf '\n_Ordering: %s %s. %s_\n' "${used}" "${stage_word}" "${line}"
 }
 
 # Adds one rendered metadata row's outcome to render_with_relevance's counters.
@@ -287,6 +430,7 @@ function main {
 
   ENVIRONMENT_COUNT=0
   FAILED_COUNT=0
+  read_stage_results
   # Redirection, not $(...): a command substitution would run the renderer
   # in a subshell and lose the counts it sets.
   local body_file="${RUNNER_TEMP:-/tmp}/run-summary-$$.md"
@@ -294,6 +438,7 @@ function main {
   local body
   body=$(cat "${body_file}")
   rm -f "${body_file}"
+  [ -n "${STAGE_RESULTS_FILE}" ] && rm -f "${STAGE_RESULTS_FILE}"
 
   log-multiline "run summary" "${body}"
 
