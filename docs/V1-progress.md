@@ -19,8 +19,8 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | merged 2026-09-26 | yes |
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | merged 2026-09-27 | yes |
 | 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
-| 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | — (branch `feat/environment-ordering`) | draft, handed off | no |
-| 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed | — | outstanding | no |
+| 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
+| 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
@@ -351,6 +351,36 @@ table only says where.
     sentence;
   - a single-environment dispatch with `goal: apply` bypassing its dependency, with the notice.
   The test bed's `main` went back to `@v1`, identical to before, and the tag was deleted.
+
+### Step 7: the open-questions pass
+
+An inventory of every open question, deferred decision and carried finding in the docs and the code
+comments (60 items), each classified by whether it bears on implementation, delivery or v1, and
+closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such.
+
+| Item | Decision | Where |
+|---|---|---|
+| A real OIDC login in a Terraform test lane, "required before v1 is tagged" | the maintainer: in step 7, with the maintainer's Azure session and the test bed | step 7 |
+| Auto-merge end to end with a real merge App | the maintainer: a throwaway App on the test bed, with the test bed's `main` ruleset requiring an approval and the conclusion and the App on its bypass list; a docs-only and a plan-within-limits pull request through it | step 7 |
+| Values pasted into `run:` blocks instead of `env:` | the maintainer: every `${{ inputs.* }}` and `${{ matrix.* }}` in a `run:` block moves to `env:`, and a structural test forbids new ones outside heredoc captures. Only small scalars move, so the envp limits of CLAUDE.md are respected; large values stay in their heredoc captures | step 7 |
+| Docs-only pull requests auto-merged for any author | the maintainer: no; the actor list stays the only rule | closed |
+| `actions/download-artifact@v4` (Node 20) | the maintainer: v8, with a test-bed check that a by-pattern download with zero matches still succeeds | step 7 |
+| The PR comment's mode row reading the raw goals | the maintainer: on a pull request it reads what was granted | step 7 |
+| How v1 is cut (`v1.0`, the changelog) | the maintainer: decided at step 11; release-please is one option | step 11 |
+| The test job without `queue: max` | a third overlapping run cancels a pending test job, which turns the conclusion red; it gains `queue: max` as the stage jobs have | step 7 |
+| "nothing to verify for this change" on schedules and dispatches | the notice and the conclusion stop saying "this change" where there is none | step 7 |
+| The lock-file notice on every run of a repository without test files | only when there are test files | step 7 |
+| `runs-on` and `format-check-in-root-dir` missing from the required row fields | added | step 7 |
+| A private repository's name in `auto-merge-pr/run_local_step_auto_merge_pr.sh` | removed | step 7 |
+| The engine's `validate` and `render-summary` commands, specified but not built | dropped from the spec; P12 described as built | step 7 |
+| Contradictory caller advice on `cancel-in-progress` (the PR-comments spec against the user guide) | the user guide's warning holds | step 7 |
+| Cases covered by tests only (ordering's overlapping runs, a force push, a push creating a branch, a dispatch without an inputs block, a re-run by another actor) | exercised on the test bed | step 7 |
+| Dependabot runs and OIDC; a fork run creating an environment | bear on nothing in v1: deferred | closed |
+| A single-test-file dispatch input; relevance for tests | after v1 | closed |
+| Suites writing to a fixed `/tmp` file | step 8, with the parallel runs | step 8 |
+| Module CI's inline actions without suites; the module workflow docs | step 9 | step 9 |
+| Specs' status lines and progress markers; the stale statements the inventory listed (eleven); the self-hosted runner requirements; the secret naming precondition | step 10 | step 10 |
+| The required `tests-conclusion` check on this repository | closed: a merge of #66 was refused while it was pending | closed |
 
 ## 5. Findings to carry
 
