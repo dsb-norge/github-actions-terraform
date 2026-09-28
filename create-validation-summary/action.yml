@@ -269,6 +269,20 @@ inputs:
       independent of any outcome — the warning is on the PR before the
       apply has happened. Malformed JSON is ignored.
       See docs/Apply-and-destroy-reporting.md §8.2, §8.5.
+
+      On a pull request `goals-granted-json` narrows this: see there.
+    required: false
+    default: ""
+  goals-granted-json:
+    description: |
+      The goals the run granted the environment, as a JSON array (the
+      matrix's `goals-granted`). On a pull request the Mode row, the
+      banner and the "Terraform summary" title name 'apply-on-pr' only
+      when this holds 'apply', and 'destroy-on-pr' only when it holds
+      'destroy': an on-PR goal is granted only against the default
+      branch, so against another base nothing applies and the raw goals
+      would say it does. Other events, an empty value (the default) and
+      malformed JSON leave `goals-json` to decide alone.
     required: false
     default: ""
   apply-console-file:
@@ -442,6 +456,7 @@ runs:
         input_destroy_plan_warning_count: ${{ inputs.destroy-plan-warning-count }}
         input_destroy_warning_count: ${{ inputs.destroy-warning-count }}
         input_goals_json: ${{ inputs.goals-json }}
+        input_goals_granted_json: ${{ inputs.goals-granted-json }}
         input_apply_console_file: ${{ inputs.apply-console-file }}
         input_destroy_plan_console_file: ${{ inputs.destroy-plan-console-file }}
         input_destroy_plan_txt_output_file: ${{ inputs.destroy-plan-txt-output-file }}

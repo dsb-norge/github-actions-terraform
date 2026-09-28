@@ -121,6 +121,7 @@ reset_defaults() {
   export input_warnings_markdown_file=""
   # Mode row / banner / extracts / Links (L4a)
   export input_goals_json=""
+  export input_goals_granted_json=""
   export input_apply_console_file=""
   export input_destroy_plan_console_file=""
   export input_destroy_plan_txt_output_file=""
@@ -137,6 +138,8 @@ reset_defaults() {
   export GITHUB_SERVER_URL="https://github.com"
   export GITHUB_REPOSITORY="dsb-norge/github-actions-terraform"
   export GITHUB_RUN_ID="12345678"
+  # The runner's value would leak in otherwise; the granted goals read it.
+  export GITHUB_EVENT_NAME="pull_request"
 }
 
 # Generic test runner function
@@ -2576,6 +2579,88 @@ run_test "C9: goals without an on-PR goal → no Mode row, no banner" assert_no_
 reset_defaults
 export input_goals_json='"apply-on-pr"'
 run_test "C9: goals-json that is a string, not an array → ignored" assert_no_mode_no_banner
+
+# Granted goals: on a pull request an on-PR goal is only granted against the
+# default branch, so against another base 'apply-on-pr' is in the goals while
+# nothing applies. The granted goals decide there; everywhere the two agree the
+# bodies are the ones the raw goals alone render, byte for byte.
+_granted_keep=$(mktemp -d)
+_granted_bodies="head-summary plan-extract apply-extract destroy-plan-extract destroy-extract step-summary"
+# Saved to files: an assertion runs in a command substitution, so a global would be lost.
+save_granted_reference() {
+  local body
+  for body in ${_granted_bodies}; do body_of "${body}" >"${_granted_keep}/${body}"; done
+  return 0
+}
+assert_same_as_granted_reference() {
+  local body fails=""
+  for body in ${_granted_bodies}; do
+    diff -q "${_granted_keep}/${body}" <(body_of "${body}") >/dev/null || fails+="  ${body} differs from the render without granted goals\n"
+  done
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+_granted_pr_default='["init","format","validate","lint","plan","apply"]'
+_granted_pr_other='["init","format","validate","lint","plan"]'
+
+assert_other_base_no_mode() {
+  local head="${3}" plan="${4}"
+  local step; step="$(body_of step-summary)"
+  local fails=""
+  [[ "${head}" != *'applies on PR'* && "${step}" != *'applies on PR'* ]] || fails+="  'applies on PR' on a pull request where nothing applies\n"
+  [[ "${head}" != *'| Mode |'* ]] || fails+="  Mode row must be absent\n"
+  [[ "${plan}" != *'> 🐙'* ]] || fails+="  banner must be absent\n"
+  [[ "${head}" == '### Terraform validation summary for environment: `dev`'* ]] ||
+    fails+="  title: got $(printf '%s' "${head}" | head -n1)\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+export input_goals_granted_json="${_granted_pr_other}"
+run_test "Granted goals: a pull request against another base with apply-on-pr does not say 'applies on PR'" assert_other_base_no_mode
+
+# The same environment against the default branch: C7's row and banner, and every body as before.
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+run_test "Granted goals: reference render of apply-on-pr without granted goals" save_granted_reference
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+export input_goals_granted_json="${_granted_pr_default}"
+run_test "Granted goals: apply granted on a pull request → C7's Mode row and banner" assert_mode_row_and_banner_apply
+run_test "Granted goals: apply granted on a pull request → every body byte-identical to the goals alone" assert_same_as_granted_reference
+
+# Both on-PR goals granted: C8, byte for byte.
+reset_defaults
+export input_goals_json='["init","plan","apply-on-pr","destroy-plan","destroy-on-pr"]'
+run_test "Granted goals: reference render of both on-PR goals without granted goals" save_granted_reference
+reset_defaults
+export input_goals_json='["init","plan","apply-on-pr","destroy-plan","destroy-on-pr"]'
+export input_goals_granted_json='["init","plan","apply","destroy-plan","destroy"]'
+run_test "Granted goals: both granted on a pull request → every body byte-identical to the goals alone" assert_same_as_granted_reference
+
+# Each operation is narrowed on its own.
+reset_defaults
+export input_goals_json='["init","plan","apply-on-pr","destroy-plan","destroy-on-pr"]'
+export input_goals_granted_json='["init","plan","destroy-plan","destroy"]'
+run_test "Granted goals: destroy granted, apply not → ☠ / destroys on PR alone" assert_mode_row_destroy_only
+
+# Off a pull request the goals decide alone, as before: a push granted no apply here.
+reset_defaults
+export GITHUB_EVENT_NAME="push"
+export input_goals_json='["init","plan","apply-on-pr"]'
+run_test "Granted goals: reference render of apply-on-pr on a push without granted goals" save_granted_reference
+reset_defaults
+export GITHUB_EVENT_NAME="push"
+export input_goals_json='["init","plan","apply-on-pr"]'
+export input_goals_granted_json='["init","plan"]'
+run_test "Granted goals: on a push the granted goals change nothing" assert_same_as_granted_reference
+
+# Malformed granted goals are ignored, never taken for "nothing granted": the warning may be true.
+reset_defaults
+export input_goals_json='["all","apply-on-pr"]'
+export input_goals_granted_json='{not json'
+run_test "Granted goals: malformed goals-granted-json → the goals decide (C7)" assert_mode_row_and_banner_apply
 
 # C10: Outputs section stripped by default, omission note present, no leak.
 assert_apply_extract_strips_outputs() {

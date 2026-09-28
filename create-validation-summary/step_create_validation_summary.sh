@@ -58,6 +58,10 @@
 #   input_goals_json           - JSON array of the env's goals. 'apply-on-pr' /
 #                                'destroy-on-pr' drive the Mode row and the
 #                                plan-tag banner; anything malformed is ignored.
+#   input_goals_granted_json   - JSON array of the goals the run granted. On a
+#                                pull request an on-PR goal counts only when its
+#                                operation ('apply' / 'destroy') is granted too;
+#                                empty or malformed leaves the goals alone.
 #   input_apply_console_file / input_destroy_console_file
 #                              - Tick-filtered consoles (parse-terraform-apply's
 #                                filtered-console-file) for the apply / destroy
@@ -85,6 +89,7 @@
 #   GITHUB_SERVER_URL  - GitHub server URL
 #   GITHUB_REPOSITORY  - Repository owner/name
 #   GITHUB_RUN_ID      - Workflow run ID
+#   GITHUB_EVENT_NAME  - 'pull_request' lets the granted goals narrow the on-PR goals
 #   RUNNER_TEMP        - Where the body files are written (falls back to /tmp)
 #
 

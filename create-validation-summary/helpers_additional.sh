@@ -91,6 +91,14 @@ function _is_positive_int {
 # on-PR flags. Malformed or empty JSON yields neither flag — no Mode row, no
 # banner, no crash: the goals are informational here, and a broken input
 # must not take the whole comment down with it.
+#
+# On a pull request the granted goals (${input_goals_granted_json}) have the
+# last word: an on-PR goal applies or destroys only against the default
+# branch, so on a pull request against another base the raw goals say
+# 'apply-on-pr' while nothing applies, and "applies on PR" would be false.
+# There the flag also needs the operation granted. Off a pull request, and
+# when the granted goals are absent or malformed, the raw goals decide as
+# before: a missing input must not hide a warning that may be true.
 #   Sets: GOALS_APPLY_ON_PR / GOALS_DESTROY_ON_PR to 'true' or ''.
 function _parse_on_pr_goals {
   GOALS_APPLY_ON_PR=""
@@ -103,6 +111,17 @@ function _parse_on_pr_goals {
   fi
   printf '%s' "${goals}" | jq -e 'index("apply-on-pr") != null'   >/dev/null 2>&1 && GOALS_APPLY_ON_PR="true"
   printf '%s' "${goals}" | jq -e 'index("destroy-on-pr") != null' >/dev/null 2>&1 && GOALS_DESTROY_ON_PR="true"
+
+  local granted="${input_goals_granted_json:-}"
+  if [ "${GITHUB_EVENT_NAME:-}" != 'pull_request' ] || [ -z "${granted}" ]; then
+    return 0
+  fi
+  if ! printf '%s' "${granted}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    log-warn "goals-granted-json is not a JSON array; ignoring it" 1>&2
+    return 0
+  fi
+  printf '%s' "${granted}" | jq -e 'index("apply") != null'   >/dev/null 2>&1 || GOALS_APPLY_ON_PR=""
+  printf '%s' "${granted}" | jq -e 'index("destroy") != null' >/dev/null 2>&1 || GOALS_DESTROY_ON_PR=""
   return 0
 }
 
