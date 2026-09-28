@@ -15,12 +15,13 @@ WAIT = "⏳ Awaiting results (run #4711 attempt #2)…"
 
 
 def document(environments, files=None, event="pull_request", action="synchronize", is_fork=False, run=True,
-             count=None):
+             count=None, base_ref="main"):
     env_yaml = [{key: support.parsed(value) for key, value in e.items() if key.endswith("-yml")} for e in environments]
     doc = support.document(environments=environments, env_yaml=env_yaml)
     doc["event"]["name"] = event
     if event == "pull_request":
         doc["event"]["action"] = action
+        doc["event"]["base_ref"] = base_ref
         doc["event"]["pull_request"] = {"number": 87, "head_sha": "abc", "is_fork": is_fork}
     if run:
         doc["run"] = {"id": 4711, "attempt": 2}
@@ -65,6 +66,15 @@ class ModeAllTest(unittest.TestCase):
              f"### Terraform summary for environment: `b`\n\n{WAIT}\n\n🐙 applies on PR · ☠ destroys on PR"),
             ("<!-- tf:head:env:c -->", f"### Terraform summary for environment: `c`\n\n{WAIT}\n\n☠ destroys on PR"),
         ], heads(environments))
+
+    def test_a_pull_request_against_another_base_names_no_on_pr_goal(self):
+        # There apply-on-pr applies nothing, so the placeholder must not say it does.
+        environments = [{"environment": "a", "goals-yml": ["all", "apply-on-pr"]},
+                        {"environment": "b", "pr-comment-group": "g", "goals-yml": ["all", "destroy-plan", "destroy-on-pr"]}]
+        self.assertEqual([
+            ("<!-- tf:head:group:g -->", f"### Terraform validation summary for group: `g`\n\n{WAIT}"),
+            ("<!-- tf:head:env:a -->", f"### Terraform validation summary for environment: `a`\n\n{WAIT}"),
+        ], heads(environments, base_ref="release"))
 
     def test_group_heads_come_first_sorted_and_grouped_environments_get_none(self):
         environments = [{"environment": "a", "pr-comment-group": "zeta"}, {"environment": "b"},
