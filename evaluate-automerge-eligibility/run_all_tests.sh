@@ -2335,7 +2335,8 @@ fi
 # whenever a stage job is skipped. The conclusion's script is also run, one case
 # per row of §7.2, and with the environments in stages: every case of one stage
 # must read exactly as it did before stages existed, and a held-back stage is
-# named with its count (docs/Environment-ordering.md §7.3).
+# named with its count (docs/Environment-ordering.md §7.3). The stage jobs'
+# guards and needs are F15's.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
@@ -2867,6 +2868,128 @@ if [[ "${_f14_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f14_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F15 — the environments' three stage jobs are one job written three times
+# (docs/Environment-ordering.md §4.2, §10; P2, P3, P4, P7, P13, P14).
+#
+# The anchor carries only the step list, so every other field is a copy that
+# can drift: a stage job that silently loses its environment, concurrency or
+# permissions deploys without them, and one named anything but "Terraform"
+# breaks the aggregator's job-link lookup. So the three must differ only in
+# if:, needs: and the matrix source, and share the steps as one list, which
+# PyYAML loads as one object only when stages 2 and 3 alias stage 1's. That is
+# also what lets F2, F5, F5c, F13 and F14 read stage 1's steps for all three.
+# Each guard is exactly !cancelled(), the builder's success, every earlier
+# stage succeeded or skipped, and its own count: no !failure(), which a failed
+# seed would trip, and no stage without its count, whose empty matrix fails
+# the run with no record. Every job after the environments waits for all
+# three, three readers get their results, and no merge key appears, which
+# PyYAML resolves silently and GitHub rejects.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F15 - the three stage jobs differ only in guard, needs and matrix, and all consumers wait for them${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f15_out=$(python3 - "${_workflow}" <<'PYEOF'
+import sys, yaml
+
+text = open(sys.argv[1], encoding="utf-8").read()
+jobs = yaml.safe_load(text)["jobs"]
+problems = []
+stages = ["terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3"]
+missing = [job_id for job_id in stages if job_id not in jobs]
+if missing:
+    print(f"PROBLEM the stage job(s) {missing} do not exist")
+    sys.exit(1)
+
+named = sorted(job_id for job_id, job in jobs.items() if job.get("name") == "Terraform")
+if named != stages:
+    problems.append(f"the jobs named 'Terraform' are {named}, expected exactly the three stage jobs")
+first = jobs[stages[0]]
+for stage, job_id in enumerate(stages, start=1):
+    job = jobs[job_id]
+    if job.get("name") != "Terraform":
+        problems.append(f"{job_id} is named {job.get('name')!r}, not 'Terraform'")
+    if set(job) != set(first):
+        problems.append(f"{job_id} has the fields {sorted(job)}, stage 1 has {sorted(first)}")
+    for key in sorted(set(job) & set(first) - {"if", "needs"}):
+        mine, theirs = job[key], first[key]
+        if key == "strategy":
+            mine, theirs = dict(mine or {}), dict(theirs or {})
+            source = mine.pop("matrix", None)
+            theirs.pop("matrix", None)
+            expected = f"${{{{ fromJSON(needs.create-matrix.outputs.matrix-stage-{stage}-json) }}}}"
+            if source != expected:
+                problems.append(f"{job_id}'s matrix is {source!r}, expected {expected!r}")
+        if mine != theirs:
+            problems.append(f"{job_id}'s {key} differs from stage 1's")
+    if job.get("steps") is not first.get("steps"):
+        problems.append(f"{job_id} does not share stage 1's step list through the anchor")
+    earlier = stages[:stage - 1]
+    needs = job.get("needs") or []
+    if sorted(needs) != sorted(["create-matrix", "seed-pr-comments"] + earlier):
+        problems.append(f"{job_id} needs {needs}, expected create-matrix, seed-pr-comments and {earlier or 'no stage'}")
+    condition = " ".join(str(job.get("if", "")).split())
+    clauses = (["!cancelled()", "needs.create-matrix.result == 'success'"]
+               + [f"(needs.{other}.result == 'success' || needs.{other}.result == 'skipped')" for other in earlier]
+               + [f"needs.create-matrix.outputs.stage-{stage}-count != '0'"])
+    for clause in clauses:
+        if clause not in condition:
+            problems.append(f"{job_id}'s if lacks {clause}")
+    if "failure()" in condition:
+        problems.append(f"{job_id}'s if uses failure(), which is transitive over every ancestor, the seed included")
+    if condition != " && ".join(clauses):
+        problems.append(f"{job_id}'s if is {condition!r}, expected {' && '.join(clauses)!r}")
+
+for consumer in ("conclusion", "pr-comment-aggregator", "run-summary", "automerge"):
+    needs = (jobs.get(consumer) or {}).get("needs") or []
+    for job_id in stages:
+        if job_id not in needs:
+            problems.append(f"{consumer} does not need {job_id}")
+
+results = ('{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", '
+           '"3": "${{ needs.terraform-ci-cd-3.result }}"}')
+for consumer, action in (("pr-comment-aggregator", "aggregate-validation-summaries"),
+                         ("run-summary", "create-run-summary"), ("automerge", "evaluate-automerge-eligibility")):
+    given = [(step.get("with") or {}).get("stage-results-json") for step in (jobs.get(consumer) or {}).get("steps", [])
+             if f"/{action}@" in str(step.get("uses", ""))]
+    if given != [results]:
+        problems.append(f"{consumer} passes {action} the stage results as {given}, expected [{results!r}]")
+
+
+def merge_keys(node, found):
+    if isinstance(node, yaml.MappingNode):
+        for key, value in node.value:
+            if key.tag == "tag:yaml.org,2002:merge":
+                found.add(key.start_mark.line + 1)
+            merge_keys(value, found)
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            merge_keys(item, found)
+    return found
+
+
+lines = sorted(merge_keys(yaml.compose(text, Loader=yaml.SafeLoader), set()))
+if lines:
+    problems.append(f"merge key(s) on line(s) {lines}: GitHub does not support them")
+
+print("checked the three stage jobs' names, fields, steps, matrices, needs and guards, their consumers' needs, "
+      "the stage results and merge keys")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f15_rc=0 || _f15_rc=$?
+if [[ "${_f15_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f15_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f15_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
