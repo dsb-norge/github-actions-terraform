@@ -68,6 +68,19 @@ default branch from the same repository. It:
 On a Dependabot-triggered run only Dependabot's own secrets exist, so the App key must also be a
 Dependabot secret, as it is today.
 
+```mermaid
+flowchart TD
+  run(["a pull-request run"]) --> gate{"the auto-merge job runs?<br/>the conclusion green, pr-auto-merge-enabled true,<br/>not closing, not a draft, against the default<br/>branch, from the same repository"}
+  gate -->|no| none(["no auto-merge job"])
+  gate -->|yes| app["check the App settings"]
+  app --> fetch["download every environment job's metadata,<br/>relevance.json and the test jobs' metadata"]
+  fetch --> each["evaluate every environment of the run (§5)"]
+  each --> all{"every one eligible?"}
+  all -->|no| stay(["not merged; the log names every reason"])
+  all -->|yes| token["mint the App token"]
+  token --> merge["merge, pinned to the planned head and base (§6)"]
+```
+
 ## 4. Changes
 
 | Area | Today | Then |
@@ -84,6 +97,26 @@ Dependabot secret, as it is today.
 ## 5. Evaluation
 
 ### 5.1 Per environment
+
+In the order the evaluator checks them; every check runs and every failure is logged, and one
+failure makes the environment, and so the pull request, not eligible:
+
+```mermaid
+flowchart TD
+  env(["an environment of relevance.json"]) --> kind{"its verdict"}
+  kind -->|run: affected| meta{"its job's metadata found?"}
+  meta -->|no| no(["not eligible"])
+  meta -->|yes| c1["1-3: the settings readable, auto-merge enabled,<br/>the actor listed (without case)"]
+  c1 --> c4["4-5: every granted plan, destroy plan,<br/>apply and destroy succeeded"]
+  c4 --> c6["6-9: the limits, where the plan was not applied on the<br/>pull request: counts known, from a complete JSON plan,<br/>the plan's and the destroy plan's added up"]
+  c6 --> c10["10: no operation step failed or was cancelled,<br/>a tolerated one included"]
+  c10 --> verdict{"all passed?"}
+  kind -->|skip, relevant, takes no part in pull requests| no
+  kind -->|skip otherwise| c1u["1-3 from relevance.json: the settings readable,<br/>enabled, the actor listed"]
+  c1u --> verdict
+  verdict -->|yes| yes(["eligible"])
+  verdict -->|no| no
+```
 
 For an affected environment, from its metadata:
 
@@ -182,6 +215,22 @@ The console text keeps feeding the comment's plan extract; the comment's "no cha
 the counts.
 
 ## 6. The merge
+
+```mermaid
+flowchart TD
+  start(["every environment eligible"]) --> inputs{"head-sha and merge-sha<br/>full SHAs?"}
+  inputs -->|no| refuse(["refused: an error annotation,<br/>the pull request stays open"])
+  inputs -->|yes| base{"the merge commit's first parent<br/>still the base branch's tip?"}
+  base -->|"no, or a lookup failed"| refuse
+  base -->|yes| merge["gh pr merge --admin --rebase --delete-branch<br/>--match-head-commit head-sha"]
+  merge -->|merged| done(["merged"])
+  merge -->|failed| why{"why?"}
+  why -->|the head moved| refuse
+  why -->|CONFLICTING| refuse
+  why -->|otherwise| retry{"attempts left?"}
+  retry -->|yes| base
+  retry -->|no| refuse
+```
 
 `auto-merge-pr` takes two required inputs, `head-sha` (`github.event.pull_request.head.sha`) and
 `merge-sha` (`github.sha`, the event's merge commit). Before every merge attempt it reads the merge
