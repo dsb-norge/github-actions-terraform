@@ -22,7 +22,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
-| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
+| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: the fixes that need no decision; the port waits on the maintainer's decisions below | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
@@ -456,6 +456,49 @@ engine's mutation gate, which ran in full in three jobs: the discovered engine s
   139 one after another.
 - **Removed**: nothing. The engine's unit suite runs in about eight seconds, and the duplication
   that cost the time was the three full gates, not the tests.
+
+### Step 9: module CI on v1 (analysis; the port waits on decisions)
+
+A read-only analysis of both module workflows, the actions they call, the five module repositories
+that call them and the module template. Its findings:
+
+- **A module repository without test files turns red on `@v1`.** `create-tftest-matrix` publishes
+  `{"files":[""]}` for none, and the v1 `terraform-test` refuses an empty `test-file`; v0 passed.
+  The module template has no test files.
+- **Every test file gets the repository-secret Azure principal**, unit tests included: the
+  workflow-level `ARM_*` reaches every job, and the legacy call shape of `terraform-test` logs in
+  for every file. No module repository has GitHub Environments.
+- **The test job restores a provider plugin cache nothing reads**, and on a cache miss the
+  init's prerequisite check fails the job.
+- **A dispatch or a push can push a docs commit to that branch, `main` included, as the App.** The
+  docs job checks out `pull_request.head.ref`, empty outside a pull request, and terraform-docs
+  pushes.
+- **The non-breaking spaces did no harm in production:** GitHub evaluated the expressions, and v0
+  module runs log in. They blocked actionlint. Fixed, and guarded by F19.
+- **The org's App-token action is not bumped:** from v3 it runs on Deno, which the hosted runners
+  do not carry, and it pastes the private key into an unquoted heredoc.
+  `actions/create-github-app-token@v3` replaces it, as in the default workflow (decision D7).
+- F6, F7, F9 and F16 already cover the module workflows. No test covers their gates, their
+  conclusion, or parity with the default workflow's test job.
+
+Built so far: the non-breaking spaces (F19), release-please-action v5.0.0 and terraform-docs/gh-actions
+v1.4.1 (both still pinned by commit), and CLAUDE.md's list of the remaining legacy actions.
+
+Decisions for the maintainer, each with the analysis's recommendation:
+
+| # | Decision | Recommendation |
+|---|---|---|
+| D1 | Where module test discovery lives | an engine entry point for module mode (`tests.decide_tests` with no environment rows); retire `create-tftest-matrix` and `create-test-report`, which nothing outside this repository uses |
+| D2 | How the module workflow gets the v1 test job | copy the default workflow's test and test-summary jobs, held to one shape by a parity structural test (the F15 precedent), not a shared reusable workflow |
+| D3 | Tests on `workflow_dispatch` | yes, in module mode only: module callers use dispatch as their manual build, and modules have nothing to recover |
+| D4 | Credentials on day one | none implicit: callers declare lanes, with the repository-secret mapping documented as the interim lane |
+| D5 | The Terraform 1.13 floor | applies to modules too; three of five callers pin 1.11 |
+| D6 | terraform-docs | push only on pull requests and fail on a diff elsewhere; convert the action to the modern layout; keep the Docker action for now |
+| D7 | The App token for docs and release | `actions/create-github-app-token@v3` |
+| D8 | PR comments | two heads, validation and tests; delete the legacy per-file comments once; no seed job |
+| D9 | New module-CI inputs | the four test inputs plus `terraform-test-enabled`, named as in the default workflow |
+| D10 | The test bed for modules | a throwaway module repository first, then one real one through a preview ref |
+| D11 | Scope | the plugin cache, per-job permissions and the module docs rewrite in step 9 |
 
 ## 5. Findings to carry
 
