@@ -18,6 +18,9 @@ description: |
     - With relevance-file: also renders the groups relevance.json declares and
       the environments path relevance left out of the run, as columns of dashes
       (docs/Path-relevance.md §6.2, §6.4).
+    - With relevance-file and stage-results-json: renders the environments a
+      failed stage held back, and finalises the heads of ungrouped ones, which
+      no job of the run writes (docs/Environment-ordering.md §7.4).
 
   Failure isolation:
     - Empty desired set + empty existing set -> no-op.
@@ -54,6 +57,21 @@ inputs:
       the action behaves exactly as without relevance.
     required: false
     default: ""
+  stage-results-json:
+    description: |
+      The result of each stage job, as a JSON object:
+      {"1": "<result>", "2": "<result>", "3": "<result>"}, each one of success,
+      failure, cancelled or skipped. With relevance-file, an affected
+      environment without metadata in a skipped stage that has environments was
+      held back (docs/Environment-ordering.md §7.4):
+        - in a group, it keeps its column, every cell but Links a "⏭️" whose
+          tooltip names what held it back, and the group's footer names it on a
+          "⏭️ Held back:" line above the workflow-log line;
+        - ungrouped with add-pr-comment "true", its own head, which no job of
+          this run will write, is finalised here with the held-back body.
+      Empty, or not such an object: the action behaves exactly as without it.
+    required: false
+    default: ""
   github-token:
     description: |
       Token used by the `gh` CLI to call the GitHub API. Needs `pull-requests: write`.
@@ -69,6 +87,7 @@ outputs:
     description: |
       JSON array of objects describing each action taken. Each object has shape:
         {group: <string>, "comment-id": <string>, action: posted|repost|orphan-deleted|post-failed}
+      A held-back environment's head is recorded with `environment` in place of `group`.
       Used for logs/tests; not normally consumed by callers.
     value: ${{ steps.aggregate.outputs.groups-processed-json }}
 
@@ -83,7 +102,15 @@ runs:
         input_relevance_file: ${{ inputs.relevance-file }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        # Reconcile the per-group validation summary PR comments
+        # Reconcile the group PR comments and finalise held-back env heads
+
+        # A JSON-contract input through a quoted heredoc, before allexport, so it
+        # is never exported; step_aggregate.sh reads it as a shell-local.
+        input_stage_results_json=$(cat <<'AGGREGATE_VALIDATION_SUMMARIES_STAGE_RESULTS_JSON'
+        ${{ inputs.stage-results-json }}
+        AGGREGATE_VALIDATION_SUMMARIES_STAGE_RESULTS_JSON
+        )
+
         set -o allexport
         source "${{ github.action_path }}/step_aggregate.sh"
         exit_code=$?

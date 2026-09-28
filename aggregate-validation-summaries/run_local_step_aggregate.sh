@@ -137,6 +137,9 @@ echo "============================================================"
 
 # Source the main script in a subshell so 'exit' doesn't terminate this runner
 (
+  # A shell-local before allexport, as the shim captures it. It only matters with
+  # a relevance file that has stages (input_relevance_file); none is given here.
+  input_stage_results_json='{"1": "success", "2": "skipped", "3": "skipped"}'
   set -o allexport
   source "${_this_script_dir}/step_aggregate.sh"
 )

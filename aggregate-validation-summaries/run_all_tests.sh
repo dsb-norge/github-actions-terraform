@@ -116,6 +116,7 @@ FAKE_GH
   export input_pr_number="123"
   # The shim passes the input's default, empty, when the caller gives none.
   export input_relevance_file=""
+  unset STAGE_RESULTS GITHUB_RUN_ATTEMPT
 
   cd "${TEST_DIR}"
 }
@@ -315,6 +316,9 @@ with_jobs_for() {
 run_step() {
   (
     set -eo pipefail
+    # As the shim does: stage-results-json is a shell-local captured before allexport, never
+    # exported, and empty when the caller passes nothing.
+    input_stage_results_json="${STAGE_RESULTS:-}"
     set -o allexport
     source "${_this_script_dir}/step_aggregate.sh"
   ) > "${TEST_DIR}/step.log" 2>&1
@@ -2006,6 +2010,370 @@ test_rel_mode_all_matches_no_file() {
 }
 
 # ============================================================================
+# Environment ordering: held-back members and heads (docs/Environment-ordering.md §7.4)
+# ============================================================================
+
+# Write relevance.json with stages, one environment entry per argument, in environments-yml order.
+# $1 the stages in use; each further argument
+# "<env>|<group>|<run|skip>|<stage>[|<depends-on, comma-separated>[|<mutates-on-pr, comma-separated>[|<add-pr-comment>[|<github-environment>]]]]"
+# counts.by_stage is counted from the entries, as the engine does.
+write_staged_relevance() {
+  local used="${1}"; shift
+  local spec env group verdict stage deps mutates comment gh_env entries='[]'
+  for spec in "$@"; do
+    IFS='|' read -r env group verdict stage deps mutates comment gh_env <<<"${spec}"
+    entries=$(jq -c --arg e "${env}" --arg ge "${gh_env:-${env}}" --arg g "${group}" --arg v "${verdict}" \
+      --arg s "${stage:-1}" --arg d "${deps}" --arg m "${mutates}" --arg c "${comment:-true}" '
+      . + [{
+        "environment": $e, "github-environment": $ge, "verdict": $v,
+        "depends-on": ($d | split(",") | map(select(. != ""))),
+        "reasons": [if $v == "run" then "relevance: envs/\($e)/**" else "relevance: no changed file matches" end],
+        "add-pr-comment": $c, "pr-comment-group": $g,
+        "mutates-on-pr": ($m | split(",") | map(select(. != ""))),
+        "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": null, "pr-auto-merge-limits": null,
+        "paths": ["envs/\($e)/**"], "paths-ignore": []
+      } + (if $v == "run" then {"stage": ($s | tonumber)} else {} end)]' <<<"${entries}")
+  done
+  jq -n --argjson envs "${entries}" --argjson used "${used}" '
+    def in_stage($n): [$envs[] | select(.verdict == "run" and .stage == $n)] | length;
+    {
+      "schema_version": 1,
+      "relevance": {"mode": "diff", "reason": "diff", "changed_count": 1},
+      "ordering": {"declared": true, "stages_used": $used, "cap": 3, "bypass": null},
+      "counts": {"affected": ($envs | map(select(.verdict == "run")) | length),
+                 "unaffected": ($envs | map(select(.verdict == "skip")) | length),
+                 "by_stage": {"1": in_stage(1), "2": in_stage(2), "3": in_stage(3)}},
+      "environments": $envs,
+      "comments": {"heads": [], "purge_tags_for": [], "gc": []},
+      "notices": [], "record": []
+    }' >"${TEST_DIR}/relevance.json"
+  export input_relevance_file="relevance.json"
+}
+
+HB='<span title="held back: stage 2; stage 1 failed">⏭️</span>'
+# The visible part of one environment head's rendered body, picked by name.
+env_head_body() {
+  awk -v h="for environment: \`${1}\`" '
+    /Body:$/ {f=1; buf=""; next}
+    f && /^::endgroup::/ {f=0; if (index(buf, h)) {printf "%s", buf; exit}; next}
+    f {buf = buf $0 "\n"}
+  ' "${TEST_DIR}/step.log" | sed -n '/^### /,/^<\/details>/p'
+}
+# The marker line logged before an environment head's body.
+env_head_marker() {
+  awk -v h="for environment: \`${1}\`" '
+    /Body:$/ {f=1; buf=""; next}
+    f && /^::endgroup::/ {f=0; if (index(buf, h)) {printf "%s", buf; exit}; next}
+    f {buf = buf $0 "\n"}
+  ' "${TEST_DIR}/step.log" | head -n1
+}
+# The PR's existing comments: "<id>|<first body line>" per argument, created in argument order.
+with_comments() {
+  local spec out='[]' i=0
+  for spec in "$@"; do
+    i=$((i + 1))
+    out=$(jq -c --arg id "${spec%%|*}" --arg b "${spec#*|}" --arg t "2026-01-30T10:00:0${i}Z" \
+      '. + [{"id": ($id | tonumber), "created_at": $t, "body": ($b + "\n\n⏳ Awaiting results (run #999 attempt #1)…")}]' <<<"${out}")
+  done
+  echo "${out}" >"${GH_FAKE_LIST_RESPONSE_FILE}"
+}
+# gh calls that write, with temp-file paths normalised so two runs compare.
+write_calls() { grep -E 'PATCH|POST|DELETE' "${GH_FAKE_CALL_LOG}" | sed 's#body=@[^ ]*#body=@FILE#' || true; }
+
+# A group head: the held-back member keeps its column, every cell the held-back span but an empty
+# Links cell, and the footer names it above the workflow-log line.
+test_ord_held_back_column_in_group() {
+  write_meta "alpha" "g"
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|1" "bravo|g|run|2|shared"
+  write_meta "shared" ""
+  # A job record under the held-back member's name (another attempt's, say) is not its job in
+  # this run: its Links cell stays empty.
+  with_jobs_for alpha bravo
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local ok='<span title="success">✅</span>'
+  local pd='<div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div>'
+  local expected
+  expected="### Terraform validation summary for group: \`g\`
+|  | Step | alpha | bravo |
+|:---:|---|:---:|:---:|
+$(step_rows "${ok}" "${HB}")
+| <span title=\"Plan details\">📊</span> | Plan details | ${pd} | ${HB} |
+| <span title=\"Plan time\">⏱</span> | Plan time | <span title=\"mm:ss (minutes:seconds)\">—</span> | ${HB} |
+| <span title=\"Links\">🔗</span> | Links | [job log](https://github.com/dsb-norge/test-repo/actions/runs/999/job/alpha#logs) |  |
+
+⏭️ Held back: \`bravo\`
+
+[Workflow log](https://github.com/dsb-norge/test-repo/actions/runs/999)"
+  local got; got="$(group_body g)"
+  [[ "${got}" == "${expected}" ]] || { echo "held-back group body mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# Held back, not affected and affected members together: both footer lines, not affected first, in
+# column order; a held-back member's mutates-on-pr sets the title and the Mode row, as the seed's
+# placeholder counts it; and the member is out of every group-wide gate. delta's stage 2 ran and was
+# cancelled, so delta crashed before capture: no column, as before ordering.
+test_ord_held_back_with_unaffected_and_mode() {
+  write_meta "alpha" "g" "success" "" "" "" "$(ops_apply success true 1 0 0 0:10)"
+  write_staged_relevance 3 "alpha|g|run|1" "charlie|g|skip" "bravo|g|run|3|alpha|apply-on-pr" "delta|g|run|2|alpha"
+  STAGE_RESULTS='{"1": "success", "2": "cancelled", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "$(head -n1 <<<"${got}")" == '### Terraform summary for group: `g`' ]] || { echo "the held-back member mutates: title must drop 'validation'"; echo "${got}"; return 1; }
+  [[ "$(sed -n 2p <<<"${got}")" == '|  | Step | alpha | charlie | bravo |' ]] || { echo "columns in environments-yml order, none for the crashed delta"; echo "${got}"; return 1; }
+  local hb3='<span title="held back: stage 3; stage 2 was cancelled">⏭️</span>'
+  local mode="| <span title=\"Mode\">🐙</span> | Mode | <span title=\"This environment mutates infrastructure on pull request\">—</span> | ${NA} | ${hb3} |"
+  [[ "$(sed -n 4p <<<"${got}")" == "${mode}" ]] || { echo "Mode row mismatch"; echo "want: ${mode}"; echo "got:  $(sed -n 4p <<<"${got}")"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `charlie`
+
+⏭️ Held back: `bravo`
+
+[Workflow log]('* ]] || { echo "footer: not affected, then held back, then the workflow log"; echo "${got}"; return 1; }
+  local r; r="$(row "Apply")"
+  [[ "${r}" == *" | ${NA} | ${hb3} |" ]] || { echo "the Apply row carries the held-back cell: ${r}"; return 1; }
+  [ -z "$(row 'Apply warnings')" ] || { echo "a held-back member must not open a warnings row"; return 1; }
+  return 0
+}
+
+# A group whose members were all held back renders, instead of staying at the seed's placeholder.
+test_ord_all_held_back_group_patched() {
+  write_meta "shared" ""
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|2|shared" "bravo|g|run|2|shared"
+  with_comments '7001|<!-- tf:head:group:g -->'
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  grep -q 'PATCH repos/dsb-norge/test-repo/issues/comments/7001' "${GH_FAKE_CALL_LOG}" || { echo "expected PATCH of 7001"; cat "${GH_FAKE_CALL_LOG}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "${got}" == *"| <span title=\"Plan time\">⏱</span> | Plan time | ${HB} | ${HB} |"* ]] || { echo "every cell held back"; echo "${got}"; return 1; }
+  [[ "${got}" == *'⏭️ Held back: `alpha`, `bravo`'* ]] || { echo "footer must name both"; echo "${got}"; return 1; }
+  return 0
+}
+
+# A held-back environment's own head: the seed's placeholder is PATCHed with the §7.4 body, byte
+# for byte, under its marker; run and attempt are this run's.
+test_ord_held_back_head_patched() {
+  write_meta "shared" ""
+  write_staged_relevance 2 "shared||run|1" "prod||run|2|shared|apply-on-pr"
+  with_comments '8001|<!-- tf:head:env:shared -->' '8002|<!-- tf:head:env:prod -->'
+  export GITHUB_RUN_ATTEMPT=2
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local expected='### Terraform summary for environment: `prod`
+
+⏭️ Held back: this environment is in stage 2 and stage 1 failed (run #999 attempt #2).
+
+<details><summary>Ordering</summary>
+
+Depends on: `shared`
+Stage: 2 of 2 · stage 1 result: failure
+
+</details>'
+  local got; got="$(env_head_body prod)"
+  [[ "${got}" == "${expected}" ]] || { echo "held-back head mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  [[ "$(env_head_marker prod)" == '<!-- tf:head:env:prod -->' ]] || { echo "the marker must be line 1"; return 1; }
+  [[ "$(write_calls)" == 'gh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8002 -F body=@FILE --jq .id' ]] ||
+    { echo "only prod's head is written, in place"; write_calls; return 1; }
+  local processed; processed=$(get_processed_json)
+  jq -e '.[] | select(.environment == "prod" and .action == "patched" and ."comment-id" == "8002")' <<<"${processed}" >/dev/null ||
+    { echo "expected {environment: prod, action: patched}; got ${processed}"; return 1; }
+  return 0
+}
+
+# Held back told apart from not affected (a skip verdict, whose head the seed wrote final) and from
+# crashed before capture (a run entry whose stage ran): only the held-back head is written.
+test_ord_held_back_told_apart() {
+  write_meta "ok" ""
+  write_staged_relevance 2 "docs||skip" "crash||run|1" "ok||run|1" "prod||run|2|ok"
+  with_comments '8101|<!-- tf:head:env:docs -->' '8102|<!-- tf:head:env:crash -->' '8103|<!-- tf:head:env:ok -->' '8104|<!-- tf:head:env:prod -->'
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(write_calls)" == 'gh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8104 -F body=@FILE --jq .id' ]] ||
+    { echo "only the held-back head (8104) may be written"; write_calls; return 1; }
+  # The same environments when stage 2 ran: prod crashed before capture, and its head is left alone.
+  : >"${GH_FAKE_CALL_LOG}"
+  STAGE_RESULTS='{"1": "success", "2": "failure", "3": "skipped"}'
+  run_step
+  [[ -z "$(write_calls)" ]] || { echo "a crashed environment's head is not the aggregator's"; write_calls; return 1; }
+  return 0
+}
+
+# The wording without a failed stage to name, for a cancelled one, and for a free-standing
+# environment that does not mutate: the seed's title, "none" for its dependencies.
+test_ord_held_back_head_wording() {
+  write_staged_relevance 2 "shared||run|1" "sandbox||run|2" "prod-app||run|2|shared||true|prod"
+  STAGE_RESULTS='{"1": "cancelled", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local expected='### Terraform validation summary for environment: `sandbox`
+
+⏭️ Held back: this environment is in stage 2 and stage 1 was cancelled (run #999 attempt #1).
+
+<details><summary>Ordering</summary>
+
+Depends on: none; free-standing environments run in the last stage
+Stage: 2 of 2 · stage 1 result: cancelled
+
+</details>'
+  local got; got="$(env_head_body sandbox)"
+  [[ "${got}" == "${expected}" ]] || { echo "cancelled wording mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  [[ "$(env_head_marker prod)" == '<!-- tf:head:env:prod -->' ]] || { echo "the head is the github-environment's"; return 1; }
+  STAGE_RESULTS='{"1": "success", "2": "skipped", "3": "skipped"}'
+  run_step
+  got="$(env_head_body sandbox)"
+  [[ "${got}" == *'⏭️ Held back: this environment is in stage 2, which did not run (run #999 attempt #1).'* ]] || { echo "no-cause wording"; echo "${got}"; return 1; }
+  [[ "${got}" == *$'\nStage: 2 of 2\n'* ]] || { echo "no stage result to name"; echo "${got}"; return 1; }
+  # Three stages: the stage and the stages in use are the file's
+  write_staged_relevance 3 "shared||run|1" "mid||run|2|shared" "tail||run|3|mid"
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  got="$(env_head_body tail)"
+  [[ "${got}" == *'⏭️ Held back: this environment is in stage 3 and stage 1 failed'* ]] || { echo "three stages: the why"; echo "${got}"; return 1; }
+  [[ "${got}" == *$'\nDepends on: `mid`\nStage: 3 of 3 · stage 1 result: failure\n'* ]] || { echo "three stages: the details"; echo "${got}"; return 1; }
+  return 0
+}
+
+# No head on the pull request (the seed did not run): posted fresh. Duplicates: the oldest kept.
+# Degraded mode: posted fresh.
+test_ord_held_back_head_upsert_paths() {
+  write_staged_relevance 2 "shared||run|1" "prod||run|2|shared"
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ "$(write_calls)" == 'gh api -X POST repos/dsb-norge/test-repo/issues/123/comments -F body=@FILE --jq .id' ]] ||
+    { echo "no head: expected one POST"; write_calls; return 1; }
+  : >"${GH_FAKE_CALL_LOG}"
+  with_comments '8301|<!-- tf:head:env:prod -->' '8302|<!-- tf:head:env:prod -->'
+  run_step
+  [[ "$(write_calls)" == $'gh api -X DELETE repos/dsb-norge/test-repo/issues/comments/8302\ngh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8301 -F body=@FILE --jq .id' ]] ||
+    { echo "duplicates: delete the newer, patch the oldest"; write_calls; return 1; }
+  : >"${GH_FAKE_CALL_LOG}"
+  export GH_FAKE_LIST_EXIT=1
+  run_step
+  [[ "$(write_calls)" == 'gh api -X POST repos/dsb-norge/test-repo/issues/123/comments -F body=@FILE --jq .id' ]] ||
+    { echo "degraded: expected one POST"; write_calls; return 1; }
+  unset GH_FAKE_LIST_EXIT
+  : >"${GH_FAKE_CALL_LOG}"
+  with_comments '8401|<!-- tf:head:env:prod -->'
+  export GH_FAKE_PATCH_EXIT=1
+  run_step
+  [[ "$(write_calls)" == $'gh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8401 -F body=@FILE --jq .id\ngh api -X POST repos/dsb-norge/test-repo/issues/123/comments -F body=@FILE --jq .id' ]] ||
+    { echo "PATCH failure: fall back to POST"; write_calls; return 1; }
+  return 0
+}
+
+# Only an ungrouped, commenting environment has a head of its own; a grouped one is its group's
+# column, one with add-pr-comment false has none, and one with metadata ran whatever the results say.
+test_ord_held_back_heads_only_where_they_exist() {
+  write_meta "ran" ""
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|2|shared" "quiet||run|2|shared||false" "ran||run|2|shared"
+  with_comments '8501|<!-- tf:head:group:g -->' '8502|<!-- tf:head:env:ran -->'
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(write_calls)" == 'gh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8501 -F body=@FILE --jq .id' ]] ||
+    { echo "only the group head is written"; write_calls; return 1; }
+  [[ -z "$(env_head_body quiet)$(env_head_body ran)$(env_head_body alpha)" ]] || { echo "no environment head rendered"; return 1; }
+  return 0
+}
+
+# Heads and columns are labelled by github-environment, and so are the dependencies.
+test_ord_labels_are_github_environments() {
+  write_meta "hub-gh" ""
+  write_staged_relevance 2 "hub||run|1||||hub-gh" "spoke|g|run|2|hub|||spoke-gh" "app||run|2|hub|||app-gh"
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "${got}" == *'|  | Step | spoke-gh |'* && "${got}" == *'⏭️ Held back: `spoke-gh`'* ]] || { echo "the column and footer name the github-environment"; echo "${got}"; return 1; }
+  [[ "$(env_head_body app-gh)" == *'Depends on: `hub-gh`'* ]] || { echo "the dependency is named by its github-environment"; env_head_body app-gh; return 1; }
+  return 0
+}
+
+# Without stage results (absent, blank, or not an object of results), and with every environment in
+# stage 1, the run is byte for byte what it was before ordering.
+test_ord_without_results_is_unchanged() {
+  write_meta "alpha" "g"
+  write_meta "shared" ""
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|1" "bravo|g|run|2|shared" "prod||run|2|shared"
+  with_comments '8601|<!-- tf:head:group:g -->' '8602|<!-- tf:head:env:prod -->'
+  run_step
+  sed "s#${TEST_DIR}#TEST_DIR#g" "${TEST_DIR}/step.log" >"${TEST_DIR}/absent.log"
+  write_calls >"${TEST_DIR}/absent.calls"
+  grep -q 'held back\|Held back' "${TEST_DIR}/absent.log" && { echo "absent results must say nothing about holding back"; return 1; }
+  [[ "$(group_body g)" == *'|  | Step | alpha |'* ]] || { echo "absent: today's group, without the column"; group_body g; return 1; }
+  local value
+  for value in '' '  '; do
+    : >"${GH_FAKE_CALL_LOG}"
+    STAGE_RESULTS="${value}"
+    run_step
+    diff <(sed "s#${TEST_DIR}#TEST_DIR#g" "${TEST_DIR}/step.log") "${TEST_DIR}/absent.log" >/dev/null || { echo "'${value}': log differs from absent"; return 1; }
+    [[ "$(write_calls)" == "$(cat "${TEST_DIR}/absent.calls")" ]] || { echo "'${value}': writes differ"; return 1; }
+  done
+  for value in '{not json' '["failure"]'; do
+    : >"${GH_FAKE_CALL_LOG}"
+    STAGE_RESULTS="${value}"
+    run_step
+    grep -q 'stage-results-json is not a JSON object' "${TEST_DIR}/step.log" || { echo "'${value}': expected a warning"; return 1; }
+    diff <(sed "s#${TEST_DIR}#TEST_DIR#g" "${TEST_DIR}/step.log" | grep -v 'stage-results-json is not') "${TEST_DIR}/absent.log" >/dev/null ||
+      { echo "'${value}': log differs from absent beyond the warning"; return 1; }
+    [[ "$(write_calls)" == "$(cat "${TEST_DIR}/absent.calls")" ]] || { echo "'${value}': writes differ"; return 1; }
+  done
+  # Every environment in stage 1: stages 2 and 3 skipped as empty, and a stage-1 failure (or a
+  # cancelled run's skipped stage 1) holds nothing back.
+  write_staged_relevance 1 "shared||run|1" "alpha|g|run|1" "bravo|g|run|1" "prod||run|1"
+  : >"${GH_FAKE_CALL_LOG}"
+  unset STAGE_RESULTS
+  run_step
+  sed "s#${TEST_DIR}#TEST_DIR#g" "${TEST_DIR}/step.log" >"${TEST_DIR}/stage1.log"
+  write_calls >"${TEST_DIR}/stage1.calls"
+  for value in '{"1": "success", "2": "skipped", "3": "skipped"}' '{"1": "failure", "2": "skipped", "3": "skipped"}' \
+    '{"1": "skipped", "2": "skipped", "3": "skipped"}'; do
+    : >"${GH_FAKE_CALL_LOG}"
+    STAGE_RESULTS="${value}"
+    run_step
+    diff <(sed "s#${TEST_DIR}#TEST_DIR#g" "${TEST_DIR}/step.log") "${TEST_DIR}/stage1.log" >/dev/null || { echo "stage 1 only, ${value}: log differs"; return 1; }
+    [[ "$(write_calls)" == "$(cat "${TEST_DIR}/stage1.calls")" ]] || { echo "stage 1 only, ${value}: writes differ"; return 1; }
+  done
+  return 0
+}
+
+# A held-back member does not make a group appear that no commenting environment declares, and a
+# group's held-back cell names no cause the results cannot give, and the lowest one they can.
+test_ord_group_rules() {
+  write_meta "shared" ""
+  write_staged_relevance 3 "shared||run|1" "quiet|silent|run|3|shared||false" "alpha|g|run|1" "bravo|g|run|3|alpha"
+  write_meta "alpha" "g"
+  STAGE_RESULTS='{"1": "success", "2": "success", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ -z "$(group_body silent)" ]] || { echo "no group head for a group nobody comments in"; group_body silent; return 1; }
+  [[ "$(row Plan)" == *' | <span title="held back: stage 3">⏭️</span> |' ]] || { echo "no cause to name: $(row Plan)"; return 1; }
+  STAGE_RESULTS='{"1": "failure", "2": "cancelled", "3": "skipped"}'
+  run_step
+  [[ "$(row Plan)" == *' | <span title="held back: stage 3; stage 1 failed">⏭️</span> |' ]] || { echo "the lowest cause: $(row Plan)"; return 1; }
+  [[ -z "$(group_body silent)" ]] || { echo "still no group head for a group nobody comments in"; group_body silent; return 1; }
+  return 0
+}
+
+# A skipped stage the builder counts no environment in holds nothing back, whatever an entry says.
+test_ord_empty_stage_holds_nothing_back() {
+  write_meta "shared" ""
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|2|shared" "prod||run|2|shared"
+  jq '.counts.by_stage["2"] = 0' "${TEST_DIR}/relevance.json" >"${TEST_DIR}/x.json" && mv "${TEST_DIR}/x.json" "${TEST_DIR}/relevance.json"
+  with_comments '8701|<!-- tf:head:group:g -->' '8702|<!-- tf:head:env:prod -->'
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ -z "$(write_calls)" ]] || { echo "nothing is held back, so nothing is written"; write_calls; return 1; }
+  return 0
+}
+
+# ============================================================================
 # Run tests
 # ============================================================================
 
@@ -2088,6 +2456,18 @@ run_test "relevance: malformed file behaves as no file"                     test
 run_test "relevance: mode all renders byte-identical to the no-file path"   test_rel_mode_all_matches_no_file
 run_test "contract: the engine's docs-only file renders the all-unaffected group" test_contract_engine_docs_only_renders_the_group
 run_test "contract: the engine's one-environment file mixes a column and dashes" test_contract_engine_one_environment_mixes_a_column_and_dashes
+run_test "ordering: a held-back member keeps a column of held-back cells"   test_ord_held_back_column_in_group
+run_test "ordering: held back beside not affected; title and Mode row"      test_ord_held_back_with_unaffected_and_mode
+run_test "ordering: an all-held-back group is rendered, not left waiting"   test_ord_all_held_back_group_patched
+run_test "ordering: a held-back environment's head is finalised in place"   test_ord_held_back_head_patched
+run_test "ordering: held back told apart from not affected and crashed"     test_ord_held_back_told_apart
+run_test "ordering: the head's wording for cancelled, no cause, no deps"    test_ord_held_back_head_wording
+run_test "ordering: a held-back head is posted, deduplicated, degraded"     test_ord_held_back_head_upsert_paths
+run_test "ordering: only ungrouped commenting envs without metadata"         test_ord_held_back_heads_only_where_they_exist
+run_test "ordering: labels are github-environments, dependencies too"       test_ord_labels_are_github_environments
+run_test "ordering: without stage results or stages, the run is unchanged"  test_ord_without_results_is_unchanged
+run_test "ordering: a stage with no environments holds nothing back"        test_ord_empty_stage_holds_nothing_back
+run_test "ordering: undeclared groups, the cell without a cause, lowest cause" test_ord_group_rules
 
 # ============================================================================
 echo ""

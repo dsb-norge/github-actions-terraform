@@ -22,6 +22,12 @@
 #   input_relevance_file          - Path of the matrix builder's relevance.json;
 #                                   empty, or a path that does not exist, renders
 #                                   from metadata alone (docs/Path-relevance.md §6.4)
+#   input_stage_results_json      - {"1": <result>, "2": ..., "3": ...}, the stage
+#                                   jobs' results; a shell-local, never exported.
+#                                   With the relevance file it names the environments
+#                                   a failed stage held back (docs/Environment-ordering.md
+#                                   §7.4); absent or blank renders as before ordering
+#   GITHUB_RUN_ATTEMPT            - Named in a held-back head, as the seed names it
 #
 
 # Allow unset variables so we can do graceful fallback for optional inputs.
@@ -77,10 +83,29 @@ declare -gA DECLARED_GROUPS=()
 # unaffected["<group>/<env>"]=1 for a member relevance left out of the run.
 # It is listed in DESIRED_GROUPS like any member but has no DESIRED_META.
 declare -gA UNAFFECTED=()
-# unaffected_goals["<group>/<env>"]="apply-on-pr destroy-on-pr" — the
-# member's mutates-on-pr from relevance.json, standing in for the goals an
-# affected member's metadata carries.
-declare -gA UNAFFECTED_GOALS=()
+# held_back["<group>/<env>"]=1 for a member in a stage that did not run
+# because an earlier stage failed (docs/Environment-ordering.md §7.4). Listed
+# in DESIRED_GROUPS without DESIRED_META, like an unaffected member.
+declare -gA HELD_BACK=()
+# A member without a job, unaffected or held back, renders every cell as
+# jobless_cell["<group>/<env>"] and is left out of every group-wide gate.
+declare -gA JOBLESS_CELL=()
+# jobless_goals["<group>/<env>"]="apply-on-pr destroy-on-pr" — such a member's
+# mutates-on-pr from relevance.json, standing in for the goals an affected
+# member's metadata carries.
+declare -gA JOBLESS_GOALS=()
+# metadata_envs[<github-environment>]=1 for every metadata file, grouped or
+# not: an environment with metadata ran, whatever its stage's result says.
+declare -gA METADATA_ENVS=()
+# The ungrouped, commenting environments a failed stage held back, in the
+# relevance file's order, and what their heads say (keyed by github-environment).
+declare -ga HELD_BACK_HEADS=()
+declare -gA HELD_BACK_HEAD_FIELDS=()
+# existing_env_heads[<github-environment>]="<created_at>|<id>\n..." — the PR's
+# comments carrying a held-back environment's head marker.
+declare -gA EXISTING_ENV_HEADS=()
+# The normalised stage results (see _read_stage_results); empty without them.
+STAGE_RESULTS_FILE=""
 # group_columns[group]="env1\nenv2\n..." — column order when the file is given.
 declare -gA GROUP_COLUMNS=()
 
@@ -128,6 +153,7 @@ function build_desired_set {
       log-warn "Skipping ${file}: no .metadata.environment"
       continue
     fi
+    METADATA_ENVS[${env}]=1
 
     if [ -z "${group}" ] || [ "${group}" = "null" ]; then
       log-debug "Env '${env}' has no pr-comment-group — not part of any desired group"
@@ -233,13 +259,16 @@ function merge_relevance_file {
     [ -n "${UNAFFECTED[${group}/${env}]:-}" ] && continue
     log-info "Env '${env}' in group '${group}' is not affected by this pull request"
     UNAFFECTED["${group}/${env}"]=1
-    UNAFFECTED_GOALS["${group}/${env}"]="${mutates}"
+    JOBLESS_CELL["${group}/${env}"]="${NOT_AFFECTED_CELL}"
+    JOBLESS_GOALS["${group}/${env}"]="${mutates}"
     if [ -n "${DESIRED_GROUPS[${group}]:-}" ]; then
       DESIRED_GROUPS[${group}]+=$'\n'"${env}"
     else
       DESIRED_GROUPS[${group}]="${env}"
     fi
   done
+
+  merge_held_back
 
   local g member order
   local -A placed=()
@@ -270,12 +299,62 @@ function merge_relevance_file {
   done
 
   log-info "Desired set with relevance: ${#DESIRED_GROUPS[@]} group(s) to render, ${#UNAFFECTED[@]} unaffected member(s)"
+  [ ${#HELD_BACK[@]} -gt 0 ] && log-info "Held back: ${#HELD_BACK[@]} group member(s)"
+  [ ${#HELD_BACK_HEADS[@]} -gt 0 ] && log-info "Held back: ${#HELD_BACK_HEADS[@]} environment head(s) to finalise"
   end-group
+}
+
+# The environments a failed stage held back (docs/Environment-ordering.md §7.1,
+# §7.4). A grouped one keeps its column, like an unaffected member; an ungrouped
+# one that comments has its own head finalised by this action, because its
+# matrix job never runs to do it (P12). Told apart from the two other reasons an
+# environment has no metadata: not affected is a relevance verdict of skip, and
+# crashed before capture is a run entry whose stage ran; both leave the head as
+# the seed or the job left it, as before ordering.
+function merge_held_back {
+  _read_stage_results
+  [ -z "${STAGE_RESULTS_FILE}" ] && return 0
+  local line env group comment mutates deps stage cause result used cell
+  while IFS= read -r line; do
+    IFS=$'\x1f' read -r env group comment mutates deps stage cause result used <<<"${line}"
+    [ -z "${env}" ] && continue
+    # A job that left metadata ran: results that exist are shown.
+    [ -n "${METADATA_ENVS[${env}]:-}" ] && continue
+    if [ -z "${group}" ]; then
+      [ "${comment}" = 'true' ] || continue
+      log-info "Env '${env}' was held back in stage ${stage} — its head will be finalised"
+      HELD_BACK_HEADS+=("${env}")
+      HELD_BACK_HEAD_FIELDS[${env}]="${line}"
+      continue
+    fi
+    [ -z "${DECLARED_GROUPS[${group}]:-}" ] && [ -z "${DESIRED_GROUPS[${group}]:-}" ] && continue
+    log-info "Env '${env}' in group '${group}' was held back in stage ${stage}"
+    cell=$(_held_back_cell "${stage}" "${cause}" "${result}")
+    HELD_BACK["${group}/${env}"]=1
+    JOBLESS_CELL["${group}/${env}"]="${cell}"
+    JOBLESS_GOALS["${group}/${env}"]="${mutates}"
+    if [ -n "${DESIRED_GROUPS[${group}]:-}" ]; then
+      DESIRED_GROUPS[${group}]+=$'\n'"${env}"
+    else
+      DESIRED_GROUPS[${group}]="${env}"
+    fi
+  done < <(_held_back_entries "${RELEVANCE_FILE}")
+  return 0
 }
 
 # True when the member is an unaffected environment of the group.
 function _is_unaffected {
   [ -n "${UNAFFECTED[${1}/${2}]:-}" ]
+}
+
+# True when the member is a held-back environment of the group.
+function _is_held_back {
+  [ -n "${HELD_BACK[${1}/${2}]:-}" ]
+}
+
+# True when no job ran for the member: unaffected or held back.
+function _is_jobless {
+  [ -n "${JOBLESS_CELL[${1}/${2}]:-}" ]
 }
 
 # ============================================================================
@@ -437,9 +516,9 @@ function list_pr_state {
   for group in "${!DESIRED_GROUPS[@]}"; do
     while IFS= read -r env; do
       [ -z "${env}" ] && continue
-      # No job ran for an unaffected member, so it has no tag of this run and
-      # its Links cell stays empty whatever a lookup would find.
-      _is_unaffected "${group}" "${env}" && continue
+      # No job ran for an unaffected or held-back member, so it has no tag of
+      # this run and its Links cell stays empty whatever a lookup would find.
+      _is_jobless "${group}" "${env}" && continue
       # One lookup per tag kind. The marker is '<!-- tf:tag:<kind>:<env>:run-id-<id>:'
       # — every segment terminated by ':' so 'destroy' cannot match a
       # 'destroy-plan' tag and 'prod' cannot match 'prod-dr'
@@ -481,6 +560,22 @@ function list_pr_state {
         fi
       done
     done <<<"${DESIRED_GROUPS[${group}]}"
+  done
+
+  # A held-back environment's head, by the marker the seed and the matrix job
+  # upsert it with. Contains, as pr-comment matches it: the marker ends in
+  # ' -->', so 'prod' cannot match 'prod-dr'.
+  local head_marker head_lines
+  for env in "${HELD_BACK_HEADS[@]}"; do
+    head_marker="<!-- tf:head:env:${env} -->"
+    head_lines=$(jq -r --arg m "${head_marker}" '.[] | select(.body | contains($m)) | "\(.created_at)|\(.id)"' \
+      <"${normalized_file}" 2>/dev/null) || head_lines=""
+    if [ -n "${head_lines}" ]; then
+      EXISTING_ENV_HEADS[${env}]="${head_lines}"
+      log-info "  existing head of held-back env '${env}': $(echo "${head_lines}" | tr '\n' ' ')"
+    else
+      log-info "  no head of held-back env '${env}' on PR"
+    fi
   done
 
   rm -f "${normalized_file}"
@@ -535,11 +630,11 @@ function render_group_body {
   for env in "${envs[@]}"; do
     apply_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "apply-on-pr")
     destroy_on_pr=$(_extract_goal_flag "${group_name}" "${env}" "destroy-on-pr")
-    # An unaffected member's flags still count toward the title and the
-    # col-1 icon, as the seed placeholder's title counts every member; only
-    # its own cell is the not-affected dash.
-    if _is_unaffected "${group_name}" "${env}"; then
-      mode_cells+=("${NOT_AFFECTED_CELL}")
+    # An unaffected or held-back member's flags still count toward the title
+    # and the col-1 icon, as the seed placeholder's title counts every member;
+    # only its own cell is its jobless cell.
+    if _is_jobless "${group_name}" "${env}"; then
+      mode_cells+=("${JOBLESS_CELL[${group_name}/${env}]}")
     else
       mode_cells+=("$(_render_mode_cell "${apply_on_pr}" "${destroy_on_pr}")")
     fi
@@ -566,8 +661,8 @@ function render_group_body {
 
     local row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
     for env in "${envs[@]}"; do
-      if _is_unaffected "${group_name}" "${env}"; then
-        row+=" ${NOT_AFFECTED_CELL} |"
+      if _is_jobless "${group_name}" "${env}"; then
+        row+=" ${JOBLESS_CELL[${group_name}/${env}]} |"
         continue
       fi
       local outcome
@@ -589,10 +684,10 @@ function render_group_body {
   local warnings_row="| $(_render_step_icon_cell "⚠️" "Warnings") | Warnings |"
   local group_warning_total=0
   for env in "${envs[@]}"; do
-    # Unaffected members are left out of every group-wide gate below: a
-    # column of dashes must not open a row, nor keep one open.
-    if _is_unaffected "${group_name}" "${env}"; then
-      warnings_row+=" ${NOT_AFFECTED_CELL} |"
+    # Unaffected and held-back members are left out of every group-wide gate
+    # below: a column without a job must not open a row, nor keep one open.
+    if _is_jobless "${group_name}" "${env}"; then
+      warnings_row+=" ${JOBLESS_CELL[${group_name}/${env}]} |"
       continue
     fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
@@ -611,8 +706,8 @@ function render_group_body {
   local plan_details_row="| $(_render_step_icon_cell "📊" "Plan details") | Plan details |"
   local group_has_plan_data=false
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group_name}" "${env}"; then
-      plan_details_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group_name}" "${env}"; then
+      plan_details_row+=" ${JOBLESS_CELL[${group_name}/${env}]} |"
       continue
     fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
@@ -634,8 +729,8 @@ function render_group_body {
   # not as a step-status row alongside init/fmt/validate/lint/plan.
   local plan_time_row="| $(_render_step_icon_cell "⏱" "Plan time") | Plan time |"
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group_name}" "${env}"; then
-      plan_time_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group_name}" "${env}"; then
+      plan_time_row+=" ${JOBLESS_CELL[${group_name}/${env}]} |"
       continue
     fi
     local meta_file="${DESIRED_META[${group_name}/${env}]:-}"
@@ -663,9 +758,9 @@ function render_group_body {
   # ---- Links row ----
   local links_row="| $(_render_step_icon_cell "🔗" "Links") | Links |"
   for env in "${envs[@]}"; do
-    # An unaffected member has no job and no tag: an empty cell, as for an
-    # affected env whose links could not be resolved.
-    if _is_unaffected "${group_name}" "${env}"; then
+    # An unaffected or held-back member has no job and no tag: an empty cell,
+    # as for an affected env whose links could not be resolved.
+    if _is_jobless "${group_name}" "${env}"; then
       links_row+=" $(_render_links_cell "" "") |"
       continue
     fi
@@ -690,6 +785,15 @@ function render_group_body {
   for env in "${envs[@]}"; do
     _is_unaffected "${group_name}" "${env}" && unaffected_envs+=("${env}")
   done
+  # The held-back members' names on their own line between the two
+  # (docs/Environment-ordering.md §7.4).
+  local -a held_back_envs=()
+  for env in "${envs[@]}"; do
+    _is_held_back "${group_name}" "${env}" && held_back_envs+=("${env}")
+  done
+  if [ ${#held_back_envs[@]} -gt 0 ]; then
+    footer="$(_render_held_back_line "${held_back_envs[@]}")"$'\n\n'"${footer}"
+  fi
   if [ ${#unaffected_envs[@]} -gt 0 ]; then
     footer="$(_render_not_affected_line "${unaffected_envs[@]}")"$'\n\n'"${footer}"
   fi
@@ -748,11 +852,11 @@ function _render_op_block {
 
   local env outcome any_outcome=false
   local status_row="| $(_render_step_icon_cell "${emoji}" "${label}") | ${label} |"
-  # Unaffected members neither open the block nor count toward its warnings
-  # gate; every row carries their not-affected dash.
+  # Unaffected and held-back members neither open the block nor count toward
+  # its warnings gate; every row carries their jobless cell.
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group}" "${env}"; then
-      status_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group}" "${env}"; then
+      status_row+=" ${JOBLESS_CELL[${group}/${env}]} |"
       continue
     fi
     outcome=$(_extract_step_outcome "${group}" "${env}" "${step}")
@@ -766,8 +870,8 @@ function _render_op_block {
   local warnings_row="| $(_render_step_icon_cell "⚠️" "${warn_label}") | ${warn_label} |"
   local warn_total=0 wc meta_file
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group}" "${env}"; then
-      warnings_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group}" "${env}"; then
+      warnings_row+=" ${JOBLESS_CELL[${group}/${env}]} |"
       continue
     fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
@@ -779,8 +883,8 @@ function _render_op_block {
   local details_label="${label} details"
   local details_row="| $(_render_step_icon_cell "📊" "${details_label}") | ${details_label} |"
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group}" "${env}"; then
-      details_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group}" "${env}"; then
+      details_row+=" ${JOBLESS_CELL[${group}/${env}]} |"
       continue
     fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
@@ -816,8 +920,8 @@ function _render_op_block {
   local time_label="${label} time"
   local time_row="| $(_render_step_icon_cell "⏱" "${time_label}") | ${time_label} |"
   for env in "${envs[@]}"; do
-    if _is_unaffected "${group}" "${env}"; then
-      time_row+=" ${NOT_AFFECTED_CELL} |"
+    if _is_jobless "${group}" "${env}"; then
+      time_row+=" ${JOBLESS_CELL[${group}/${env}]} |"
       continue
     fi
     meta_file="${DESIRED_META[${group}/${env}]:-}"
@@ -843,12 +947,12 @@ function _extract_step_output {
 
 # 'true' when the env's goals (matrix_context.vars.goals, a JSON array)
 # contain the given goal; '' otherwise, including when goals are missing or
-# not an array (older artifacts). For an unaffected member, whose metadata
-# does not exist, relevance.json's mutates-on-pr answers instead.
+# not an array (older artifacts). For an unaffected or held-back member, whose
+# metadata does not exist, relevance.json's mutates-on-pr answers instead.
 function _extract_goal_flag {
   local group="${1}" env="${2}" goal="${3}"
-  if _is_unaffected "${group}" "${env}"; then
-    [[ " ${UNAFFECTED_GOALS[${group}/${env}]:-} " == *" ${goal} "* ]] && echo "true" || echo ""
+  if _is_jobless "${group}" "${env}"; then
+    [[ " ${JOBLESS_GOALS[${group}/${env}]:-} " == *" ${goal} "* ]] && echo "true" || echo ""
     return
   fi
   local file="${DESIRED_META[${group}/${env}]:-}"
@@ -1147,6 +1251,78 @@ function _post_fresh {
 }
 
 # ============================================================================
+# Step 6: Finalise held-back environments' heads
+# ============================================================================
+
+# For every ungrouped, commenting environment a failed stage held back, write
+# its final head (docs/Environment-ordering.md §7.4) into the comment the seed
+# posted, found by the marker the matrix job would have upserted it with.
+# Upserted as pr-comment does: the oldest match is kept and PATCHed, the others
+# deleted, and a fresh one POSTed when there is none (a seed that did not run)
+# or the listing failed (degraded mode, which the next clean run self-heals).
+function held_back_heads_pass {
+  [ ${#HELD_BACK_HEADS[@]} -eq 0 ] && return 0
+  local env marker body name group comment mutates deps stage cause result used
+  for env in "${HELD_BACK_HEADS[@]}"; do
+    start-group "Step 6: Finalise the head of held-back env '${env}'"
+    IFS=$'\x1f' read -r name group comment mutates deps stage cause result used <<<"${HELD_BACK_HEAD_FIELDS[${env}]}"
+    marker="<!-- tf:head:env:${env} -->"
+    body=$(_render_held_back_head "${env}" "${mutates}" "${deps}" "${stage}" "${cause}" "${result}" "${used}")
+    log-info "Body:"
+    _render_full_body "${marker}" "${body}"
+    echo
+    _upsert_env_head "${env}" "${marker}" "${body}"
+    end-group
+  done
+}
+
+function _upsert_env_head {
+  local env="${1}" marker="${2}" user_body="${3}"
+  local body_file entries="" keep_id="" entry cid new_id
+  body_file=$(mktemp)
+  _render_full_body "${marker}" "${user_body}" >"${body_file}"
+  if [ "${DEGRADED_MODE}" = "true" ]; then
+    log-warn "Degraded mode — posting fresh (cannot list existing comments to upsert)."
+  else
+    entries="${EXISTING_ENV_HEADS[${env}]:-}"
+  fi
+  if [ -n "${entries}" ]; then
+    local sorted_entries
+    sorted_entries=$(echo "${entries}" | sort)
+    keep_id=$(echo "${sorted_entries}" | head -n1)
+    keep_id="${keep_id##*|}"
+    while IFS= read -r entry; do
+      [ -z "${entry}" ] && continue
+      cid="${entry##*|}"
+      [ "${cid}" = "${keep_id}" ] && continue
+      log-info "  duplicate head of '${env}' (id=${cid}) — deleting"
+      if _gh_delete_comment "${GITHUB_REPOSITORY}" "${cid}" >/dev/null 2>&1; then
+        _record_processed_env "${env}" "${cid}" "duplicate-deleted"
+      else
+        log-warn "  failed to delete duplicate id=${cid} for '${env}' — continuing"
+      fi
+    done <<<"${sorted_entries}"
+    log-info "Editing the head in place (id=${keep_id})."
+    if _gh_patch_comment "${GITHUB_REPOSITORY}" "${keep_id}" "${body_file}" >/dev/null 2>&1; then
+      _record_processed_env "${env}" "${keep_id}" "patched"
+      rm -f "${body_file}"
+      return 0
+    fi
+    log-warn "PATCH failed for the head of '${env}' (id=${keep_id}) — posting fresh as fallback."
+  elif [ "${DEGRADED_MODE}" != "true" ]; then
+    log-info "No head for '${env}' on the PR — posting fresh."
+  fi
+  if new_id=$(_gh_post_comment "${GITHUB_REPOSITORY}" "${input_pr_number}" "${body_file}" 2>&1); then
+    log-info "posted: comment id=${new_id}"
+    _record_processed_env "${env}" "${new_id}" "posted"
+  else
+    log-warn "failed to post the head of '${env}': ${new_id}"
+    _record_processed_env "${env}" "0" "post-failed"
+  fi
+  rm -f "${body_file}"
+}
+
+# ============================================================================
 # Output helpers
 # ============================================================================
 
@@ -1155,6 +1331,14 @@ function _record_processed {
   PROCESSED_RESULTS_JSON=$(echo "${PROCESSED_RESULTS_JSON}" | jq \
     --arg g "${group}" --arg id "${comment_id}" --arg a "${action}" \
     '. + [{"group": $g, "comment-id": $id, "action": $a}]')
+}
+
+# The same record for an environment's head, keyed by environment, not group.
+function _record_processed_env {
+  local env="${1}" comment_id="${2}" action="${3}"
+  PROCESSED_RESULTS_JSON=$(echo "${PROCESSED_RESULTS_JSON}" | jq \
+    --arg e "${env}" --arg id "${comment_id}" --arg a "${action}" \
+    '. + [{"environment": $e, "comment-id": $id, "action": $a}]')
 }
 
 # ============================================================================
@@ -1227,9 +1411,12 @@ function main {
   list_pr_state
   orphan_delete_pass
   upsert_pass
+  held_back_heads_pass
 
   set-multiline-output "groups-processed-json" "${PROCESSED_RESULTS_JSON}"
   log-info "Done. Processed ${#DESIRED_GROUPS[@]} group(s)."
+  [ ${#HELD_BACK_HEADS[@]} -gt 0 ] && log-info "Finalised ${#HELD_BACK_HEADS[@]} held-back environment head(s)."
+  [ -n "${STAGE_RESULTS_FILE}" ] && rm -f "${STAGE_RESULTS_FILE}"
   return 0
 }
 
