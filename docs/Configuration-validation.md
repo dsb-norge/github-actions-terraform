@@ -6,8 +6,7 @@ and what it refuses, with the message it refuses with. It is rule 1 of the engin
 procedure: a configuration is valid or it is not, whatever the event, and nothing is decided until
 it is.
 
-Status: **implemented.** §12 says where each rule lives; §13 is what implementation taught the
-spec.
+§12 says where each rule lives; §13 is what implementation taught the spec.
 
 ## 1. Why
 
@@ -373,7 +372,7 @@ With one environment naming its own actors, the others are named one by one: `�
 
 ## 7. Breaking changes
 
-For [Road-to-v1.md](Road-to-v1.md) §3, added in the same change:
+What these rules break for a configuration that worked on v0:
 
 - unknown, unsuffixed and wrongly suffixed keys in an environment entry;
 - goals whose prerequisite is missing;
@@ -429,7 +428,7 @@ None; the decisions are the maintainer's (D3, D5, D6, D10).
 
 ## 11. Implementation order
 
-1. `docs:` this spec and [Auto-merge.md](Auto-merge.md); Road-to-v1.md §3's rows.
+1. `docs:` this spec and [Auto-merge.md](Auto-merge.md), with the breaking changes of §7.
 2. `feat(engine):` the keys of an entry and the input classification (§3.1).
 3. `feat(engine):` the goals' prerequisites and the goal messages (§3.2).
 4. `feat(engine):` variables as source text, nulls dropped, their rules (§3.5); the adapter's reading.
