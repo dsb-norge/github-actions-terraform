@@ -135,7 +135,8 @@ class SpecTableTest(unittest.TestCase):
 
     def test_a_schedule_no_environment_opted_into_is_green_with_a_notice(self):
         output = decided(document(SPEC[:1] + SPEC[2:], event="schedule"))
-        self.assertEqual(([], {"affected": 0, "unaffected": 3}), (output["errors"], output["counts"]))
+        self.assertEqual(([], {"affected": 0, "unaffected": 3, "by_stage": {"1": 0, "2": 0, "3": 0}}),
+                         (output["errors"], output["counts"]))
         line = ("schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the "
                 "environment the schedule is for")
         self.assertEqual({"event": "schedule", "lines": [line]}, output["trigger"])

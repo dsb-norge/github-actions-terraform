@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 import urllib.parse
 
-from . import SCHEMA_VERSION, decide, environments, relevance, tests, workflow
+from . import SCHEMA_VERSION, decide, environments, ordering, relevance, tests, workflow
 
 TITLE = "create-tf-vars-matrix"
 EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
@@ -54,7 +54,7 @@ NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
-             "record", "trigger")
+             "record", "trigger", "ordering")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -426,6 +426,20 @@ def build_document(inputs, facts, tools, isdir):
     return document
 
 
+def compact(value):
+    """A value as a job output: one line, keys sorted, text unescaped."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def union_matrix(output):
+    """Every stage's rows in one matrix, in environments-yml order: the matrix-json output, kept for the
+    action's callers that read one matrix."""
+    position = {entry["environment"]: index for index, entry in enumerate(output["environments"])}
+    rows = sorted((row for stage in ordering.STAGES for row in output["matrices"][stage]["include"]),
+                  key=lambda row: position[row["environment"]])
+    return {"environment": [row["environment"] for row in rows], "include": rows}
+
+
 def run(inputs_file, environ, stream, tools, isdir):
     """Run the create-matrix step. Returns the exit code: 0, 1 a fault, 2 an invalid configuration."""
     log = workflow.Log(stream, TITLE)
@@ -483,18 +497,19 @@ def run(inputs_file, environ, stream, tools, isdir):
         log.notice(NOTICE_TITLE, notice)
     for warning in output["warnings"]:
         log.warning(warning)
-    matrix = output["matrices"]["1"]
+    matrix = union_matrix(output)
     log.group("matrix-json", json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
     outputs = {
-        "matrix-json": json.dumps(matrix, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+        "matrix-json": compact(matrix),
+        **{f"matrix-stage-{stage}-json": compact(output["matrices"][stage]) for stage in ordering.STAGES},
+        **{f"stage-{stage}-count": str(output["counts"]["by_stage"][stage]) for stage in ordering.STAGES},
         "affected-count": str(output["counts"]["affected"]),
         "unaffected-count": str(output["counts"]["unaffected"]),
         "relevance-mode": output["relevance"]["mode"],
         "relevance-reason": output["relevance"]["reason"],
         "changed-count": str(output["relevance"]["changed_count"]),
         "relevance-file": relevance_file,
-        "tests-matrix-json": json.dumps(output["tests"]["matrix"], sort_keys=True, ensure_ascii=False,
-                                        separators=(",", ":")),
+        "tests-matrix-json": compact(output["tests"]["matrix"]),
         "tests-count": str(output["tests"]["count"]),
         "tests-active": "true" if output["tests"]["active"] else "false",
     }

@@ -12,8 +12,26 @@ inputs:
     required: true
 outputs:
   matrix-json:
-    description: "All terraform ci/cd variables as json, one row per affected environment; may be empty"
+    description: "All terraform ci/cd variables as json, one row per affected environment, every stage's together; may be empty"
     value: ${{ steps.create-matrix.outputs.matrix-json }}
+  matrix-stage-1-json:
+    description: "The rows of stage 1 (docs/Environment-ordering.md); every affected environment when no depends-on orders them; may be empty"
+    value: ${{ steps.create-matrix.outputs.matrix-stage-1-json }}
+  matrix-stage-2-json:
+    description: "The rows of stage 2; may be empty"
+    value: ${{ steps.create-matrix.outputs.matrix-stage-2-json }}
+  matrix-stage-3-json:
+    description: "The rows of stage 3; may be empty"
+    value: ${{ steps.create-matrix.outputs.matrix-stage-3-json }}
+  stage-1-count:
+    description: "How many environments stage 1 runs, as a string"
+    value: ${{ steps.create-matrix.outputs.stage-1-count }}
+  stage-2-count:
+    description: "How many environments stage 2 runs, as a string"
+    value: ${{ steps.create-matrix.outputs.stage-2-count }}
+  stage-3-count:
+    description: "How many environments stage 3 runs, as a string"
+    value: ${{ steps.create-matrix.outputs.stage-3-count }}
   affected-count:
     description: "How many environments this change is relevant to, as a string (docs/Path-relevance.md)"
     value: ${{ steps.create-matrix.outputs.affected-count }}

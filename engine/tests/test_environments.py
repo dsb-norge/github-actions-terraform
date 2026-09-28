@@ -36,7 +36,7 @@ class EnvironmentsTest(unittest.TestCase):
                          [(e["environment"], e["verdict"], e["reasons"]) for e in output["environments"]])
         self.assertEqual(["env-a: run — relevance: all:not-computed; goals: none",
                           "env-7: run — relevance: all:not-computed; goals: none"], output["record"])
-        self.assertEqual({"affected": 2, "unaffected": 0}, output["counts"])
+        self.assertEqual({"affected": 2, "unaffected": 0, "by_stage": {"1": 2, "2": 0, "3": 0}}, output["counts"])
 
     def test_the_record_joins_every_reason_in_order(self):
         self.assertEqual(["prod: skip — relevance: none; ordering: stage 2", "7: run — port"],
@@ -52,7 +52,7 @@ class EnvironmentsTest(unittest.TestCase):
     def test_the_output_document_has_exactly_its_keys(self):
         keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record"}
         output = decide.decide(support.document())
-        self.assertEqual(keys | {"relevance", "tests", "comments", "trigger"}, set(output))
+        self.assertEqual(keys | {"relevance", "tests", "comments", "trigger", "ordering"}, set(output))
         self.assertEqual(1, output["schema_version"])
         self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])
         output = decide.decide(support.document(environments=[]))

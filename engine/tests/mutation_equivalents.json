@@ -1,1 +1,3 @@
-{}
+{
+  "ordering.py: 0->1: 0": "_cycle walks from any environment left after peeling: at least two are left, since none may depend on itself, and the cycle found is rotated to start at its member declared first, so which one the walk starts from cannot change the message."
+}

@@ -740,9 +740,15 @@ class RunTest(unittest.TestCase):
         runner = Runner(self, inputs={**DEFAULT_INPUTS, "environments-yml": '[{"environment": "env-a"}, {"environment": "b"}]'})
         self.assertEqual(0, runner.run())
         outputs = runner.outputs()
-        self.assertEqual(["matrix-json", "affected-count", "unaffected-count", "relevance-mode", "relevance-reason",
-                          "changed-count", "relevance-file", "tests-matrix-json", "tests-count", "tests-active"],
+        self.assertEqual(["matrix-json", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
+                          "stage-1-count", "stage-2-count", "stage-3-count", "affected-count", "unaffected-count",
+                          "relevance-mode", "relevance-reason", "changed-count", "relevance-file", "tests-matrix-json",
+                          "tests-count", "tests-active"],
                          list(outputs))
+        self.assertEqual(("1", "0", "0", '{"environment":[],"include":[]}'),
+                         (outputs["stage-1-count"], outputs["stage-2-count"], outputs["stage-3-count"],
+                          outputs["matrix-stage-2-json"]))
+        self.assertEqual(outputs["matrix-json"], outputs["matrix-stage-1-json"])
         self.assertEqual(('{"include":[]}', "0", "false"),
                          (outputs["tests-matrix-json"], outputs["tests-count"], outputs["tests-active"]))
         self.assertEqual(("1", "1", "diff", "diff", "1"),
@@ -754,8 +760,9 @@ class RunTest(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
         self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
-                          "warnings", "record", "trigger"}, set(published))
-        self.assertEqual((["env-a", "b"], ["run", "skip"], {"affected": 1, "unaffected": 1}),
+                          "warnings", "record", "trigger", "ordering"}, set(published))
+        self.assertEqual((["env-a", "b"], ["run", "skip"],
+                          {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}),
                          ([e["environment"] for e in published["environments"]],
                           [e["verdict"] for e in published["environments"]], published["counts"]))
 

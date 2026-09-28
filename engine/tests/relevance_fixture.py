@@ -11,7 +11,9 @@ Every scenario has three environments, auto-merge enabled for all: `prod` ungrou
 (github-environment `prod-gh`, auto-merge only for `renovate[bot]`), `staging` and `sandbox` in the
 group `platform`, for `renovate[bot]` and `dependabot[bot]` (`sandbox` applies on pull request). Pull request #87, run #4711
 attempt #1. The event scenarios are not pull requests: a dispatch of `staging` with a plan by
-`octocat`, and a schedule no environment takes part in.
+`octocat`, and a schedule no environment takes part in. The staged scenario is a push to `main`
+changing `main/` for three environments of its own: `shared`, `prod` depending on it, and the
+free-standing `sandbox`, so `shared` is stage 1 and the other two stage 2.
 """
 
 import json
@@ -32,12 +34,18 @@ ENVIRONMENTS = [
 ACTORS = ["renovate[bot]", "dependabot[bot]"]
 LIMITS = {"plan-max-count-add": 0, "plan-max-count-change": 0, "plan-max-count-destroy": 0,
           "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": 0}
+STAGED_ENVIRONMENTS = [
+    {"environment": "shared"},
+    {"environment": "prod", "depends-on": ["shared"]},
+    {"environment": "sandbox"},
+]
 SCENARIOS = {
     "docs-only": ["README.md", "envs/prod/README.md"],
     "one-environment": ["envs/staging/main.tf"],
     "workflow-changed": [".github/workflows/ci.yml"],
     "dispatch-staging": None,
     "schedule-nothing": None,
+    "push-staged": ["main/providers.tf"],
 }
 EVENTS = {
     "dispatch-staging": {"name": "workflow_dispatch", "ref_name": "main", "ref_type": "branch", "actor": "octocat",
@@ -52,9 +60,10 @@ def _parsed(value):
     return {"ok": True, "value": value}
 
 
-def document(files):
+def document(files, environments=None):
     """The input document create-matrix builds for a pull request touching `files`."""
-    inputs = {"environments-yml": json.dumps(ENVIRONMENTS), "add-pr-comment": True, "apply-extract-include-outputs": False,
+    environments = ENVIRONMENTS if environments is None else environments
+    inputs = {"environments-yml": json.dumps(environments), "add-pr-comment": True, "apply-extract-include-outputs": False,
               "cache-terraform-modules": True, "path-relevance-enabled": True, "pr-auto-merge-enabled": True,
               "pr-comment-group": "", "terraform-version": "latest", "tflint-version": "latest",
               "verify-lock-file": True, "goals-yml": "[all]", "pr-auto-merge-from-actors-yml": json.dumps(ACTORS),
@@ -66,12 +75,12 @@ def document(files):
                   "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
         "workflow_inputs": inputs,
         "yaml": {
-            "inputs": {"environments-yml": _parsed(ENVIRONMENTS), "goals-yml": _parsed(["all"]),
+            "inputs": {"environments-yml": _parsed(environments), "goals-yml": _parsed(["all"]),
                        "pr-auto-merge-from-actors-yml": _parsed(ACTORS), "pr-auto-merge-limits-yml": _parsed(LIMITS)},
             "environments": [{key: _parsed(value) for key, value in e.items() if key.endswith("-yml")}
-                             for e in ENVIRONMENTS],
+                             for e in environments],
         },
-        "directories_exist": {f"./envs/{e['environment']}": True for e in ENVIRONMENTS},
+        "directories_exist": {f"./envs/{e['environment']}": True for e in environments},
         "run": {"id": 4711, "attempt": 1},
         "changed_files": {"available": True, "truncated": False, "error": None, "api_head_sha": "abc",
                           "count": len(files), "files": files},
@@ -79,6 +88,11 @@ def document(files):
 
 
 def scenario_document(scenario):
+    if scenario == "push-staged":
+        doc = document(SCENARIOS[scenario], STAGED_ENVIRONMENTS)
+        doc["event"] = {"name": "push", "ref_name": "main", "ref_type": "branch", "actor": "octocat",
+                        "push": {"created": False, "forced": False, "deleted": False}}
+        return doc
     if scenario not in EVENTS:
         return document(SCENARIOS[scenario])
     doc = document([])

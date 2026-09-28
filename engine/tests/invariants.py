@@ -64,12 +64,16 @@ def check(document, output):
         if any(entry["verdict"] not in VERDICTS for entry in environments):
             violations.append("I7: a verdict outside run/skip")
 
-    # I8: the union of the stage matrices is exactly the run set, in declaration order, and no
-    # environment is in more than one matrix.
+    # I8: the union of the stage matrices is exactly the run set, each stage in declaration order,
+    # and no environment is in more than one matrix.
     run_names = [entry["environment"] for entry in environments if entry["verdict"] == "run"]
     matrix_names = [row["environment"] for stage in sorted(matrices) for row in matrices[stage]["include"]]
-    if matrix_names != run_names:
-        violations.append("I8: matrix rows are not the run environments in declaration order")
+    if sorted(matrix_names) != sorted(run_names) or len(set(matrix_names)) != len(matrix_names):
+        violations.append("I8: matrix rows are not the run environments, each once")
+    for stage, matrix in matrices.items():
+        names = [row["environment"] for row in matrix["include"]]
+        if names != [name for name in run_names if name in names]:
+            violations.append(f"I8: stage {stage}'s rows are not in declaration order")
     for stage, matrix in matrices.items():
         if matrix["environment"] != [row["environment"] for row in matrix["include"]]:
             violations.append(f"I8: stage {stage}'s environment list does not match its rows")
@@ -138,6 +142,7 @@ def check(document, output):
             violations.append("I14: not four purge rules per purged environment")
 
     violations += _goal_invariants(document, output)
+    violations += _ordering_invariants(document, output)
 
     tests = output.get("tests")
     if tests is not None:
@@ -194,4 +199,107 @@ def _goal_invariants(document, output):
     # I2 and I17: a dispatch naming one environment runs exactly that one.
     if named and [entry["environment"] for entry in running] != [named]:
         violations.append(f"I2: the dispatch named '{named}' but {[e['environment'] for e in running]} run")
+    return violations
+
+
+def _declared_graph(document):
+    """Each declared environment's depends-on, a single name read as one; written apart from the engine's."""
+    graph = {}
+    for entry in declared_environments(document) or []:
+        value = entry.get("depends-on")
+        graph[entry["environment"]] = [] if value is None else [value] if isinstance(value, str) else list(value)
+    return graph
+
+
+def _expected_stages(graph, running):
+    """The stages of the running environments by relaxation: start everyone at 1 and raise a dependent
+    above each running dependency until nothing moves (I24's pure function), then free-standing
+    environments to the last stage in use."""
+    stages = {name: 1 for name in running}
+    for _ in range(len(running)):
+        for name in running:
+            for dependency in graph.get(name, []):
+                if dependency in stages and stages[name] <= stages[dependency]:
+                    stages[name] = stages[dependency] + 1
+    last = max(stages.values(), default=1)
+    depended_on = {dependency for dependencies in graph.values() for dependency in dependencies}
+    for name in running:
+        if not graph.get(name) and name not in depended_on:
+            stages[name] = last
+    return stages
+
+
+def _longest(graph):
+    """The number of environments on the longest declared chain, by relaxation."""
+    depth = {name: 1 for name in graph}
+    for _ in range(len(graph)):
+        for name, dependencies in graph.items():
+            for dependency in dependencies:
+                if dependency in depth:
+                    depth[name] = max(depth[name], depth[dependency] + 1)
+    return max(depth.values(), default=0)
+
+
+def _ordering_invariants(document, output):
+    """I18 to I24: the stages and what they record."""
+    violations = []
+    if output["errors"]:
+        return violations
+    graph = _declared_graph(document)
+    environments = output["environments"]
+    running = [entry for entry in environments if entry["verdict"] == "run"]
+    names = [entry["environment"] for entry in running]
+    event = document["event"]
+    named = event["name"] == "workflow_dispatch" and event.get("dispatch", {}).get("environment", "") != ""
+    mutating = any(goal in ("apply", "destroy") for entry in running for goal in entry.get("goals", []))
+    # I20 and I23: the declared graph is acyclic, names nothing unknown or itself, and fits the cap.
+    for name, dependencies in graph.items():
+        if name in dependencies or any(dependency not in graph for dependency in dependencies):
+            violations.append(f"I20: '{name}' depends on itself or on an undeclared environment, yet no error")
+    if _longest(graph) > 3 or _longest(graph) > len(graph):
+        violations.append("I20/I23: the declared graph is cyclic or deeper than the cap, yet no error")
+    # I18: every running environment has one stage and appears in that stage's matrix only.
+    stages = {entry["environment"]: entry.get("stage") for entry in running}
+    by_stage = output["counts"].get("by_stage")
+    if any(stage not in (1, 2, 3) for stage in stages.values()) or not isinstance(by_stage, dict):
+        return violations + [f"I18: a running environment without a stage of 1 to 3, or no counts by stage: {stages}"]
+    for entry in environments:
+        if entry["verdict"] == "skip" and "stage" in entry:
+            violations.append(f"I18: '{entry['environment']}' is skipped but carries a stage")
+        if entry.get("depends-on") != graph.get(entry["environment"], []):
+            violations.append(f"I18: '{entry['environment']}' does not carry its declared depends-on")
+    for stage in ("1", "2", "3"):
+        expected = [name for name in names if stages[name] == int(stage)]
+        if [row["environment"] for row in output["matrices"][stage]["include"]] != expected:
+            violations.append(f"I18: stage {stage}'s matrix is not its environments in declaration order")
+        if by_stage.get(stage) != len(expected):
+            violations.append(f"I18: stage {stage}'s count is not its environments")
+    used = max(stages.values(), default=1)
+    if output["ordering"]["stages_used"] != used or output["ordering"]["cap"] != 3:
+        violations.append(f"I18: stages_used {output['ordering']['stages_used']} but the highest stage is {used}")
+    if output["ordering"]["declared"] != any(graph.values()):
+        violations.append("ordering: 'declared' does not say whether any environment declares depends-on")
+    # I21 and I22: one stage unless something mutates, and one stage for a dispatch naming one environment.
+    if (named or not mutating) and used != 1:
+        violations.append(f"I21/I22: {used} stages although nothing mutates or one environment is dispatched")
+    if output["ordering"]["bypass"] != ("single-environment-dispatch" if named else None):
+        violations.append(f"I22: bypass {output['ordering']['bypass']} for this event")
+    for entry in running:
+        bypassed = "ordering: single-environment dispatch, stage 1" in entry["reasons"]
+        if bypassed != (named and bool(graph.get(entry["environment"]))):
+            violations.append(f"I22: '{entry['environment']}' records the bypass wrongly")
+    if named or not mutating:
+        return violations
+    # I24: the stages are the pure function of the graph restricted to the run and the last-stage rule.
+    if _expected_stages(graph, names) != stages:
+        violations.append(f"I24: stages {stages}, expected {_expected_stages(graph, names)}")
+    # I19: a dependency in the run is in a strictly lower stage; one outside it is recorded.
+    for entry in running:
+        for dependency in graph.get(entry["environment"], []):
+            if dependency in stages:
+                if not stages[dependency] < stages[entry["environment"]]:
+                    violations.append(f"I19: '{entry['environment']}' is not after its dependency '{dependency}'")
+            elif not any(reason.startswith(f"ordering: depends-on '{dependency}' not in this run (")
+                         for reason in entry["reasons"]):
+                violations.append(f"I19: '{entry['environment']}' does not record that '{dependency}' is not in the run")
     return violations

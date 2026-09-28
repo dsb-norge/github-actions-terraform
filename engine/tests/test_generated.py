@@ -185,6 +185,63 @@ class GeneratedTriggersTest(unittest.TestCase):
         self.assertEqual({"error", "0 run", "1 run", "2 run"}, kinds)
 
 
+class GeneratedOrderingTest(unittest.TestCase):
+    """depends-on graphs over four environments, valid and not, across events, goals, changed files and
+    dispatches (docs/Environment-ordering.md §12): the invariants I18 to I24 hold on every case, and
+    every outcome kind occurs."""
+
+    NAMES = ("a", "b", "c", "d")
+
+    def test_random_graphs_are_sound(self):
+        rng = random.Random(6)
+        kinds = set()
+        for _ in range(600):
+            environments = []
+            for name in self.NAMES:
+                entry = {"environment": name}
+                choice = rng.random()
+                if choice < 0.55:
+                    entry["depends-on"] = rng.sample(self.NAMES + ("z",), rng.randint(1, 2))
+                elif choice < 0.62:
+                    entry["depends-on"] = rng.choice(self.NAMES)
+                if rng.random() < 0.2:
+                    entry["goals-yml"] = rng.choice([["init", "plan"], ["all", "apply-on-pr"], ["all", "destroy-plan",
+                                                                                              "destroy"]])
+                if rng.random() < 0.15:
+                    entry["trigger-events"] = rng.choice([["push"], ["pull_request"], ["schedule"]])
+                environments.append(entry)
+            document = support.document(environments=environments, env_yaml=[
+                {key: support.parsed(value) for key, value in entry.items() if key.endswith("-yml")}
+                for entry in environments])
+            document["yaml"]["inputs"]["goals-yml"] = support.parsed(rng.choice([["all"], ["init", "plan"]]))
+            event = rng.choice(("push", "pull_request", "workflow_dispatch", "schedule"))
+            document["event"].update({"name": event, "ref_name": rng.choice(("main", "main", "feature/x"))})
+            if event == "push":
+                document["event"]["push"] = {"created": False, "forced": False, "deleted": False}
+            if event == "pull_request":
+                document["event"].update({"action": "synchronize", "base_ref": "main",
+                                          "pull_request": {"number": 1, "head_sha": "a", "is_fork": False}})
+            if event == "workflow_dispatch":
+                document["event"]["dispatch"] = {"block": True, "environment": rng.choice(("", "", "a", "c")),
+                                                 "goal": rng.choice(("default", "plan", "apply")), "reason": "",
+                                                 "inputs": ["environment", "goal", "reason"]}
+            if event in ("push", "pull_request") and rng.random() < 0.7:
+                files = rng.sample([f"envs/{name}/main.tf" for name in self.NAMES] + ["README.md", "main/x.tf"],
+                                   rng.randint(0, 3))
+                document["changed_files"] = {"available": True, "truncated": False, "error": None,
+                                             "api_head_sha": "a", "count": len(files), "files": files}
+            with self.subTest(environments=environments, event=event):
+                output = decide.decide(document)
+                self.assertEqual([], invariants.check(document, output))
+                if output["errors"]:
+                    kinds.add("error")
+                else:
+                    kinds.add(f"{output['ordering']['stages_used']} stages")
+                    kinds.add(f"bypass {output['ordering']['bypass']}")
+        self.assertEqual({"error", "1 stages", "2 stages", "3 stages", "bypass None",
+                          "bypass single-environment-dispatch"}, kinds)
+
+
 class GeneratedTestsTest(unittest.TestCase):
     """The test stage's random walk: rules, lanes, events and facts; the invariants hold, nothing crashes."""
 
