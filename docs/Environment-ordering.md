@@ -6,9 +6,8 @@ before production, a shared landing zone before what sits on it. An environment 
 follows, the [decision engine](Decision-engine.md) compiles those declarations into stages, and the
 workflow runs the stages in sequence.
 
-Status: **implemented.** The decisions in §2 are settled; the mechanics of §4 were observed on a
-test-bed repository during design and again through the implementation (§13). §14 is what
-implementation taught the spec.
+The decisions in §2 are settled; the mechanics of §4 were observed on a test-bed repository during
+design and again through the implementation (§13). §14 is what implementation taught the spec.
 
 Related: [Decision-engine.md](Decision-engine.md) assigns the stages;
 [Path-relevance.md](Path-relevance.md) decides which environments are in the run at all;
