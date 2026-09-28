@@ -6,9 +6,9 @@ before production, a shared landing zone before what sits on it. An environment 
 follows, the [decision engine](Decision-engine.md) compiles those declarations into stages, and the
 workflow runs the stages in sequence.
 
-Status: **specification, not yet implemented.** Decisions in §2 are settled; the mechanics in §4
-were verified on a test-bed repository during design and are marked as observed where GitHub does
-not document them. §14 is reserved for what implementation teaches the spec.
+Status: **implemented.** The decisions in §2 are settled; the mechanics of §4 were observed on a
+test-bed repository during design and again through the implementation (§13). §14 is what
+implementation taught the spec.
 
 Related: [Decision-engine.md](Decision-engine.md) assigns the stages;
 [Path-relevance.md](Path-relevance.md) decides which environments are in the run at all;
@@ -43,7 +43,7 @@ all three:
 | D3 | An environment with no dependencies and no dependents joins the **last stage in use**. | Its failure can then hold nothing back, which matters because free-standing environments are usually the experimental ones. It waits behind the chain, which costs time on a mutating run and never correctness. |
 | D4 | Stages apply on any run where some environment is granted `apply` or `destroy`; otherwise every environment is stage 1. | Keying on the event would exempt callers who apply on pull requests through `apply-on-pr`, which is exactly the throwaway-environment pattern that wants ordering. For a plan-only pull request the two rules are identical. |
 | D5 | A **tolerated** failure releases the next stage. | `allow-failing-terraform-operations` makes the job green, and every other consumer already reads it that way. At job level the difference is invisible, so holding back would need a metadata-inspecting gate job between every pair of stages. An environment others depend on should not carry the flag, and the run summary says when one did. |
-| D6 | The stage cap is **3**, enforced against the **declared** graph. A deeper chain is a validation error naming it. | Hub-and-spoke is depth 2 and three tiers is depth 3; deeper coupling in practice crosses repositories, which this workflow cannot sequence anyway. Validating the declared graph keeps a configuration's validity independent of which files a change touched. Raising the cap later is one job block and a constant, and moves no existing configuration. |
+| D6 | The stage cap is **3**, enforced against the **declared** graph. A deeper chain is a validation error naming it. | Hub-and-spoke is depth 2 and three tiers is depth 3; deeper coupling in practice crosses repositories, which this workflow cannot sequence anyway. Validating the declared graph keeps a configuration's validity independent of which files a change touched. Raising the cap later moves no existing configuration; it is one job block, the engine's constant, and one entry in every list of the stage jobs (the four consumers' `needs`, the three `stage-results-json` values, the conclusion's stage loop, the auto-merge condition, the outputs of create-matrix and `create-tf-vars-matrix`, and F10 and F15). |
 | D7 | Every stage job keeps `name: "Terraform"`. | Any other name breaks or silently corrupts the aggregator's job-link lookup, and would change the check-run names every caller sees. With identical names, callers observe no change at all. |
 | D8 | `depends-on` is **opt-in**. Absent, every environment is stage 1 and the workflow behaves as before. | Nothing breaks for a caller that does nothing, so v1 gains no breaking-change row for this feature. |
 | D9 | Ordering is **intra-run only** and never inspects a dependency's earlier runs. | Stated as an anti-goal (§8) because `depends-on` reads like a health gate. |
@@ -65,7 +65,7 @@ environments-yml: |
 ```
 
 Compiled: stage 1 holds `shared`; stage 2 holds `prod` and, by D3, `sandbox`. The run summary
-prints exactly that, so nobody has to derive it from the configuration.
+prints exactly that (§7.2), so nobody has to derive it from the configuration.
 
 There is no workflow-level input. Ordering is a property of the environments, and a caller that
 wants none writes none.
@@ -109,7 +109,8 @@ is the conditionality the need asked for, and it costs no extra machinery.
 Three stage jobs, chained. They share one step list through a YAML anchor, which GitHub supports in
 workflow files and which was verified to work for a whole step list across matrix jobs in a
 remotely-referenced reusable workflow. The anchor carries only the step list: `runs-on`,
-`environment`, `concurrency`, `permissions`, `strategy` and `outputs` are written per stage job.
+`strategy`, `environment`, `concurrency` and `defaults` are written per stage job, the fields the
+environment job has.
 
 ```yaml
 terraform-ci-cd:            # stage 1, keeps today's job id
@@ -204,7 +205,10 @@ be used, and how to write what was probably meant.
 | cycle | `depends-on forms a cycle, shared → prod → shared, so none of them could ever run first; remove one of the dependencies.` |
 | deeper than the cap | `depends-on needs 4 stages, but the workflow runs at most 3: shared → platform → regional → app. Flatten the chain, or split the repository.` |
 | not a list of names | `The environment 'prod' sets 'depends-on' to {"shared": true}; it must be a list of environment names.` |
-| a name that is not text | `The environment 'prod' depends on 7, which is not an environment name; quote it if it is one.` |
+| a name that is not text | `The environment 'prod' depends on 7, which is not an environment name; quote it if it is one.` (for a number; otherwise `… depends on null, which is not an environment name.`) |
+
+The names are checked first, then the cycle, then the depth, each only when the one before found
+nothing. A cycle is named in run order from its member declared first.
 
 ## 6. Bypass and recovery
 
@@ -213,12 +217,12 @@ Dispatching a single environment carries no dependencies: it is stage 1 whatever
 asked for, so a sandbox can never hold production hostage, and the recovery path for an environment
 that a failed stage held back.
 
-The run's record and its notice say so, and only when the dispatched environment actually declares
-dependencies:
+The run's record and a notice say so, and only when the dispatched environment actually declares
+dependencies. The dispatch line itself is unchanged:
 
 ```
-dispatched by <actor>: environment prod, goal apply, reason "recover after failed nightly"
-  — ordering bypassed: `prod` depends on `shared`, which is not in this run
+prod: run — relevance: all:event; ordering: single-environment dispatch, stage 1; goals: init, format, validate, lint, plan, apply
+ordering bypassed: 'prod' depends on 'shared', which a single-environment dispatch does not run
 ```
 
 A dispatch that names no environment is staged normally. A dispatch capped to `goal: plan` grants
@@ -245,7 +249,7 @@ that.
 The only surface on push, dispatch and schedule runs.
 
 ```markdown
-**3 environments · 1 applied · 2 held back · 1 failed**
+**3 environments · 3 affected · 0 not affected · 0 applied · 2 held back · 1 failed**
 
 | Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |
 |---|:---:|---|---|---|---|---|
@@ -253,27 +257,40 @@ The only surface on push, dispatch and schedule runs.
 | `prod`    | <span title="held back: stage 2; stage 1 failed">⏭️</span> | — | — | — | — | — |
 | `sandbox` | <span title="held back: stage 2; stage 1 failed">⏭️</span> | — | — | — | — | — |
 
-_Ordering: 2 stages. Stage 1 failed, so stage 2 did not run. Held back: `prod`, `sandbox`._
+_Ordering: 2 stages. Stage 1: `shared`. Stage 2: `prod`, `sandbox`. Stage 1 failed, so stage 2 did not run. Held back: `prod`, `sandbox`._
 ```
 
-The dash cells are the relevance spec's unaffected rows exactly; only the outcome cell and the
-footer line are new. The footer also carries the two cases worth naming when they occur: a
-dependency that was not in the run at all, and a tolerated failure that released a later stage.
+A held-back row has plain dashes and no job link: the unaffected rows' "not affected" tooltip would
+be false. The headline counts `held back` after `destroyed` and before `failed`, and a held-back
+environment is counted as neither failed nor not reported. The footer is one line below the table:
 
-```
-_Ordering: 2 stages. `prod` applied; its dependency `shared` was not in this run (not affected)._
-_Ordering: 2 stages. Stage 1 released stage 2; `shared` failed but allows failing operations._
-```
+- with more than one stage, it lists the stages, each with its environments by github-environment,
+  in `environments-yml` order;
+- `Stage 1 failed, so stage 2 did not run. Held back: …` (`stages 2 and 3`, `Stage 1 was cancelled,
+  so …`), when a stage was held back;
+- `Stage 1 released stage 2; `shared` failed but allows failing operations.`, when an earlier
+  stage's environment has a failed operation under `allow-failing-terraform-operations` and a later
+  stage ran;
+- `` `prod` applied; its dependency `shared` was not in this run (relevance: no changed file matches). ``,
+  for an environment granted apply or destroy whose declared dependency was not in the run. This
+  one shows at one stage too, because it is the §8 warning: `_Ordering: 1 stage. …_`.
+
+Without depends-on, nothing about ordering is shown.
 
 ### 7.3 Conclusion
 
 Red, through the rule the relevance spec already states: a stage whose result is `skipped` while
 its row count is greater than zero is a failure. The run is red anyway from the environment that
-failed; the value here is the sentence.
+failed; the value here is the sentence. The conclusion job has the stages' results and counts, not
+the environments' names, so it names stages:
 
 ```
-conclusion: red — stage 1 failed (shared); 2 environment(s) held back: prod, sandbox
+conclusion: red — stage 1 failed; stage 2 held back (2 environment(s)); environments: 3 affected, 0 not affected (…); tests: 0
+conclusion: green — stage 1 succeeded; stage 2 succeeded; environments: 3 affected, 0 not affected (…); tests: 0
 ```
+
+With one stage, as for every repository without depends-on, the line is exactly what it was before
+ordering existed, word for word.
 
 ### 7.4 Pull request comments
 
@@ -300,16 +317,27 @@ Stage: 2 of 2 · stage 1 result: failure
 </details>
 ```
 
-In a group head the member keeps its column, every cell
+The title follows the seed's rule ("Terraform validation summary" for an environment that does not
+mutate on pull requests). A free-standing environment's details say `Depends on: none;
+free-standing environments run in the last stage`. The aggregator finds the head by its marker,
+`<!-- tf:head:env:<github-environment> -->`, and writes it with `pr-comment`'s upsert semantics:
+the oldest match is kept and patched, the others deleted, and the head posted when there is none.
+A `skip` entry (not affected) and a `run` entry whose stage ran (crashed before capturing metadata)
+are left alone.
+
+In a group head the member keeps its column, every cell but the empty Links cell
 `<span title="held back: stage 2; stage 1 failed">⏭️</span>`, and the head gains a footer line
-`⏭️ Held back: \`prod\`, \`sandbox\`` above the workflow-log line, structurally identical to the
-relevance spec's not-affected footer.
+`⏭️ Held back: \`prod\`, \`sandbox\`` above the workflow-log line, below the not-affected footer.
+A group whose members are all held back is rendered too.
 
 ### 7.5 Auto-merge
 
 A held-back environment produces no metadata, which the completeness rule already treats as not
 eligible. Only the reason changes, so the operator is not told "cancelled or crashed" when the
-truth is "held back because stage 1 failed".
+truth is "held back because stage 1 failed":
+`'prod' was held back: it is in stage 2 and stage 1 failed, so it was never planned, environment is ineligible for PR auto merge`.
+In practice the auto-merge job does not run at all when a stage was held back, since the
+conclusion is red; the reason is defence in depth.
 
 ## 8. Anti-goal: not a health gate
 
@@ -354,9 +382,9 @@ The contract between the pieces:
   invariants of its §7, and `depends-on` as a dimension of its generated cases.
 - **`create-tf-vars-matrix` shim**: emits `matrix-stage-<n>-json` and `stage-<n>-count` per stage.
 - **Workflow**: three stage jobs sharing one anchored step list; every consumer's `needs` extended
-  (`conclusion`, `pr-comment-aggregator`, `run-summary`, `automerge`); the auto-merge condition
-  rewritten so an implicit success check cannot skip it when a stage is skipped, which with three
-  stage jobs would otherwise happen on every run of every repository that declares no dependencies.
+  (`conclusion`, `pr-comment-aggregator`, `run-summary`, `automerge`); the auto-merge condition,
+  which already carried `!cancelled()`, tests each stage by name: `success`, or `skipped` with no
+  environments.
 - **`aggregate-validation-summaries`**: held-back columns, the footer line, and finalising a
   held-back environment's own head (§7.4).
 - **`create-run-summary`**: held-back rows, the headline term, the ordering footer.
@@ -373,7 +401,7 @@ The contract between the pieces:
 | P3 | `!failure()` is transitive over all ancestors. | A failed seed job holds back every stage, which the environment job deliberately tolerates today. | Explicit result checks, never `!failure()`. |
 | P4 | An empty matrix fails the run with no annotation and no job record. | A red run nobody can explain. | The per-stage row count gates the job, and a job-level condition is evaluated before the matrix is applied. A comment in the workflow says so. |
 | P5 | A stage skipped for being empty and one skipped for being held back both report `skipped`. | A held-back production environment reads as benign. | Join the result with the row count in every human-facing surface (§7.1). |
-| P6 | Auto-merge's condition has no status function. | With three stage jobs it is skipped on every run of every unordered repository. | Rewritten in the same change (§10). |
+| P6 | A job-level condition built only from `needs.*.result` comparisons gets an implicit `success()`. | With three stage jobs, auto-merge would be skipped on every run of every unordered repository. | Auto-merge keeps `!cancelled()` and tests each stage by name (§10). |
 | P7 | A stage job named anything but `Terraform`. | The aggregator's job-link lookup silently produces a garbage key and every job link disappears; check names change for callers. | D7, with a structural test. |
 | P8 | Ordering is per run, not global. | A newer run can take an environment before an older run's later stage reaches it. | Documented (§4.5). |
 | P9 | `depends-on` reads as a health gate. | Production applies on top of a dependency whose last apply failed. | Anti-goal plus the run-summary line (§8). |
@@ -408,6 +436,13 @@ The contract between the pieces:
 - A property test that stage assignment is a pure function of the restricted graph, by permuting
   the declaration order.
 
+As built: the engine's `test_ordering.py` (every case of the Must list, every message of §5) and a
+generated dimension of 600 random graphs across events, goals, changed files and dispatches, with
+I18 to I24 derived apart from `ordering.py`; F10 (the conclusion's lines) and F15 (the three stage
+jobs' shape) in `evaluate-automerge-eligibility/run_all_tests.sh`; the held-back cases of
+`create-run-summary`, `aggregate-validation-summaries` and `evaluate-automerge-eligibility`, each
+with the unordered output held byte-identical.
+
 **What tests cannot cover**: that a skipped stage releases the next one and a failed stage does
 not, that an empty matrix behind a false condition does not fail the run, that the anchor resolves
 across a remote reusable-workflow reference, and the queue interleaving of §4.5. All four were
@@ -416,15 +451,37 @@ release.
 
 ## 13. Open questions
 
-1. **The aggregator finalising a held-back head** is the one genuinely new mechanism. Verify on the
-   test-bed that it can distinguish held-back from not-affected from crashed-before-capture using
-   only the relevance artifact, the metadata set and the stage results.
+1. **The aggregator finalising a held-back head**: closed on the test bed. A pull request whose
+   stage 1 failed an apply finalised the held-back environment's own head and the group head's
+   held-back columns, from the relevance artifact, the metadata set and the stage results; not
+   affected and crashed are told apart by the verdict and by whether the stage ran, and tested.
 2. **Whether a strict opt-in is ever wanted**: a per-environment key that makes a tolerated failure
-   hold back dependents after all, implemented as a metadata-inspecting gate job between stages. Not
-   in v1; recorded so the decision is not rediscovered.
-3. **Hand-off latency** between stages on a contended environment was about forty seconds in one
-   observation. Confirm it is not materially worse with a real apply in front of it.
+   hold back dependents after all, implemented as a metadata-inspecting gate job between stages.
+   Deferred: not in v1; recorded so the decision is not rediscovered.
+3. **Hand-off latency** between stages: three seconds on the test bed, uncontended, with a real
+   apply in stage 1. A contended environment adds its concurrency queue's wait, as today.
 
 ## 14. What implementation taught the spec
 
-Reserved.
+- **Stage 1 is never held back.** A skipped stage 1 with environments means the run was cancelled
+  before it started, not that ordering held it; treating it as held back would also have broken
+  the promise that a repository without depends-on sees nothing new. Held back is a stage from 2
+  up, skipped, with environments, and without their metadata; metadata always wins.
+- **The dependency warning shows at one stage.** Its motivating case, a push touching only
+  production's directory, leaves one environment and one stage. The run summary therefore prints
+  that sentence whenever a mutating goal was granted, stages or not, and the engine's notice does
+  the same.
+- **The conclusion names stages, not environments.** It runs with the job results and the counts
+  only; the run summary names the environments.
+- **The cycle is found by peeling.** Environments whose dependencies are all peeled off are removed
+  until none can be; what is left is on a cycle or depends on one, and following dependencies
+  within it must repeat. The first build walked the graph depth first with a visited set, which
+  the mutation gate showed was an optimisation no test could see; the peeling has none. The
+  longest chain is found by relaxation, and the stages by plain recursion, which the validated
+  depth keeps short.
+- **The structural tests had a blind spot for digits.** F12 matched output names with `[a-z-]+`,
+  so the new `stage-1-count` read as undeclared.
+- **The test bed confirmed the four things tests cannot** (§12): a skipped stage released the next
+  and a failed one held it back, an empty stage job behind its count was skipped without an error,
+  the anchor resolved across the remote reference, and a single-environment dispatch recovered an
+  environment on its own.

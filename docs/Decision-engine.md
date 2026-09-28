@@ -8,13 +8,14 @@ summary and the conclusion are told about it. Today that logic is spread over ba
 moves it into a single Python core with a JSON contract, a decision record as output, a set of
 invariants, and a coverage gate at 100 percent.
 
-Status: **built, but for ordering.** `create-tf-vars-matrix` runs the engine through the
-create-matrix adapter (§3): rules 1 to 5 and 7 of §6 (the configuration's validation as
+Status: **built.** `create-tf-vars-matrix` runs the engine through the create-matrix adapter (§3):
+the seven rules of §6 (the configuration's validation as
 [Configuration-validation.md](Configuration-validation.md) specifies it, trigger events, the
-dispatch filter, relevance and the granted goals), the test rows of `tests.py`, the comment
-manifest, the input and output documents of §4 and §5, the tests of §8 and both gates. Rule 6 and
-the `validate` and `render-summary` commands are specified here and are built with
-[Environment-ordering.md](Environment-ordering.md). §13 holds what implementation taught the spec.
+dispatch filter, relevance, the granted goals and the ordering of
+[Environment-ordering.md](Environment-ordering.md)), the test rows of `tests.py`, the comment
+manifest, the input and output documents of §4 and §5, the tests of §8 and both gates. The
+`validate` and `render-summary` commands of §3.2 are specified but not built: nothing needs them
+yet. §13 holds what implementation taught the spec.
 
 ## 1. Why
 
@@ -63,6 +64,7 @@ engine/
 │   ├── decide.py             # core: the decide command, input document in, output document out
 │   ├── environments.py       # core: rule 1 (Configuration-validation.md) and rule 7, the rows
 │   ├── triggers.py           # core: rules 2, 3 and 5: trigger events, the dispatch filter, the granted goals, the dispatch lines
+│   ├── ordering.py           # core: rule 6: the declared depends-on graph validated, the stages assigned (Environment-ordering.md §4)
 │   ├── values.py             # core: jq-compatible rendering, merge and per-goal normalisation
 │   ├── globs.py              # core: the one glob matcher (Terraform-tests.md §4.4)
 │   ├── relevance.py          # core: rule 4, path relevance (Path-relevance.md §3-§5)
@@ -88,8 +90,7 @@ adapter side (`test_purity.py` checks the imports). **The adapter side** reads t
 the filesystem and the network, runs programs and writes the log, so that the core does not have
 to; it sits under the same coverage and mutation gates.
 
-Ordering adds its stages to the core when it is built, and `record.py` the rendering for the run
-summary; its fact-gathering, if any, joins the adapter side (§3.1).
+A new decision is a rule in the core; its fact-gathering, if any, joins the adapter side (§3.1).
 
 How the pieces meet in one run:
 
@@ -349,14 +350,14 @@ while the input is false, before the test stage's warnings. The features extend 
   "notices": ["relevance diff (diff): 1 of 3 environments affected"],
   "relevance": { "mode": "diff", "reason": "diff", "changed_count": 3 },
   "environments": [
-    { "environment": "prod", "verdict": "run", "reasons": ["trigger-events: pull_request", "relevance: envs/prod/**", "ordering: stage 2"],
-      "stage": 2, "depends_on": ["shared"],
-      "goals": ["init","format","validate","lint","plan"] },
-    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "goals": [] }
+    { "environment": "prod", "verdict": "run", "reasons": ["relevance: main/**", "ordering: stage 2", "goals: init, format, validate, lint, plan, apply"],
+      "stage": 2, "depends-on": ["shared"],
+      "goals": ["init","format","validate","lint","plan","apply"] },
+    { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "depends-on": [] }
   ],
   "matrices": { "1": { "environment": ["shared"], "include": [ … ] }, "2": { "environment": ["prod"], "include": [ … ] }, "3": { "environment": [], "include": [] } },
   "counts": { "affected": 2, "unaffected": 1, "by_stage": { "1": 1, "2": 1, "3": 0 } },
-  "ordering": { "enabled": true, "stages_used": 2, "cap": 3, "bypass": null },
+  "ordering": { "declared": true, "stages_used": 2, "cap": 3, "bypass": null },
   "tests": {
     "matrix": { "include": [ … ] },
     "count": 12, "active": true,
@@ -422,9 +423,11 @@ flowchart TD
   r1b --> r23["rules 2 and 3: the event in each environment's<br/>trigger-events; a dispatch's named environment"]
   r23 --> r4["rule 4: relevance, for every environment;<br/>its paths and paths-ignore validated"]
   r4 --> r5["rule 5: the granted goals for this event, ref and<br/>branch, capped by a dispatch's goal"]
-  r5 --> t["the test rows"]
+  r5 --> r6["rule 6: the stages, when something mutates<br/>and no dispatch names one environment"]
+  r6 --> t["the test rows"]
   t --> out["goals-granted into each running row; comments,<br/>record, notices, warnings"]
   out --> done(["output document, exit 0"])
+  r1b -->|"the declared depends-on graph:<br/>a name, a cycle, the depth"| invalid
   r1a & r7 & r1b & r23 & r4 & r5 & t -->|a configuration error| invalid(["errors, no matrix, exit 2"])
 ```
 
@@ -438,8 +441,8 @@ flowchart TD
   dn -->|yes| s2["skip: dispatch: not the requested environment"]
   dn -->|no| rel{"relevance mode all, or<br/>a changed file matches?"}
   rel -->|no| s3["skip: relevance: no changed file matches"]
-  rel -->|yes| run["run: relevance: RULE, then goals: GRANTED"]
-  s1 & s2 & s3 & run --> entry["its entry in relevance.json: verdict, reasons,<br/>relevant, trigger-events and the row's settings"]
+  rel -->|yes| run["run: relevance: RULE, then its stage,<br/>then goals: GRANTED"]
+  s1 & s2 & s3 & run --> entry["its entry in relevance.json: verdict, reasons,<br/>relevant, trigger-events, depends-on, a run's stage,<br/>and the row's settings"]
 ```
 
 For each environment, in order; the first rule that drops it wins and is recorded, later rules are
