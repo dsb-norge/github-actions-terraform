@@ -761,3 +761,10 @@ AI-assistant configuration files are never in these commits.
   the switch and a workflow change ran all with their reasons; a pull request that turned
   documentation-only lost its old plan comments to the seed's purge; and the merge's push ran only
   the environment it touched.
+- **What tests alone covered at first, the test bed later confirmed.** A force push to the default
+  branch ran every environment, mode `all`, reason `forced`. A push creating a branch at the default
+  branch's tip was diffed against the default branch (D13), found no changed file and reported
+  `nothing to verify for this change`. A documentation-only pull request, every environment not
+  affected, was merged by the auto-merge App under a ruleset requiring a pull request, an approval
+  and the conclusion, with the App on the ruleset's bypass list (§8, [Auto-merge.md](Auto-merge.md)
+  §13).
