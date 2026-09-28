@@ -23,7 +23,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: built and validated on the test bed | no |
-| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
+| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — (branch `feat/docs-finalisation`, stacked on step 9) | in progress: the stale statements and status lines, first drafts of `V1-changes.md` and `Migration-v0-to-v1.md` | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
 ### Outside the road steps
@@ -530,6 +530,24 @@ Test bed, through `preview/pr-70`, on a module-shaped branch of the test-bed rep
 - **Unused variable:** it failed TFLint, named in the head, an annotation and the conclusion.
 
 Kept on the test bed for module work, and cleaned up once v1 is ready: the module branch, the `ORG_TF_CICD_APP_ID` variable and `ORG_TF_CICD_APP_PRIVATE_KEY` secret, the test identity and the sandbox resource group.
+
+### Step 10: docs finalisation (in progress)
+
+- The specs' status lines are gone where their open questions are closed, and so are their links to
+  the road documents. Terraform-tests.md keeps its open question, the OIDC lane login.
+- The stale statements the step-7 inventory listed are brought to as built, each checked against
+  the code: in Dispatch-and-triggers, Path-relevance, Terraform-tests, Decision-engine,
+  Per-goal-environment-variables, Testing-in-ci, Preview-refs, Apply-and-destroy-reporting and
+  CLAUDE.md.
+- First drafts of `docs/V1-changes.md` (every change a caller of the default workflow meets) and
+  `docs/Migration-v0-to-v1.md` (must, should and could, the step-by-step change, validating the
+  move, rolling back, pitfalls). Every YAML example parses and was accepted by the engine's adapter.
+  The input diff from v0.33: eight inputs added, none removed or renamed, no default changed.
+- Checked on the test bed, because the migration guide rests on it: a calling job that grants every
+  permission but `id-token: write` fails at startup with no job (`startup_failure`); the same job
+  with it runs.
+- Still to do: the module sections once step 9 is built, the road documents' content captured in
+  the specs and guides, and a last as-built pass.
 
 ## 5. Findings to carry
 
