@@ -627,7 +627,9 @@ moment one of them upgrades. Instead the matrix builder reads every environment'
 `.terraform.lock.hcl`, groups the environments by identical provider-version content, and runs each
 test file once per **distinct set**: normally once, twice while two environments disagree, which is
 exactly the situation worth a second run (P36). A lane narrows this with `providers-from` (§3.2).
-An environment without a lock file is reported and contributes no set.
+An environment without a lock file contributes no set. A notice names it only when the run has a
+test outside every environment root, the only kind that takes its providers from the locks; a
+repository without such tests, or without test files, gets no notice.
 
 Before init, the job copies the set's lock into the test root. A normal init then keeps the
 recorded version of every provider the tests need that the environments also use, drops the entries
