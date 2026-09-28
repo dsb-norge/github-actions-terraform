@@ -385,7 +385,7 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | Non-breaking spaces inside `${{ secrets.… }}` in `terraform-module-ci.yaml` (actionlint flags them) | may break those expressions | step 9 |
 | A per-environment `runs-on` written as a list of runner labels is refused as not a string (the rule of #61 for string inputs); no surveyed caller writes one | for the migration guide | step 10 |
 | The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | through a hand-published tag; all but the OIDC lane done (below). The lane waits for a directory role to register its throwaway identity | step 7, the OIDC lane still to do |
-| `actions/create-github-app-token@v2` in the auto-merge job (Node 20; the runner forces it onto Node 24 with a deprecation warning) | found on the test bed; v3 is Node 24, and its breaking change is proxy handling (`NODE_USE_ENV_PROXY`), which reaches callers because the job runs on their `runs-on` | for the maintainer |
+| `actions/create-github-app-token@v2` in the auto-merge job (Node 20; the runner forces it onto Node 24 with a deprecation warning) | found on the test bed. The maintainer: always on the latest, no permission needed. v3, passing the App ID as `client-id` (v3 deprecates `app-id`, which reads the same value) and setting `NODE_USE_ENV_PROXY=1`, which keeps v2's proxy handling on a caller's self-hosted runner; with it `actions/checkout@v7` and `actions/cache@v6`, the other actions behind their latest major | step 7 |
 
 Test bed, through the hand-published tag `test/step7-81c7372`, on
 dsb-norge/azure-terraform-peder-tester#66, #67 and its `main`, whose ruleset requires a pull
@@ -415,7 +415,14 @@ admin role on its bypass list:
   environment and by a group member: the seed's placeholders, the environment's head and the
   group head all titled "Terraform validation summary", with no Mode row and no "applies on PR".
 
-The re-run by another actor needs a second account and stays covered by tests only.
+- the action bumps, through `test/step7-b6416cf`: dsb-norge/azure-terraform-peder-tester#69, a
+  docs-only pull request, merged by the App with a token from `create-github-app-token@v3`, and
+  a push applying all three environments with `actions/checkout@v7` and `actions/cache@v6`; no
+  run printed a warning, the Node 20 deprecation included.
+
+The re-run by another actor needs a second account and stays covered by tests only. The module
+workflows' own actions (release-please, terraform-docs, the organisation's App-token action) are
+behind their latest major too; they are bumped in step 9, with the module workflows.
 
 ## 5. Findings to carry
 
