@@ -60,6 +60,42 @@ Two things cost a round trip each if you learn them from CI instead of here:
   under test. The `init`/`fmt`/`validate`/`lint` jobs still run, so a dispatch is
   enough when those are all you need to see.
 
+### Validating on a test-bed repository
+
+A change is validated on a test-bed calling repository before it is handed over for review: the
+test bed's calling workflow is switched to the pull request's preview ref for the verification and
+back to `@v1` right after, so between verifications it runs what callers run. Compare every run with
+what the change should have done; a green run is necessary, not sufficient. A round that needs no
+new CI run of this repository can use a hand-published tag instead (above): pushing a tag starts no
+workflow here. Delete the tag afterwards. What the test bed cannot reach, such as a re-run by a
+second account, is recorded in the spec as covered by tests only.
+
+### Keeping actions current
+
+The actions the workflows use are kept on their latest major version, and a bump needs no separate
+decision. The few pinned by commit carry their version in a comment and are bumped the same way.
+After a bump, a test-bed run's logs are checked for deprecation warnings
+([Testing-in-ci.md §12.2](Testing-in-ci.md)).
+
+## Documentation
+
+- **A spec describes the system as built.** While its feature is unbuilt it carries a status line
+  saying so and an open-questions section. When implementation and the test-bed run have closed
+  those questions, the status line goes, the text stays in the present tense, the decisions
+  section remains as the record of what was chosen and why, and a "what implementation taught the
+  spec" section records what changed on the way. An open question that remains stays listed, with
+  what it needs to be answered.
+- **No progress markers.** Specs and code comments carry no pull request numbers, no delivery
+  steps and no "done" or "pending"; they rot the moment the next change lands.
+- **Public repository.** No internal repository, tenant, subscription or environment names and no
+  App IDs anywhere in `docs/`, in commit messages or in pull requests. The test bed is "a test-bed
+  repository"; a private caller's motivation is described generically.
+- **Worked examples are produced, not written.** Each example of a message, a log line or a
+  decision in the user guide is the output of running the code concerned (the create-matrix
+  adapter, the auto-merge evaluator, the conclusion's run block) on the configuration shown, and
+  every YAML example in the guides parses and is accepted by the adapter. Doing so found an engine
+  gap the tests had missed ([Configuration-validation.md §13](Configuration-validation.md)).
+
 ## Release
 
 After merge to main use tags to release.
