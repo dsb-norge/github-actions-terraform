@@ -18,9 +18,13 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 2 | Path relevance: the glob matcher, the relevance rules and the seed manifest in the engine, the adapter's changed-file fetch and published decision, the aggregator, run summary and auto-merge evaluator on `relevance-file`, the workflow wiring and the conclusion rewrite | [#62](https://github.com/dsb-norge/github-actions-terraform/pull/62) | merged 2026-09-25 | yes |
 | 3 | Terraform tests: the test stage in the engine (`tests.py`, the adapter's test facts), `terraform-test` rewritten as runner and classifier, `create-test-summary`, `export-env-vars` with the prefix export, `terraform-init`, `capture-matrix-job-meta` and `terraform-module-cache` extended, the test job and the tests summary job | [#64](https://github.com/dsb-norge/github-actions-terraform/pull/64) | merged 2026-09-26 | yes |
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | merged 2026-09-27 | yes |
-| 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | draft, handed off | no |
-| 6 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — | outstanding | no |
-| 7 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
+| 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
+| 6 | Environment ordering: stage assignment, the three stage jobs, held-back reporting | — (branch `feat/environment-ordering`) | in progress | no |
+| 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed | — | outstanding | no |
+| 8 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | — | outstanding | no |
+| 9 | CI optimisation: this repository's CI time brought down, coverage and gates kept | — | outstanding | no |
+| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
+| 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
 ### Outside the road steps
 
@@ -71,7 +75,7 @@ table only says where.
 | Terraform-tests.md | the role that sets environment secrets; the step anchor in the web view | closed 2026-09-25: a write-role account set, updated, listed and deleted environment secrets with `gh`, but could not create, configure or delete the environment; the maintainer confirmed the anchor opens the right step |
 | Terraform-tests.md | isolation end to end; a real environment lane; case in flexible credential `matches` | closed 2026-09-25 in a session with the maintainer, with throwaway identities and a resource group in a sandbox subscription: an environment-only credential refused tokens to jobs outside its environment, the flexible credential granted one only to `tftest-*` jobs, a lane ran a `command = apply` test and cleaned up, and `matches` is case-sensitive |
 | Terraform-tests.md | Dependabot runs and OIDC; fork runs and environment creation | open (spec §12): the first needs a Dependabot pull request, fork creation is blocked by the organisation's fork policy for private repositories; neither changes the design |
-| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 7) |
+| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 11) |
 | Terraform-tests.md | lower-case `TF_VAR_` names from environment secrets; the version floor | decided 2026-09-25 by the maintainer after the test bed showed GitHub upper-casing secret names and 1.12 refusing a test file's `variable` block: environment lanes export a lower-cased copy of every `TF_VAR_*` secret, and the floor is 1.13 |
 | Terraform-tests.md | the copied lock and the runner's platform; the shared plugin-cache key | decided 2026-09-25 by the maintainer: every lock a test job uses must record the runner's platform, checked before init as `lock-platform`; the test job's cache key gets a `-tftest` suffix and falls back to the environment job's |
 | Configuration-validation.md, Auto-merge.md | auto-merge with no actors; a per-environment actor list; goals whose prerequisite is missing | decided 2026-09-27 by the maintainer: an error that says plainly what is wrong; it replaces the global list; an error |
@@ -82,7 +86,7 @@ table only says where.
 | Configuration-validation.md | a `codeowners` value for the actor list, resolved from CODEOWNERS | dropped 2026-09-27 by the maintainer, after the facts: teams resolve only with an organisation Members permission no workflow token has, email owners cannot be mapped, and an owner merging their own change past review defeats it |
 | Environment-ordering.md | held-back finalisation; hand-off latency | open, answered in step 6 |
 | Road-to-v1.md | the v0 support period | closed: fixes only on `release/v0` until the last caller moves (Road-to-v1.md §7) |
-| Road-to-v1.md | the module CI workflow on the engine in v1 or after | open |
+| Road-to-v1.md | the module CI workflow on the engine in v1 or after | decided 2026-09-28 by the maintainer: in v1, as step 8 |
 
 ## 4. Validation log
 
