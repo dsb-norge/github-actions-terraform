@@ -111,7 +111,7 @@ gh() {
 export -f gh
 
 # Required input variables
-export input_repo_ref="dsb-infra/azure-terraform-dsb-platform-sandbox"
+export input_repo_ref="example-org/example-repo"
 export input_pr_number="60"
 export input_head_sha="${PLANNED_HEAD_SHA}"
 export input_merge_sha="${MERGE_COMMIT_SHA}"
@@ -147,10 +147,10 @@ export input_github_event_context_json='{
     }
   },
   "repository": {
-    "full_name": "dsb-infra/azure-terraform-dsb-platform-sandbox",
-    "name": "azure-terraform-dsb-platform-sandbox",
+    "full_name": "example-org/example-repo",
+    "name": "example-repo",
     "owner": {
-      "login": "dsb-infra"
+      "login": "example-org"
     }
   },
   "sender": {
