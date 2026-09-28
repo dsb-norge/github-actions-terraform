@@ -1664,6 +1664,37 @@ test_e8_mode_row_tolerates_missing_goals() {
   return 0
 }
 
+# On a pull request against another base 'apply-on-pr' is held but not
+# granted: nothing applies, so neither the title nor the Mode row may say so.
+test_e8_mode_row_reads_the_granted_goals() {
+  _grant() {
+    local f="${TEST_DIR}/matrix-job-meta-${1}.json"
+    jq --argjson g "${2}" '.matrix_context.vars["goals-granted"] = $g' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+  }
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  write_meta "bravo" "g" success "" "" "" "" '["all","destroy-plan","destroy-on-pr"]'
+  _grant alpha '["init","format","validate","lint","plan"]'
+  _grant bravo '["init","format","validate","lint","plan","destroy-plan"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local first; first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform validation summary for group: `g`' ]] ||
+    { echo "nothing granted mutates, so the title keeps 'validation'; got: ${first}"; return 1; }
+  [ -z "$(row Mode)" ] || { echo "Mode row must be omitted when no on-PR goal is granted"; return 1; }
+
+  write_meta "alpha" "g" success "" "" "" "" '["all","apply-on-pr"]'
+  _grant alpha '["init","format","validate","lint","plan","apply"]'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  first="$(rendered_body | grep -m1 '^### ')"
+  [[ "${first}" == '### Terraform summary for group: `g`' ]] ||
+    { echo "a granted apply-on-pr must drop 'validation'; got: ${first}"; return 1; }
+  local t='This environment mutates infrastructure on pull request'
+  local expected="| <span title=\"Mode\">🐙</span> | Mode | <span title=\"${t}\">🐙</span> | <span title=\"${t}\">—</span> |"
+  [[ "$(row Mode)" == "${expected}" ]] || { echo "Mode row mismatch"; echo "  expected: ${expected}"; echo "  got:      $(row Mode)"; return 1; }
+  return 0
+}
+
 # P30: 'skipped' outcomes must not open a block.
 test_p30_all_skipped_no_block() {
   write_meta "a" "g" success "" "" "" '"apply": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy-plan": {"outcome":"skipped","conclusion":"skipped","outputs":{}},"destroy": {"outcome":"skipped","conclusion":"skipped","outputs":{}}'
@@ -2438,6 +2469,7 @@ run_test "Q4: group title drops 'validation' when the group mutates on PR"  test
 run_test "E8: Mode row renders per-env 🐙/☠/🐙☠/— and sits first"           test_e8_mode_row_per_env
 run_test "E8: Mode row omitted when no env in the group mutates on PR"      test_e8_mode_row_omitted_when_nobody_mutates
 run_test "E8: artifact without goals → no Mode row, no crash"              test_e8_mode_row_tolerates_missing_goals
+run_test "E8: the granted goals narrow the on-PR goals"                  test_e8_mode_row_reads_the_granted_goals
 run_test "P30: every env skipped the step → no block at all"                test_p30_all_skipped_no_block
 run_test "P30: one env ran, one skipped → row with ✅ and ⏭️"                test_p30_mixed_success_and_skipped
 run_test "relevance: unaffected member keeps a dash column in a mixed group" test_rel_unaffected_column_in_mixed_group

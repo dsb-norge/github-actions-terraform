@@ -949,6 +949,14 @@ function _extract_step_output {
 # contain the given goal; '' otherwise, including when goals are missing or
 # not an array (older artifacts). For an unaffected or held-back member, whose
 # metadata does not exist, relevance.json's mutates-on-pr answers instead.
+#
+# The granted goals (matrix_context.vars.goals-granted) have the last word, as
+# in create-validation-summary: an on-PR goal applies or destroys only on a
+# pull request against the default branch, so against another base the goals
+# hold 'apply-on-pr' while nothing applies. The flag then also needs the
+# operation granted. This job runs only on pull requests. Without the granted
+# goals (an older artifact) the goals decide, so a missing field never hides a
+# warning that may be true.
 function _extract_goal_flag {
   local group="${1}" env="${2}" goal="${3}"
   if _is_jobless "${group}" "${env}"; then
@@ -957,7 +965,12 @@ function _extract_goal_flag {
   fi
   local file="${DESIRED_META[${group}/${env}]:-}"
   [ -z "${file}" ] || [ ! -f "${file}" ] && { echo ""; return; }
-  if jq -e --arg g "${goal}" '(.matrix_context.vars.goals // []) | (type == "array") and (index($g) != null)' "${file}" >/dev/null 2>&1; then
+  if jq -e --arg g "${goal}" '
+      (.matrix_context.vars.goals // []) as $goals
+      | .matrix_context.vars["goals-granted"] as $granted
+      | ($goals | type == "array") and ($goals | index($g) != null)
+        and (($granted | type) != "array" or ($granted | index($g | sub("-on-pr$"; "")) != null))
+    ' "${file}" >/dev/null 2>&1; then
     echo "true"
   else
     echo ""
