@@ -3072,6 +3072,99 @@ else
 fi
 
 # ============================================================================
+# F17 — the engine's mutation gate runs once in CI, in every shard, and gates.
+#
+# The suite jobs leave the gate out (ENGINE_MUTATION=shards) because the
+# engine-mutation shards run it; that is safe only while the shards cover
+# 1..N with N the same in the matrix, the command and the name, the merge job
+# needs them and applies the gate, and tests-conclusion requires the merge
+# (docs/Testing-in-ci.md §14). A shard left out would leave its mutants unjudged
+# with every check green, which the merge refuses; a merge nothing requires
+# would let a red gate merge.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F17 - the engine mutation gate runs once, in every shard, and gates tests-conclusion${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f17_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import re, sys, yaml
+
+with open('.github/workflows/action-tests.yml', encoding='utf-8') as fh:
+    jobs = yaml.safe_load(fh)['jobs']
+problems = []
+
+def steps(job):
+    return jobs.get(job, {}).get('steps') or []
+
+def needs(job):
+    value = jobs.get(job, {}).get('needs') or []
+    return [value] if isinstance(value, str) else value
+
+# Which jobs run the engine suite, and whether each leaves the gate to the shards.
+skipping = []
+for name, job in jobs.items():
+    for step in steps(name):
+        run = step.get('run') or ''
+        if 'run_all_tests.sh' in run and ('engine/' in run or 'ACTION_NAME' in run):
+            if (step.get('env') or {}).get('ENGINE_MUTATION') == 'shards':
+                skipping.append(name)
+            else:
+                problems.append(f"job '{name}' runs the engine suite with its mutation gate; it runs once, in engine-mutation")
+if not skipping:
+    problems.append("no job runs the engine suite")
+
+shard = jobs.get('engine-mutation')
+if shard is None:
+    problems.append("the engine-mutation job is missing")
+else:
+    listed = shard.get('strategy', {}).get('matrix', {}).get('shard')
+    total = len(listed or [])
+    if listed != list(range(1, total + 1)) or total < 1:
+        problems.append(f"engine-mutation's shards must be 1..N, not {listed}")
+    commands = [step['run'] for step in steps('engine-mutation') if '--shard' in (step.get('run') or '')]
+    if len(commands) != 1 or f'/{total}"' not in commands[0]:
+        problems.append(f"engine-mutation must run exactly one '--shard \"${{SHARD}}/{total}\"'")
+    if f'/{total}' not in shard.get('name', ''):
+        problems.append(f"engine-mutation's name must say /{total}")
+    uploads = [step for step in steps('engine-mutation') if str(step.get('uses', '')).startswith('actions/upload-artifact@')]
+    if len(uploads) != 1 or uploads[0].get('with', {}).get('if-no-files-found') != 'error':
+        problems.append("engine-mutation must upload its result once, failing when the file is missing")
+
+gate = jobs.get('engine-mutation-gate')
+if gate is None:
+    problems.append("the engine-mutation-gate job is missing")
+else:
+    if 'engine-mutation' not in needs('engine-mutation-gate'):
+        problems.append("engine-mutation-gate must need engine-mutation")
+    if '!cancelled()' not in str(gate.get('if', '')):
+        problems.append("engine-mutation-gate must run when a shard fails (!cancelled()), to fail the gate")
+    runs = ' '.join(step.get('run') or '' for step in steps('engine-mutation-gate'))
+    if '--merge' not in runs or 'needs.engine-mutation.result' not in str(gate):
+        problems.append("engine-mutation-gate must check the shards' result and apply the gate with --merge")
+
+conclusion = jobs.get('tests-conclusion', {})
+if 'engine-mutation-gate' not in needs('tests-conclusion'):
+    problems.append("tests-conclusion must need engine-mutation-gate")
+if 'needs.engine-mutation-gate.result' not in str(conclusion):
+    problems.append("tests-conclusion must fail unless engine-mutation-gate succeeded")
+
+print(f"{len(skipping)} suite job(s) leave the gate to {len((shard or {}).get('strategy', {}).get('matrix', {}).get('shard') or [])} shard(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f17_rc=0 || _f17_rc=$?
+if [[ "${_f17_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f17_out}" | head -n1), merged and required"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f17_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
