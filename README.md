@@ -48,6 +48,7 @@ Which environments a pull request or push runs is its path relevance:
 
 Default DSB CI/CD workflow for terraform projects that performs various operations depending on from what github event it was called and given input.
 See [docs](docs/Workflow-terraform-ci-default.md) for workflow information, configuration and behavior.
+Moving from `@v0` to `@v1`: [Migration-v0-to-v1.md](docs/Migration-v0-to-v1.md), and every change in [V1-changes.md](docs/V1-changes.md).
 
 ### Workflow [`terraform-module-ci`](.github/workflows/terraform-module-ci.yaml)
 
