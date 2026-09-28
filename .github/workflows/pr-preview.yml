@@ -60,7 +60,7 @@ jobs:
         if: vars.PREVIEW_APP_ID != ''
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.PREVIEW_APP_ID }}
+          client-id: ${{ vars.PREVIEW_APP_ID }} # the App ID or its client ID; 'app-id' is deprecated
           private-key: ${{ secrets.PREVIEW_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-workflows: write
