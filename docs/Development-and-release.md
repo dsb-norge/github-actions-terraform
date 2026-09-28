@@ -153,7 +153,7 @@ lightly rephrased where a literal subject would be confusing as a release note.
 
 Ex. for smaller backwards compatible changes. Add a new minor version tag ex `v1.0` with a description of the changes and amend the description to the major version tag.
 
-Example for release `v0.9`:
+Example for release `v0.33`:
 
 ```bash
 git checkout origin/main
