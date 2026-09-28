@@ -52,7 +52,8 @@ class InputClassificationTest(unittest.TestCase):
 class EntryKeysTest(unittest.TestCase):
     def test_every_known_key_is_accepted(self):
         values = {"project-dir": "./envs/prod", "github-environment": "prod-gh", "url": "https://x", "paths": ["**"],
-                  "paths-ignore": [], "trigger-events": ["push"], "allow-failing-terraform-operations": True,
+                  "paths-ignore": [], "trigger-events": ["push"], "depends-on": [],
+                  "allow-failing-terraform-operations": True,
                   "add-pr-comment": True, "apply-extract-include-outputs": False, "cache-terraform-modules": True,
                   "format-check-in-root-dir": False, "pr-auto-merge-enabled": False, "pr-comment-group": "g",
                   "runs-on": "ubuntu-latest", "terraform-version": "1.16", "tflint-version": "latest",

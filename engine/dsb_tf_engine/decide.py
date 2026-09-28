@@ -1,6 +1,6 @@
 """The `decide` command: the input document in, the output document out."""
 
-from . import SCHEMA_VERSION, comments, environments, model, record, relevance, tests, triggers
+from . import SCHEMA_VERSION, comments, environments, model, ordering, record, relevance, tests, triggers
 
 
 def _failed(errors):
@@ -16,22 +16,28 @@ def _failed(errors):
     }
 
 
-def _decided(document, block, rows, entries, tests_block, warnings, notices, trigger):
+def _matrix(rows):
+    return {"environment": [row["environment"] for row in rows],
+            "include": [{"environment": row["environment"], "vars": row} for row in rows]}
+
+
+def _decided(document, block, rows, entries, staged, tests_block, warnings, notices, trigger):
+    order_block, stages, order_notices = staged
     affected = [row for row, entry in zip(rows, entries) if entry["verdict"] == "run"]
-    matrix = {
-        "environment": [row["environment"] for row in affected],
-        "include": [{"environment": row["environment"], "vars": row} for row in affected],
-    }
+    by_stage = {stage: [rows[index] for index in sorted(stages) if str(stages[index]) == stage]
+                for stage in ordering.STAGES}
     return {
         "schema_version": SCHEMA_VERSION,
         "errors": [],
-        "notices": [*trigger, relevance.notice(block, entries), *notices],
+        "notices": [*trigger, relevance.notice(block, entries), *order_notices, *notices],
         "warnings": warnings,
         "relevance": block,
         "environments": entries,
-        # One stage until environment ordering assigns more.
-        "matrices": {"1": matrix},
-        "counts": {"affected": len(affected), "unaffected": len(rows) - len(affected)},
+        "ordering": order_block,
+        # Every stage, an empty one included: the workflow reads each stage's matrix and count.
+        "matrices": {stage: _matrix(stage_rows) for stage, stage_rows in by_stage.items()},
+        "counts": {"affected": len(affected), "unaffected": len(rows) - len(affected),
+                   "by_stage": {stage: len(stage_rows) for stage, stage_rows in by_stage.items()}},
         "tests": tests_block,
         "trigger": {"event": document["event"]["name"], "lines": trigger},
         "comments": comments.manifest(document, block, entries, tests_block),
@@ -48,9 +54,12 @@ def decide(document):
     try:
         rows = environments.build_rows(document)
         declared = environments.parsed_inputs(document)["environments-yml"]
+        ordering.check(declared)
         events, dropped = triggers.participation(document, declared, rows)
         block, entries = relevance.decide_relevance(document, declared, rows, dropped)
         granted = triggers.grant(document, rows, entries)
+        # Rule 6: before the goals reason, so an entry's reasons read in the rules' order.
+        staged = ordering.assign(document, declared, rows, entries, granted)
         tests_block, warnings, notices = tests.decide_tests(document, rows)
         warnings = environments.setting_warnings(document, rows) + warnings
     except environments.ConfigError as error:
@@ -62,5 +71,5 @@ def decide(document):
             rows[index]["goals-granted"] = granted[index]
             entry["goals"] = granted[index]
             entry["reasons"].append(f"goals: {', '.join(granted[index]) or 'none'}")
-    return _decided(document, block, rows, entries, tests_block, warnings, notices,
+    return _decided(document, block, rows, entries, staged, tests_block, warnings, notices,
                     triggers.lines(document, entries))

@@ -239,12 +239,12 @@ class MatchingTest(unittest.TestCase):
         output = run(environments=ENVS, files=["envs/sandbox/a.tf", "envs/prod/a.tf"])
         self.assertEqual(["prod", "sandbox"], output["matrices"]["1"]["environment"])
         self.assertEqual(["prod", "sandbox"], [row["environment"] for row in output["matrices"]["1"]["include"]])
-        self.assertEqual({"affected": 2, "unaffected": 1}, output["counts"])
+        self.assertEqual({"affected": 2, "unaffected": 1, "by_stage": {"1": 2, "2": 0, "3": 0}}, output["counts"])
 
     def test_nothing_affected_is_an_empty_matrix(self):
         output = run(environments=ENVS, files=["README.md"])
-        self.assertEqual({"1": {"environment": [], "include": []}}, output["matrices"])
-        self.assertEqual({"affected": 0, "unaffected": 3}, output["counts"])
+        self.assertEqual({stage: {"environment": [], "include": []} for stage in ("1", "2", "3")}, output["matrices"])
+        self.assertEqual({"affected": 0, "unaffected": 3, "by_stage": {"1": 0, "2": 0, "3": 0}}, output["counts"])
 
     def test_mode_all_reproduces_the_rows_without_relevance(self):
         with_rules = run(environments=[{"environment": "prod", "paths": ["x/**"], "paths-ignore": ["y/**"]}],
@@ -270,7 +270,7 @@ class MatchingTest(unittest.TestCase):
                                                    "plan-max-count-move": -1, "plan-max-count-remove": 0},
                           "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
                           "paths-ignore": ["**/*.md"], "trigger-events": ["pull_request", "push", "workflow_dispatch"],
-                          "relevant": False},
+                          "relevant": False, "depends-on": []},
                          entry)
 
     def test_relevance_is_published_for_an_environment_an_earlier_rule_dropped(self):

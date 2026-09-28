@@ -61,23 +61,23 @@ class InvariantCheckerTest(unittest.TestCase):
     def test_a_run_environment_missing_from_the_matrix(self):
         document, output = decided()
         output["matrices"]["1"]["include"].pop()
-        self.assertViolation(document, output, "I8: matrix rows are not the run environments")
+        self.assertViolation(document, output, "I8: matrix rows are not the run environments, each once")
 
     def test_matrix_rows_out_of_declaration_order(self):
         document, output = decided()
         output["matrices"]["1"]["include"].reverse()
-        self.assertViolation(document, output, "I8: matrix rows are not the run environments")
+        self.assertViolation(document, output, "I8: stage 1's rows are not in declaration order")
 
     def test_a_skipped_environment_in_the_matrix(self):
         document, output = decided()
         output["environments"][1]["verdict"] = "skip"
         output["environments"][1]["reasons"] = ["relevance: no changed file matches"]
-        self.assertViolation(document, output, "I8: matrix rows are not the run environments")
+        self.assertViolation(document, output, "I8: matrix rows are not the run environments, each once")
 
     def test_an_environment_in_two_stages(self):
         document, output = decided()
         output["matrices"]["2"] = copy.deepcopy(output["matrices"]["1"])
-        self.assertViolation(document, output, "I8: matrix rows are not the run environments")
+        self.assertViolation(document, output, "I8: matrix rows are not the run environments, each once")
 
     def test_a_stage_whose_environment_list_disagrees_with_its_rows(self):
         document, output = decided()
@@ -88,9 +88,10 @@ class InvariantCheckerTest(unittest.TestCase):
         document, output = decided()
         output["environments"][1]["verdict"] = "skip"
         output["environments"][1]["reasons"] = []
+        del output["environments"][1]["stage"]
         output["matrices"]["1"]["include"].pop()
         output["matrices"]["1"]["environment"].pop()
-        output["counts"] = {"affected": 1, "unaffected": 1}
+        output["counts"] = {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}
         output["relevance"] = {"mode": "diff", "reason": "diff", "changed_count": 0}
         self.assertEqual(["I11: a skip without a reason"], invariants.check(document, output))
 
@@ -113,9 +114,10 @@ class InvariantCheckerTest(unittest.TestCase):
     def test_mode_all_with_an_environment_skipped(self):
         document, output = decided()
         output["environments"][1]["verdict"] = "skip"
+        del output["environments"][1]["stage"]
         output["matrices"]["1"]["include"].pop()
         output["matrices"]["1"]["environment"].pop()
-        output["counts"] = {"affected": 1, "unaffected": 1}
+        output["counts"] = {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}
         self.assertEqual(["I6: mode all but an environment does not run for it"], invariants.check(document, output))
 
     def test_mode_all_with_an_environment_running_for_another_reason(self):

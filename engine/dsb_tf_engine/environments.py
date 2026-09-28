@@ -68,8 +68,9 @@ BOOLEAN_INPUTS = (
     "format-check-in-root-dir", "path-relevance-enabled", "pr-auto-merge-enabled", "verify-lock-file",
 )
 
-# Relevance rules and trigger events: resolved by relevance.py and triggers.py, never row variables.
-RULE_FIELDS = ("paths", "paths-ignore", "trigger-events")
+# Relevance rules, trigger events and ordering: resolved by relevance.py, triggers.py and ordering.py,
+# never row variables.
+RULE_FIELDS = ("paths", "paths-ignore", "trigger-events", "depends-on")
 
 # An environment name, and a github-environment, reach comment markers (':'-separated, ended by
 # '-->'), artifact names, concurrency groups and shell; this is what is safe in all of them.
@@ -82,7 +83,7 @@ PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 # The keys an environments-yml entry may hold (docs/Configuration-validation.md §3.1), besides the
 # per-environment inputs and the per-environment YAML settings below.
 ENTRY_KEYS = ("environment", "project-dir", "github-environment", "url", "paths", "paths-ignore", "trigger-events",
-              "allow-failing-terraform-operations")
+              "depends-on", "allow-failing-terraform-operations")
 # Workflow inputs an environment may override. A new input is in exactly one of this list, the YAML
 # settings (REPLACE_FIELDS, MERGE_FIELDS) or WORKFLOW_ONLY_INPUTS; a test holds the workflow to it.
 PER_ENVIRONMENT_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
@@ -95,7 +96,7 @@ WORKFLOW_ONLY_INPUTS = ("environments-yml", "trigger-events-yml", "path-relevanc
 ENGINE_SET_FIELDS = ("goals-granted", "caller-repo-default-branch", "caller-repo-calling-branch",
                      "caller-repo-is-on-default-branch")
 # Plain settings whose -yml spelling is a mistake per environment.
-PLAIN_WITH_YML = ("paths", "paths-ignore", "trigger-events")
+PLAIN_WITH_YML = ("paths", "paths-ignore", "trigger-events", "depends-on")
 KEYS_DOC = "docs/Configuration-validation.md §3.1"
 
 # Every goal a caller may name: the eight the operation gates read, 'all' for the five standard goals
@@ -209,7 +210,7 @@ PREREQUISITES = {
 GOAL_LIST = ", ".join(GOALS)
 
 
-def _as_list(value):
+def as_list(value):
     """A list setting as a list: a plain string written alone is its one item, never split, and none
     is an empty list."""
     if value is None:
@@ -232,7 +233,7 @@ def _goal_name_problem(owner, goal):
 
 def goal_problems(owner, value):
     """Every problem of one goals value (docs/Configuration-validation.md §3.2); `owner` begins each message."""
-    goals = _as_list(value)
+    goals = as_list(value)
     if not isinstance(goals, list):
         return [f"{owner} has the goals {shown(value)}; they must be a list of goal names."]
     problems = [_goal_name_problem(owner, goal) for goal in goals if goal not in GOALS]
@@ -284,7 +285,7 @@ INIT_DIRS = "terraform-init-additional-dirs-yml"
 def init_dir_problems(owner, subject, value):
     """Every problem of one additional-init-directories value (docs/Configuration-validation.md §3.4).
     `owner` begins a message about one directory, `subject` one about the value as a whole."""
-    directories = _as_list(value)
+    directories = as_list(value)
     if not isinstance(directories, list):
         return [f"{subject} {shown(value)}; it must be a list of directories."]
     return [f"{owner} has the additional init directory '', which is empty." if directory == "" else
@@ -327,7 +328,7 @@ def _actor_problem(owner, actor):
 def actor_problems(owner, subject, value):
     """Every problem of one actor list; `owner` begins a message about one actor, `subject` one about the
     value as a whole."""
-    actors = _as_list(value)
+    actors = as_list(value)
     if not isinstance(actors, list):
         return [f"{subject} {shown(value)}; it must be a list of logins."]
     return [_actor_problem(owner, actor) for actor in actors if not (isinstance(actor, str) and LOGIN.fullmatch(actor))]
@@ -489,7 +490,7 @@ def build_row(document, globals_, index, environment):
 
     for field in REPLACE_FIELDS:
         value = _env_field(document, index, field) if field in row else globals_[field]
-        row[_unsuffixed(field)] = _as_list(value)
+        row[_unsuffixed(field)] = as_list(value)
 
     for field in MERGE_FIELDS:
         if field in row:

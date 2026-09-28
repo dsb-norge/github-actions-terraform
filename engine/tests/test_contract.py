@@ -18,7 +18,7 @@ import support
 
 READ_BY_THE_ACTIONS = {"environment", "github-environment", "verdict", "reasons", "add-pr-comment", "pr-comment-group",
                        "mutates-on-pr", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits",
-                       "paths", "paths-ignore"}
+                       "paths", "paths-ignore", "depends-on"}
 # The decision itself, published beside what the actions read: every entry's trigger events, and the
 # goals a running environment is granted (docs/Decision-engine.md I16).
 DECISION_FIELDS = {"trigger-events", "relevant"}
@@ -38,11 +38,13 @@ class ContractTest(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 published = written(scenario)
                 self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments",
-                                  "notices", "warnings", "record", "trigger"}, set(published))
+                                  "notices", "warnings", "record", "trigger", "ordering"}, set(published))
+                self.assertEqual({"declared", "stages_used", "cap", "bypass"}, set(published["ordering"]))
+                self.assertEqual({"affected", "unaffected", "by_stage"}, set(published["counts"]))
                 self.assertEqual({"event", "lines"}, set(published["trigger"]))
                 self.assertEqual({"mode", "reason", "changed_count"}, set(published["relevance"]))
                 for entry in published["environments"]:
-                    goals = {"goals"} if entry["verdict"] == "run" else set()
+                    goals = {"goals", "stage"} if entry["verdict"] == "run" else set()
                     self.assertEqual(READ_BY_THE_ACTIONS | DECISION_FIELDS | goals, set(entry))
 
     def test_the_event_scenarios_publish_their_trigger_lines(self):
@@ -55,7 +57,7 @@ class ContractTest(unittest.TestCase):
         self.assertEqual({"event": "schedule", "lines": [
             "schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the "
             "environment the schedule is for"]}, schedule["trigger"])
-        self.assertEqual({"affected": 0, "unaffected": 3}, schedule["counts"])
+        self.assertEqual({"affected": 0, "unaffected": 3, "by_stage": {"1": 0, "2": 0, "3": 0}}, schedule["counts"])
 
     def test_the_scenarios_decide_what_the_actions_tests_expect(self):
         cases = {
@@ -92,8 +94,16 @@ class ContractTest(unittest.TestCase):
                     done = subprocess.run([sys.executable, "-I", "-B", script, *argv], capture_output=True, text=True,
                                           cwd=temp)
                     self.assertNotEqual(0, done.returncode)
-                    self.assertIn("usage: relevance_fixture.py <docs-only|one-environment|workflow-changed|dispatch-staging|schedule-nothing>",
+                    self.assertIn("usage: relevance_fixture.py <docs-only|one-environment|workflow-changed|dispatch-staging|schedule-nothing|"
+                                  "push-staged>",
                                   done.stderr)
+
+    def test_the_staged_scenario_publishes_its_stages(self):
+        published = written("push-staged")
+        self.assertEqual(({"declared": True, "stages_used": 2, "cap": 3, "bypass": None}, {"1": 1, "2": 2, "3": 0}),
+                         (published["ordering"], published["counts"]["by_stage"]))
+        self.assertEqual([("shared", 1, []), ("prod", 2, ["shared"]), ("sandbox", 2, [])],
+                         [(e["environment"], e["stage"], e["depends-on"]) for e in published["environments"]])
 
     def test_a_scenario_that_does_not_decide_is_refused(self):
         original = relevance_fixture.ENVIRONMENTS
