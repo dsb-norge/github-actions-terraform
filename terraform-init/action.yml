@@ -117,6 +117,8 @@ runs:
   steps:
     - id: check-prereqs
       shell: bash
+      env:
+        input_plugin_cache_directory: ${{ inputs.plugin-cache-directory }}
       run: |
         # Make sure terraform and the plugin cache directory are available
 
@@ -132,7 +134,7 @@ runs:
         end-group
 
         start-group "check prerequisite: terraform providers plugin cache directory"
-        PLUGIN_CACHE_DIR="${{ inputs.plugin-cache-directory }}"
+        PLUGIN_CACHE_DIR="${input_plugin_cache_directory}"
         if [ "" == "${PLUGIN_CACHE_DIR}" ]; then
           log-info "input 'plugin-cache-directory' not configured."
         else

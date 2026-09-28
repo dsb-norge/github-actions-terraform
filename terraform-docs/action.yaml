@@ -62,11 +62,13 @@ runs:
 
     - id: validate-root-readme
       shell: bash
+      env:
+        input_readme_file_path: ${{ inputs.readme-file-path }}
       run: |
         # Make sure README.md has the terraform-docs delimiters
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
 
-        README_FILE="${{ inputs.readme-file-path }}/README.md"
+        README_FILE="${input_readme_file_path}/README.md"
 
         if [ -f "${README_FILE}" ]; then
             log-info "Checking if delimiters exist in ${README_FILE}"
@@ -119,6 +121,9 @@ runs:
     - id: count
       if: always()
       shell: bash
+      env:
+        project_num_changed: ${{ steps.generate-project-docs.outputs.num_changed }}
+        example_num_changed: ${{ steps.generate-example-docs.outputs.num_changed }}
       run: |
         # Count the files changed by terraform-docs
         set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
@@ -126,13 +131,13 @@ runs:
         # count number of files changed by the action
         PROJECT_FILES_CHANGED=0
         if [ '${{ steps.generate-project-docs.outcome }}' == 'success' ]; then
-          PROJECT_FILES_CHANGED=${{ steps.generate-project-docs.outputs.num_changed }}
+          PROJECT_FILES_CHANGED="${project_num_changed}"
         fi
         log-info "Project files changed: ${PROJECT_FILES_CHANGED}"
 
         EXAMPLE_FILES_CHANGED=0
         if [ '${{ steps.generate-example-docs.outcome }}' == 'success' ]; then
-          EXAMPLE_FILES_CHANGED=${{ steps.generate-example-docs.outputs.num_changed }}
+          EXAMPLE_FILES_CHANGED="${example_num_changed}"
         fi
         log-info "Example files changed: ${EXAMPLE_FILES_CHANGED}"
 

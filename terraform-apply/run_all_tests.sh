@@ -577,15 +577,14 @@ run_prereqs() {
   local plan_file="${1}"
   local tmp
   tmp="$(mktemp -d)"
-  printf '%s' "${plan_file}" >"${tmp}/plan-file.txt"
 
   python3 "${_this_script_dir}/extract_step_source.py" \
     "${_this_script_dir}/action.yml" check-prereqs "${tmp}/step.sh" \
-    "inputs.terraform-plan-file=@${tmp}/plan-file.txt" \
     "github.action_path=${_this_script_dir}"
 
-  # Same shell flags the runner uses, so 'exit 1' behaves as it does in CI.
-  PATH="${RUNNER_TEMP}/stub-bin:${PATH}" \
+  # Same shell flags the runner uses, so 'exit 1' behaves as it does in CI. The
+  # plan file arrives through the step's env:, as the shim hands it over.
+  input_terraform_plan_file="${plan_file}" PATH="${RUNNER_TEMP}/stub-bin:${PATH}" \
     bash --noprofile --norc -eo pipefail "${tmp}/step.sh" >"${OUT_FILE}" 2>&1
   LAST_EXIT=$?
 }
@@ -617,6 +616,16 @@ install_stub_terraform
 run_prereqs "${WORK_DIR}"
 assert "prereqs: a directory is not accepted as a plan file" \
   test "${LAST_EXIT}" -ne 0
+
+# The path is data. Pasted into the script between single quotes, as it once
+# was, a quote in it ended the string and the rest ran as shell.
+setup_workdir
+install_stub_terraform
+_quoted_plan="${GITHUB_WORKSPACE}/it's the \$(plan).plan"
+echo 'fake plan' >"${_quoted_plan}"
+run_prereqs "${_quoted_plan}"
+assert "prereqs: a plan file path with a quote in it is found" \
+  test "${LAST_EXIT}" -eq 0
 
 # ----------------------------------------------------------------------
 # jq older than 1.7 has no '--raw-output0'. The runner images this repo
