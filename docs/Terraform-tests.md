@@ -5,11 +5,11 @@ Authoritative spec for the `terraform test` stage of
 discovered, how each one becomes a job, how credentials reach a test, how results reach the pull
 request and the run page, and how a failing test blocks a merge.
 
-Status: **implemented.** The decisions in §2 are settled; §12 lists what is still open, and §15
-is what implementation taught the spec.
+The decisions in §2 are settled; §12 lists the open questions, and §15 is what implementation
+taught the spec.
 
-Out of scope: per-environment path relevance and single-file dispatch are separate specs that hook
-into this one (§8). [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) runs
+Out of scope: path relevance does not filter tests, and in the project workflow tests do not run on
+a dispatch (§8). [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) runs
 this test stage for a module repository; [Module-ci.md](Module-ci.md) is its spec (§9.7).
 
 ## 1. Why
@@ -570,6 +570,7 @@ terraform-test:
   concurrency:
     group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
     cancel-in-progress: false
+    queue: max
   steps:
     # §5.2
 ```
@@ -582,9 +583,9 @@ terraform-test:
 - Concurrency is **per test file**, not per lane: a per-lane group would leave one row running, one
   pending and cancel the rest of this run's own matrix, and cancelled reddens the conclusion (P11).
   Per-file groups serialise the same file across overlapping runs, which is what protects
-  integration tests that create fixed-name objects, and leave sibling files parallel. The
-  one-pending caveat of GitHub's default queue applies exactly as it does to the environment job; if
-  the workflow later adopts `queue: max` there, it adopts it here too.
+  integration tests that create fixed-name objects, and leave sibling files parallel. GitHub's
+  default queue depth is one, so a third overlapping run would cancel the pending job; the group
+  sets `queue: max`, as the environment stage jobs' groups do, and the jobs wait in best-effort arrival order.
 - `timeout-minutes` is per lane because a job killed mid-apply leaves objects that no state file
   knows about (P12).
 - `deployment: false` is what keeps ten credentialed files from posting ten deployment entries per
@@ -1013,11 +1014,11 @@ in the list.
 | Environment init | Loads test files in the environment root (§4.9). Not something this spec can change; documented. |
 | Per-goal environment variables | Do not reach test jobs (D6). |
 | GitHub Environments | Lane environments are `tftest-*`, disjoint from the Terraform environments' `github-environment` values; the builder rejects a collision. The isolation preconditions of §3.6 are about the Terraform environments' credentials and are stated in the user guide. |
-| Explicit conclusion (separate spec) | Adds "skipped for a benign reason" precision and the fork guard; this spec only adds the `needs` entry. |
+| The conclusion ([Path-relevance.md](Path-relevance.md) §7) | Its result table holds the test job's rows, "skipped" only while `tests-active` is not `'true'`, and the fork pull request rule; this spec adds the test job to its `needs` (§7). |
 | Provider versions for tests (formerly a separate need) | Folded into this spec, §5.3: tests inherit the environments' lock files per distinct set. No committed test lock, no verification step, no CLI change. |
 | Terraform module cache | The test job runs the same phases and gates as the environment job (§5.3); the classifier additionally receives run-block module sources from the test file. |
-| Single-file dispatch (separate spec) | Will add `workflow_dispatch` to the event rule together with a `tests-filter` input; the lane and slug vocabulary is what it filters on. |
-| Per-environment path relevance ([Path-relevance.md](Path-relevance.md)) | Tests are not filtered by relevance yet; the `root` field is the hook. The conclusion table there judges tests independently of environments, and the test jobs' `if:` drop the seed-result clause for the reason its P3 gives. |
+| Single-file dispatch | Not in the project workflow: its tests do not run on `workflow_dispatch` (D7); the module workflow's do ([Module-ci.md](Module-ci.md) D3). A dispatch input selecting test files would filter on the lane and slug vocabulary. |
+| Per-environment path relevance ([Path-relevance.md](Path-relevance.md)) | Tests are not filtered by relevance (its D11); a row's `root` field is what a filter would read. The conclusion table there judges tests independently of environments, and the test jobs' `if:` drop the seed-result clause for the reason its P3 gives. |
 | Module CI | Runs this test stage through the engine's module mode (§9.7). |
 
 ## 9. Actions: new and changed
@@ -1192,7 +1193,7 @@ Indexed so implementation commits and future specs can cite them.
 | P8 | `init -lockfile=readonly` on a copied lock rejects both the removal of providers the tests do not need and the addition of test-only ones. | Every non-environment test root fails init. | Read-only mode for environment roots only; `default` elsewhere (§5.3). |
 | P9 | `-verbose` embeds full provider schemas per run block (megabytes for large providers). | Log, artifact and every downstream buffer explode; ARG_MAX territory. | Never default; document `TF_CLI_ARGS_test`. |
 | P10 | An environment's own `init` and `validate` load test files in its root; a parse error in any test file of a root fails init for that root. | A broken test file blocks plan and apply for that environment; a broken sibling breaks every job of its root. | Documented (§4.9); `allow-failing-terraform-tests` cannot cover it. |
-| P11 | A concurrency group allows one running and one pending job; a newer arrival cancels the pending one, and cancelled reddens the conclusion. | A per-lane group cancels this run's own matrix rows. | Group per test file (§5.1). |
+| P11 | A concurrency group allows one running and one pending job; a newer arrival cancels the pending one, and cancelled reddens the conclusion. | A per-lane group cancels this run's own matrix rows. | Group per test file, with `queue: max` (§5.1). |
 | P12 | `terraform test` state is in memory; a job killed by timeout or cancellation leaves objects nothing can destroy. | Leaked test objects in a real tenant. | Short per-lane timeouts; the calling repository runs a janitor keyed on a naming prefix. |
 | P13 | The plugin cache serves a provider only when the lock records its checksum, and the copied lock records none for test-only providers. | Floating providers download from the registry on every job. | `default` mode exports the may-break variable for non-environment roots; the throwaway lock's single-platform hashes cost nothing (§5.3). |
 | P14 | OIDC needs `id-token: write` even when `azure/login` is skipped. | A directory-only lane fails to mint a token. | Permission on the job (§5.1). |
@@ -1285,7 +1286,8 @@ Indexed so implementation commits and future specs can cite them.
 secrets reaching a called job, `deployment: false`, a collaborator with write access setting
 environment secrets, `azure/login` skipping, artifact URL validity, the `#step:N:1` anchor, the
 256-job cap, the exact behaviour of an environment root with a real backend. These are verified
-through a preview ref on a test-bed calling repository and recorded in §15.
+through a preview ref on a test-bed calling repository and recorded in §15, except a real OIDC
+login in an environment lane, which is open (§12).
 
 ## 12. Open questions
 
@@ -1301,6 +1303,12 @@ the documentation could answer is answered in the text above. What remains:
    missing environment creates it. The docs are silent on forks; the design never references one
    from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
    its private repositories into a personal account. Needs a public repository to fork.
+3. **A real OIDC login in an environment lane, through the workflow**: whether `azure/login` in a
+   lane whose GitHub Environment holds a real identity's secrets gets a token and logs in, and a
+   `command = apply` test then runs with it. The identities, their federated credentials and a lane
+   running such a test in a sandbox subscription were probed before the stage was built, and the
+   test bed ran the lanes' mechanics through the workflow with placeholder secrets (§15); no run of
+   the workflow has logged in from a lane with a real identity.
 
 ## 13. Implementation order
 
