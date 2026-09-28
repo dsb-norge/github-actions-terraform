@@ -200,7 +200,7 @@ jobs:
   # (docs/Testing-in-ci.md §14). A shard judges nothing; engine-mutation-gate merges the shards and
   # applies the gate, which needs every mutant's result to find a stale equivalent.
   engine-mutation:
-    name: "🧬 Engine mutation ${{ matrix.shard }}/4"
+    name: "🧬 Engine mutation ${{ matrix.shard }}/8"
     needs: discover
     runs-on: ubuntu-latest
     permissions:
@@ -208,7 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v7
@@ -224,7 +224,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           # Run one shard of the mutation gate and keep its result for the merge
-          python3 -B engine/tests/mutation.py --shard "${SHARD}/4" --out "mutation-shard-${SHARD}.json"
+          python3 -B engine/tests/mutation.py --shard "${SHARD}/8" --out "mutation-shard-${SHARD}.json"
 
       - name: "📤 Upload the shard's result"
         uses: actions/upload-artifact@v7
