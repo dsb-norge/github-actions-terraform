@@ -103,16 +103,15 @@ KEYS_DOC = "docs/Configuration-validation.md §3.1"
 # and apply, and the two that let apply and destroy run on a pull request.
 GOALS = values.GOAL_KEYS + ("all", "apply-on-pr", "destroy-on-pr")
 
-# Fields the workflow reads from every row. runs-on and format-check-in-root-dir are read too
-# but were never listed; the port keeps the list as it was.
+# Fields the workflow reads from every row.
 REQUIRED_FIELDS = (
     "add-pr-comment", "allow-failing-terraform-operations", "apply-extract-include-outputs",
     "cache-terraform-modules", "caller-repo-calling-branch", "caller-repo-default-branch",
     "caller-repo-is-on-default-branch", "environment", "extra-envs", "extra-envs-from-secrets",
-    "extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "github-environment", "goals",
-    "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits", "pr-comment-group",
-    "project-dir", "terraform-init-additional-dirs", "terraform-version", "tflint-version", "url",
-    "verify-lock-file",
+    "extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "format-check-in-root-dir", "github-environment",
+    "goals", "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits",
+    "pr-comment-group", "project-dir", "runs-on", "terraform-init-additional-dirs", "terraform-version",
+    "tflint-version", "url", "verify-lock-file",
 )
 
 # Required fields that must not be the empty string. '[]', '{}' and null are not empty.
@@ -120,8 +119,9 @@ NOT_EMPTY_FIELDS = (
     "add-pr-comment", "allow-failing-terraform-operations", "apply-extract-include-outputs",
     "cache-terraform-modules", "caller-repo-calling-branch", "caller-repo-default-branch",
     "caller-repo-is-on-default-branch", "environment", "extra-envs", "extra-envs-from-secrets",
-    "github-environment", "goals", "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors",
-    "pr-auto-merge-limits", "project-dir", "terraform-version", "tflint-version", "verify-lock-file",
+    "format-check-in-root-dir", "github-environment", "goals", "path-relevance-enabled", "pr-auto-merge-enabled",
+    "pr-auto-merge-from-actors", "pr-auto-merge-limits", "project-dir", "runs-on", "terraform-version",
+    "tflint-version", "verify-lock-file",
 )
 
 
@@ -426,7 +426,8 @@ def setting_warnings(document, rows):
 def _typed_overrides(document, name, environment):
     """The environment's own values for workflow inputs, in the types the forwarded ones have."""
     typed = {}
-    for field, value in environment.items():
+    # In key order, so which of two bad values is reported never depends on how the entry was written.
+    for field, value in sorted(environment.items(), key=lambda item: shown(item[0])):
         if field in BOOLEAN_INPUTS:
             typed[field] = "true" if _boolean(name, field, value) else "false"
         elif field in document["workflow_inputs"] and field not in YML_INPUTS and not isinstance(value, str):

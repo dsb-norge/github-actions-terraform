@@ -30,5 +30,13 @@
   "default_branch": "main",
   "directories": [
     "envs/my-tf-env"
-  ]
+  ],
+  "engine_expected": {
+    "exit_code": 2,
+    "deviation": "the workflow reads format-check-in-root-dir and runs-on from every row, so they are required; this fixture of the bash suite omits the inputs, which GitHub always delivers with their defaults",
+    "errors": [
+      "Missing property 'format-check-in-root-dir' in environment specification!",
+      "Missing property 'runs-on' in environment specification!"
+    ]
+  }
 }

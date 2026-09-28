@@ -66,7 +66,8 @@ def document(files, environments=None):
     inputs = {"environments-yml": json.dumps(environments), "add-pr-comment": True, "apply-extract-include-outputs": False,
               "cache-terraform-modules": True, "path-relevance-enabled": True, "pr-auto-merge-enabled": True,
               "pr-comment-group": "", "terraform-version": "latest", "tflint-version": "latest",
-              "verify-lock-file": True, "goals-yml": "[all]", "pr-auto-merge-from-actors-yml": json.dumps(ACTORS),
+              "verify-lock-file": True, "format-check-in-root-dir": False, "runs-on": "ubuntu-latest",
+              "goals-yml": "[all]", "pr-auto-merge-from-actors-yml": json.dumps(ACTORS),
               "pr-auto-merge-limits-yml": json.dumps(LIMITS)}
     return {
         "schema_version": 1,

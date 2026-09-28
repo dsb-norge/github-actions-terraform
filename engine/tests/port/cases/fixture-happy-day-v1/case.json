@@ -26,7 +26,8 @@
     "pr-auto-merge-enabled": "true",
     "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
-    "trigger-events-yml": "[pull_request, push, workflow_dispatch]"
+    "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
+    "runs-on": "ubuntu-latest"
   },
   "ref_name": "main",
   "default_branch": "main",
@@ -35,7 +36,7 @@
   ],
   "engine_expected": {
     "exit_code": 0,
-    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare; the fixture's goals that do not exist ('dummy', 'apple', 'destroy-plan-on-pr') are left out, since they are now refused; an environment's own pr-auto-merge-from-actors-yml replaces the global one (docs/Configuration-validation.md §3.6)",
+    "deviation": "names follow the name rule; a per-environment boolean input becomes the string the gates compare; the fixture's goals that do not exist ('dummy', 'apple', 'destroy-plan-on-pr') are left out, since they are now refused; an environment's own pr-auto-merge-from-actors-yml replaces the global one (docs/Configuration-validation.md §3.6); its inputs include runs-on, which GitHub always delivers and the workflow reads from every row",
     "matrix": {
       "environment": [
         "my-first-env",
@@ -56,6 +57,7 @@
             "cache-terraform-modules": "true",
             "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
+            "runs-on": "ubuntu-latest",
             "terraform-version": "1.4.4",
             "tflint-version": "v0.46.1",
             "verify-lock-file": "true",
@@ -151,6 +153,7 @@
             "format-check-in-root-dir": "true",
             "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
+            "runs-on": "ubuntu-latest",
             "terraform-version": "1.4.4",
             "tflint-version": "v0.46.1",
             "verify-lock-file": "true",
@@ -242,6 +245,7 @@
             "path-relevance-enabled": "true",
             "pr-auto-merge-enabled": "true",
             "pr-comment-group": "",
+            "runs-on": "ubuntu-latest",
             "terraform-version": "1.4.4",
             "tflint-version": "v0.46.1",
             "verify-lock-file": "true",
