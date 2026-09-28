@@ -381,6 +381,10 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | Module CI's inline actions without suites; the module workflow docs | step 9 | step 9 |
 | Specs' status lines and progress markers; the stale statements the inventory listed (eleven); the self-hosted runner requirements; the secret naming precondition | step 10 | step 10 |
 | The required `tests-conclusion` check on this repository | closed: a merge of #66 was refused while it was pending | closed |
+| The mode row's raw goals elsewhere: the engine's seed placeholder (`comments.py`) and the aggregator's group head (`_extract_goal_flag`) | found while fixing the per-environment row; the same fix, what was granted on a pull request | step 7, still to do |
+| Non-breaking spaces inside `${{ secrets.… }}` in `terraform-module-ci.yaml` (actionlint flags them) | may break those expressions | step 9 |
+| A per-environment `runs-on` written as a list of runner labels is refused as not a string (the rule of #61 for string inputs); no surveyed caller writes one | for the migration guide | step 10 |
+| The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | needs the maintainer's Azure session for the first; the rest through a hand-published tag | step 7, still to do |
 
 ## 5. Findings to carry
 
