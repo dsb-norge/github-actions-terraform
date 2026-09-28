@@ -546,8 +546,15 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
 - Checked on the test bed, because the migration guide rests on it: a calling job that grants every
   permission but `id-token: write` fails at startup with no job (`startup_failure`); the same job
   with it runs.
-- Still to do: the module sections once step 9 is built, the road documents' content captured in
-  the specs and guides, and a last as-built pass.
+- The road documents' lasting content, section by section: most of it was already in the specs and
+  guides; what was not now is. Development-and-release.md gains the v1 tag's moving and its
+  append-only annotation, validation on a test bed, keeping actions current and the documentation
+  conventions (as built, no progress markers, nothing internal, worked examples produced by running
+  the code). The specs gain their test-bed results, and the user guide the App's ruleset bypass and
+  advice for test lanes. What stays open: how v1 is cut (a `v1.0`, the changelog), decided at step
+  11, and where a caller-facing change is announced once the road documents are gone.
+- The Path-relevance §7.3 and §8 wiring examples are the workflow's, §8's condition word for word.
+- Still to do: the module sections once step 9 is built, and a last as-built pass.
 
 ## 5. Findings to carry
 
