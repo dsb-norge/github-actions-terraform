@@ -308,8 +308,8 @@ def decide_tests(document, rows):
             or event.get("action", "") in UNTESTED_ACTIONS):
         return {"matrix": {"include": []}, "count": 0, "active": False, "not_run": [], "provider_sets": []}, [], []
 
-    warnings, notices = [], []
-    sets = _provider_sets(document, rows, notices)
+    warnings, notices, lockless = [], [], []
+    sets = _provider_sets(document, rows, lockless)
     environment_roots = {normalise_dir(values.render(row["project-dir"])) for row in rows}
     directories = {normalise_dir(path) for path in document["tests"]["directories_with_tf"]}
     unavailable = _secrets_unavailable(event)
@@ -348,4 +348,7 @@ def decide_tests(document, rows):
                            "files with terraform-test-exclude-paths-yml!"])
     block = {"matrix": {"include": matrix}, "count": len(matrix), "active": bool(matrix), "not_run": not_run,
              "provider_sets": sets}
+    # An environment without a lock matters only to a test that takes its providers from the locks.
+    if any(row["test"]["root-kind"] != "environment" for row in matrix):
+        notices += lockless
     return block, warnings, notices
