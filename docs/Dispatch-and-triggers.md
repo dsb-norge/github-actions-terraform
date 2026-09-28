@@ -191,7 +191,8 @@ A dispatch or schedule has no pull request, so the surfaces are the run summary 
   `dispatched by octocat: this dispatch delivered the inputs mode, target but neither 'environment' nor 'goal', so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1`.
   The standard block's `goal` is a choice with a default, always delivered, which is what makes the
   case recognisable. A schedule that no environment takes part in says which key would change it.
-  None of these runs speaks of "this change" in the run summary.
+  None of these runs speaks of "this change": the relevance notice and the conclusion say
+  `nothing to run` where a pull request or a push would say `nothing to verify for this change`.
 - The environment jobs and the conclusion are unchanged; the conclusion's own summary line already
   counts what ran.
 - On a pull request, an ungrouped commenting environment whose `trigger-events` lack
