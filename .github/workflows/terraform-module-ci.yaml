@@ -78,7 +78,7 @@ jobs:
 
       - name: "📥 Checkout"
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
           ref: ${{ github.event.pull_request.head.ref }}
@@ -110,7 +110,7 @@ jobs:
         uses: dsb-norge/directory-recreate@v1
 
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "🎰 Create the matrix"
         id: create-test-matrix
@@ -131,7 +131,7 @@ jobs:
         uses: dsb-norge/directory-recreate@v1
 
       - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v4
@@ -274,7 +274,7 @@ jobs:
         test-file: ${{ fromJSON(needs.create-test-matrix.outputs.all-tests).files }}
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v4

@@ -37,7 +37,7 @@ jobs:
       no-tests-list: ${{ steps.discover.outputs.no-tests-list }}
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "🔎 Partition actions by test-suite presence"
         id: discover
@@ -57,7 +57,7 @@ jobs:
         action: ${{ fromJSON(needs.discover.outputs.tests-matrix) }}
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # Runs the suite, enforces the canonical summary-line contract (§4),
       # parses counts, writes result.json, emits annotations, and finally
@@ -176,7 +176,7 @@ jobs:
         python: ["3.12", "3.x"]
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "🐍 Set up Python ${{ matrix.python }}"
         uses: actions/setup-python@v7
@@ -204,7 +204,7 @@ jobs:
       pull-requests: write
     steps:
       - name: "📥 Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: "📥 Download all test result artifacts"
         uses: actions/download-artifact@v8

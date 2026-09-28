@@ -259,7 +259,7 @@ Suite: `.github/scripts/test-rewrite-internal-refs.sh`, offline, fixture-based (
 | T-M5 | Idempotent: running twice with the same ref changes nothing the second time; running with `v0` after `preview/pr-1-abc1234` restores the original bytes (manual fallback = revert path). |
 | T-M6 | `--list-files` prints exactly the set the rewrite touched, one per line, sorted, and modifies nothing. |
 | T-M7 | Missing argument → non-zero exit, usage on stderr, no file modified. |
-| T-M8 | Refs to *other* repos (`dsb-norge/github-actions/...@v2`, `actions/checkout@v6`, `hashicorp/setup-terraform@v4`) are untouched. |
+| T-M8 | Refs to *other* repos (`dsb-norge/github-actions/...@v2`, `actions/checkout@v7`, `hashicorp/setup-terraform@v4`) are untouched. |
 | T-M9 | Against the **real** repo tree (not a fixture): after rewriting to `X`, `grep -c '@X$'` over the file set equals the number of self-refs before, and no `@v0` self-ref remains in that set. |
 
 ### Should

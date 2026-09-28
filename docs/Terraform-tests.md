@@ -597,7 +597,7 @@ groups need readable titles.
 
 | # | Step | Notes |
 |---|---|---|
-| 1 | `⬇ Checkout` | `actions/checkout@v6`, as in the environment job. |
+| 1 | `⬇ Checkout` | `actions/checkout@v7`, as in the environment job. |
 | 2 | `🔧 Export lane environment variables` | `export-env-vars@v1` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` and `lower-case-copies-for-prefixes-json: '["TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` for both (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`, by the engine in the row's `extra-envs`. |
 | 3 | `🔐 Verify lane credentials` (id `verify-credentials`) | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init; the test step still runs and reports `no-credentials`. `continue-on-error: true`. |
 | 4 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the credential check did not fail and the three ARM variables are set (§3.3). `continue-on-error: true`: the providers log in on their own, and a failed login shows in the test. |

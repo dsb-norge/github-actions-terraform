@@ -66,7 +66,7 @@ jobs:
   tf:
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: "⚙️ init — old-style manual swap with marker"
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/terraform-init@my-feature
@@ -89,7 +89,7 @@ jobs:
   tf:
     steps:
       - name: "⬇ Checkout"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: "⚙️ init — old-style manual swap with marker"
         # TODO revert to @v0
         uses: dsb-norge/github-actions-terraform/terraform-init@preview/pr-7-abc1234
@@ -122,7 +122,7 @@ name: fixture module release
 jobs:
   release:
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 YML
 
   # Excluded: the preview workflow's own comment template …
