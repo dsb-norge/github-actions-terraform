@@ -170,7 +170,7 @@ Computed once per run, in the `create-matrix` step, by the decision engine's ada
 | `pull_request` | `GET /repos/{owner}/{repo}/pulls/{n}` for `changed_files` and `head.sha`, then `GET …/pulls/{n}/files` paginated at 100 | The pull request's three-dot diff against its merge base: what the Files tab shows, regardless of how far the base has advanced. After "Update branch" the merge commit's conflict resolutions count, which is right, they are the pull request's changes now. |
 | `push` | `GET /repos/{owner}/{repo}/compare/{before}...{after}` | Everything the push carried. For any non-forced push `before` is an ancestor of `after`, so the three-dot diff equals the union of the pushed commits' changes: a rebase merge of N commits, a squash, a merge commit and a direct push are all covered. |
 | `push` creating a branch | `GET /repos/{owner}/{repo}/compare/{default-branch}...{after}` | Everything the new branch carries that the default branch does not (D13). |
-| `schedule`, `workflow_dispatch` | none | Mode `all`. A dispatch is the manual "run it all" button until the single-environment dispatch spec adds a filter. |
+| `schedule`, `workflow_dispatch` | none | Mode `all`. The trigger events and a dispatch's filter to one named environment come first ([Dispatch-and-triggers.md](Dispatch-and-triggers.md)); relevance runs every environment they leave. |
 
 The `github` context inside a reusable workflow describes the caller's event, which the workflow
 already relies on for the pull request number and the ref name.
@@ -579,7 +579,7 @@ environments-yml: |
 | Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test job's `if:` drops its `seed-pr-comments` result clause for the same reason as §5.3. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | Conditionality comes for free: a dependency on an environment that is not in the run is satisfied trivially, and is recorded. `relevance.json` carries what the stage builder needs. The conclusion rule for a stage skipped while its row count is non-zero is shared with that spec. |
 | Dispatch and trigger events ([Dispatch-and-triggers.md](Dispatch-and-triggers.md)) | `workflow_dispatch` and `schedule` are mode `all`; the trigger events and the dispatch filter come first, so an environment that does not take part, or that a dispatch did not name, is skipped for that reason and a dispatched environment is always affected. A pull request skip for trigger events gets its own head, not the "not affected" one. |
-| Test-root lock files (later) | Unchanged. |
+| Provider versions for tests ([Terraform-tests.md](Terraform-tests.md) §5.3) | Unchanged: tests inherit the environments' lock files, and there is no committed test lock. |
 
 ## 11. Actions: new and changed
 
