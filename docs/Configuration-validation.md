@@ -488,3 +488,12 @@ delivered names) and `terraform-init/run_tests_step_init.sh` (a directory holdin
   leaf, and a limit of null is neither a limit nor "not set".
 - **Numbers in actor lists are ints only.** A fraction can never be a login, so only a whole number
   gets the "quote it" advice; anything else gets the login rule.
+- **On the test bed every refusal and every accepted shape behaved as written.** One dispatch
+  holding one mistake of each kind (an unsuffixed key, a near miss, a suffixed plain setting, a
+  workflow-only input, goals without dashes, a goal without its prerequisite, an empty init
+  directory, actors without dashes, a quoted and a misspelt limit) reported all ten in one run, in
+  the words of §3. An accepted configuration showed a per-environment null removing a global
+  variable, `1.10` and `012345678901` reaching the row as written, a single init directory written
+  alone being initialised, and the inert per-environment `pr-auto-merge-enabled: true` as a
+  warning. From a tag, a dispatched apply was refused naming the tag, and a default dispatch was
+  granted no apply.
