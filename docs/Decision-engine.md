@@ -14,8 +14,7 @@ the seven rules of §6 (the configuration's validation as
 dispatch filter, relevance, the granted goals and the ordering of
 [Environment-ordering.md](Environment-ordering.md)), the test rows of `tests.py`, the comment
 manifest, the input and output documents of §4 and §5, the tests of §8 and both gates. The
-`validate` and `render-summary` commands of §3.2 are specified but not built: nothing needs them
-yet. §13 holds what implementation taught the spec.
+`validate` and `render-summary` commands the first draft specified are not built (§3.2). §13 holds what implementation taught the spec.
 
 ## 1. Why
 
@@ -190,9 +189,11 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | Command | Input | Output | Used by |
 |---|---|---|---|
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
-| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, and the runner's environment | `matrix-json` in `$GITHUB_OUTPUT`, the log | the `create-tf-vars-matrix` action |
-| `validate` | the input document without the adapter sections | validation errors only, exit 2 when any | the same job, on a partial document built from the event and the inputs, before the adapters run, so a configuration error is reported before any API call |
-| `render-summary` | an output document | Markdown for the run summary | `create-matrix` and the conclusion |
+| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log | the `create-tf-vars-matrix` action |
+
+Two more commands were specified and are not built, because nothing needs them: a `validate` on a
+partial document before the adapters run, and a `render-summary` of an output document. The run
+summary is `create-run-summary`'s, from `relevance.json` (P12 says what that costs).
 
 Exit codes: 0 success, 2 validation error, 1 anything that is not the caller's configuration: a
 malformed input document, an unreadable file, a broken `yq`, an unanswerable API, a usage error
@@ -711,7 +712,7 @@ preview-ref run on the test-bed repository closes it (§13).
 | P9 | `capture-matrix-job-meta` strips keys that look like secrets. | A row field a summary must read back from metadata disappears (`fork-safe` was named for this). Today's rows already carry `pr-auto-merge-app-private-key-secret` and the `extra-envs-from-secrets*` maps, which are stripped and must stay so. | Only fields a downstream summary reads from metadata are validated against the filter; the port does not rename existing keys. |
 | P10 | The decision record can grow long on a repository with many environments and files. | A run summary nobody reads. | One line per environment, one per test root, collapsed detail per file. |
 | P11 | A per-environment YAML boolean stayed a JSON boolean in `vars`, and the workflow's gates compare with `== 'true'`; GitHub casts a boolean to a number and a string to NaN, so `true == 'true'` is false. | A per-environment `verify-lock-file: true` skipped the lock check; `add-pr-comment: true` left the seed job's placeholder head never updated. | A per-environment value of a boolean input is normalised to the gates' string (D9); `BOOLEAN_INPUTS` is held to the workflow's declared boolean inputs by a test. |
-| P12 | The adapter gathers facts before the engine can validate the configuration. | A misconfigured caller pays for API calls before hearing about the typo. | `validate` on the partial document first (§3.2). |
+| P12 | The adapter gathers facts before the engine can validate the configuration. | A misconfigured caller pays for a few API calls (the changed files, the test facts) before hearing about the typo. | Accepted: the calls are cheap and the error comes in the same step; a `validate` pass first would cost a second engine run on every run to save them on a broken one. |
 | P13 | `github.event.repository.default_branch` is documented for push, pull request and dispatch payloads, not for `schedule`. | An unknown default branch on a scheduled run. | Verified on the test bed: the `schedule` payload carries it too, inside a called workflow as well. The API fallback stays, and fails the step loudly. |
 | P14 | Retired: the runner's `bash -e` swallowing a step's exit code applied to the bash shim, which the adapter replaced. | | |
 | P15 | `jq -r` prints null as `null`, but the builder read most fields through `select(. != null)`, which prints nothing. | Two renderings of null; mixing them changes the not-empty and directory checks. | `values.render` (the check's view) and `values.get_val` (the read's view), each used where the builder used it. |

@@ -277,7 +277,11 @@ On subsequent runs, heads stay at their original `created_at` positions (PATCH p
 
 When two workflow runs against the same PR overlap (e.g. retrigger before the first finishes), each run's matrix delete-first step will wipe plan tags from the env it's about to post for — including any in-flight tag the other run just POSTed. The result is some plan tags briefly disappearing and reappearing while both runs are in flight. Each run's aggregator scopes its anchor lookup to its own `run-id`, so the per-group head's Links column resolves to that run's tags rather than the competing run's.
 
-Mitigation: set `concurrency: { group: pr-${{ github.event.pull_request.number }}-tf, cancel-in-progress: true }` on the caller workflow so a new run cancels any in-flight previous run. Without this, the noise is tolerable but not zero.
+The noise is tolerable and settles when the last run finishes. Do not mitigate it with a
+`cancel-in-progress: true` group on the calling workflow: it cancels the whole run, an in-progress
+or waiting environment job included, so an apply can be cut off, and on a push, where there is no
+pull-request number, every run would share the group (Workflow-terraform-ci-default.md,
+"environments-yml").
 
 ## 8.1 Comment ownership — two callers on one pull request
 
