@@ -95,7 +95,7 @@ flowchart LR
 |---|---|---|
 | `create-matrix` | `Create test matrix` | Runs `create-tf-vars-matrix` with `mode: module`; uploads `relevance` (the decision, for the summary). |
 | `generate-docs` | `Update documentation` | terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run; elsewhere a README that needs regenerating fails it. |
-| `validate` | `Validate module` | Init (no backend), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. |
+| `validate` | `Validate module` | Init in the module root (a plain `terraform init`, not `-backend=false`; the test jobs' init passes `backend: false`), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. |
 | `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
 | `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, while the stage is on: on every event with test files, and on a pull request. It waits for validation, so the validation head is posted first, and skips when the docs job pushed. |
 | `conclusion` | `Terraform conclusion` | §8. The only check a caller requires. |
