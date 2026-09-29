@@ -70,7 +70,7 @@ The App's installation lacks write access to contents or pull requests on the re
 
 ### The release pull request has no module CI run
 
-The release pull request was opened or last updated by `GITHUB_TOKEN`, which the v0 workflow used, so no run started. With this workflow, the next update of the pull request is made with the App token and starts one; closing and reopening the pull request by hand starts one at once.
+The release pull request was opened or last updated by `GITHUB_TOKEN`, as the v0 workflow did before v0.9, so no run started. With this workflow, the next update of the pull request is made with the App token and starts one; closing and reopening the pull request by hand starts one at once.
 
 ### A merge opened no release pull request
 
