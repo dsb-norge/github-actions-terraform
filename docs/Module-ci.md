@@ -95,12 +95,13 @@ flowchart LR
 | `create-matrix` | `Create test matrix` | Runs `create-tf-vars-matrix` with `mode: module`; uploads `relevance` (the decision, for the summary). |
 | `generate-docs` | `Update documentation` | terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run; elsewhere a README that needs regenerating fails it. |
 | `validate` | `Validate module` | Init (no backend), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. |
-| `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20). |
+| `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
 | `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, on every event with test files, and on a pull request. |
 | `conclusion` | `Terraform conclusion` | §8. The only check a caller requires. |
 
 The test jobs do not wait for validation: they install their own providers, and a failing test is
-worth seeing next to a failing lint.
+worth seeing next to a failing lint. They do wait for the docs job, as validation does: a docs
+commit starts a run of its own, and this run's tree is superseded.
 
 ## 5. The engine's module mode
 
@@ -153,7 +154,7 @@ Lanes are the project workflow's, key for key ([Terraform-tests.md §3.2, §3.6]
 
 | Surface | Pull request | Push, dispatch, schedule |
 |---|---|---|
-| Validation head `<!-- tf:head:module -->` | `create-validation-summary` with init, fmt, validate, lint and the warning rows; lock and plan rows absent | — |
+| Validation head `<!-- tf:head:module -->` | `create-validation-summary` with `subject: module`: the title "Terraform validation summary for module: `<repository>`", init, fmt, validate, lint and the warnings count; no lock and no plan rows (`absent`) | — |
 | Tests head `<!-- tf:head:tests:<caller> -->` | `create-test-summary`, one comment for every file | — |
 | Legacy `<!-- tf:head:test:<file> -->` comments | deleted by the summary job | — |
 | Step summaries | validation block, each test job's block, the tests block, the conclusion line | the same |
@@ -195,6 +196,9 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | P3 | Two module test jobs of two pull requests on one integration file | They create the same fixed-name objects. | The per-file concurrency group of the test job, `queue: max`. |
 | P4 | A docs commit pushed with `GITHUB_TOKEN` | No new run starts, and the required check stays on the old commit. | The App token (D7). |
 | P5 | The plugin cache restored where no CLI config points at it | Never read, and a miss fails init. | The test jobs set their cache up themselves, as in the project workflow; validation keeps its own. |
+| P6 | A README out of date on a fork's pull request, a push, a dispatch or a schedule | The docs check fails: only a pull request from the repository gets a docs commit. | Regenerate with terraform-docs 0.20 (the pinned action's), or let a pull request regenerate it. |
+| P7 | `.tflint.hcl` matched by the template's `.gitignore` (`**/.tflint.hcl`) | A copy that is not force-added is never committed, and lint fails: "could not find a TFLint config file". | The template keeps it force-added; a repository keeps it that way. |
+| P8 | The default terraform-docs config injected in check mode | Upstream stages the whole directory and counts every staged file, so the injected file would read as drift. | The injected config is listed in `.git/info/exclude`; with push it is committed as before. |
 
 ## 11. Tests
 
@@ -216,11 +220,29 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 |---|---|
 | Module mode | `engine/dsb_tf_engine/decide.py`, `tests.py`, `adapter.py`, `__main__.py` |
 | The action input | `create-tf-vars-matrix/action.yml` (`mode`) |
+| The module head | `create-validation-summary/` (`subject`, the `absent` status) |
 | Docs | `terraform-docs/` |
 | The workflows | `.github/workflows/terraform-module-ci.yaml`, `terraform-module-release.yaml` |
 | Parity and conclusion tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21) |
 
 ## 13. Open questions
 
-1. The test-bed rounds of §11, including an integration test that creates and destroys a resource
-   in a sandbox resource group.
+1. The pull-request round on the test bed: a docs commit through the App, the validation and tests
+   heads, the removal of v0's per-file comments.
+2. An integration test that creates and destroys a resource in a sandbox resource group.
+
+## 14. What implementation taught the spec
+
+- **The test bed ran the rest through the workflow at the preview ref**, on a module-shaped branch
+  of the project test bed made from the module template:
+  - a push: the unit suite ran without credentials and the integration test as the lane
+    identity, through its GitHub Environment and OIDC;
+  - a README that needed regenerating failed the docs check with its step-summary line, and the
+    conclusion named it;
+  - with the README current, every job and the conclusion were green (`conclusion: green —
+    validation succeeded; tests: 2`);
+  - a dispatch ran the tests;
+  - a branch without test files was red with the warning and `a module needs at least one test
+    file`, and green with `terraform-test-required: false`.
+- **The first mutation run of the module mode** found the adapter's string defaults and one
+  conditional redundant; the adapter takes a boolean, and `--mode` is required.
