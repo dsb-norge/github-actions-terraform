@@ -14,7 +14,9 @@ class DocumentError(Exception):
 
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
 # Present only when the adapter fetched them; absent means "relevance not computed".
-OPTIONAL_KEYS = ("changed_files", "run", "tests")
+OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode")
+# Absent means the project workflow's decision; a module decides its test stage alone (docs/Module-ci.md §5).
+MODES = ("project", "module")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
 CHANGED_FILES_KEYS = ("available", "truncated", "error", "api_head_sha", "count", "files")
 PUSH_KEYS = ("created", "forced", "deleted")
@@ -123,6 +125,8 @@ def check(document):
         _require(_is_changed_files(document["changed_files"]),
                  "input document: 'changed_files' needs exactly 'available', 'truncated', 'error', 'api_head_sha', "
                  "'count' and 'files', typed as the adapter reports them")
+    _require(document.get("mode", "project") in MODES,
+             f"input document: 'mode' is {document.get('mode')!r}, expected one of {', '.join(MODES)}")
     if "tests" in document:
         _require(_is_tests(document["tests"]),
                  "input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "

@@ -27,6 +27,9 @@ SLUG_CAP = 100
 TEST_FILE_SUFFIXES = (".tftest.hcl", ".tftest.json")
 # Unattended runs must not create or destroy test objects, and a dispatch is often a recovery (D7).
 TEST_EVENTS = ("pull_request", "push")
+# A module has no environment to recover, so its tests are its manual and its nightly build too
+# (docs/Module-ci.md D3).
+MODULE_TEST_EVENTS = ("pull_request", "push", "workflow_dispatch", "schedule")
 UNTESTED_ACTIONS = ("closed", "converted_to_draft")
 DEPENDABOT = "dependabot[bot]"
 
@@ -55,7 +58,10 @@ def _is_count(value):
 def _globals(inputs, errors):
     enabled = _flag(inputs.get("terraform-test-enabled", True))
     allow = _flag(inputs.get("allow-failing-terraform-tests", False))
-    for name, value in (("terraform-test-enabled", enabled), ("allow-failing-terraform-tests", allow)):
+    # Only the module workflow declares it: a module needs at least one test file (docs/Module-ci.md D9).
+    required = _flag(inputs.get("terraform-test-required", False))
+    for name, value in (("terraform-test-enabled", enabled), ("allow-failing-terraform-tests", allow),
+                        ("terraform-test-required", required)):
         if value is None:
             errors.append(f"The input '{name}' is {shown(inputs[name])}; it must be true or false!")
     timeout = inputs.get("terraform-test-timeout-minutes", 30)
@@ -65,7 +71,7 @@ def _globals(inputs, errors):
     runs_on = inputs.get("terraform-test-runs-on", "ubuntu-latest")
     if runs_on == "":
         errors.append("The input 'terraform-test-runs-on' is empty!")
-    return {"enabled": enabled, "allow": allow, "timeout": timeout, "runs_on": runs_on,
+    return {"enabled": enabled, "allow": allow, "required": required, "timeout": timeout, "runs_on": runs_on,
             "version": inputs.get("terraform-version", "latest"),
             "cache": _flag(inputs.get("cache-terraform-modules", True)) is not False}
 
@@ -290,11 +296,12 @@ def _row(slug, path, root, rel, kind, lane, provider_set, name):
         "extra-envs": lane["variables"], "extra-envs-from-secrets": lane["secrets"]}}
 
 
-def decide_tests(document, rows):
+def decide_tests(document, rows, events=TEST_EVENTS):
     """The tests block and its warnings and notices, or a ConfigError with every error.
 
     Lanes and inputs are validated whether or not the stage runs, so a configuration never becomes
-    valid by being run on a schedule.
+    valid by being run on a schedule. `events` are the events the stage runs on. `missing` is true
+    when the stage ran, requires a test file and has none that runs or is held back from a fork.
     """
     errors = []
     defaults = _globals(document["workflow_inputs"], errors)
@@ -304,9 +311,10 @@ def decide_tests(document, rows):
         raise ConfigError(errors)
 
     event = document["event"]
-    if (not defaults["enabled"] or "tests" not in document or event["name"] not in TEST_EVENTS
+    if (not defaults["enabled"] or "tests" not in document or event["name"] not in events
             or event.get("action", "") in UNTESTED_ACTIONS):
-        return {"matrix": {"include": []}, "count": 0, "active": False, "not_run": [], "provider_sets": []}, [], []
+        return {"matrix": {"include": []}, "count": 0, "active": False, "not_run": [], "provider_sets": [],
+                "missing": False}, [], []
 
     warnings, notices, lockless = [], [], []
     sets = _provider_sets(document, rows, lockless)
@@ -346,9 +354,21 @@ def decide_tests(document, rows):
     if len(matrix) > MATRIX_CAP:
         raise ConfigError([f"{len(matrix)} test jobs exceed GitHub's cap of {MATRIX_CAP} jobs in one matrix; exclude "
                            "files with terraform-test-exclude-paths-yml!"])
+    # A misplaced file never runs; a file held back from a fork has run where secrets exist.
+    missing = defaults["required"] and not matrix and not any(entry["reason"] != "misplaced" for entry in not_run)
     block = {"matrix": {"include": matrix}, "count": len(matrix), "active": bool(matrix), "not_run": not_run,
-             "provider_sets": sets}
+             "provider_sets": sets, "missing": missing}
+    if missing:
+        warnings.append("no test file: a module needs at least one test file, a unit suite such as "
+                        "tests/unit-tests.tftest.hcl; set terraform-test-required: false to run without "
+                        "(docs/Module-ci.md D9)")
     # An environment without a lock matters only to a test that takes its providers from the locks.
     if any(row["test"]["root-kind"] != "environment" for row in matrix):
         notices += lockless
     return block, warnings, notices
+
+
+def record(block):
+    """The module mode's decision record: one line per test file, run or not and why."""
+    return ([f"{row['test']['file']}: run, lane {row['test']['lane']}" for row in block["matrix"]["include"]]
+            + [f"{entry['file']}: not run, {entry['reason']}" for entry in block["not_run"]])
