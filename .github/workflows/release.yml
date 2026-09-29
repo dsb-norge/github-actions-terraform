@@ -1,0 +1,76 @@
+name: "Release"
+#
+# Opens and updates the release pull request with release-please, and, when that pull request
+# merges, tags the release (v1.<minor>.<patch>), publishes its GitHub Release and moves the major
+# tag (v1) to it. Spec: docs/Development-and-release.md, "Release".
+#
+# The release pull request is opened with the releaser App's token, not GITHUB_TOKEN: a pull
+# request opened or updated with GITHUB_TOKEN starts no workflow, so the required tests-conclusion
+# check would never run on it. The App is read from:
+#   - vars.RELEASER_APP_ID              <-- the App's ID (or its client ID)
+#   - secrets.RELEASER_APP_PRIVATE_KEY  <-- a private key of the App
+# Until the variable is set, the job is skipped.
+#
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# One release at a time; a push while one runs waits for it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: "🚀 Release"
+    if: vars.RELEASER_APP_ID != ''
+    runs-on: ubuntu-latest
+    permissions: {} # everything is done with the App token
+    steps:
+      # The installation's permissions, as the App grants them: contents (the release tag, the
+      # major tag, the release pull request's branch) and pull requests with their labels.
+      - name: "🔑 Create GitHub App token"
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASER_APP_ID }}
+          private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+
+      - name: "🚀 Create or update the release pull request, or release"
+        id: release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: "📥 Checkout the release"
+        if: steps.release-please.outputs.release_created == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release-please.outputs.sha }}
+          persist-credentials: false
+
+      # Calling repositories pin the major tag, so it follows every release. Annotated, so it
+      # names the release it points at.
+      - name: "🏷️ Move the major tag to the release"
+        if: steps.release-please.outputs.release_created == 'true'
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          MAJOR: ${{ steps.release-please.outputs.major }}
+          RELEASE_TAG: ${{ steps.release-please.outputs.tag_name }}
+          RELEASE_SHA: ${{ steps.release-please.outputs.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Move the major tag to the release commit and push it with the App token
+          major_tag="v${MAJOR}"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git tag -f -a "${major_tag}" -m "${major_tag} is ${RELEASE_TAG}; see CHANGELOG.md" "${RELEASE_SHA}"
+          # --force is right here: the major tag is meant to move.
+          git push --force "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git" "refs/tags/${major_tag}"
+          echo "Moved ${major_tag} to ${RELEASE_TAG} (${RELEASE_SHA})" >>"${GITHUB_STEP_SUMMARY}"
