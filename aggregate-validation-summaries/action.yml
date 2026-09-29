@@ -11,10 +11,10 @@ description: |
     - Partitions envs by their matrix_context.vars["pr-comment-group"] value.
     - Lists all PR comments via the GitHub API; finds existing group comments by
       family-prefix match.
-    - Deletes existing group comments whose specific prefix is no longer desired
-      (orphans from removed/renamed groups), plus existing group comments that
-      ARE desired (will be reposted with fresh body).
-    - Posts one fresh per-group comment per distinct non-empty group.
+    - Deletes existing group comments whose group is no longer desired
+      (orphans from removed/renamed groups).
+    - Upserts one comment per desired group: PATCHes the oldest existing one in
+      place, deleting any duplicates, or POSTs a fresh one when there is none.
     - With relevance-file: also renders the groups relevance.json declares and
       the environments path relevance left out of the run, as columns of dashes
       (docs/Path-relevance.md §6.2, §6.4).
@@ -23,8 +23,9 @@ description: |
       no job of the run writes (docs/Environment-ordering.md §7.4).
 
   Failure isolation:
-    - Empty desired set + empty existing set -> no-op.
-    - Empty desired set + non-empty existing set -> sweep mode (clean orphans only).
+    - No environment with add-pr-comment enabled -> lists, posts and deletes nothing.
+    - Empty desired set and no group declared -> deletes nothing: the group comments
+      it sees belong to another caller (docs/Workflow-pr-comments.md §8.1).
     - GitHub API outage -> degraded mode: skip delete pass, still post fresh bodies.
     - Malformed individual metadata file -> log warning, skip the file.
 
