@@ -117,7 +117,7 @@ A file is relevant to an environment when it matches at least one `paths` entry 
 A renamed file is tested under both its old and its new path. Every change status counts: added,
 modified, removed, renamed, copied.
 
-The matcher is the decision engine's `globs.py`, which the test stage will share, with the fixtures
+The matcher is the decision engine's `globs.py`, which the test stage shares, with the fixtures
 of Terraform-tests.md §11 plus the cases of §13 here.
 
 Validation errors, each naming the environment, all of them collected before the run stops, and
@@ -186,14 +186,15 @@ Mode `all` with the reason recorded, in this order of evaluation:
 | (not a fail-open) | `push` with `github.event.created == true`, or `before` all zeros (the documented field first, the zero SHA as belt and braces), is diffed against the default branch (D13); only a failure of that compare fails open, as `api-error` or `too-many-files`. |
 | `forced` | `push` with `github.event.forced == true`: the merge base is no longer `before`, reverted files would be invisible |
 | `branch-deleted` | `push` with `github.event.deleted == true` |
+| `not-computed` | no changed-file facts in the engine's input document. The workflow never produces it, since the adapter fetches on every push and pull request the earlier reasons leave; a caller of the engine's `decide` that builds no facts gets it, and every environment runs. |
 | `pr-head-moved` | `pull_request` where the API's `head.sha` differs from `github.event.pull_request.head.sha`: a re-run of an older attempt, or an overlapping run; the file list is live but the run is pinned to its SHA, and a newer run governs the check anyway |
 | `too-many-files` | `changed_files > 3000` on the pull request, or 3000 files paged, or 300 or more files in a compare response; neither endpoint signals truncation, so the caps are the signal |
-| `not-computed` | no changed-file facts in the engine's input document. The workflow never produces it, since the adapter fetches on every push and pull request the earlier reasons leave; a caller of the engine's `decide` that builds no facts gets it, and every environment runs. |
 | `api-error` | any non-2xx response, unparseable JSON, an answer of the wrong shape, a missing `gh`, or a payload without the pull request number and head or the push's commits |
 | `workflow-changed` | any changed file under `.github/workflows/`: the calling workflow file carries the `uses:` ref and every input, and a caller may route through a local reusable workflow |
 
-The action **never exits non-zero**; fail-open is a result, not an error. Only `environments-yml`
-validation may redden `create-matrix`.
+A failed fetch **never makes the step exit non-zero**; fail-open is a result, not an error. Only
+an invalid configuration, or a fault of the runner itself (a `yq` that cannot parse, a default
+branch that cannot be resolved), may redden `create-matrix`.
 
 ### 4.3 Fetching in the adapter
 
@@ -216,9 +217,9 @@ line in its own group, and elided from the logged input document.
 ### 4.4 Cost and permissions
 
 A docs-only pull request costs `create-matrix` (checkout, builder, two to four API requests),
-`seed-pr-comments`, `pr-comment-aggregator`, `run-summary`, `terraform-test-summary` when tests are
-active, and `conclusion`: five short jobs and no runner minutes on environments. Cheaper than
-today's skipped-and-blocked state, not free.
+`seed-pr-comments`, `pr-comment-aggregator`, `run-summary`, `terraform-test-summary` when the test
+stage is switched on (the default), and `conclusion`: up to six short jobs and no runner minutes on
+environments. Cheaper than today's skipped-and-blocked state, not free.
 
 Permissions used by `create-matrix`: `pull-requests: read` for the pull request endpoints,
 `contents: read` for compare, `metadata: read` for the repository. The caller already grants
@@ -253,9 +254,10 @@ so they never reach the generic forwarding (P7).
 | `relevance-file` | the path of `relevance.json` on the runner: the engine's output document without its matrices ([Decision-engine.md](Decision-engine.md) §5). Every environment of `environments-yml`, affected or not, with its `verdict` (`run` / `skip`), its reasons (`relevance: <matched rule>`, `relevance: no changed file matches`, `relevance: all:<reason>`), `github-environment`, `add-pr-comment`, `pr-comment-group`, `mutates-on-pr`, the resolved `pr-auto-merge-*` values, the resolved `paths` and `paths-ignore`, its `trigger-events`, and `relevant`: whether a changed file is relevant to it, evaluated whatever its verdict (true in mode `all`), so a change to an environment that takes no part in pull requests is visible to the auto-merge evaluator ([Auto-merge.md](Auto-merge.md) D6); the counts; the relevance block; the seed manifest (§6.3); the notices and the decision record. Names and rules, no file lists. |
 
 The `create-matrix` job exposes the five small values as job outputs and uploads the file as the
-artifact `relevance`, which the seed job, the aggregator, the run summary and the auto-merge
-evaluator download. Every download of it carries `continue-on-error: true`, because a download by
-name of a missing artifact throws (P8); without the file each of them behaves as before relevance.
+artifact `relevance`, which the seed job, the aggregator, the run summary, the auto-merge
+evaluator and the tests summary download. Every download of it carries `continue-on-error: true`,
+because a download by name of a missing artifact throws (P8); without the file each of them behaves
+as before relevance.
 
 ### 5.3 The environment job
 
@@ -265,18 +267,19 @@ terraform-ci-cd:
   if: |
     !cancelled()
     && needs.create-matrix.result == 'success'
-    && needs.create-matrix.outputs.affected-count != '0'
+    && needs.create-matrix.outputs.stage-1-count != '0'
 ```
 
-Two changes. The count gate, a string comparison that cannot throw where `fromJSON('')` would,
-keeps an empty matrix away from GitHub, which rejects it ("Matrix
+Two changes. The count gate (stage 1's row count; the later stage jobs test their own,
+[Environment-ordering.md](Environment-ordering.md) §4.2), a string comparison that cannot throw
+where `fromJSON('')` would, keeps an empty matrix away from GitHub, which rejects it ("Matrix
 vector … does not contain any values"); a false job-level `if:` short-circuits matrix evaluation,
 which is widely relied on and undocumented and was verified on the test bed (P13), so no sentinel
-row is needed. And the clause on `seed-pr-comments`'s
-result is dropped: the seed's steps are already `continue-on-error`, `needs:` alone keeps the
-ordering, and the old clause meant a broken seed skipped the matrix silently while the conclusion
-stayed green (P3). The concurrency group is unchanged; an unaffected environment no longer takes
-its lock, so a docs-only pull request stops queueing behind production's apply.
+row is needed. And the clause on `seed-pr-comments`'s result is dropped: the seed's steps are
+already `continue-on-error`, `needs:` alone keeps the ordering, and the old clause meant a broken
+seed skipped the matrix silently while the conclusion stayed green (P3). The concurrency group is
+unchanged; an unaffected environment no longer takes its lock, so a docs-only pull request stops
+queueing behind production's apply.
 
 ## 6. What the pull request shows
 
@@ -351,10 +354,11 @@ heads. The job's `if:` is unchanged; the engine returns an empty manifest where 
 
 1. **Group heads**: for each distinct non-empty `pr-comment-group` among environments with
    `add-pr-comment: true`, affected or not, sorted: today's title rule (`Terraform summary` when
-   any member of the group, commenting or not, affected or not, holds `apply-on-pr` or
-   `destroy-on-pr`) and today's `⏳ Awaiting results…` placeholder. Always a placeholder: the aggregator finalises every group on
-   every pull-request event, including all-unaffected ones, and the seed may be skipped on a re-run
-   while the aggregator is not.
+   any member of the group, commenting or not, affected or not, mutates on pull request: holds
+   `apply-on-pr` or `destroy-on-pr` on a pull request against the default branch) and today's
+   `⏳ Awaiting results…` placeholder. Always a placeholder: the aggregator finalises every group
+   on every pull-request event, including all-unaffected ones, and the seed may be skipped on a
+   re-run while the aggregator is not.
 2. **Environment heads**: for each ungrouped environment with `add-pr-comment: true`, in
    `environments-yml` order: affected → today's placeholder with the Mode line when it mutates on
    pull request; unaffected → the final body of §6.1.
@@ -388,15 +392,17 @@ behaves exactly as today.
 `create-run-summary` gains an optional `relevance-file` input. With it:
 
 - The headline is `N environments · A affected · U not affected · X applied · Y failed`, with
-  `· D destroyed` before `failed` and `· M not reported` after it when non-zero, and `1 environment`
-  in the singular. N, A and U come from the file's verdicts only.
+  `· D destroyed` and `· H held back` ([Environment-ordering.md](Environment-ordering.md) §7.2)
+  before `failed` and `· M not reported` after it when non-zero, and `1 environment` in the
+  singular. N, A and U come from the file's verdicts only.
 - Every environment gets a row, in `environments-yml` order, matched and labelled by its
   `github-environment` as the metadata is. An unaffected one is a row of
   `<span title="not affected">—</span>` cells. An affected one without a metadata file (its job was
   cancelled or crashed) is a `❔` row, counted as not reported and never as failed.
 - A line states the relevance: ``Relevance: `diff`, 3 changed files`` in mode `diff`,
   ``Relevance: `all` (workflow-changed)`` in mode `all`.
-- With nothing affected, `_Nothing needed verifying: no environment is affected by this change._`
+- With nothing affected on a pull request or a push, `_Nothing needed verifying: no environment is
+  affected by this change._`
 - A footer line explains the dashes, since a tooltip does not show on a phone.
 
 Without the file, or with one that is missing on disk or is not a relevance document, today's
@@ -404,8 +410,8 @@ rendering stays byte for byte, the "No environments" line included.
 
 `create-matrix` emits one annotation per run: `::notice title=Terraform CI::relevance <mode>
 (<reason>): <A> of <N> environments affected` (`1 environment` in the singular) and, when `A` is
-zero, `; nothing to verify for this change`. This and the run summary are the only surfaces on push
-runs.
+zero, `; nothing to verify for this change` (`; nothing to run` when the reason is `event`, which
+carries no change). This and the run summary are the only surfaces on push runs.
 
 ### 6.6 Re-runs
 
@@ -477,13 +483,14 @@ conclusion:
 
 Named results in `env:`, one `case` per row of §7.2, one summary line to the log, the step summary
 and a `::notice` or `::error`, for example `conclusion: green — nothing to verify for this change;
-environments: 0 affected, 3 not affected (diff: diff)` or `conclusion: red — the environments should
-have run but were skipped; environments: 2 affected, 1 not affected (diff: diff)`. The test stage's
-result and active flag, and each stage job's result with its count
+environments: 0 affected, 3 not affected (diff: diff); tests: 0` or `conclusion: red — the
+environments should have run but were skipped; environments: 2 affected, 1 not affected (diff:
+diff); tests: 0` (`nothing to run` on a schedule or a dispatch). The test stage's result and
+active flag, and each stage job's result with its count
 ([Environment-ordering.md](Environment-ordering.md) §7.3), are judged the same way; with one stage,
-as on every run of a repository without `depends-on`, the line is the one above. The structural test
-in [`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts the `needs` list,
-the named results, and that no `contains(needs.*.result, …)` remains.
+as on every run of a repository without `depends-on`, the line is the one above. The structural
+test in [`evaluate-automerge-eligibility`](../evaluate-automerge-eligibility/) asserts the `needs`
+list, the named results, and that no `contains(needs.*.result, …)` remains.
 
 `run-summary` and `pr-comment-aggregator` stay out of `needs`; a reporting job must never redden a
 run.
@@ -588,7 +595,7 @@ environments-yml: |
 | Force push to the pull request branch | any | all on the next push run (`forced`); the pull request run itself is `diff` from the pull request's files | as today | as today |
 | "Update branch" from a base that changed `envs/prod/**` | the pull request's own files only | unchanged from the previous run | unchanged | unchanged |
 | Push to main after merging the one-environment pull request | `envs/staging/main.tf` | `staging` | no comments; run summary lists `prod`, `sandbox` as not affected | green if the apply passes |
-| Failed apply on push N, unrelated push N+1 | push N+1 touches `envs/prod/**` only | `prod` only | `staging` is not retried | green; the notice lists `staging` as not affected; a dispatch reconciles it |
+| Failed apply on push N, unrelated push N+1 | push N+1 touches `envs/prod/**` only | `prod` only | `staging` is not retried | green; the run summary lists `staging` as not affected; a dispatch reconciles it |
 | Pull request with a merge conflict | any | no run at all | nothing | "Expected", until the conflict is resolved |
 | Converting a repository that has `on.paths` today | the workflow file itself | all (`workflow-changed`) | today's comments | as today; from the next pull request on, docs-only changes merge without a dummy commit |
 | `path-relevance-enabled: false` | any | all (`disabled`) | as today | as today |
@@ -614,8 +621,8 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
   `project-dir` normalisation, `auto` plus extras, replacement lists, implied and explicit ignore,
   `paths-ignore: []`, renamed files, mode `all`, all-unaffected, the `relevance.json` shape, validation
   errors for a bad glob and a non-list `paths`.
-- **`pr-comments-reconcile`**: unchanged; the seed job composes `gc-yml` for unaffected
-  environments from existing primitives.
+- **`pr-comments-reconcile`**: unchanged; the engine composes `gc-yml` for unaffected
+  environments from existing primitives (§6.3), and the seed job hands it over.
 - **`aggregate-validation-summaries`**: §6.4, `relevance-file` input, goldens for an unaffected
   column, an all-unaffected group, a group absent from metadata but present in relevance, and the
   no-file case unchanged.
@@ -635,7 +642,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 | P3 | The matrix job's `if:` also tested the seed job's result, and the seed is not in the conclusion's `needs`. | A broken seed skipped every environment and the conclusion stayed green with no plan. | Drop the clause; gate "skipped is benign" on `affected-count` (§5.3, §7.2). |
 | P4 | The aggregator's desired set comes from metadata only, and its orphan pass deletes group heads outside the set. | An all-unaffected group's head is deleted when another group ran, or left at "Awaiting results" when none ran. | Desired set = relevance ∪ metadata (§6.4). |
 | P5 | Three thousand paths in a job output enter envp through the steps context. | Exit 126, "Argument list too long", in production only. | The file list travels by path; outputs carry counts and mode (§4.3). |
-| P6 | The builder's existing `curl` to the API has no error handling and degrades to `null`. | Out of scope here, but the same pattern must not be copied. | `gh api` with tempfiles and explicit fail-open (§4.3). |
+| P6 | The bash builder's `curl` to the API had no error handling and degraded to `null`. | The same pattern must not be copied. | `gh api` from the adapter, every failure a fact that fails open (§4.3). |
 | P7 | `paths` and `paths-ignore` are lists; the builder's generic forwarding loop copies scalars. | The keys would be silently dropped. | Explicit handling like the `*-yml` fields (§5.1). |
 | P8 | `download-artifact` by name throws when the artifact is missing; by pattern it succeeds with zero matches. | A reporting or auto-merge job fails on a run that had no reason to upload. | `continue-on-error: true` on every `relevance` download (§5.2). |
 | P9 | Files Terraform reads from outside the `auto` set: `-var-file` and `-backend-config` targets via `TF_CLI_ARGS_*`, local modules outside `main/` and `modules/`, Markdown read by `file()`. | An environment is not planned for a change that affects it. | Explicit `paths`, `paths-ignore: []` (§3.2). |
@@ -645,10 +652,10 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 | P13 | An empty matrix fails the job; whether a false job-level `if:` avoids evaluating it is undocumented. | A docs-only pull request could redden on the matrix job. | Verified on the test bed: GitHub evaluates the job-level condition first, so an empty matrix behind a false one is no error and no sentinel row is needed ([Environment-ordering.md](Environment-ordering.md) P4). |
 | P14 | The `automerge` job's `if:` has no status function. | Implicit `success()` skips it when the matrix is skipped. | `!cancelled()` plus explicit results (§8). |
 | P15 | Auto-merge eligibility with no metadata skipped the enabled and actor checks. | Any actor's docs-only pull request would auto-merge in an actor-restricted repository. | Checks one to three from `relevance.json` (§8). |
-| P16 | A failed apply on push N is not retried by an unrelated push N+1. | Drift until the next relevant change. | The notice lists the environment; a dispatch is mode `all` (D5). |
+| P16 | A failed apply on push N is not retried by an unrelated push N+1. | Drift until the next relevant change. | The run summary lists the environment as not affected; a dispatch is mode `all` (D5). |
 | P17 | The Environments view shows the last affected run's deployment for an environment. | A reviewer may read an old deployment as current. | Documented in the user guide. |
 | P18 | A pull request with a merge conflict gets no run. | Its check stays "Expected", which looks like this feature failing. | Documented (§7.4). |
-| P19 | Relevance is the default in v1. | A caller's docs-only changes stop planning on the move to v1, and a change outside the `auto` set with an environment that reads it silently stops planning that environment. | `path-relevance-enabled` (D10); the migration guide's checklist asks each caller to review its `paths`. Never shipped on a rolling major tag. |
+| P19 | Relevance is the default in v1. | A caller's docs-only changes stop planning on the move to v1, and a change outside the `auto` set with an environment that reads it silently stops planning that environment. | `path-relevance-enabled` (D10); the migration guide's checklist asks each caller to review its `paths`. Never shipped on `v0`. |
 
 ## 13. Test coverage
 
@@ -668,7 +675,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
 - `aggregate-validation-summaries`: goldens of §11; an all-unaffected group is rendered, not
   deleted; the no-file path is byte-identical to the existing goldens.
 - `evaluate-automerge-eligibility`: goldens of §11; the structural test asserts the `automerge`
-  `if:` contains `!cancelled()` and the affected-count clause, the conclusion's `needs`, and the
+  `if:` contains `!cancelled()` and each stage job's count clause, the conclusion's `needs`, and the
   absence of `contains(needs.*.result`.
 - `create-run-summary`: goldens of §11.
 - The contract: each reader's suite also runs on the `relevance.json` the engine publishes, written
@@ -713,7 +720,8 @@ case is decided (D13).
 2. `feat(engine):` the adapter's fetching of the changed files (D12), with a fake `gh`.
 3. `feat(create-tf-vars-matrix):` `paths`, `paths-ignore`, `auto`, relevance inputs, `relevance.json`
    and counts; fixtures. The glob helper is shared with `create-tftest-matrix`; whichever spec is
-   implemented first lands it.
+   implemented first lands it. As built, it is the engine's `globs.py`, shared with the test
+   stage's discovery in the engine, and `create-tftest-matrix` no longer exists.
 4. `feat(aggregate-validation-summaries):` `relevance-file`, unaffected columns, footer, desired
    set; goldens.
 5. `feat(create-run-summary):` `relevance-file`; goldens.
@@ -754,17 +762,18 @@ AI-assistant configuration files are never in these commits.
   engine's heads equal the old jq's on 300 random configurations; that comparison corrected the
   draft's "first-seen order" for group heads, which jq's `unique` had always sorted.
 - **`envs-json` became a file.** Every environment's entry, the manifest and the record travel in
-  `relevance.json`, uploaded once; only the counts, the mode, the reason and the changed count are
-  job outputs. The entries carry `mutates-on-pr`, which the seed and the aggregator need for the
-  title of a head whose environment did not run.
+  `relevance.json`, uploaded once; beside the matrices, only the counts, the mode, the reason and
+  the changed count are job outputs. The entries carry `mutates-on-pr`, which the seed and the
+  aggregator need for the title of a head whose environment did not run.
 - **The grammar gained a root anchor.** `auto` meant the root's `.tflint.hcl`, but the basename
   rule gave no way to say so: `.tflint.hcl` matched every environment's own configuration, and a
   change to one ran every environment on `auto`. A leading `/` or `./` now anchors a pattern at the
   root, as a leading `/` does in `.gitignore`; `./.tflint.hcl`, which used to lose its `./` and match
   everywhere, now means what it says. An absolute directory stays an error, since there `/` is the
   runner's filesystem root.
-- **The count gate is a string comparison.** `needs.create-matrix.outputs.affected-count != '0'`
-  cannot throw on an empty output the way `fromJSON('')` can.
+- **The count gate is a string comparison.** `needs.create-matrix.outputs.stage-1-count != '0'`
+  (each stage job tests its own stage's count) cannot throw on an empty output the way
+  `fromJSON('')` can.
 - **Port cases are dispatches.** They fetch nothing and run everything, so the goldens changed
   only by the forwarded `path-relevance-enabled`.
 - **The auto-merge evaluator needed rules the draft did not name**: two inputs that disagree
