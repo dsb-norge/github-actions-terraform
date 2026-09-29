@@ -107,7 +107,7 @@ All optional. Every other input of v0.33 keeps its name, type and default.
 | `terraform-test-lanes-yml` | string (YAML list) | empty | lanes: which files run with which credentials, runner, version and GitHub Environment | [Terraform-tests.md §3.2](Terraform-tests.md) |
 | `terraform-test-exclude-paths-yml` | string (YAML list) | empty | glob patterns of test files discovery ignores | [Terraform-tests.md §3.1](Terraform-tests.md) |
 
-The four `terraform-test-*` inputs, `allow-failing-terraform-tests`, `trigger-events-yml` and
+The five `terraform-test-*` inputs, `allow-failing-terraform-tests`, `trigger-events-yml` and
 `path-relevance-enabled` are workflow-only: setting one inside an environment is a validation error.
 
 ## 4. New and changed per-environment keys
@@ -240,7 +240,7 @@ test jobs.
 |---|---|---|
 | `create-matrix` and the reporting jobs, on `runs-on` | Python 3.12 or later (`run.py` exits naming the floor), `yq` v4 (the Go implementation), `jq`, `gh`, `git`, bash and coreutils | present on `ubuntu-latest` |
 | Every job | an Actions runner that runs Node 24 actions, v2.327.1 or later: v1 uses `actions/checkout@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8` and `actions/create-github-app-token@v3`. v0.33 already needed it for checkout, cache and upload | always current |
-| The auto-merge job behind a proxy | `create-github-app-token@v3` has no proxy handling of its own; the workflow sets `NODE_USE_ENV_PROXY=1`, so Node honours `HTTP(S)_PROXY` as v2 did | no proxy |
+| The auto-merge job behind a proxy | not supported: `create-github-app-token@v3` has no proxy handling of its own, and the workflow sets nothing to add it | no proxy |
 | Test jobs, on `terraform-test-runs-on` | Terraform 1.13 or later for the test roots; the same tools as the environment job | present |
 
 `ubuntu-latest` moving to a newer image brings a newer Python; the engine is standard library only
@@ -284,7 +284,7 @@ The design is [Module-ci.md](Module-ci.md), and moving a repository is
 | Credentials | every test file got the repository's Azure principal, through the called workflow's `env:` | only from lanes: none by default, one fallback lane for the usual single credential, a GitHub Environment with OIDC per lane |
 | No test file | green | red: a module needs at least one test file; `terraform-test-required: false` opts out |
 | Terraform version | any | 1.13 or later for the tests |
-| Events that test | `pull_request`, `workflow_dispatch` | also `push` and `schedule` |
+| Events that test | every event the calling workflow runs on | `pull_request`, `push`, `workflow_dispatch` and `schedule`; any other event is a validation error |
 | Test jobs | per file, legacy call shape, embedded login | the project workflow's test job and summary job, held equal by a structural test |
 | PR comments | the validation head, and one comment per test file | the validation head for the module (no lock and no plan rows), and one tests summary; v0's per-file comments are deleted |
 | Run page | nothing on a dispatch | the validation block, each test job's block, the tests block and the conclusion line on every event |
