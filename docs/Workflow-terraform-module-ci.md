@@ -2,13 +2,13 @@
 
 The reusable CI workflow for a Terraform **module** repository: one module at the repository root, its examples under `examples/`, and its `terraform test` files. On every run it:
 
-1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository it commits the regenerated README, anywhere else a README that needs regenerating fails the check;
+1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository, Dependabot's excepted, it commits the regenerated README, anywhere else a README that needs regenerating fails the check;
 2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint;
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
 4. reports on the pull request (a validation comment and one tests comment) and on the run page (a step summary from every job);
 5. ends in one check to require, `Terraform conclusion`.
 
-Repositories of environments that are planned and applied use the sibling [`terraform-ci-cd-default`](Workflow-terraform-ci-default.md) instead; the two share the test stage, so lanes, credentials and the test reports work the same in both. The design is [Module-ci.md](Module-ci.md), the test stage [Terraform-tests.md](Terraform-tests.md), and releases are [`terraform-module-release`](Workflow-terraform-module-release.md). The module template, [dsb-norge/tf-module-template](https://github.com/dsb-norge/tf-module-template), is set up for all of this.
+Repositories of environments that are planned and applied use the sibling [`terraform-ci-cd-default`](Workflow-terraform-ci-default.md) instead; the two share the test stage, so lanes, credentials and the test reports work the same in both. The design is [Module-ci.md](Module-ci.md), the test stage [Terraform-tests.md](Terraform-tests.md), and releases are [`terraform-module-release`](Workflow-terraform-module-release.md). The module template is [dsb-norge/tf-module-template](https://github.com/dsb-norge/tf-module-template).
 
 Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration-v0-to-v1-modules.md).
 
@@ -31,7 +31,7 @@ Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration
   - the organisation variable `ORG_TF_CICD_APP_ID`, the App's ID (or its client ID);
   - the organisation secret `ORG_TF_CICD_APP_PRIVATE_KEY`, a private key of the App.
 
-  For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents. `ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read: the token action finds the installation itself.
+  For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents. `ORG_TF_CICD_APP_INSTALLATION_ID` is not read: the token action finds the installation itself.
 
 - **Terraform 1.13 or later** for the tests. `terraform-version` accepts a constraint such as `"1.14.x"`.
 
@@ -85,7 +85,7 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `tflint-version` | string | required | TFLint for the lint step, for example `"v0.55.1"`. |
 | `readme-file-path` | string | `"."` | Directory of the `README.md` terraform-docs maintains, relative to the repository root. |
 | `runs-on` | string | `"ubuntu-latest"` | Runner of every job but the test jobs. |
-| `add-pr-comment` | boolean | `true` | Post the validation and tests comments on pull requests. `false` keeps the step summaries only. |
+| `add-pr-comment` | boolean | `true` | Post the validation and tests comments on pull requests. `false` posts neither; the step summaries remain. |
 | `cache-terraform-modules` | boolean | `true` | Cache the modules the test jobs download ([Terraform-module-cache.md](Terraform-module-cache.md)). A lane may set its own. |
 | `terraform-test-enabled` | boolean | `true` | `false` removes the test stage: no test jobs, no tests comment, and no test file is required. |
 | `terraform-test-required` | boolean | `true` | A module needs at least one test file; with none the conclusion is red. `false` lets a repository without test files conclude green. |
@@ -125,7 +125,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | Job (check name) | Runs | On a pull request | On the run page |
 |---|---|---|---|
 | `create-matrix` (Create test matrix) | on every run | — | Validates the test inputs and lanes, lists the committed test files and decides which run, in which lane. Warns about a misplaced test file and about a missing one. A refused configuration fails here. |
-| `generate-docs` (Update documentation) | on every run | From the repository: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
+| `generate-docs` (Update documentation) | on every run | From the repository, not from Dependabot: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
 | `validate` (Validate module) | unless the docs job pushed a commit | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
@@ -133,7 +133,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 
 The comments are not posted on a pull request from a fork, with `add-pr-comment: false`, or on a closed or draft-converted pull request; the step summaries are written on every run. The tests summary job is not among the conclusion's `needs`, so reporting can never turn the check red.
 
-Each comment is updated in place on every run. The validation comment carries the marker `<!-- tf:head:module -->`, the tests comment `<!-- tf:head:tests:<calling workflow's name> -->`.
+Each comment is updated in place on every run. The validation comment carries the marker `<!-- tf:head:module -->`, the tests comment `<!-- tf:head:tests:<calling workflow's name> -->`, the name kept to letters, digits, `-` and `_`.
 
 ### The conclusion
 
@@ -160,7 +160,7 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`,
 | Pull request from a fork | checked; a stale README fails | yes | files in lanes without credentials; a credentialed lane's files are listed as "secrets unavailable" | no |
 | Push, dispatch, schedule | checked; a stale README fails | yes | every file | no |
 
-A fork's run has no secrets, so a credentialed lane cannot run there; the tests treat a Dependabot pull request the same way. A file held back like this still counts as a test file for `terraform-test-required`.
+A fork's run has no secrets, so a credentialed lane cannot run there; a Dependabot pull request is treated the same way by the tests and by the docs job, which checks its README instead of committing. A file held back like this still counts as a test file for `terraform-test-required`.
 
 There is one run per ref at a time: a newer push to the same pull request waits for the running one and replaces a waiting one. A test job also queues on its file, across the repository, so two pull requests never run the same integration test at the same time.
 
@@ -170,7 +170,7 @@ terraform-docs writes the module's inputs, outputs and resources into `README.md
 
 **On a pull request from the repository**, the docs job regenerates the READMEs and, when anything changed, commits and pushes to the pull request's branch with the App token. That push starts a new run on the new commit; a push with the job's own `GITHUB_TOKEN` would start none, and the required check would stay on the old commit. The run that pushed skips validation and the tests and concludes green, pointing at the new run. Pull the branch before pushing to it again.
 
-**On every other event**, a push, a dispatch, a schedule or a pull request from a fork, nothing is committed: a dispatch or a push must never commit to the branch it runs on, `main` included. A README that differs from what terraform-docs generates fails the docs job, and with it the conclusion. Fix it in either of two ways:
+**On every other event**, a push, a dispatch, a schedule or a pull request from a fork or from Dependabot, nothing is committed: a dispatch or a push must never commit to the branch it runs on, `main` included. A README that differs from what terraform-docs generates fails the docs job, and with it the conclusion. Fix it in either of two ways:
 
 - open a pull request from the repository and let the workflow regenerate and push the README; or
 - regenerate locally with **terraform-docs 0.20**, the version the pinned action runs, with the same configuration, and commit. Another version can format the tables differently and fail the check again.
@@ -186,7 +186,7 @@ The docs job's step summary is one line:
 
 ## Tests
 
-Every committed `*.tftest.hcl` and `*.tftest.json` file runs as its own job, `Terraform test (<file>)`, on every event. The module is the repository root, so the usual place is `tests/` there, `tests/unit-tests.tftest.hcl` for example; a test file beside the module's `.tf` files works too. Terraform finds test files in no other place: a file elsewhere is reported as misplaced, gets no job and does not count as a test file. Files are found with `git ls-files`, so an uncommitted file does not run, and a path with a segment starting with `.` is ignored. The full rules are [Terraform-tests.md §4](Terraform-tests.md).
+Every committed `*.tftest.hcl` and `*.tftest.json` file runs as its own job, `Terraform test (<file>)`, on every event. The module is the repository root, so the usual place is `tests/` there, `tests/unit-tests.tftest.hcl` for example; a test file beside the module's `.tf` files works too. Terraform finds a test file only beside a root module's `.tf` files or in the `tests/` directory under it, so a file in `examples/<example>/tests/` runs with that example as its root; a file anywhere else is reported as misplaced, gets no job and does not count as a test file. Files are found with `git ls-files`, so an uncommitted file does not run, and a path with a segment starting with `.` is ignored. The full rules are [Terraform-tests.md §4](Terraform-tests.md).
 
 **A unit suite is required by default.** With no test file to run, `Create test matrix` warns
 
@@ -194,7 +194,7 @@ Every committed `*.tftest.hcl` and `*.tftest.json` file runs as its own job, `Te
 no test file: a module needs at least one test file, a unit suite such as tests/unit-tests.tftest.hcl; set terraform-test-required: false to run without (docs/Module-ci.md D9)
 ```
 
-and the conclusion is red. A module's tests are its contract with its callers; the template ships a unit suite. `terraform-test-required: false` opts out, and `terraform-test-enabled: false` removes the test stage altogether.
+and the conclusion is red. A module's tests are its contract with its callers. `terraform-test-required: false` opts out, and `terraform-test-enabled: false` removes the test stage altogether.
 
 **Provider versions float.** A module commits no lock file, so each test job installs the newest provider versions the module's constraints allow; the nightly schedule is what notices a new one that breaks the module.
 
@@ -202,7 +202,7 @@ and the conclusion is red. A module's tests are its contract with its callers; t
 
 ### Credentials: lanes
 
-A test job gets credentials from its lane and from nowhere else. Without lanes every file runs without credentials. The lane keys are the project workflow's, key for key: `name`, `match`, `extra-envs-yml`, `extra-envs-from-secrets-yml`, `runs-on`, `terraform-version`, `timeout-minutes`, `allow-failing-terraform-tests`, `cache-terraform-modules` and `github-environment` ([Terraform-tests.md §3.2](Terraform-tests.md)). `providers-from` names environments, which a module does not have, so any value is refused. The first lane whose `match` covers a file owns it; a lane without `match` takes the files no other lane matches; a file no lane takes runs in the implicit lane `default`, without credentials.
+A test job gets credentials from its lane and from nowhere else. Without lanes every file runs without credentials. The lane keys are the project workflow's, key for key: `name`, `match`, `extra-envs-yml`, `extra-envs-from-secrets-yml`, `runs-on`, `terraform-version`, `timeout-minutes`, `allow-failing-terraform-tests`, `cache-terraform-modules` and `github-environment` ([Terraform-tests.md §3.2](Terraform-tests.md)). `providers-from` names environments, which a module does not have, so any environment it names is refused. The first lane whose `match` covers a file owns it; a lane without `match` takes the files no other lane matches; a file no lane takes runs in the implicit lane `default`, without credentials.
 
 When `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_CLIENT_ID` are all set in a lane, the job also logs in with `azure/login`; the `azurerm` and `azuread` providers log in on their own through OIDC either way.
 
@@ -255,7 +255,7 @@ The lane's jobs run in the GitHub Environment `tftest-azure`, whose `ARM_*` and 
 
 Bringing the lane up:
 
-1. Add the lane and open a pull request. The first run creates `tftest-azure`, and its test jobs fail with `The environment 'tftest-azure' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet.`, printing the commands below. Set `allow-failing-terraform-tests: true` on the lane meanwhile if the pull request must stay green.
+1. Add the lane and open a pull request. The first run creates `tftest-azure`, and its test jobs fail with `The environment 'tftest-azure' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet.`, printing the commands that set them. Set `allow-failing-terraform-tests: true` on the lane meanwhile if the pull request must stay green.
 2. Someone with write access sets the secrets (the environment must exist first):
    ```bash
    gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-azure --body '<tenant-id>'
@@ -336,7 +336,7 @@ Commit it with `git add -f .tflint.hcl`; `git ls-files .tflint.hcl` shows whethe
 
 ### The README needs regenerating
 
-On a push, a dispatch, a schedule or a pull request from a fork, the docs job fails with `📝 Docs: README needs regenerating …`, and the conclusion is `red — the documentation check's result is failure`. Nothing is committed on those events. Regenerate with terraform-docs 0.20 and commit, or open a pull request from the repository and let the workflow push the README, see [documentation](#documentation).
+On a push, a dispatch, a schedule or a pull request from a fork or from Dependabot, the docs job fails with `📝 Docs: README needs regenerating …`, and the conclusion is `red — the documentation check's result is failure`. Nothing is committed on those events. Regenerate with terraform-docs 0.20 and commit, or open a pull request from the repository and let the workflow push the README, see [documentation](#documentation).
 
 ### The docs job cannot create the App token
 
