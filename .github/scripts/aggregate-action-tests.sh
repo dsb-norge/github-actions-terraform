@@ -20,6 +20,9 @@
 #   GH_TOKEN            - token with pull-requests: write (used by `gh`)
 #
 # Optional environment:
+#   RUN_STARTED_AT      - the run's start (ISO 8601) for the headline's wall-clock
+#                         time; read from the Actions API when unset and a
+#                         token is there, and left out when neither works
 #   GITHUB_STEP_SUMMARY - when set (always set in GitHub Actions), the body
 #                         is also appended here so the run page renders the
 #                         same table without anyone having to open a comment.
@@ -53,6 +56,30 @@ function status_label {
   esac
 }
 
+# Seconds as m:ss, or h:mm:ss from an hour; '—' for anything not a count.
+function format_duration {
+  local seconds="${1}"
+  if ! [[ "${seconds}" =~ ^[0-9]+$ ]]; then
+    echo '—'
+  elif [[ "${seconds}" -ge 3600 ]]; then
+    printf '%d:%02d:%02d' $((seconds / 3600)) $((seconds % 3600 / 60)) $((seconds % 60))
+  else
+    printf '%d:%02d' $((seconds / 60)) $((seconds % 60))
+  fi
+}
+
+# The run's wall-clock so far, in seconds: from RUN_STARTED_AT, or the run's start as the Actions
+# API reports it. Empty when neither is available: the headline then leaves the time out.
+function run_wall_clock {
+  local started="${RUN_STARTED_AT:-}"
+  if [[ -z "${started}" && "${DRY_RUN:-false}" != "true" && -n "${GH_TOKEN:-}" ]]; then
+    started="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.run_started_at' 2>/dev/null || true)"
+  fi
+  local start_epoch
+  [[ -n "${started}" ]] && start_epoch="$(date -d "${started}" +%s 2>/dev/null)" || return 0
+  echo $(( $(date +%s) - start_epoch ))
+}
+
 # Render the "Tests" column: "N / N" or "?" when counts are null.
 function tests_cell {
   local passed="${1}" run="${2}"
@@ -65,7 +92,7 @@ function tests_cell {
 
 # Build the markdown body and print to stdout.
 function build_body {
-  local results_json="${1}" no_tests_json="${2}"
+  local results_json="${1}" no_tests_json="${2}" wall_clock="${3:-}"
 
   local total_suites total_run total_passed total_failed bad_outcomes
   total_suites="$(echo "${results_json}" | jq 'length')"
@@ -78,30 +105,35 @@ function build_body {
   tested_count="${total_suites}"
   not_tested_count="$(echo "${no_tests_json}" | jq 'length')"
 
+  # The time the run has taken, which is the time to wait for this comment.
+  local timing=""
+  [[ -n "${wall_clock}" ]] && timing=" · ⏱ $(format_duration "${wall_clock}") since the run started"
+
   printf '%s\n' "${COMMENT_MARKER}"
   printf '### 🧪 Action test results\n\n'
   if [[ "${bad_outcomes}" -gt 0 ]]; then
-    printf '**Total: %s tests across %s suites — %s passed, %s failed, %s suite(s) not passing**\n\n' \
-      "${total_run}" "${total_suites}" "${total_passed}" "${total_failed}" "${bad_outcomes}"
+    printf '**Total: %s tests across %s suites — %s passed, %s failed, %s suite(s) not passing**%s\n\n' \
+      "${total_run}" "${total_suites}" "${total_passed}" "${total_failed}" "${bad_outcomes}" "${timing}"
   else
-    printf '**Total: %s tests across %s suites — %s passed, %s failed**\n\n' \
-      "${total_run}" "${total_suites}" "${total_passed}" "${total_failed}"
+    printf '**Total: %s tests across %s suites — %s passed, %s failed**%s\n\n' \
+      "${total_run}" "${total_suites}" "${total_passed}" "${total_failed}" "${timing}"
   fi
 
   printf '**Tested (%s)**\n\n' "${tested_count}"
   if [[ "${tested_count}" -eq 0 ]]; then
     printf '_No suites ran._\n\n'
   else
-    printf '| Action | Result | Tests | Details |\n'
-    printf '|---|:---:|:---:|---|\n'
+    printf '| Action | Result | Tests | Time | Details |\n'
+    printf '|---|:---:|:---:|:---:|---|\n'
     # Sort alphabetically by action name.
     while IFS= read -r row; do
-      local action outcome run passed job_url
+      local action outcome run passed job_url duration
       action="$(  echo "${row}" | jq -r '.action')"
       outcome="$( echo "${row}" | jq -r '.outcome')"
       run="$(     echo "${row}" | jq -r '."tests-run"')"
       passed="$(  echo "${row}" | jq -r '."tests-passed"')"
       job_url="$( echo "${row}" | jq -r '."job-url" // empty')"
+      duration="$(echo "${row}" | jq -r '."duration-seconds" // empty')"
 
       local icon label cell details
       icon="$(status_icon "${outcome}")"
@@ -113,8 +145,8 @@ function build_body {
         details="—"
       fi
 
-      printf '| %s | %s %s | %s | %s |\n' \
-        "${action}" "${icon}" "${label}" "${cell}" "${details}"
+      printf '| %s | %s %s | %s | %s | %s |\n' \
+        "${action}" "${icon}" "${label}" "${cell}" "$(format_duration "${duration}")" "${details}"
     done < <(echo "${results_json}" | jq -c 'sort_by(.action) | .[]')
     printf '\n'
   fi
@@ -225,7 +257,7 @@ function main {
 
   local body_file
   body_file="$(mktemp)"
-  build_body "${results_json}" "${NO_TESTS_LIST}" > "${body_file}"
+  build_body "${results_json}" "${NO_TESTS_LIST}" "$(run_wall_clock)" > "${body_file}"
 
   echo "=== Comment body (begin) ===" >&2
   cat "${body_file}" >&2
