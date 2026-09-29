@@ -56,6 +56,7 @@ ${line}"
 # Set default input values shared across tests
 reset_defaults() {
   export input_environment_name="dev"
+  export input_subject="environment"
   export input_plan_console_file=""
   export input_plan_txt_output_file=""
   export input_status_init="success"
@@ -3201,6 +3202,44 @@ set_apply_success_inputs
 export input_apply_console_file=$(make_apply_console)
 export input_status_destroy_plan="success"; export input_status_destroy="success"
 run_test "step-summary-file: < 8 KiB and never carries a console extract (P19)" assert_step_summary_small
+
+# The module workflow's head (docs/Module-ci.md §7): the title names the module, and a module has no
+# lock file and no plan, so those rows are absent rather than a dash.
+assert_module_head() {
+  local head="${3}" fails=""
+  local expected
+  expected=$(cat <<'EXPECTED'
+### Terraform validation summary for module: `terraform-azurerm-thing`
+|  | Step | Result |
+|:---:|---|---|
+| <span title="Initialization">⚙️</span> | Initialization | `success` |
+| <span title="Format and Style">🖌</span> | Format and Style | `success` |
+| <span title="Validate">✔</span> | Validate | `success` |
+| <span title="TFLint">🧹</span> | TFLint | <kbd>failure</kbd> |
+| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ 2</span> |
+EXPECTED
+)
+  [[ "$(printf '%s\n' "${head}" | head -n 9)" == "${expected}" ]] \
+    || fails+="  module head mismatch:\n$(diff <(echo "${expected}") <(printf '%s\n' "${head}" | head -n 9) | sed 's/^/    /')\n"
+  [[ "${head}" != *"Lock file"* && "${head}" != *"| Plan |"* && "${head}" != *"Plan time"* ]] \
+    || fails+="  absent rows rendered\n"
+  if [[ -n "${fails}" ]]; then echo -e "${fails}"; return 1; fi
+  return 0
+}
+reset_defaults
+export input_subject="module" input_environment_name="terraform-azurerm-thing"
+export input_status_verify_lock="absent" input_status_plan="absent" input_status_lint="failure" input_warning_count="2"
+run_test "Module head: 'for module:' title, no Lock file and no Plan row" assert_module_head
+
+# 'absent' is only a lock or plan status; the environment head keeps both rows.
+assert_environment_head_keeps_both_rows() {
+  local head="${3}"
+  [[ "${head}" == *"| Lock file |"* && "${head}" == *"| Plan |"* && "${head}" == *"for environment: \`dev\`"* ]] \
+    || { echo "  the environment head lost a row or its title"; return 1; }
+  return 0
+}
+reset_defaults
+run_test "Environment head: keeps its Lock file and Plan rows and its title" assert_environment_head_keeps_both_rows
 
 # --------------------------------------------------
 # Summary
