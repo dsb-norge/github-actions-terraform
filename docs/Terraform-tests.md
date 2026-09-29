@@ -8,9 +8,9 @@ request and the run page, and how a failing test blocks a merge.
 Status: **implemented.** The decisions in §2 are settled; §12 lists what is still open, and §15
 is what implementation taught the spec.
 
-Out of scope: [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) keeps its
-own test job and per-file comments for now (§9.7); per-environment path relevance and single-file
-dispatch are separate specs that hook into this one (§8).
+Out of scope: per-environment path relevance and single-file dispatch are separate specs that hook
+into this one (§8). [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) runs
+this test stage for a module repository; [Module-ci.md](Module-ci.md) is its spec (§9.7).
 
 ## 1. Why
 
@@ -714,8 +714,8 @@ terraform test -json -no-color -filter=<rel> [-junit-xml=$RUNNER_TEMP/<slug>/jun
 
 - `-filter` must equal the discovered path exactly (`tests/unit-net.tftest.hcl`); `./tests/…`, an
   absolute path or a bare basename all miss.
-- `-junit-xml` is passed only when the version is 1.11 or later; on a parse error Terraform writes
-  no XML at all, so the reporter never depends on it.
+- `-junit-xml` is passed unless `junit` is false; it exists from 1.11, below the floor (§3.5). On a
+  parse error Terraform writes no XML at all, so the reporter never depends on it.
 - `-verbose` and `-parallelism` are never passed by default (P9). Callers add them through
   `TF_CLI_ARGS_test`.
 - stdout and stderr go to `$RUNNER_TEMP/<slug>/test.json`, never to a shell variable (ARG_MAX,
@@ -1018,7 +1018,7 @@ in the list.
 | Terraform module cache | The test job runs the same phases and gates as the environment job (§5.3); the classifier additionally receives run-block module sources from the test file. |
 | Single-file dispatch (separate spec) | Will add `workflow_dispatch` to the event rule together with a `tests-filter` input; the lane and slug vocabulary is what it filters on. |
 | Per-environment path relevance ([Path-relevance.md](Path-relevance.md)) | Tests are not filtered by relevance yet; the `root` field is the hook. The conclusion table there judges tests independently of environments, and the test jobs' `if:` drop the seed-result clause for the reason its P3 gives. |
-| Module CI | Unchanged (§9.7). |
+| Module CI | Runs this test stage through the engine's module mode (§9.7). |
 
 ## 9. Actions: new and changed
 
@@ -1044,17 +1044,17 @@ Provider sets (§5.3): the engine groups environments by the hash of their locks
 and versions, and expands every non-environment-root file into one row per set the lane's
 `providers-from` allows. An environment root's file gets its own lock and no copy.
 
-`create-tftest-matrix` is untouched: the module CI workflow keeps using its `all-tests` output until
-that workflow migrates.
+Module CI decides its test stage here too, in the engine's module mode (§9.7).
 
 ### 9.2 `terraform-test` (modernised)
 
-Inputs: `test-file` (used as `-filter`, a leading `./` dropped), `working-directory` (the test
-root), `junit` (default true; only from 1.11), `slug` (the directory under `$RUNNER_TEMP`),
-`status-credentials`, `status-lock` and `status-init` (the outcomes of the job's earlier steps, so a
-failure there is reported as `no-credentials`, `lock-platform` or `init` without running terraform),
-`environments-lock-file` (the lock the written one is compared with), and the compatibility switches
-`azure-login` and `upload-artifact` (default `auto`, on only for the module CI call shape). Files go
+Inputs: `test-file` (required; used as `-filter`, a leading `./` dropped), `working-directory`
+(required; the test root, `.` for the workspace), `junit` (default true), `slug` (the directory
+under `$RUNNER_TEMP`), `status-credentials`, `status-lock` and `status-init` (the outcomes of the
+job's earlier steps, so a failure there is reported as `no-credentials`, `lock-platform` or `init`
+without running terraform), and `environments-lock-file` (the lock the written one is compared
+with). An empty `test-file` or `working-directory` is a caller error: the step logs it and fails
+with no outputs. The action neither logs in nor uploads; the test job does both (§5.2). Files go
 under `$RUNNER_TEMP/<slug>/`, never `$GITHUB_WORKSPACE`: `test.json`, `report.txt`, `junit.xml`,
 `runs.json`, `diagnostics.json`, `providers.json`.
 
@@ -1064,10 +1064,9 @@ Outputs, all small, large content only as a path: `status`, `reason`, `passed`, 
 `runs-json-file`, `diagnostics-json-file`, `providers-json-file`, `providers-summary`
 (`null 3.2.3 environments · random 3.9.1 floating`), `providers-floating-count`, `failed-runs-json`
 (the failed and errored runs with their first diagnostics, at most 3000 bytes) and
-`failed-runs-omitted`; `json` and `report` stay as aliases for module CI. Behaviour: §3.5, §5.4,
-§5.5, §5.7, §5.8. Fixtures: JSON logs captured from a real Terraform 1.16.2 with credential-free
-providers for every classification of §5.5, with the version noted, and a fake `terraform` that
-replays them.
+`failed-runs-omitted`. Behaviour: §3.5, §5.4, §5.5, §5.7, §5.8. Fixtures: JSON logs captured from a
+real Terraform 1.16.2 with credential-free providers for every classification of §5.5, with the
+version noted, and a fake `terraform` that replays them.
 
 ### 9.3 `create-test-summary` (new)
 
@@ -1129,14 +1128,10 @@ Unknown values fail the step before init runs. Existing callers see no change.
 
 ### 9.7 Module CI
 
-Untouched by this spec. `terraform-module-ci.yaml` keeps `create-tftest-matrix`'s `all-tests`
-output and `create-test-report`, and calls `terraform-test` as before, with `test-file` only. That
-call shape keeps the action's embedded login and upload (its `auto` switches), runs from the
-workspace with `-filter=tests/<file>`, and applies no version floor. Visible changes for module CI:
-a filter that matches no file is now red (`not-discovered`) instead of passing silently, the summary
-line loses its JSON quotes (the report builder matches `Success!` either way), and the report has
-the new format. Passing `working-directory` from module CI would switch its login and upload off;
-migrating it to the summary job is a follow-up once this has run for a while.
+`terraform-module-ci.yaml` runs this test stage: the engine's module mode decides it (no
+environments, so no provider sets), and the workflow carries copies of the `terraform-test` and
+`terraform-test-summary` jobs, held to these by a structural test. Lanes, credentials, the floor and
+reporting are this spec's. [Module-ci.md](Module-ci.md) is the spec.
 
 ### 9.8 `export-env-vars` (modernised)
 
@@ -1253,8 +1248,9 @@ Indexed so implementation commits and future specs can cite them.
   environment root gets `root-kind: environment` and no lock to copy, and an environment without a
   lock file is reported and contributes no set.
 - `terraform-test`: each classification of §5.5 from its fixture; the version gate; `-junit-xml`
-  passed only from 1.11; outputs match the fixture's counts; `elapsed-ms` from timestamps; diagnostic
-  files prefixed with the root; at most ten annotations plus the warning; report capped at 65 000;
+  passed unless `junit` is false; an empty `test-file` or `working-directory` fails the step with no
+  outputs; outputs match the fixture's counts; `elapsed-ms` from timestamps; diagnostic files
+  prefixed with the root; at most ten annotations plus the warning; report capped at 65 000;
   nothing large in `$GITHUB_OUTPUT`; resolved provider versions parsed from the written lock and
   classified as from-environments or floating against the copied lock.
 - Workflow structural tests: the test jobs' module-cache step sequence and gates equal the
@@ -1276,8 +1272,6 @@ Indexed so implementation commits and future specs can cite them.
 
 **Should**
 
-- The module CI workflow's test job still passes with the modernised `terraform-test`, and
-  `create-tftest-matrix`'s `all-tests` output is unchanged.
 - The seed manifest places the tests head last and only when `tests-count > 0`.
 - The summary's Jobs-API resolver handles a caller-prefixed name and two pages.
 
@@ -1351,8 +1345,8 @@ AI-assistant configuration files are never in these commits.
 
 - **Discovery moved into the engine** (D20). The create-matrix adapter lists the committed files
   and the locks in the step that builds the environment matrix, and `tests.py` decides under both
-  gates; `create-tftest-matrix` stays for module CI. The row gained `name`, the job's display name
-  with the provider-set suffix, because a job's `name:` expression cannot count the sets.
+  gates. The row gained `name`, the job's display name with the provider-set suffix, because a
+  job's `name:` expression cannot count the sets.
 - **One test job** (D21): an empty environment name means no environment, verified in a called
   workflow.
 - **The earlier steps report through the test step.** The credential check, the lock check and init
@@ -1386,6 +1380,3 @@ AI-assistant configuration files are never in these commits.
   root reports a `test_abstract` with a run error, a single missing package says "there is no
   package for", and a file-level error still emits skipped runs. `test_summary`'s text counts an
   errored run as failed; the counts come from its numeric fields.
-- **Module CI sees three changes** through the shared `terraform-test`: a file Terraform cannot find
-  now fails instead of passing silently, the summary line loses its quotes, and the report has the
-  new format (§9.7).
