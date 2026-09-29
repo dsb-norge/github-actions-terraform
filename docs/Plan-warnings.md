@@ -6,7 +6,7 @@ Out of scope: errors (the existing `🧐 Validation outcome` steps already surfa
 
 ## 1. Why
 
-Terraform's `Warning:` diagnostics — deprecation notices, soft state-drift warnings, provider-level advisories — appear today only in the raw job log. Reviewers reading the PR conversation never see them, and nothing draws the eye in the GitHub UI. Deprecations harden into errors months later when the provider does a major release; the moment to act was when the warning first fired.
+Terraform's `Warning:` diagnostics — deprecation notices, soft state-drift warnings, provider-level advisories — appear only in the raw job log unless something lifts them out: reviewers reading the PR conversation never see them, and nothing draws the eye in the GitHub UI. Deprecations harden into errors months later when the provider does a major release; the moment to act was when the warning first fired.
 
 Goal: warnings are first-class on the PR. They're counted in the summary table, listed in a collapsible block under the plan extract, and emitted as `::warning` annotations so they appear inline in the Files-changed view next to the offending source line where context is available.
 
@@ -20,7 +20,7 @@ flowchart TD
     parse["parse-terraform-warnings (x3 per env)<br>inputs - console-output-file, step-label<br>outputs - warning-count, warnings-markdown-file<br>side effect - emits ::warning:: annotations"]
     concat["concat-warnings-md<br>inline step concatenates the three .md files<br>in init then validate then plan order"]
     summary["create-validation-summary<br>inputs - warning-count, warnings-markdown-file<br>renders Warnings row plus warnings collapser"]
-    capture["capture-matrix-job-meta<br>no code change - picks up new step outputs<br>via toJSON of steps automatically"]
+    capture["capture-matrix-job-meta<br>picks up the step outputs<br>via toJSON of steps automatically"]
     aggregate["aggregate-validation-summaries<br>sums per-env warning counts across three step ids<br>renders grouped-table Warnings row"]
 
     init --> validate --> plan --> parse --> concat
@@ -55,8 +55,8 @@ For each block extract:
 | Field | Source |
 |---|---|
 | `title` | text after `Warning: ` on the header line |
-| `source_file`, `source_line` | first `^\s*on (?P<file>.+) line (?P<line>\d+)` line in the block; absent when terraform's warning isn't anchored to a file (e.g. provider-level deprecation) |
-| `message` | remaining non-context body lines, leading/trailing whitespace trimmed, internal blank lines collapsed |
+| `source_file`, `source_line` | first indented `^\s+on (?P<file>.+) line (?P<line>\d+)` line before the message body; absent when terraform's warning isn't anchored to a file (e.g. provider-level deprecation) |
+| `message` | every line from the first non-blank, non-indented line after the header to the end of the block, trailing newlines trimmed; internal blank lines are kept (a bare `>` line in the markdown) |
 | `suppressed_count` | `N` from `(and (?P<n>\d+) more similar warnings elsewhere)` if present |
 
 **`warning-count`** is the sum of `(1 + suppressed_count)` across all blocks — so when terraform shows one block with `(and 2 more)`, the count is `3`. This matches what reviewers expect ("there are N warnings in this plan").
@@ -68,13 +68,13 @@ Annotations are emitted once per block (terraform only prints file/line for the 
 GitHub workflow-command shape:
 
 ```
-::warning file=<rel-path>,line=<n>,title=<title>::<message>
+::warning file=<rel-path>,line=<n>,title=terraform <step-label> warning: <title>::<message>
 ```
 
 With fallback when source context is missing:
 
 ```
-::warning title=<title>::<message>
+::warning title=terraform <step-label> warning: <title>::<message>
 ```
 
 Escaping rules ([GitHub docs — workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message)):
@@ -87,7 +87,7 @@ Escaping rules ([GitHub docs — workflow commands](https://docs.github.com/en/a
 
 Paths are kept as-printed by terraform (relative to the terraform working directory). GitHub resolves them against the repo root for inline-annotation placement; when the working directory isn't the repo root the annotation still appears in the right-side run panel but doesn't anchor inline. Acceptable — anchoring is a bonus, not the contract.
 
-GitHub silently dedupes identical annotations and caps each step at 10 warning annotations. Per-step extraction (one call after init, validate, plan) gives each its own 10 budget, so a noisy init no longer crowds out plan warnings.
+GitHub silently dedupes identical annotations and caps each step at 10 warning annotations. Per-step extraction (one call after init, validate, plan) gives each its own 10 budget, so a noisy init does not crowd out plan warnings.
 
 ## 5. 65k budgeting algorithm
 
@@ -101,23 +101,23 @@ WARN_CAP     = 60000        # warnings get most-but-not-all of the budget
 warnings_md  = read warnings file (empty string if missing or 0 warnings)
 
 if size(warnings_md) > WARN_CAP:
-  # Drop trailing complete '---'-separated blocks until size <= WARN_CAP.
-  # Block-level truncation keeps the visible warnings readable; we never
-  # show a half-rendered diagnostic.
-  warnings_md = drop_trailing_blocks(warnings_md, until=WARN_CAP)
-  warnings_md += "\n\n_(truncated, N more warnings — see job log)_"
+  # Keep the first WARN_CAP bytes, cut back to the last complete line.
+  # The cut is line-level, not block-level: the last diagnostic shown
+  # may be incomplete, and the marker says so.
+  warnings_md = head_bytes(warnings_md, WARN_CAP) up to its last newline
+  warnings_md += "\n_(truncated, warnings exceed 60000 bytes — see job log)_"
 
-plan_budget  = max(0, HARD_LIMIT - OVERHEAD - size(warnings_md))
+plan_budget  = max(0, HARD_LIMIT - OVERHEAD - size(warnings_md) - size(banner))
 plan_extract = line_anchored_tail(plan_file, plan_budget)
 ```
 
-`line_anchored_tail` is **not** `tail -c <budget>` — that cut can land mid-UTF-8 and corrupt the comment. Implementation: read the file, accumulate lines from the end while `size(buf) + size(next_line) + 1 ≤ budget`, then emit in order. This also fixes a latent UTF-8 truncation in `create-validation-summary/step_create_validation_summary.sh:162` that pre-dates this feature.
+`line_anchored_tail` is **not** a bare `tail -c <budget>` — that cut can land mid-UTF-8 and corrupt the comment. Implementation: a file within the budget passes through whole; a larger one goes through `tail -c <budget> | sed 1d`, which drops the first, possibly partial, line. The cut then falls on a newline, a single ASCII byte, so it never splits a multi-byte character.
 
 Edge cases:
 
-- **`warnings_md` empty**: warnings collapser not rendered at all. The combined body is plan-block-only, identical to today's output.
-- **`plan_budget` floors to 0**: plan-extract renders as an empty code fence inside the existing collapser; the warnings collapser carries the full diagnostic.
-- **Both empty**: existing `Plan not available 🤷‍♀️` fallback in `render_plan_extract`.
+- **`warnings_md` empty**: warnings collapser not rendered at all. The combined body is the plan-block alone.
+- **`plan_budget` floors to 0** (a guard: `WARN_CAP` keeps the budget positive): the plan output is empty, so the plan-block renders `Plan not available 🤷‍♀️` and the warnings collapser carries the diagnostics.
+- **No plan output**: `Plan not available 🤷‍♀️` from `_render_plan_like_extract`, the renderer behind `render_plan_extract`, followed by the warnings collapser when there are warnings.
 
 ## 6. Comment-shape integration
 
@@ -125,13 +125,13 @@ This feature extends [Workflow-pr-comments.md §5.1 and §5.2](Workflow-pr-comme
 
 ### Per-env head (§5.1)
 
-A new `⚠️ Warnings` row is inserted **between** the `📖 Plan` row and the `📊 Plan Details` row, rendered only when `warning-count > 0`:
+A `⚠️ Warnings` row is inserted **between** the `📖 Plan` row and the `📊 Plan details` row, rendered only when `warning-count > 0`:
 
 ```markdown
-| ⚠️ | Warnings | <span title="Warnings from init+validate+plan">⚠️ 3</span> |
+| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ 3</span> |
 ```
 
-The row is absent when count is 0, missing, or `?` — consistent with the existing "absent when not interesting" convention for the Plan Details row.
+The row is absent when count is 0, missing, or `?` — consistent with the existing "absent when not interesting" convention for the Plan details row.
 
 ### Per-env plan tag (§5.2)
 
@@ -142,9 +142,10 @@ A new `<details>` collapser is appended **after** the existing plan-block. It is
 
 <plan-block>             ← existing five shapes, unchanged
 
-<details><summary>⚠️ 3 warnings</summary>
+<details><summary>⚠️ 4 warnings</summary>
 
 ### From terraform init
+
 **Warning: Deprecated attribute**
 - source: `.terraform/modules/foo/main.tf:176`
 
@@ -154,11 +155,13 @@ A new `<details>` collapser is appended **after** the existing plan-block. It is
 ---
 
 ### From terraform plan
+
 **Warning: Argument is deprecated**
 - (and 2 more similar warnings elsewhere)
 
 > This property has been renamed to `rbac_authorization_enabled`...
 
+---
 </details>
 ```
 
@@ -169,10 +172,10 @@ The collapser is absent when warning-count is 0 — no empty `<details>`.
 A `⚠️ Warnings` row is added to the grouped table, positioned between the step rows and the `📊 Plan details` row:
 
 ```markdown
-| <span title="Warnings">⚠️</span> | Warnings | ⚠️ 3 | — | ⚠️ 1 |
+| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ 3</span> | <span title="Warnings from init+validate+plan">—</span> | <span title="Warnings from init+validate+plan">⚠️ 1</span> |
 ```
 
-The whole row is **omitted** when no env in the group has warnings — keeping ⚠️ a signal rather than a permanent fixture, and matching the per-env head which also suppresses the row at zero. When the row *is* shown (at least one env has warnings), each cell is `⚠️ N` for envs with warnings and em-dash `—` for the clean envs. Both warning surfaces (per-env head row + per-env plan-tag collapser) were already conditional; this aligns the grouped table with them.
+The whole row is **omitted** when no env in the group has warnings — keeping ⚠️ a signal rather than a permanent fixture, and matching the per-env head which also suppresses the row at zero. When the row *is* shown (at least one env has warnings), each cell is `⚠️ N` for envs with warnings and em-dash `—` for the clean envs. Both warning surfaces (per-env head row + per-env plan-tag collapser) are conditional too; the grouped table matches them.
 
 ### Warnings from the mutating stages
 
@@ -204,9 +207,9 @@ Per-action test suites (under `<action>/run_all_tests.sh`) cover:
 
 - Warnings row appears with count > 0; absent with count = 0 / unset / `?`.
 - Warnings collapser appended after plan-block; absent when warnings markdown file empty.
-- Combined body stays under 65000 bytes for: small warnings + huge plan; huge warnings + small plan; both huge (warnings preserved, plan trimmed).
-- UTF-8 boundary preserved (warning body with multi-byte char near the cut point).
-- Legacy `summary` output includes warnings collapser.
+- Combined body stays under 65000 bytes: huge warnings are truncated with the `_(truncated, warnings exceed …)_` marker; a large plan with warnings is trimmed while the warnings stay intact.
+- UTF-8 boundary preserved (a plan padded with multi-byte characters, cut to the budget).
+- Head and plan bodies together carry the warnings collapser.
 
 `aggregate-validation-summaries/` test additions:
 
@@ -218,7 +221,7 @@ Per-action test suites (under `<action>/run_all_tests.sh`) cover:
 
 ## 8. ARG_MAX caveat
 
-`capture-matrix-job-meta` captures every step's outputs via `toJSON(steps)` ([capture-matrix-job-meta/action.yml:64-71](../capture-matrix-job-meta/action.yml)). A prior incident documented in that file: when `plan-extract` (~65k) was exported into the environment, the next fork's envp blew past `ARG_MAX` and the metadata-capture step died with `E2BIG`.
+`capture-matrix-job-meta` captures every step's outputs via `toJSON(steps)` (its `steps-context-json` input, [capture-matrix-job-meta/action.yml](../capture-matrix-job-meta/action.yml)). A prior incident documented in that file: when `plan-extract` (~65k) was exported into the environment, the next fork's envp blew past `ARG_MAX` and the metadata-capture step died with `E2BIG`.
 
 Constraint for this feature: **never expose warnings-markdown *content* as a step output.** Only paths and small integers go through step outputs. The warnings markdown lives in `${GITHUB_WORKSPACE}/tf-warnings-<env>-<step>.md` and is referenced by path; `create-validation-summary` reads the file from disk, never from env.
 
@@ -226,4 +229,4 @@ Constraint for this feature: **never expose warnings-markdown *content* as a ste
 
 - Force-unlock remediation hints. They attach to `Error:` blocks (and look like multi-line shell snippets, not `Warning:` diagnostics) — would need a separate parser.
 - Warnings from `tflint` and other non-terraform-CLI tools. Their output formats differ; if surfacing them is wanted later, add per-tool parsers and one more `parse-*-warnings` invocation per env.
-- Audit the rest of the codebase for `tail -c` cuts that could land mid-UTF-8. This feature fixes only the one site it touches.
+- Audit the rest of the codebase for `tail -c` cuts that could land mid-UTF-8. `line_anchored_tail` covers only the tag bodies `create-validation-summary` renders.
