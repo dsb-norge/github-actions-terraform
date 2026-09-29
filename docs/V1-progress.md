@@ -24,7 +24,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69) | merged 2026-09-29 | yes |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70) | merged 2026-09-29 | yes |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | [#71](https://github.com/dsb-norge/github-actions-terraform/pull/71) | merged 2026-09-29 | yes |
-| 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
+| 11 | v1 released to callers: release-please and CHANGELOG.md, templates on `@v1`, the first module repository moved, 1.0.0 cut | [#73](https://github.com/dsb-norge/github-actions-terraform/pull/73) | draft: release-please built; templates and the first module repository in progress | no |
 
 ### Outside the road steps
 
@@ -34,7 +34,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 |---|---|---|---|
 | Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | merged 2026-09-24 | yes |
 | The engine reviewed for what should change after the port: per-environment values of workflow inputs take the inputs' types (per-environment booleans were silently ignored by the gates), environment names follow one rule, one environment per github-environment | [#61](https://github.com/dsb-norge/github-actions-terraform/pull/61) | merged 2026-09-24 | yes |
-| Every step script ends with `exit`, as the implementation guide says: six scripts that returned when sourced, their shims' trailing lines, the plugin cache's helpers path; structural test F23 | [#72](https://github.com/dsb-norge/github-actions-terraform/pull/72) | draft | no |
+| Every step script ends with `exit`, as the implementation guide says: six scripts that returned when sourced, their shims' trailing lines, the plugin cache's helpers path; structural test F23 | [#72](https://github.com/dsb-norge/github-actions-terraform/pull/72) | merged 2026-09-29 | yes |
 
 ## 2. Status per spec
 
@@ -578,6 +578,46 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
   so it gains a unit suite and the v1 module workflow when templates move to `@v1`. The docs no
   longer claim it ships one. Six older step scripts ended with a `return` when sourced instead
   of the guide's `exit`; fixed outside the road steps, with a structural test.
+
+### Step 11: tagging v1
+
+The maintainer's decisions (2026-09-29): v1 releases by release-please; the history in a
+`CHANGELOG.md` migrated from the tag annotations, release-please maintaining it from then on;
+tags `v1.X.Y` plus a moving `v1`, no moving `v1.X`; the release pull request opened with a new
+App, `dsb-norge-tf-actions-releaser`; 1.0.0 cut by hand; `terraform-azurerm-mgmt-resource-lock`
+the first module repository moved; the module template's workflows active in the template itself,
+with a unit test. Order: the templates and the first module repository on `@v1` first, then the
+cut, so the release includes what they turn up.
+
+- **Release mechanics** (#73): `release.yml`, the config and manifest at 1.0.0, `CHANGELOG.md`
+  (1.0.0 with the v1 pull requests, every v0 minor from its own tag), Development-and-release.md's
+  release section and CLAUDE.md.
+- **The module template**
+  ([tf-module-template#7](https://github.com/dsb-norge/tf-module-template/pull/7)): both
+  workflows on `@v1` and active, a `unit` and an environment-isolated `integration` lane, a unit
+  suite, the docs, the maintainer's unmerged terraform-docs configuration, the AI configuration.
+  Its first run: validation, the unit test and the tests summary green; the docs job cannot read
+  `ORG_TF_CICD_APP_ID`, since the template repository has no access to the organisation's
+  variable and secret yet. Found: a missing App variable fails with the token action's
+  "client-id must be set", which does not name the setup; worth a check of its own in the docs
+  job.
+- **The project template**
+  ([terraform-template-project#12](https://github.com/dsb-norge/terraform-template-project/pull/12)):
+  `@v1` and the standard dispatch block. Both scaffold modes run through v1's engine: accepted, a
+  dispatch of every environment or of one runs, `goal: apply` refused.
+- **The first module repository**: its change is prepared as the guide's §5 shape (a credential-
+  free `unit` lane, the repository's principal in an `integration` lane for every other file, as
+  every file had on v0). It keeps v0's exposure; the identity audit (below) is raised with the
+  maintainer before it is pushed.
+- **The cut, once the above is green:**
+  1. Set 1.0.0's date in `CHANGELOG.md`, merge #73, and tag its merge `v1.0.0`
+     (`git tag -a v1.0.0 -m "v1.0.0" origin/main`), push it, and move `v1` to it.
+  2. Publish the GitHub Release `v1.0.0` from the tag, with the changelog's 1.0.0 entry: release-
+     please finds its last release through it.
+  3. Set `RELEASER_APP_ID` and `RELEASER_APP_PRIVATE_KEY`: from the next push, release-please runs.
+  4. Delete `Road-to-v1.md` and `V1-progress.md` (and their rows in the docs index) shortly after.
+- **Before more repositories with tests move:** the identity audit, the principals' federated
+  credentials trusting `pull_request` or branch subjects narrowed once environment lanes run.
 
 ## 5. Findings to carry
 
