@@ -9,7 +9,7 @@ name: "DSB Terraform Module CI"
 # The calling job grants:
 #   permissions:
 #     id-token: write       # OIDC, for the test jobs
-#     contents: write       # checkout; the docs job pushes with the App token
+#     contents: read        # checkout; the docs job pushes with the App token, not this one
 #     pull-requests: write  # the validation and tests heads
 #     actions: read         # job links in the tests head
 #   secrets: inherit
@@ -139,10 +139,14 @@ jobs:
       status: ${{ steps.docs.outputs.status }}
     steps:
       # Only a pull request from this repository gets a docs commit (docs/Module-ci.md D6): a fork's
-      # run has no secrets, and a push, a dispatch or a schedule must never commit to its branch.
+      # run has no secrets, a Dependabot run only Dependabot's, and a push, a dispatch or a schedule
+      # must never commit to its branch. Everywhere else the docs job checks.
       - name: "🔑 Create GitHub App token"
         id: app-token
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: |
+          github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
