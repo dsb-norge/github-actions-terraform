@@ -1,21 +1,35 @@
 name: "Run terraform docs"
-description: "Inject terraform docs for modules into README.md"
+description: |
+  Inject terraform docs for modules into README.md, and into the README.md of
+  every examples/ subfolder when the repository has an examples/ folder, and
+  push the result.
+
+  Where the repository has no .terraform-docs.yml (in its root, or in
+  examples/), the action's default config is added and committed with the
+  docs. A README.md without the BEGIN_TF_DOCS / END_TF_DOCS delimiters gets
+  them appended; delimiters in the wrong order fail the action.
+
+  terraform-docs/gh-actions is a Docker action, so its two steps stay in this
+  file; the logic around them lives in the step_*.sh scripts.
 author: "Artjoms Laivins"
 
 inputs:
   readme-file-path:
     description: |
-      "README.md file path to inject terraform docs into. Default is the root of the repository.
-      Path consider default name of README.md.
-      If README.md is in repo root then use github-workspace as path.
-      This variable support multiple paths separated by comma."
+      Directory of the README.md to inject terraform docs into, relative to the
+      repository root. Default is the root of the repository.
+      terraform-docs takes a comma-separated list of directories here, but the
+      delimiter check handles a single directory only.
+    required: false
+    default: "."
 
 outputs:
   number-of-files-changed:
     description: |
-      Total number of files changed by this action.
+      Total number of files changed by this action: the num_changed of the
+      project and the examples terraform-docs steps.
       ref. https://github.com/terraform-docs/gh-actions?tab=readme-ov-file#outputs
-    value: ${{ steps.count.outputs.num-files-changed }}
+    value: ${{ steps.report.outputs.number-of-files-changed }}
 
 runs:
   using: "composite"
@@ -24,41 +38,8 @@ runs:
       shell: bash
       run: |
         # Add default terraform-docs config files where the repo has none
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        # check if terraform-docs config is present in the repo root
-        if [ -f ".terraform-docs.yml" ]; then
-            log-info ".terraform-docs.yml found in the repo root. Nothing to do."
-        else
-            log-info ".terraform-docs.yml not found in the repo root. Creating default config."
-            cp "${{ github.action_path }}/terraform-docs-module-root.yml" "${{ github.workspace }}/.terraform-docs.yml"
-            log-info ".terraform-docs.yml created in the repo root."
-            log-multiline "root directory content" "$(ls -la)"
-            log-info "Adding .terraform-docs.yml to git commit."
-            git add .terraform-docs.yml
-        fi
-
-        # check if repo has examples folder
-        if [ -d "examples" ]; then
-            log-info "examples folder found in the repo root."
-            set-output "examples-folder-exists" "true"
-            # check if .terraform-docs.yml config is present in the examples folder
-            if [ -f "${{ github.workspace }}/examples/.terraform-docs.yml" ]; then
-              log-info ".terraform-docs.yml found in the examples folder. Nothing to do."
-            else
-              log-info ".terraform-docs.yml not found in the examples folder. Creating default config."
-              cp "${{ github.action_path }}/terraform-docs-module-examples.yml" "${{ github.workspace }}/examples/.terraform-docs.yml"
-              log-info ".terraform-docs.yml created in the examples folder."
-              log-info "Adding .terraform-docs.yml to git commit."
-              git add examples/.terraform-docs.yml
-            fi
-            log-multiline "examples directory content" "$(ls -la examples/)"
-            # set output with coma separated list of directory names in examples folder
-            set-output "examples-subfolders" "$(ls -d examples/*/ | tr '\n' ',')"
-        else
-            log-info "examples folder not found in the repo root. Examples docs will not be generated."
-            set-output "examples-folder-exists" "false"
-        fi
+        set -o allexport
+        source "${{ github.action_path }}/step_inject_config_files.sh"
 
     - id: validate-root-readme
       shell: bash
@@ -66,43 +47,12 @@ runs:
         input_readme_file_path: ${{ inputs.readme-file-path }}
       run: |
         # Make sure README.md has the terraform-docs delimiters
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        README_FILE="${input_readme_file_path}/README.md"
-
-        if [ -f "${README_FILE}" ]; then
-            log-info "Checking if delimiters exist in ${README_FILE}"
-            if grep -q '<!-- BEGIN_TF_DOCS -->' "${README_FILE}" && grep -q '<!-- END_TF_DOCS -->' "${README_FILE}" ; then
-                log-info "Delimiters exist in ${README_FILE}"
-                log-info "Checking if delimiters are in the correct order"
-                START_LINE=$(grep -n '<!-- BEGIN_TF_DOCS -->' "${README_FILE}" | cut -d: -f1)
-                log-info "BEGIN_TF_DOCS found on line: $START_LINE"
-                END_LINE=$(grep -n '<!-- END_TF_DOCS -->' "${README_FILE}" | cut -d: -f1)
-                log-info "END_TF_DOCS found on line: $END_LINE"
-                if [ "$START_LINE" -lt "$END_LINE" ]; then
-                    log-info "Delimiters are in the correct order"
-                else
-                    log-error "Delimiters are not in the correct order, verify ${README_FILE}"
-                    exit 1
-                fi
-            else
-                log-info "Delimiters do not exist in ${README_FILE}"
-                log-info "Adding delimiters to ${README_FILE}"
-                printf "\nBelow is a placeholder for Terraform-docs generated documentation. Do not edit between the delimiters.\n" >> "${README_FILE}"
-                {
-                    echo "<!-- BEGIN_TF_DOCS -->"
-                    echo " "
-                    echo "<!-- END_TF_DOCS -->"
-                } >> "${README_FILE}"
-                log-info "Delimiters added to ${README_FILE}"
-            fi
-
-        else
-            log-info "File ${README_FILE} does not exist. Terraform-docs will create new README.md file."
-        fi
+        set -o allexport
+        source "${{ github.action_path }}/step_validate_root_readme.sh"
       continue-on-error: true
 
     - id: generate-example-docs
+      name: Generate the examples' docs
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@6de6da0cefcc6b4b7a5cbea4d79d97060733093c # v1.4.1
       with:
@@ -111,6 +61,7 @@ runs:
         config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
 
     - id: generate-project-docs
+      name: Generate the module's docs
       if: steps.validate-root-readme.outcome == 'success'
       uses: terraform-docs/gh-actions@6de6da0cefcc6b4b7a5cbea4d79d97060733093c # v1.4.1
       with:
@@ -118,36 +69,16 @@ runs:
         git-push: "true"
         config-file: .terraform-docs.yml
 
-    - id: count
+    - id: report
       if: always()
       shell: bash
       env:
-        project_num_changed: ${{ steps.generate-project-docs.outputs.num_changed }}
-        example_num_changed: ${{ steps.generate-example-docs.outputs.num_changed }}
+        input_validate_outcome: ${{ steps.validate-root-readme.outcome }}
+        input_examples_outcome: ${{ steps.generate-example-docs.outcome }}
+        input_examples_num_changed: ${{ steps.generate-example-docs.outputs.num_changed }}
+        input_project_outcome: ${{ steps.generate-project-docs.outcome }}
+        input_project_num_changed: ${{ steps.generate-project-docs.outputs.num_changed }}
       run: |
-        # Count the files changed by terraform-docs
-        set -o allexport; source "${{ github.action_path }}/helpers.sh"; set +o allexport;
-
-        # count number of files changed by the action
-        PROJECT_FILES_CHANGED=0
-        if [ '${{ steps.generate-project-docs.outcome }}' == 'success' ]; then
-          PROJECT_FILES_CHANGED="${project_num_changed}"
-        fi
-        log-info "Project files changed: ${PROJECT_FILES_CHANGED}"
-
-        EXAMPLE_FILES_CHANGED=0
-        if [ '${{ steps.generate-example-docs.outcome }}' == 'success' ]; then
-          EXAMPLE_FILES_CHANGED="${example_num_changed}"
-        fi
-        log-info "Example files changed: ${EXAMPLE_FILES_CHANGED}"
-
-        TOTAL_FILES_CHANGED=$((${PROJECT_FILES_CHANGED} + ${EXAMPLE_FILES_CHANGED}))
-        log-info "Total files changed: ${TOTAL_FILES_CHANGED}"
-        set-output 'num-files-changed' "${TOTAL_FILES_CHANGED}"
-
-    - id: tf-docs-status
-      if: ( steps.validate-root-readme.outcome == 'failure' || steps.validate-root-readme.outcome == 'cancelled' )
-      shell: bash
-      run: |
-        # Fail the action because the README.md validation failed
-        exit 1
+        # Count the files terraform-docs changed and judge the README check
+        set -o allexport
+        source "${{ github.action_path }}/step_report.sh"
