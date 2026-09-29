@@ -103,6 +103,8 @@ run_step() {
     export GITHUB_REPOSITORY="example-org/example-repo" GITHUB_EVENT_NAME="workflow_dispatch"
     export GITHUB_REF_NAME="${CASE_REF_NAME:-main}" GITHUB_REF_TYPE="branch" GITHUB_EVENT_PATH="${SANDBOX}/event.json"
     export GITHUB_OUTPUT="${SANDBOX}/output.txt" GH_TOKEN="fake-token" GITHUB_RUN_ID="4711" GITHUB_RUN_ATTEMPT="1"
+    # The step's env: the action input 'mode', as its default delivers it unless a case sets it.
+    export MODE="project"
     mkdir -p "${SANDBOX}/temp" && export RUNNER_TEMP="${SANDBOX}/temp"
     export PATH="${SANDBOX}/bin:${PATH}"
     for assignment in "$@"; do export "${assignment?}"; done
@@ -198,7 +200,8 @@ run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
 if [[ "$(head -n 1 <<<"${run_block}")" == "# "* ]] \
   && grep -qx "cat >\"\${inputs_file}\" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'" <<<"${run_block}" \
   && grep -qx 'CREATE_TF_VARS_MATRIX_INPUTS_JSON' <<<"${run_block}" \
-  && grep -q '^python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"$' <<<"${run_block}" \
+  && grep -q '^python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}" \\$' <<<"${run_block}" \
+  && grep -qx '  --mode "${MODE}"' <<<"${run_block}" \
   && [[ "$(grep -c '\${{' <<<"${run_block}")" == "2" ]] \
   && ! grep -qE '^(export|input_)' <<<"${run_block}"; then
   pass
@@ -505,6 +508,43 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output tests-count) $(step_output test
   pass
 else
   fail "exit ${STEP_EXIT}, or the committed test files did not become the test matrix: ${tests_matrix}"
+fi
+
+begin "module mode: a module's test stage alone, from the committed files, on a dispatch"
+make_sandbox "${baseline}"
+jq -n '{"terraform-version": "1.14.x", "tflint-version": "v0.64.0", "readme-file-path": ".",
+        "runs-on": "ubuntu-latest", "add-pr-comment": true, "cache-terraform-modules": true,
+        "terraform-test-enabled": true, "terraform-test-required": true, "allow-failing-terraform-tests": false,
+        "terraform-test-runs-on": "ubuntu-latest", "terraform-test-timeout-minutes": 30,
+        "terraform-test-lanes-yml": "- name: unit\n  match: [\"**/unit-*.tftest.hcl\"]\n- name: azure\n  extra-envs-from-secrets-yml:\n    ARM_CLIENT_ID: REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL\n",
+        "terraform-test-exclude-paths-yml": ""}' >"${SANDBOX}/inputs.json"
+mkdir -p "${SANDBOX}/ws/tests"
+echo 'variable "x" {}' >"${SANDBOX}/ws/main.tf"
+echo 'run "a" {}' >"${SANDBOX}/ws/tests/unit-tests.tftest.hcl"
+echo 'run "b" {}' >"${SANDBOX}/ws/tests/integration-basic.tftest.hcl"
+git -C "${SANDBOX}/ws" add main.tf tests/unit-tests.tftest.hcl tests/integration-basic.tftest.hcl
+run_step MODE=module
+tests_matrix="$(step_output tests-matrix-json)"
+lanes="$(jq -r '[.include[].test | "\(.file)=\(.lane)"] | join(" ")' <<<"${tests_matrix}")"
+if [[ ${STEP_EXIT} -eq 0 ]] \
+  && [[ "$(step_output tests-count) $(step_output tests-active) $(step_output tests-required-missing)" == "2 true false" ]] \
+  && [[ "${lanes}" == "tests/integration-basic.tftest.hcl=azure tests/unit-tests.tftest.hcl=unit" ]] \
+  && [[ -z "$(step_output matrix-json)" ]] \
+  && [[ "$(jq -r '.mode' "$(step_output relevance-file)")" == "module" ]]; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or module mode did not decide the test stage: ${lanes}; $(tail -n 5 "${OUT_FILE}")"
+fi
+
+begin "module mode: a module without a test file publishes the finding"
+jq '.["terraform-test-lanes-yml"] = ""' "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.tmp" && mv "${SANDBOX}/inputs.tmp" "${SANDBOX}/inputs.json"
+git -C "${SANDBOX}/ws" rm -q --cached tests/unit-tests.tftest.hcl tests/integration-basic.tftest.hcl
+run_step MODE=module
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output tests-count) $(step_output tests-required-missing)" == "0 true" ]] \
+  && grep -q "^::warning title=create-tf-vars-matrix::no test file: a module needs at least one test file" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the missing test file was not published: $(tail -n 5 "${OUT_FILE}")"
 fi
 
 echo ""
