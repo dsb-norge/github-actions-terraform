@@ -22,7 +22,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
-| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: built; the test bed's pull-request round and a create-and-destroy test remain | no |
+| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: built and validated on the test bed | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
@@ -525,9 +525,11 @@ Test bed, through `preview/pr-70`, on a module-shaped branch of the test-bed rep
 - **Dispatch:** it ran the tests.
 - **No test files:** red; with `terraform-test-required: false`, green.
 
-Still to do in step 9:
-- the pull-request round, which needs the test-bed App's key as `ORG_TF_CICD_APP_PRIVATE_KEY` on the test bed;
-- a create-and-destroy integration test, once the resource group is granted.
+- **Pull request with a stale README:** the App committed the docs, and that run skipped validation and the tests and concluded green. The run the push started was green with three test files, one creating a user-assigned identity in the sandbox resource group and destroying it. It posted both heads and deleted a planted v0 per-file comment.
+- **Tests summary after a docs push:** found and fixed. It had run and reported every skipped file as missing metadata, above the validation head. It now waits for validation and skips after a docs push; a second round confirmed both.
+- **Unused variable:** it failed TFLint, named in the head, an annotation and the conclusion.
+
+Kept on the test bed for module work, and cleaned up once v1 is ready: the module branch, the `ORG_TF_CICD_APP_ID` variable and `ORG_TF_CICD_APP_PRIVATE_KEY` secret, the test identity and the sandbox resource group.
 
 ## 5. Findings to carry
 

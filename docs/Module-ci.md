@@ -1,7 +1,5 @@
 # Module CI
 
-Status: **designed, being built.** §2 is settled; §13 lists what is open.
-
 The reusable workflow [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml)
 validates, documents and tests a Terraform **module** repository: one module at the repository
 root, its examples, and its `terraform test` files. The project workflow,
@@ -229,9 +227,8 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 
 ## 13. Open questions
 
-1. The pull-request round on the test bed: a docs commit through the App, the validation and tests
-   heads, the removal of v0's per-file comments.
-2. An integration test that creates and destroys a resource in a sandbox resource group.
+None. Schedules run a module's tests too (D3), which the engine's tests cover. GitHub runs a
+schedule only from the default branch, which the test bed's module branch is not.
 
 ## 14. What implementation taught the spec
 
@@ -245,6 +242,17 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
     validation succeeded; tests: 2`);
   - a dispatch ran the tests;
   - a branch without test files was red with the warning and `a module needs at least one test
-    file`, and green with `terraform-test-required: false`.
+    file`, and green with `terraform-test-required: false`;
+  - a pull request whose README needed regenerating got the docs commit through the App. The run
+    skipped validation and the tests and concluded green ("the run it started decides"), and the
+    run the push started was green with three test files, one of them creating a user-assigned
+    identity in a sandbox resource group and destroying it again;
+  - that run posted the validation head and the tests head, and deleted a planted v0 per-file
+    comment;
+  - an unused variable failed TFLint, which the head, an annotation and the conclusion named.
+- **The tests summary must not run after a docs push.** On the first pull-request round it did:
+  it reported every skipped file as leaving no metadata, in a head created before the validation
+  head. The module summary job now waits for validation and skips after a docs push; the second
+  round's first run skipped it, and the validation head came first.
 - **The first mutation run of the module mode** found the adapter's string defaults and one
   conditional redundant; the adapter takes a boolean, and `--mode` is required.
