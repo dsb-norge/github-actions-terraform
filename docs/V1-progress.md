@@ -22,7 +22,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
-| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: the fixes that need no decision; the port waits on the maintainer's decisions below | no |
+| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: built; the test bed's pull-request round and a create-and-destroy test remain | no |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — | outstanding | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
@@ -484,7 +484,13 @@ that call them and the module template. Its findings:
 Built so far: the non-breaking spaces (F19), release-please-action v5.0.0 and terraform-docs/gh-actions
 v1.4.1 (both still pinned by commit), and CLAUDE.md's list of the remaining legacy actions.
 
-Decisions for the maintainer, each with the analysis's recommendation:
+Decisions, each with the analysis's recommendation. The maintainer accepted them on 2026-09-29, with these additions:
+- D2: one workflow per kind of repository, at least.
+- D4: make the move easy from today's usage; a module must support none, one or several credentials, one being the normal case.
+- D8: tidy the reporting, job and run summaries included, reused and aligned with the project workflow.
+- D9: by default at least a unit suite; everything from there up supported. With no test file the conclusion is red, with an opt-out.
+- D3: `schedule` runs a module's tests too.
+- D10: the project test bed is reused. The kept test identity gets Contributor on one sandbox resource group for a create-and-destroy test, which the maintainer grants.
 
 | # | Decision | Recommendation |
 |---|---|---|
@@ -499,6 +505,29 @@ Decisions for the maintainer, each with the analysis's recommendation:
 | D9 | New module-CI inputs | the four test inputs plus `terraform-test-enabled`, named as in the default workflow |
 | D10 | The test bed for modules | a throwaway module repository first, then one real one through a preview ref |
 | D11 | Scope | the plugin cache, per-job permissions and the module docs rewrite in step 9 |
+
+Built, as docs/Module-ci.md specifies:
+- the engine's module mode, under both gates;
+- `create-tf-vars-matrix`'s `mode` input;
+- terraform-docs in the modern layout, pushing only on a pull request from the repository and failing on a diff elsewhere;
+- the module workflow: create-matrix, docs, validation with the parsed warnings, the project workflow's two test jobs held equal by F20, and a conclusion on named results (F21);
+- the release workflow on `actions/create-github-app-token@v3`;
+- `create-validation-summary`'s module head (`subject`, the `absent` status);
+- `create-tftest-matrix` and `create-test-report` retired;
+- `terraform-test` without its legacy call shape: `working-directory` required, the 1.13 floor for every call.
+
+The analysis's D4 finding, from reading the five callers: they all keep the same three `REPO_AZURE_*` secrets and a calling-workflow `env:` block that never reached the called workflow. Their test files are all under `tests/`, named `unit-*` and `integration-*`. Not every unit suite mocks its providers. The one-credential lane maps those three secrets, which is v0's behaviour for every file. An implicit default lane was rejected: it would fail every repository without the secrets.
+
+Test bed, through `preview/pr-70`, on a module-shaped branch of the test-bed repository made from the module template:
+- **Push:** the unit suite ran without credentials, and the integration test as the lane identity through `tftest-oidc`.
+- **Stale README:** a push with a README that needed regenerating failed the docs check, and the conclusion named it.
+- **Everything current:** all green.
+- **Dispatch:** it ran the tests.
+- **No test files:** red; with `terraform-test-required: false`, green.
+
+Still to do in step 9:
+- the pull-request round, which needs the test-bed App's key as `ORG_TF_CICD_APP_PRIVATE_KEY` on the test bed;
+- a create-and-destroy integration test, once the resource group is granted.
 
 ## 5. Findings to carry
 
