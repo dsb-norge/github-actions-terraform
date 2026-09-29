@@ -218,8 +218,8 @@ Only if `runs-on` or `terraform-test-runs-on` names a self-hosted pool:
   later, `yq` v4 (the Go implementation), `jq`, `gh`, `git` and bash. Too old a Python stops
   `create-matrix` naming the floor.
 - Every job uses Node 24 actions, which need Actions runner v2.327.1 or later.
-- Behind a proxy, the auto-merge job's App token step honours `HTTP(S)_PROXY` through
-  `NODE_USE_ENV_PROXY`, which the workflow sets.
+- An HTTP(S) proxy is not supported: the workflow sets no proxy configuration, so the auto-merge
+  job's App token step (`actions/create-github-app-token`) does not honour `HTTP(S)_PROXY`.
 
 ### 2.12 Unsupported events
 
