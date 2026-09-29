@@ -642,12 +642,15 @@ jobs:
   # the conclusion's needs: a reporting job must never redden a run.
   terraform-test-summary:
     name: "Terraform tests summary"
-    needs: [create-matrix, terraform-test]
+    # After validation, so the validation head is posted first; and not when a docs commit started
+    # a run of its own, whose tests this run skipped.
+    needs: [create-matrix, generate-docs, validate, terraform-test]
     if: |
       always()
       && needs.create-matrix.result == 'success'
       && inputs.terraform-test-enabled == true
       && (needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request')
+      && needs.generate-docs.outputs.pushed != 'true'
     runs-on: ${{ inputs.runs-on }} # global setting
     permissions:
       pull-requests: write # the tests head

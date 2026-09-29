@@ -3296,11 +3296,12 @@ for part in ("!cancelled()", "needs.create-matrix.result == 'success'",
     if part not in condition:
         problems.append(f"the module test job's if lacks {part!r}")
 summary = module.get('terraform-test-summary', {})
-if sorted(summary.get('needs', [])) != ['create-matrix', 'terraform-test']:
-    problems.append(f"the module summary job must need create-matrix and terraform-test, not {summary.get('needs')}")
+if sorted(summary.get('needs', [])) != ['create-matrix', 'generate-docs', 'terraform-test', 'validate']:
+    problems.append(f"the module summary job must need create-matrix, generate-docs, validate and terraform-test, not {summary.get('needs')}")
 condition = ' '.join(str(summary.get('if', '')).split())
 for part in ("always()", "needs.create-matrix.result == 'success'", "inputs.terraform-test-enabled == true",
-             "needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request'"):
+             "needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request'",
+             "needs.generate-docs.outputs.pushed != 'true'"):
     if part not in condition:
         problems.append(f"the module summary job's if lacks {part!r}")
 if "github.event_name == 'push'" in condition:
