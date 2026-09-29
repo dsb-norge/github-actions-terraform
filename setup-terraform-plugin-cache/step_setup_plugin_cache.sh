@@ -20,8 +20,7 @@
 # changing its format would start every caller's cache anew for no gain.
 #
 
-_this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "${_this_script_dir}/helpers.sh"
+source "${GITHUB_ACTION_PATH}/helpers.sh"
 
 function main {
   local plugin_cache_dir="${HOME}/.terraform.d/plugin-cache"
