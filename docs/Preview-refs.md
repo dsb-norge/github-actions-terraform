@@ -6,20 +6,20 @@ Prior art: the same mechanism runs in [dsb-norge/cert-warden](https://github.com
 
 ## 1. Why
 
-Every consumer of this repo pins `dsb-norge/github-actions-terraform/<path>@v0`. The reusable workflows do the same internally: `terraform-ci-cd-default.yml` carries 49 `uses: dsb-norge/github-actions-terraform/<action>@v0` lines and `terraform-module-ci.yaml` another 14. That is what makes "try my branch from a calling repo" a ritual ([Development-and-release.md](Development-and-release.md), "Development and testing"):
+Every consumer of this repo pins `dsb-norge/github-actions-terraform/<path>@<major>`. The reusable workflows do the same internally: `terraform-ci-cd-default.yml` carries 62 `uses: dsb-norge/github-actions-terraform/<action>@v1` lines and `terraform-module-ci.yaml` another 26. That is what makes "try my branch from a calling repo" a ritual ([Development-and-release.md](Development-and-release.md), "Development and testing"):
 
-1. regex-rewrite all 63 refs to `@my-feature`, inserting a `# TODO revert to @v0` marker above each;
+1. regex-rewrite all 88 refs to `@my-feature`, inserting a `# TODO revert to @v0` marker above each;
 2. commit the swap on the feature branch;
 3. `git tag -f -a my-feature && git push -f origin refs/tags/my-feature` — **again after every push**;
 4. point the calling repo at the *branch* for the workflow (the branch carries the swapped file) — the *tag* only serves the actions;
-5. before merge: delete the tag, regex-revert the 63 refs, commit again.
+5. before merge: delete the tag, regex-revert the 88 refs, commit again.
 
 Costs, all of them paid per PR:
 
 - **A swap commit and a revert commit** that say nothing about the change, and which have to be kept out of `main` by discipline alone. A forgotten revert ships `@my-feature` to every calling repo on the next `v0` move — the tag was deleted in step 5, so every calling run fails at `Set up job`.
 - **A forgotten re-tag** after a push tests the previous commit while the branch looks up to date; the symptom is "my fix did not work" and the cause is invisible from the calling repo.
-- **Two refs with one name** (branch for the workflow, tag for the actions) — `Development-and-release.md` and `CLAUDE.md` both spend words on `refs/heads/` vs `refs/tags/` disambiguation because of this.
-- **Not reviewable**: a PR whose diff is 63 ref rewrites plus the actual change is harder to review than the change alone; reviewers have learnt to skim past the markers, which is exactly how a stray one gets merged.
+- **Two refs with one name** (branch for the workflow, tag for the actions), which every command naming them has to disambiguate as `refs/heads/` or `refs/tags/`.
+- **Not reviewable**: a PR whose diff is 88 ref rewrites plus the actual change is harder to review than the change alone; reviewers have learnt to skim past the markers, which is exactly how a stray one gets merged.
 
 ## 2. Goals, non-goals, invariant
 
@@ -27,11 +27,11 @@ Goals:
 
 - A same-repo PR gets, **automatically and on every push**, a ref a calling repo can consume with a single `uses:` line — for the reusable workflows *and* the composite actions, through one name.
 - The PR branch is never modified. Nothing generated is ever merged. `main` never contains a preview ref.
-- The consumed tree is **hermetic**: every internal `uses:` in it resolves to the very commit being consumed, so a calling run cannot mix this PR's workflow with `v0`'s actions (or vice versa), and a rebuild landing mid-run cannot swap the engine underneath a running job.
+- The consumed tree is **hermetic**: every internal `uses:` in it resolves to the very commit being consumed, so a calling run cannot mix this PR's workflow with the released actions (or vice versa), and a rebuild landing mid-run cannot swap the engine underneath a running job.
 - Cleanup is automatic: closing the PR deletes every ref it created.
-- The old manual procedure keeps working, scripted, as the fallback for fork PRs and for a repo where the App (§5) is not yet configured.
+- The old manual procedure keeps working, scripted, as the fallback for fork PRs and for a repo where the App (§5) is not configured.
 
-Non-goals (§13): an in-repo end-to-end run that *consumes* the preview (this repo has no terraform fixture; a calling repo is still where the workflow is exercised); fork PRs; any change to how releases (`v0.X`, `v0`) are cut.
+Non-goals (§13): an in-repo end-to-end run that *consumes* the preview (this repo has no terraform fixture; a calling repo is still where the workflow is exercised); fork PRs; any change to how releases (`v1`, `v0.X`, `v0`) are cut.
 
 Invariant, stated as a check the workflow enforces (§3.3): **every `uses: dsb-norge/github-actions-terraform/…@<ref>` in the published tree names the immutable preview tag, and that tag resolves to the published commit.**
 
@@ -53,16 +53,17 @@ One new workflow, `.github/workflows/pr-preview.yml`, `on: pull_request: types: 
 
 1. `GET repos/{repo}/git/matching-refs/tags/preview/pr-<N>` — **prefix** match, so filter with the anchored regex `^refs/tags/preview/pr-<N>(-[0-9a-f]+)?$` before deleting; without it PR 5 would delete PR 53's refs (P9).
 2. `DELETE repos/{repo}/git/refs/tags/…` for each. This is `contents: write` on `GITHUB_TOKEN` — allowed, because deleting a ref does not push workflow content.
-3. Delete the sticky comment (`pr-comment` `mode: delete`). The merge ref can be gone on `closed`, so this job checks out the **default branch** to get `pr-comment`.
+3. List the matching refs again with the same anchored filter and fail the job if any survived — the single authority on the sweep; a failed `DELETE` is logged, not judged (P33, P33b).
+4. Delete the sticky comment (`pr-comment` `mode: delete`). The branch can be gone on `closed`, so this job checks out the PR **head commit** (GitHub keeps `refs/pull/<N>/head`) to get `pr-comment`.
 
 ### 3.3 The guard
 
 ```bash
+mapfile -t files < <(bash .github/scripts/rewrite-internal-refs.sh --list-files)
 bad="$(git grep -hoE 'uses:[[:space:]]+dsb-norge/github-actions-terraform(/[^@[:space:]]*)?@[^[:space:]]+' \
-         "${commit}" -- $(bash .github/scripts/rewrite-internal-refs.sh --list-files) \
-       | grep -vE "@${pinnedRef}\$" || true)"
+         "${commit}" -- "${files[@]}" | grep -vE "@${pinned_ref}\$" || true)"
 [[ -z "${bad}" ]]                                                   # every ref names the pinned tag
-[[ "$(git rev-parse "${pinnedRef}^{commit}")" == "${commit}" ]]     # and the pinned tag is this commit
+[[ "$(git rev-parse "${pinned_ref}^{commit}")" == "${commit}" ]]    # and the pinned tag is this commit
 [[ "$(git rev-parse "${commit}^")" == "${HEAD_SHA}" ]]              # and the parent is the PR head
 ```
 
@@ -79,7 +80,7 @@ sequenceDiagram
   participant Caller as calling repo
   Dev->>PR: push S
   PR->>WF: pull_request opened / synchronize
-  WF->>WF: checkout S · rewrite 63 refs → @preview/pr-N-S7
+  WF->>WF: checkout S · rewrite 88 refs → @preview/pr-N-S7
   WF->>WF: G = commit-tree(parent S) · guard
   WF->>Tags: force-push preview/pr-N, preview/pr-N-S7 → G  (App token)
   WF->>PR: upsert sticky comment
@@ -95,7 +96,7 @@ sequenceDiagram
 
 ### 4.1 What gets rewritten
 
-Every `.github/workflows/*.yml` / `*.yaml` **except** an explicit exclusion list held in the script: `pr-preview.yml` (its own comment template contains `uses: dsb-norge/github-actions-terraform/…@<placeholder>` lines that are templates, not references — rewriting them corrupts the comment and fails the guard) and `action-tests.yml` (not consumable, no refs). A new consumable workflow is covered the day it is added; a new non-consumable one that happens to contain a self-ref shows up as a guard failure, which is the right default.
+Every `.github/workflows/*.yml` / `*.yaml` **except** an explicit exclusion list held in the script: `pr-preview.yml` (its own comment template contains `uses: dsb-norge/github-actions-terraform/…@<placeholder>` lines that are templates, not references — rewriting them corrupts the comment) and `action-tests.yml` (not consumable, no refs). A new consumable workflow is covered the day it is added; a new non-consumable one that happens to contain a self-ref is rewritten in the preview like the rest, which is harmless unless the ref is a template (then add it to the exclusion list).
 
 `README.md`, `docs/**` and `action.yml` files are never touched: the examples there *should* name the released major tag.
 
@@ -109,11 +110,11 @@ The match is `uses:[[:space:]]+dsb-norge/github-actions-terraform(/[^@[:space:]]
 
 ### 4.3 Naming
 
-`preview/pr-<N>` and `preview/pr-<N>-<sha7>`. Same namespace as cert-warden, so anyone moving between dsb-norge repos meets one convention. The `preview/` prefix keeps them out of `git tag --list 'v*'` and makes the release-picking snippet in Development-and-release.md unambiguous (P22).
+`preview/pr-<N>` and `preview/pr-<N>-<sha7>`. Same namespace as cert-warden, so anyone moving between dsb-norge repos meets one convention. The `preview/` prefix keeps them out of `git tag --list 'v*'` and makes the release-picking snippet in Development-and-release.md unambiguous (P15).
 
 ### 4.4 Lightweight tags
 
-`git tag -f <name> <commit>`, not annotated. They are machine-managed and disposable; an annotation would only duplicate the generated commit's message. Release tags stay annotated as today.
+`git tag -f <name> <commit>`, not annotated. They are machine-managed and disposable; an annotation would only duplicate the generated commit's message. Release tags are annotated.
 
 ## 5. The token — why a GitHub App is required
 
@@ -124,11 +125,11 @@ Configuration (repo-level, as cert-warden does — org-level variables and secre
 - variable `PREVIEW_APP_ID`
 - secret `PREVIEW_APP_PRIVATE_KEY`
 
-Until both exist the `publish-preview` job **skips the mint and the push** and the sticky comment says "preview unavailable (bootstrap)" with the two names — the PR that introduces this workflow shows exactly that on itself, which is the acceptance signal that everything except the credential is wired.
+Until the variable exists the `publish-preview` job **skips the mint and the push** and the sticky comment says "preview unavailable (bootstrap)" with the two names. A variable without a working key fails the mint, visibly (P1).
 
 Bootstrap, once, by an org owner:
 
-1. Organisation settings → Developer settings → GitHub Apps → **New GitHub App**. Name `dsb-norge-tf-actions-preview` — App names are capped at **34 characters**, which the full repo name does not fit. Homepage: this repo. **Uncheck** "Active" under Webhook. Repository permissions: **Contents → Read and write**, **Workflows → Read and write**. "Where can this GitHub App be installed?" → **Only on this account**. Description (shown on the install page, where the *Workflows: write* ask needs its reason):
+1. Organisation settings → Developer settings → GitHub Apps → **New GitHub App**. Name `dsb-norge-tf-actions-preview` — App names are capped at **34 characters**, which the repo name plus a `-preview` suffix does not fit. Homepage: this repo. **Uncheck** "Active" under Webhook. Repository permissions: **Contents → Read and write**, **Workflows → Read and write**. "Where can this GitHub App be installed?" → **Only on this account**. Description (shown on the install page, where the *Workflows: write* ask needs its reason):
 
    > Publishes preview refs for pull requests in dsb-norge/github-actions-terraform. On every push to a PR, `pr-preview.yml` pushes a `preview/pr-<N>` tag (plus an immutable per-push tag) pointing at a generated commit whose internal action refs are rewritten to that tag, so calling repos can validate the pre-release workflows and actions with a single `uses:` line. Needs Contents and Workflows write because the pushed tree contains modified workflow files. Installed on that one repository only; details in the repo's docs/Preview-refs.md.
 2. Generate a private key (`.pem`).
@@ -146,12 +147,12 @@ Fork PRs are skipped entirely (both jobs gate on `github.event.pull_request.head
 |---|---|
 | `.github/workflows/pr-preview.yml` | The two jobs of §3. Job names `🏷️ Publish preview ref` and `🧹 Delete preview refs`. `permissions: {}` at top; publish = `contents: read` + `pull-requests: write` (the push uses the App token, not `GITHUB_TOKEN`); cleanup = `contents: write` + `pull-requests: write`. `concurrency: pr-preview-<N>`, `cancel-in-progress: true`. |
 | `.github/scripts/rewrite-internal-refs.sh` | `rewrite-internal-refs.sh <ref>` rewrites the file set in the working tree and prints per-file counts; `rewrite-internal-refs.sh --list-files` prints the file set (one per line) and rewrites nothing. Follows the `.github/scripts` conventions in [Testing-in-ci.md](Testing-in-ci.md) (`#!/bin/env bash`, `set -o nounset`, `main`, explicit exit). |
-| `.github/scripts/test-rewrite-internal-refs.sh` | Offline test suite for the script (§9); emits the canonical `Tests run/passed/failed` lines. Runs as the first step of `publish-preview` and locally. |
-| `pr-comment/` | Unchanged; the sticky comment is `mode: upsert` / `mode: delete` with marker `<!-- gat:preview-ref -->`. Local `uses: ./pr-comment`, so the publish job uses the PR's copy and the cleanup job the default branch's. |
-| `docs/Development-and-release.md` | "Development and testing" rewritten around the preview ref; the manual procedure becomes "Fallback: publishing by hand", scripted. |
-| `docs/Testing-in-ci.md` | One cross-reference: the rewrite script is tested by `pr-preview.yml`, not `action-tests.yml`. |
-| `README.md` | "Development and maintenance" (currently an empty heading) points at both docs. |
-| `CLAUDE.md` | "Development workflow" replaced (own commit — AI config). |
+| `.github/scripts/test-rewrite-internal-refs.sh` | Offline test suite for the script (§9); emits the canonical `Tests run/passed/failed` lines. Runs in `publish-preview` before anything is built, and locally. |
+| `pr-comment/` | The sticky comment is `mode: upsert` / `mode: delete` with marker `<!-- gat:preview-ref -->`. Local `uses: ./pr-comment`, so both jobs use the PR head's copy. |
+| `docs/Development-and-release.md` | "Development and testing" uses the preview ref; the manual procedure is "Fallback: publishing by hand", scripted. |
+| `docs/Testing-in-ci.md` | Lists the rewrite script and its suite: tested by `pr-preview.yml`, not `action-tests.yml`. |
+| `README.md` | "Development and maintenance" points at both docs. |
+| `CLAUDE.md` | "Development workflow" describes the preview ref. |
 
 ## 7. Sticky comment shape — decided: B
 
@@ -201,7 +202,7 @@ jobs:
     uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-ci-cd-default.yml@preview/pr-53
 ~~~
 
-Built from `a1b2c3d` → `9f8e7d6`. The same ref serves `terraform-module-ci.yaml`, `terraform-module-release.yaml` and every composite action. Every push adds a `preview/pr-53-<sha>`; all are deleted when this PR closes — pin for validation, never for production.
+Built from `a1b2c3d` → generated commit `9f8e7d6`. The same ref serves `terraform-module-ci.yaml`, `terraform-module-release.yaml` and every composite action. Every push adds a `preview/pr-53-<sha>`; all are deleted when this PR closes — pin for validation, never for production.
 ````
 
 Decision: **B**. It is scannable at the size this repo's other comments are (tables everywhere), the one snippet is the line 95 % of readers came for, and the pinned ref is a copy from the table for the 5 %.
@@ -211,7 +212,7 @@ Decision: **B**. It is scannable at the size this repo's other comments are (tab
 ````markdown
 ### 🧪 Preview ref: unavailable (bootstrap)
 
-Publishing a preview tag pushes rewritten workflow files, which needs a GitHub App with `workflows: write` — `GITHUB_TOKEN` cannot do it. Configure the repository variable `PREVIEW_APP_ID` and secret `PREVIEW_APP_PRIVATE_KEY` (see `docs/Preview-refs.md` §5) and re-run this workflow; every PR then gets a `preview/pr-<N>` ref here automatically.
+Publishing a preview tag pushes rewritten workflow files, which needs a GitHub App with `workflows: write` — `GITHUB_TOKEN` cannot do it. Configure the repository variable `PREVIEW_APP_ID` and secret `PREVIEW_APP_PRIVATE_KEY` (`docs/Preview-refs.md` §5) and re-run this workflow; every PR then gets a `preview/pr-<N>` ref here automatically.
 ````
 
 ## 8. Pitfalls and concerns
@@ -226,7 +227,7 @@ Publishing a preview tag pushes rewritten workflow files, which needs a GitHub A
 | P6 | Fork PRs have no secrets; the App token step would fail. | Both jobs gate on same-repo. Fallback for forks in §10. |
 | P7 | `actions/checkout` on `pull_request` checks out the **merge** commit by default; the generated commit's parent would then be a synthetic merge that changes on every `main` push. | `ref: ${{ github.event.pull_request.head.sha }}`; guard asserts `parent == head`. |
 | P8 | The App token must not leak into the checkout's persisted credentials or a third-party step. | `persist-credentials: false`; the token is passed as a step `env:` to the push step only; the only non-`actions/*` step in that job is this repo's own `pr-comment`, which runs with `GITHUB_TOKEN`. |
-| P9 | `git/matching-refs/tags/preview/pr-5` matches `preview/pr-53*` too. | Anchored regex filter before delete (§3.2). Tested by inspection (F-guard, §9). |
+| P9 | `git/matching-refs/tags/preview/pr-5` matches `preview/pr-53*` too. | Anchored regex filter before delete and in the post-sweep check (§3.2). Not asserted by a test. |
 | P10 | Immutable tags accumulate until close; if the workflow is disabled or the close event never fires (repo transferred, PR deleted by admin), orphans remain. | Documented one-liner sweep in Development-and-release.md: `gh api repos/<repo>/git/matching-refs/tags/preview/ --jq '.[].ref'` then delete. |
 | P33 | **The sweep deleted nothing at all, silently.** `DELETE repos/<repo>/git/${ref#refs/}` addresses `git/tags/<name>` — the tag-*object* endpoint — instead of `git/refs/tags/<name>`, so every call 404s; `\|\| echo "(already gone?)"` then swallowed it and the job stayed green. Found 2026-09-17 by a throwaway pull request opened for exactly this, after the tags it published outlived it. The upstream implementation this was ported from had it too, with 22 orphan tags and no open pull requests to explain them. | The ref is appended whole, and the step ends by re-listing matching refs and failing if any survived. Verified by opening and closing a probe pull request. |
 | P33b | **`GET git/refs/<ref>` prefix-matches too.** The first fix distinguished "already gone" from a real failure with a per-ref `GET`, which is unsound for the same reason the anchored `grep` on `matching-refs` exists: `git/refs/tags/preview/pr-5` answers with **pr-53's** nine live refs (an array on a prefix match, an object on an exact one; `git/ref/<ref>`, singular, is the exact endpoint). The probe could only produce false failures — a `DELETE` that reported an error on a ref that was already gone, or a sibling not yet deleted, would fail the step while the verification showed nothing remaining. Reported by the maintainers of the repository this mechanism came from, after they fixed the same bug. | The probe and its `failed` accumulator are gone: a failed `DELETE` is logged, not judged, and the post-sweep re-listing is the single authority. **Do not read an exit status as proof — ask the repository.** A structural test asserts the probe stays gone. |
@@ -237,7 +238,7 @@ Publishing a preview tag pushes rewritten workflow files, which needs a GitHub A
 | P15 | `git tag --sort=-creatordate \| head -n 5` in the release procedure lists preview tags fetched locally. | Release snippet gets `--list 'v*'`; note on clearing local preview tags. |
 | P16 | `git grep` on a commit object prefixes matches with `<commit>:<path>:`. | `-h` suppresses filenames (`-o` prints the match only). |
 | P17 | `$(…)` in the build step swallows a non-zero exit under `set -e` only if the substitution is the whole command. | The build step runs under the runner's `bash -eo pipefail`; substitutions are assigned to variables (`x="$(…)"`), which *does* propagate the exit status. Kept minimal deliberately. |
-| P18 | Supply chain: the job mints a write-capable token next to third-party actions. | Only `actions/checkout` and `actions/create-github-app-token` run in that job (repo convention pins by major tag; both are GitHub-owned). If this repo ever moves to SHA pinning, this workflow first. |
+| P18 | Supply chain: the job mints a write-capable token next to third-party actions. | Only `actions/checkout`, `actions/create-github-app-token` and this repo's own `pr-comment` run in that job (repo convention pins by major tag; both are GitHub-owned). If this repo ever moves to SHA pinning, this workflow first. |
 | P19 | `workflows: write` granted at mint but not at install → mint fails with a 422. | The failure is the job's; §5 step 1 lists both permissions; the bootstrap comment names the doc. |
 | P20 | `# TODO revert to @v0` markers on a branch that still uses the old manual swap. | Harmless; the script rewrites any ref. The doc tells authors to drop the swap commit and use the preview ref instead. |
 | P21 | Draft PRs. | No draft gate: drafts are precisely when you want to test. |
@@ -283,7 +284,7 @@ Suite: `.github/scripts/test-rewrite-internal-refs.sh`, offline, fixture-based (
 - GitHub's ref-resolution semantics for `uses:` (tags vs branches, `Set up job` timing) — asserted by the guard's construction, verified once by consuming a preview from a calling repo and reading its `Set up job` log ("Download action repository 'dsb-norge/github-actions-terraform@preview/pr-N-<sha7>'").
 - Cleanup on `closed` — verified once by closing the introducing PR and listing `git/matching-refs/tags/preview/`.
 
-## 10. Day-to-day procedure (goes into Development-and-release.md)
+## 10. Day-to-day procedure (as in Development-and-release.md)
 
 1. Open a PR (draft is fine). Wait for the `🏷️ Publish preview ref` check.
 2. Copy the `uses:` line from the sticky comment into the calling repo's workflow, above it `# TODO revert to '@v1'`.
@@ -306,16 +307,7 @@ This is the old procedure minus the regex, the markers and the branch/tag split 
 
 ## 11. Delivery
 
-Lands **inside the apply-and-destroy-reporting PR** (branch `feat/apply-destroy-reporting`, D4) — the PR that most needs it: it currently carries the manual swap. Commits in this order, each self-contained, after the reporting commits:
-
-1. `docs: spec for preview refs` — this file, decisions taken.
-2. `feat(ci): publish preview/pr-<N> tags for every same-repo PR` — script, its test suite and the workflow together: the F-guard test needs the workflow, and a rewriter without its publisher is not a state worth reverting to.
-3. `docs: replace the dev-tag swap procedure with preview refs` — Development-and-release.md, README.md, Testing-in-ci.md cross-reference, two stale lines in Apply-and-destroy-reporting.md.
-4. `chore: update CLAUDE.md development workflow for preview refs` — AI config, own commit.
-
-Acceptance on the introducing PR: the bootstrap comment appears (no App yet) → App configured → re-run → refs appear → a calling repo consumes `preview/pr-<N>` and its `Set up job` log shows the pinned tag for every action → close → refs gone.
-
-Once the refs appear, the reporting PR drops its manual swap commit (`chore: swap @v0 action refs to dev tag …`), deletes the dev tag, and the calling repo used for validation moves from the branch name to `preview/pr-<N>` — with a backup branch before the history rewrite, per the working agreement.
+The spec, the workflow with its script and test suite, the documentation and the AI configuration landed as separate commits, together with the apply-and-destroy reporting (D4). What the introducing pull request's runs showed is §14.
 
 ## 12. Decisions — taken
 
@@ -324,7 +316,7 @@ Once the refs appear, the reporting PR drops its manual swap commit (`chore: swa
 | D1 | Which App pushes the tags? | (a) new dedicated App, repo-level `PREVIEW_APP_ID` / `PREVIEW_APP_PRIVATE_KEY`; (b) reuse `dsb-norge-terraform-cicd-access` with `workflows: write` added and installed here. | **(a)** — §5. |
 | D2 | Sticky comment shape | A prose / B table | **B** — §7 (A kept as considered). |
 | D3 | Tag namespace | `preview/pr-<N>` / `dev/pr-<N>` / `pr-<N>` | **`preview/`** — §4.3. |
-| D4 | Where it lands | own PR / inside the apply-and-destroy-reporting PR | **inside the reporting PR** — it is the PR carrying the manual swap today, so it becomes the first consumer; the recommendation was a separate PR, the user chose to couple them. |
+| D4 | Where it lands | own PR / inside the apply-and-destroy-reporting PR | **inside the reporting PR** — the PR that carried the manual swap, so it was the first consumer; the recommendation was a separate PR, the user chose to couple them. |
 
 ## 13. Out of scope / follow-ups
 
