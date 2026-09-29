@@ -63,7 +63,7 @@ engine/
 │   ├── decide.py             # core: the decide command, input document in, output document out
 │   ├── environments.py       # core: rule 1 (Configuration-validation.md) and rule 7, the rows
 │   ├── triggers.py           # core: rules 2, 3 and 5: trigger events, the dispatch filter, the granted goals, the dispatch lines
-│   ├── ordering.py           # core: rule 6: the declared depends-on graph validated, the stages assigned (Environment-ordering.md §4)
+│   ├── ordering.py           # core: rule 6: the declared depends-on graph validated, the stages assigned (Environment-ordering.md §4-§5)
 │   ├── values.py             # core: jq-compatible rendering, merge and per-goal normalisation
 │   ├── globs.py              # core: the one glob matcher (Terraform-tests.md §4.4)
 │   ├── relevance.py          # core: rule 4, path relevance (Path-relevance.md §3-§5)
@@ -162,17 +162,17 @@ and `deleted`, a pull request's action, number, head commit and whether it comes
 the run's id and attempt from the runner; then it fetches the changed files (§3.1). Then it
 decides in-process, logs the inputs, the changed files, the input document (with the file list
 elided, since it is already in its own group), the decision record and the matrix in collapsed
-groups printed verbatim (P20), turns each validation error into one escaped `::error` annotation
-and each notice into one `::notice`, writes `relevance.json` (the output document without its
-matrices) under `RUNNER_TEMP`, and appends `matrix-json`, the per-stage matrices and counts, the
-counts, the relevance mode, reason and changed count, the test matrix, count and flag, and the
-file's path to `$GITHUB_OUTPUT`, each under a random delimiter. Every external program sits behind
-one `Tools` object, so the tests stand in for `yq` and `gh`.
+groups printed verbatim (P20), turns each validation error into one escaped `::error` annotation,
+each notice into one `::notice` and each warning into one `::warning`, writes `relevance.json`
+(the output document without its matrices) under `RUNNER_TEMP`, and appends `matrix-json`, the
+per-stage matrices and counts, the counts, the relevance mode, reason and changed count, the test
+matrix, count and flag, and the file's path to `$GITHUB_OUTPUT`, each under a random delimiter.
+Every external program sits behind one `Tools` object, so the tests stand in for `yq` and `gh`.
 
 ### 3.1 Adapters
 
 Adapters fetch facts and report them raw; they decide nothing. `adapter.py` is the first; the
-features bring two more, as adapter-side modules under the same gates:
+features bring two more fact-gatherings, both in `adapter.py`, under the same gates:
 
 - fetching the changed files (in `adapter.py`) calls the pull request or compare endpoints and
   reports `{available, truncated, error, api_head_sha, count, files}`, the file list inline because
@@ -183,8 +183,8 @@ features bring two more, as adapter-side modules under the same gates:
 - gathering the test facts (in `adapter.py`, Terraform-tests.md D20) lists committed test files,
   the directories that hold `.tf` files, and the environments' lock files by `project-dir`, in the
   same step; the engine derives roots, lanes, environments and provider sets and validates them.
-  `create-tftest-matrix` stays as it is, with its `all-tests` output, for the module CI workflow
-  until that migrates.
+  The module CI workflow gathers the same test facts through the same adapter in mode `module`
+  (§3.3); `create-tftest-matrix` is retired.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -260,7 +260,7 @@ The features extend it; the full document, as they specify it:
     "triggering_actor": "octocat",
     "base_ref": "main",
     "push": { "created": false, "forced": false, "deleted": false },
-    "pull_request": { "number": 87, "head_sha": "…", "is_fork": false, "draft": false },
+    "pull_request": { "number": 87, "head_sha": "…", "is_fork": false },
     "dispatch": { "block": true, "environment": "", "goal": "", "reason": "", "inputs": ["environment", "goal", "reason"] }
   },
   "workflow_inputs": { … },
@@ -290,9 +290,10 @@ The features extend it; the full document, as they specify it:
 - Only the sections a command needs must be present; an absent `tests` section means "no test
   stage", an absent `changed_files` means "relevance not computed" (mode `all`, reason
   `not-computed`). `run`, `event.action`, `event.push` and `event.pull_request` are optional too;
-  when present they are checked whole. As built: `push` holds exactly its three booleans,
-  `pull_request` its `number`, `head_sha` and `is_fork`, `changed_files` exactly its six facts,
-  `dispatch` exactly its five keys; `draft` arrives with the rule that reads it.
+  when present they are checked whole. As built: `push` holds its three booleans, `pull_request`
+  its `number`, `head_sha` and `is_fork` (any other key of these two passes unread),
+  `changed_files` exactly its six facts, `dispatch` exactly its five keys; no rule reads a pull
+  request's `draft`, so the document does not carry it.
 - A renamed file is in `files` under both its paths; `count` is what the API counted, one per
   changed file.
 - Secrets never enter the document. Whether secrets are available is derived by the engine from
@@ -325,7 +326,7 @@ goals, the test stage and the comment manifest (the tests block is shown below):
       "pr-auto-merge-enabled": "false", "pr-auto-merge-from-actors": [], "pr-auto-merge-limits": { … },
       "paths": ["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], "paths-ignore": ["**/*.md"],
       "trigger-events": ["pull_request", "push", "workflow_dispatch"], "relevant": true,
-      "goals": ["init", "format", "validate", "lint", "plan"] },
+      "depends-on": [], "stage": 1, "goals": ["init", "format", "validate", "lint", "plan"] },
     { "environment": "staging", "verdict": "skip", "reasons": ["relevance: no changed file matches"], "relevant": false, … }
   ],
   "matrices": { "1": { "environment": ["prod"], "include": [ { "environment": "prod", "vars": { … } } ] } },
@@ -355,12 +356,13 @@ relevant to it, published whatever its verdict (true in mode `all`), so the auto
 tell a change to an environment that takes no part in pull requests (Auto-merge.md D6). A running environment's entry also
 carries its granted `goals`, equal to its row's `goals-granted` (I16), and its reasons end with
 them. An environment dropped by rule 2 or 3 is skipped for that rule's reason, `trigger-events:
-<event> not enabled` or `dispatch: not the requested environment`, and relevance is not evaluated
-for it. `trigger` names the event and holds the lines the run summary quotes and that lead the
-notices: who dispatched what, a dispatch without an inputs block or without the standard inputs,
-or a schedule no environment takes part in (Dispatch-and-triggers.md §5). `warnings` holds the
-settings that are valid but change nothing, such as an environment's `pr-auto-merge-enabled: true`
-while the input is false, before the test stage's warnings. The features extend it to the full document:
+<event> not enabled` or `dispatch: not the requested environment`; relevance does not decide its
+verdict, though its `relevant` is still computed and published. `trigger` names the event and
+holds the lines the run summary quotes and that lead the notices: who dispatched what, a dispatch
+without an inputs block or without the standard inputs, or a schedule no environment takes part in
+(Dispatch-and-triggers.md §5). `warnings` holds the settings that are valid but change nothing,
+such as an environment's `pr-auto-merge-enabled: true` while the input is false, before the test
+stage's warnings. The features extend it to the full document:
 
 ```json
 {
@@ -379,7 +381,7 @@ while the input is false, before the test stage's warnings. The features extend 
   "ordering": { "declared": true, "stages_used": 2, "cap": 3, "bypass": null },
   "tests": {
     "matrix": { "include": [ … ] },
-    "count": 12, "active": true,
+    "count": 12, "active": true, "missing": false,
     "not_run": [ { "file": "…", "lane": "…", "reason": "secrets unavailable" } ],
     "provider_sets": [ { "id": "a1b2c3", "environments": ["prod","staging"], "lock": "envs/prod/.terraform.lock.hcl" } ]
   },
@@ -389,7 +391,7 @@ while the input is false, before the test stage's warnings. The features extend 
                { "kind": "env", "key": "staging", "state": "not-affected", "title": "Terraform validation summary" } ],
     "purge_tags_for": ["staging"]
   },
-  "record": [ "prod: run — trigger-events: pull_request; relevance: envs/prod/**; goals: init, format, validate, lint, plan",
+  "record": [ "prod: run — relevance: main/**; ordering: stage 2; goals: init, format, validate, lint, plan, apply",
               "staging: skip — relevance: no changed file matches" ]
 }
 ```
@@ -482,9 +484,10 @@ not evaluated:
 
 Secrets availability is not a rule for environments: a fork pull request's environments run and
 fail on authentication, as today (Path-relevance.md §7.4). It is a rule for test rows, in `tests.py`,
-which follows its own procedure: root derivation, misplacement, exclusion, lane match, secrets
-availability, provider sets, environment naming, then rows. Comments are derived last, from the
-environments' verdicts and the event.
+which follows its own procedure: the lanes and their environment names validated, the provider
+sets derived, then per file exclusion, lane match, root derivation and misplacement, secrets
+availability, then its rows. Comments are derived last, from the environments' verdicts and the
+event.
 
 ## 7. Invariants
 
@@ -492,7 +495,8 @@ Checked by `invariants.py` on every case of every kind (§8). A violated invaria
 even when the case's expected output matches. An invariant is checked from the commit that builds
 the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, the test
 stage I4 and I9, trigger events, the dispatch filter and the granted goals I1, I2, I3, I15, I16
-and I17 (derived apart from `triggers.py`, from the raw goals and the event), and properties of their own: an output with errors carries no environments, no
+and I17 (derived apart from `triggers.py`, from the raw goals and the event), the ordering I18 to
+I24, and properties of their own: an output with errors carries no environments, no
 matrices and no relevance block, the record has one line per environment, the affected and
 unaffected counts sum to the environments decided, and the test count, the active flag and the
 test rows agree, with every slug unique.
@@ -511,7 +515,7 @@ test rows agree, with every slug unique.
 | I11 | Every `skip` verdict and every `not_run` entry has a non-empty reason from the fixed vocabulary. |
 | I12 | The output is byte-identical across runs with `PYTHONHASHSEED=0` and `=1`, and invariant under a permutation of the input document's key order. |
 | I13 | With `path-relevance-enabled: false`, every environment's relevance reason is `all:disabled` and every environment that passed rules 2, 3 and 5 runs. |
-| I14 | A `not-affected` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` for a relevance reason (a `not-taking-part` head: for a `trigger-events` reason) and `add-pr-comment: true`; a grouped environment gets no per-environment head at all. |
+| I14 | A `not-affected` head, a `not-taking-part` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` and `add-pr-comment: true`: a `not-affected` head for a relevance reason, a `not-taking-part` head for a `trigger-events` reason, a tag purge for either; a grouped environment gets no per-environment head at all. |
 | I15 | `destroy` is never granted on `schedule`; on `workflow_dispatch` it is granted only when the environment's own goals hold it and the ref is the default branch, never through the `goal` input. |
 | I16 | `environments[].goals` equals `vars.goals-granted` for every `run` row. |
 | I17 | A dispatch with a non-empty `environment` input yields at least one `run` verdict or an error, never a green empty matrix. On `schedule` the empty case is permitted, with the documented notice. |
@@ -527,16 +531,17 @@ I5 of the first draft restated rule 2 and is folded into it.
 
 ## 8. Tests
 
-Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests run` /
+Seven kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests run` /
 `Tests passed` / `Tests failed` lines of [Testing-in-ci.md](Testing-in-ci.md) §4 and enrols in
 `action-tests.yml` like every action.
 
-1. **Port cases** (§9), 73 of them under `tests/port/cases/<name>/`: the bash suite's three
+1. **Port cases** (§9), 76 of them under `tests/port/cases/<name>/`: the bash suite's three
    fixtures, the workflow's full default `toJSON(inputs)` (every key present, booleans as JSON
    booleans, which the old fixtures were not), seventeen anonymised shapes of the real callers, and
    one case per edge of the bash builder's code. `case.json` holds the inputs, the ref, the default
    branch and the directories that exist; `expected.json` is the bash builder's own output, pinned
-   while it still ran; `input.json` is the document the adapter builds for the case. Each must decide
+   while it still ran (the three `-v1` cases, written after it, have none: their `engine_expected`
+   is the golden); `input.json` is the document the adapter builds for the case. Each must decide
    the `matrix-json` of `expected.json`, compared as parsed JSON with row order (nothing downstream
    reads key order), or its errors in order. A case whose `engine_expected` records a deliberate
    deviation, with its reason, is held to that instead. The bash suite's helper cases migrated to
@@ -560,18 +565,19 @@ Four kinds, one suite, one `run_all_tests.sh` that prints the canonical `Tests r
    that the engine either produces an output document or a validation error, never a crash.
    A second walk of 3,000 covers relevance: rule shapes, project directories, the switch, the
    events, the push and pull request facts and random changed files, and must reach both verdicts.
+   A third walk of 1,500 covers the test stage: rules, lanes, events and facts.
 5. **Negative tests, one check at a time** (`test_validation.py`): every required field removed on
    its own, every not-empty field emptied on its own, each producing exactly its one message; the
    required fields deliberately allowed empty pinned as such; what counts as empty; the reporting
    order; the directory check failing closed for a path the adapter did not report; every forwarded
    input missing or empty end to end; and a structural test that every `matrix.vars.*` key the
-   workflow reads is guaranteed by the required list, except the two recorded in §9.
+   workflow reads is guaranteed by the required list or set by the engine (`goals-granted`).
 6. **The checker checked** (`test_invariants.py`): each invariant fires on an output broken in
    exactly one way, so a checker that let everything through would fail.
 7. **The contract with the readers** (`test_contract.py`, `relevance_fixture.py`): the
    aggregator, the run summary and the auto-merge evaluator test against hand-written
    `relevance.json` files, which a renamed key in the engine would leave green. The helper writes
-   the file through the adapter's own `write_relevance_file` for three scenarios, each reader's
+   the file through the adapter's own `write_relevance_file` for six scenarios, each reader's
    suite runs its step on it, and `test_contract.py` pins the keys those readers read as literals
    and keeps the helper deciding.
 
@@ -695,8 +701,8 @@ them:
   twenty-two not-empty fields are not the empty string (`[]`, `{}` and `null` pass), every failure
   of every environment reported before stopping; then every `project-dir` exists, likewise all reported;
 - the shape `{"environment": [names], "include": [{"environment", "vars"}]}` with `vars` the
-  whole row, for each stage's matrix and for `matrix-json`; the action's only input is
-  `inputs-json`.
+  whole row, for each stage's matrix and for `matrix-json`; the action's inputs are `inputs-json`
+  and `mode` (§3.3).
 
 A port case is a dispatch, which fetches no changed files: every environment has verdict `run`
 with the reason `relevance: all:event`, as before relevance. The deliberate deviations, each
@@ -738,7 +744,7 @@ preview-ref run on the test-bed repository closes it (§13).
 | P1 | An old self-hosted runner may carry an older Python. | Syntax or import errors at start-up in the `create-matrix` job. | `run.py` checks the version before importing anything and exits naming the floor; `create-matrix` runs on the workflow's `runs-on`, which defaults to `ubuntu-latest`. |
 | P2 | PyYAML is not on every runner. | An import error on the one runner without it. | YAML never reaches the core; the adapter runs `yq`. |
 | P3 | Dictionary and set iteration order leaks into output. | Non-deterministic outputs, flaky goldens, flapping comments. | Sorted where the input has no order; I12 checks it. |
-| P4 | `coverage` is not preinstalled, and `pip install --user` is refused on the hosted images (externally managed environment). | The suite cannot install its gate the obvious way. | `pipx run coverage==<pin>` (preinstalled pipx), `python3 -m coverage` as the fallback; the network access is accepted for CI; the gate is not optional. |
+| P4 | `coverage` is not preinstalled, and `pip install --user` is refused on the hosted images (externally managed environment). | The suite cannot install its gate the obvious way. | `python3 -m coverage` where it is importable, else `pipx run coverage==<pin>` (preinstalled pipx); the network access is accepted for CI; the gate is not optional. |
 | P5 | The changed-file list can be a quarter of a megabyte. | ARG_MAX through the steps context if it ever became an output. | Files by path in the input document; outputs carry counts. |
 | P6 | A step's `env:` and a dispatch payload hand every value over as a string. | `"false"` is truthy. | `workflow_inputs` is `toJSON(inputs)`, which keeps the declared types; the adapter normalises dispatch inputs to strings with `""` for an absent key; the model validates types and rejects the rest. |
 | P7 | A crash in the engine is a `create-matrix` failure, which the conclusion reports red for every caller on the release. | A fleet-wide red on a bad minor of `v1`. | The random-case tests assert "never a crash"; the port's goldens; the preview-ref run before release. |
