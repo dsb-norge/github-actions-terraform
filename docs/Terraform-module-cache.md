@@ -306,9 +306,9 @@ For each included directory, the audit collects the module declarations
    set for both the digest and the §4.5 classification.
 
 The walk is confined to `$GITHUB_WORKSPACE` — a local source resolving outside
-it is skipped with a notice, since terraform would fail on it anyway — memoised
-per resolved directory so a diamond is not re-walked, and cycle-guarded on the
-current chain.
+it is skipped with a logged warning, since terraform would fail on it anyway —
+memoised per resolved directory so a diamond is not re-walked, and cycle-guarded
+on the current chain.
 
 Feed the normalised result to `sha256sum`:
 
@@ -340,8 +340,8 @@ restore; after init, the two are compared with the `Modules` array normalised
 the resolved module set changed while the key did not:
 
 ```
-::warning::module cache digest is incomplete for '<dir>' — the module set
-changed on an exact cache hit. The cache is not helping for this directory.
+::warning::terraform-module-cache: module cache digest is incomplete for '<dir>'
+— the module set changed on an exact cache hit. The cache is not helping for this directory.
 ```
 
 The comparison runs only for directories that were included in the cache, so an
@@ -596,7 +596,7 @@ Three further invocations of the action support this:
   `cache-enabled` alone, because it must not touch a tree that is not about to
   be saved.
 
-Both belong to the action rather than to inline `run:` blocks in the workflow.
+All three belong to the action rather than to inline `run:` blocks in the workflow.
 The classifier has to be shared (§4.5.2) and workflow YAML cannot share code
 with an action; the before-image filename likewise has to be agreed between the
 step that writes it and the step that reads it, and one place should own it.
@@ -618,17 +618,26 @@ disk before it runs, and init discovers it.
 `cache-terraform-modules`, `type: boolean`, default `true`, with the usual
 per-environment override in `environments-yml`.
 
-Per `CLAUDE.md`, a plain boolean input needs no matrix-builder logic — the
-generic input-forwarding loop propagates it. Required changes are only:
+Per `CLAUDE.md`, a plain boolean input needs no forwarding logic — the engine's
+generic input forwarding (`build_row`) propagates it. What it does need:
 
 - the `inputs:` block in the workflow, plus the per-env bullet in the
   `environments-yml` description;
-- `REQ_FIELDS` and `NOT_EMPTY_FIELDS` in
-  [create-tf-vars-matrix/action.yml:246-289](../create-tf-vars-matrix/action.yml);
-- the JSON test fixtures under `create-tf-vars-matrix/`.
+- `PER_ENVIRONMENT_INPUTS`, `BOOLEAN_INPUTS`, `REQUIRED_FIELDS` and
+  `NOT_EMPTY_FIELDS` in
+  [engine/dsb_tf_engine/environments.py](../engine/dsb_tf_engine/environments.py);
+- the inputs of the port cases under `engine/tests/port/cases/` and of the
+  `create-tf-vars-matrix` suite.
 
 It stays a string in the matrix (`matrix.vars.cache-terraform-modules == 'true'`)
-— no `fromJSON()` normalization, since nothing needs it as a JSON boolean.
+— a per-environment value is normalised to `"true"`/`"false"` like every boolean
+input, with no `fromJSON()` normalization, since nothing needs it as a JSON
+boolean.
+
+The test stage reads the same input: a lane in `terraform-test-lanes-yml` may
+override it, and the test job gates its module cache on
+`matrix.test.cache-terraform-modules`
+([Terraform-tests.md](Terraform-tests.md) §3.2, §5.3).
 
 ## 7. Cache scoping — what to actually expect
 
@@ -812,10 +821,10 @@ The local-source walk (§4.4.1) — the part most likely to be got wrong:
 |---|---|
 | `t11_local_to_remote` | dir declares only `../../main`; `main` pulls a pinned remote module → **included**, digest non-empty, path emitted |
 | `t12_local_to_mutable` | as above but `main` pulls `?ref=main` → **excluded**, notice names the transitive source |
-| `t13_local_nested_depth` | two levels of local indirection before the remote module → reached, dot-path key `a.b.c` |
+| `t13_local_nested_depth` | two levels of local indirection before the remote module → reached, dot-path key `b.c.leaf` |
 | `t14_local_diamond` | two labels reaching the same local dir → memoised, both dot-paths present, no duplicate work |
 | `t15_local_cycle` | local modules referencing each other → terminates, no infinite recursion |
-| `t16_local_escapes_workspace` | `../../../outside` → skipped with a notice, no crash, no read outside `$GITHUB_WORKSPACE` |
+| `t16_local_escapes_workspace` | `../../../elsewhere` → skipped with a logged warning, no crash, no read outside `$GITHUB_WORKSPACE` |
 | `t17_digest_follows_local` | bumping a pin **inside** `main` changes the consuming dir's digest |
 
 Key and paths:
@@ -979,8 +988,8 @@ Rejected, with reasons, because each is a plausible-sounding change to propose:
 - **Making default-branch runs restore-free** to keep a poisoned entry out of
   `apply`. Reasoning in §7.2.
 - **A rolling month stamp in the key** to bound inheritance. A workaround for a
-  problem that A removes outright; costs a guaranteed cold start per environment
-  per month.
+  problem that the absence of `restore-keys` removes outright (§7.1); costs a
+  guaranteed cold start per environment per month.
 
 Genuine follow-ups:
 
