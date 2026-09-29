@@ -1,16 +1,14 @@
 name: DSB Terraform module release
 #
-# A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
-#   permissions:
-#     contents: write  # required for release-please to create a release PR
-#     pull-requests: write   # required for release-please to create a release PR
+# Opens and updates a module repository's release pull request with release-please. Spec:
+# docs/Module-ci.md; user guide: docs/Workflow-terraform-module-release.md.
 #
-# The following secrets must be available in the github 'secrets' context:
-#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY   <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
-#
-# The following variables must be available in the github 'vars' context:
-#   - vars.ORG_TF_CICD_APP_ID               <-- app id from here: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
-#   - vars.ORG_TF_CICD_APP_INSTALLATION_ID  <-- app installation id found in url if you "configure" the app 'dsb-norge-terraform-cicd-access' from here: https://github.com/organizations/dsb-norge/settings/installations
+# release-please works with the organisation's CI App token, not the calling job's GITHUB_TOKEN: a
+# pull request opened or updated with GITHUB_TOKEN starts no workflow, so the release pull request
+# would never get its module CI run. The App is read from:
+#   - vars.ORG_TF_CICD_APP_ID              <-- the App's ID (or its client ID)
+#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY  <-- a private key of the App
+# From the calling workflow: `secrets: inherit`. The calling job needs no permissions for this.
 #
 on:
   workflow_call:
@@ -18,19 +16,19 @@ on:
 jobs:
   release-pr:
     runs-on: ubuntu-latest
+    permissions: {} # release-please works with the App token below
     steps:
-      # need a token that will trigger the ci/cd workflow when release PR is created/updated
-      - name: "🔑 Obtain GitHub app installation access token for the terraform CI/CD app"
-        id: auth
-        uses: dsb-norge/github-actions/get-github-app-installation-token@v2
+      # The installation's permissions, as the App grants them: contents and pull requests for the
+      # release pull request, and labels on it.
+      - name: "🔑 Create GitHub App token"
+        id: app-token
+        uses: actions/create-github-app-token@v3
         with:
-          github-app-id: ${{ vars.ORG_TF_CICD_APP_ID }}
-          github-app-installation-id: ${{ vars.ORG_TF_CICD_APP_INSTALLATION_ID }}
-          github-app-private-key: "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}"
+          client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
+          private-key: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}
       - name: "🚀 Create or update the release pull request"
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please
         with:
           release-type: terraform-module
-          # using the token that will re-trigger the workflow if changes are pushed to the pr branch
-          token: ${{ steps.auth.outputs.github-token }}
+          token: ${{ steps.app-token.outputs.token }}
