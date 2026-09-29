@@ -3396,6 +3396,42 @@ else
 fi
 
 # ============================================================================
+# F22 — the documentation index lists every document, and only documents that exist.
+#
+# docs/README.md is where a reader starts; a document missing from it is one
+# nobody finds, and a row for a deleted document is a dead link.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F22 - docs/README.md indexes every document${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f22_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, os, re, sys
+
+with open('docs/README.md', encoding='utf-8') as fh:
+    index = fh.read()
+targets = set(re.findall(r'\]\(([^)#]+)(?:#[^)]*)?\)', index))
+docs = sorted(os.path.basename(path) for path in glob.glob('docs/*.md') if not path.endswith('/README.md'))
+problems = [f"docs/{doc} is not linked from docs/README.md; add a row under its kind" for doc in docs if doc not in targets]
+problems += [f"docs/README.md links {target}, which does not exist" for target in sorted(targets)
+             if not os.path.exists(os.path.normpath(os.path.join('docs', target)))]
+print(f"checked {len(docs)} document(s) and {len(targets)} link(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f22_rc=0 || _f22_rc=$?
+if [[ "${_f22_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f22_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f22_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
