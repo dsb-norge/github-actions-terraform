@@ -122,8 +122,12 @@ inputs_file="$(mktemp)"
 cat >"${inputs_file}" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'
 ${{ inputs.inputs-json }}
 CREATE_TF_VARS_MATRIX_INPUTS_JSON
-python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"
+python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}" \
+  --mode "${MODE}"
 ```
+
+`MODE` is the action's `mode` input, from the step's `env:`: `project` for the project workflow,
+`module` for the module workflow (§3.3).
 
 - **The inputs reach Python through a file**, never a variable or argv. GitHub pastes the
   expression into the script before bash parses it. The heredoc is quoted, so bash expands
@@ -189,11 +193,23 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | Command | Input | Output | Used by |
 |---|---|---|---|
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
-| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log | the `create-tf-vars-matrix` action |
+| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing` and the decision file (§3.3) | the `create-tf-vars-matrix` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
 partial document before the adapters run, and a `render-summary` of an output document. The run
 summary is `create-run-summary`'s, from `relevance.json` (P12 says what that costs).
+
+### 3.3 The module mode
+
+The module workflow runs the same command with `--mode module` ([Module-ci.md](Module-ci.md) §5).
+The adapter then builds a document without environments, locks or changed files, and marks it
+`"mode": "module"`. `decide` skips every environment rule and decides the test stage alone. It
+runs the same discovery, root rule, lanes and validation with no environment rows, so every test
+root floats its providers. It checks the event as rule 2 does, and tests run on `pull_request`,
+`push`, `workflow_dispatch` and `schedule`. With the module workflow's `terraform-test-required`,
+the tests block's `missing` flag is set and a warning names the fix when no test file runs or is
+held back from a fork. The output carries `tests`, `notices`, `warnings`, `trigger` and a record of
+one line per test file. The decision file holds those keys and the mode.
 
 Exit codes: 0 success, 2 validation error, 1 anything that is not the caller's configuration: a
 malformed input document, an unreadable file, a broken `yq`, an unanswerable API, a usage error
