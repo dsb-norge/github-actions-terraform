@@ -890,9 +890,10 @@ Lifecycle, in the terms of Workflow-pr-comments.md:
 - **PATCHed** by this job with the final body on every eligible pull-request run.
 - **Deleted** by this job when the count is zero and the marker exists (the last test file was
   removed on an open pull request). A pull request that never had tests has nothing to delete.
-  `terraform-test-enabled: false` skips this job, so a head posted earlier stays. Deleting loses
-  the head's position; if tests return, the seed re-posts it at the bottom. Rare, and better than a
-  stale result.
+  Deleting loses the head's position; if tests return, the seed re-posts it at the bottom. Rare,
+  and better than a stale result.
+- **Left as it is** when the stage is switched off: `terraform-test-enabled: false` skips this job,
+  so nothing deletes or updates a head an earlier run posted.
 
 Not posted on forks, on `add-pr-comment: false`, or on `closed` / `converted_to_draft` actions,
 matching the existing guards. Bodies travel as file paths into `pr-comment`'s `body-file`.
