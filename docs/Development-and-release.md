@@ -80,7 +80,7 @@ After a bump, a test-bed run's logs are checked for deprecation warnings
 ## Documentation
 
 - **Every document is in the index.** [README.md](README.md) in this folder lists each document once,
-  under its kind (user guide, migration, spec, contributor guide, tracking), with what it covers.
+  under its kind (user guide, migration, spec, contributor guide), with what it covers.
   A new document gets its row in the change that adds it; F22 in
   `evaluate-automerge-eligibility/run_all_tests.sh` fails on a document the index misses or a row
   whose document is gone.
