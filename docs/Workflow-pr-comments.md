@@ -20,20 +20,20 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 | Marker | Class | Cardinality | Posted/refreshed by |
 |---|---|---|---|
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
-| `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final) |
-| `<!-- tf:head:tests:<caller> -->` | Head | One per calling workflow, when it has test files | Seed job (initial), `terraform-test-summary` job via [`create-test-summary`](../create-test-summary/) (final, or deleted when the last test file is gone) |
+| `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final); for an env a failed earlier stage held back, the aggregator (final, [Environment-ordering.md §7.4](Environment-ordering.md)) |
+| `<!-- tf:head:tests:<caller> -->` | Head | One per calling workflow, when it has test files | Seed job (initial), `terraform-test-summary` job via [`create-test-summary`](../create-test-summary/) (final, or deleted when the last test file is gone); [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) has its own copy of that job and no seed |
 | `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt | Matrix job for that env |
 | `<!-- tf:tag:apply:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt **that ran apply** | Matrix job for that env (phase 2) |
 | `<!-- tf:tag:destroy-plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt that ran destroy-plan | Matrix job for that env (phase 2) |
 | `<!-- tf:tag:destroy:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt that ran destroy | Matrix job for that env (phase 2) |
 | `<!-- tf:head:module -->` | Head | One | [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) validation summary |
-| `<!-- tf:head:test:<test-file> -->` | Head | One per test file | [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) test report |
+| `<!-- tf:head:test:<test-file> -->` | Head | None posted: the v0 module CI's per-file test comments, replaced by the tests head | [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) deletes every one it finds (prefix `<!-- tf:head:test:`) |
 
 The three operation tags follow the plan tag's lifecycle exactly (purged at the top of the matrix job, POSTed fresh) and are presence-gated on the step having run — an env that only plans keeps exactly the two comments it always had. See [Apply-and-destroy-reporting.md §7.6](Apply-and-destroy-reporting.md).
 
 Marker name conventions:
 
-- Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env` / `tests`. The tests head's name is the calling workflow's name reduced to `[A-Za-z0-9_-]`, because a repository may call this workflow from two workflows and both would otherwise fight over one head ([Terraform-tests.md §6.3](Terraform-tests.md)); its closing ` -->` keeps `…tests:ci -->` from matching `…tests:ci-x -->`.
+- Heads: `tf:head:<scope>:<name>` where `<scope>` is one of `group` / `env` / `tests` (the module CI's `tf:head:module` has no name). The tests head's name is the calling workflow's name reduced to `[A-Za-z0-9_-]`, because a repository may call this workflow from two workflows and both would otherwise fight over one head ([Terraform-tests.md §6.3](Terraform-tests.md)); its closing ` -->` keeps `…tests:ci -->` from matching `…tests:ci-x -->`.
 - Tags: `tf:tag:<kind>:<scope-key>:run-id-<run-id>:attempt-<run-attempt>`. The run-id distinguishes workflow runs; the attempt token distinguishes re-runs of the same run (`run-id` is stable across attempts, only `run-attempt` increments). Both are needed so re-runs — including "Re-run failed jobs" — get fresh tags without colliding with the prior attempt's.
 
 Markers are treated as opaque substrings by the underlying actions: matching is `body.contains(marker)`. The exact format is enforced by convention in this doc, not by the actions themselves — any unique-enough string works.
@@ -57,7 +57,7 @@ flowchart TD
 The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml) reads the manifest the decision engine composed with path relevance (`comments` in the `relevance` artifact, [Path-relevance.md §6.3](Path-relevance.md)) and hands it to [`pr-comments-reconcile`](../pr-comments-reconcile/) as `heads-yml` and `gc-yml`:
 
 1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value among commenting envs, affected or not, sorted by name; always the `⏳ Awaiting results…` placeholder.
-2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**, in `environments-yml` order. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table. An affected env gets the placeholder; an env the change does not touch gets its final "not affected" body (§5.1), since no matrix job will run to finalise it.
+2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**, in `environments-yml` order. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table. An affected env gets the placeholder; an env the change does not touch gets its final "not affected" body (§5.1), and an env whose `trigger-events` lack `pull_request` its final "does not take part" body (§5.1), since no matrix job will run to finalise either.
 
 Heads are processed in declared order — group heads first, env heads after, and the tests head last, when the run has test files. Reviewers read plans first. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
 
@@ -75,7 +75,7 @@ Each env's matrix job runs the validation pipeline and emits comments in the fol
 
 Steps 2 and 3 are guarded by `always()` so the head and tag refresh even when an earlier step (init, tflint, etc.) failed. Together they are **phase 1** — the reviewer's first feedback, at plan time.
 
-4. **Phase 2** — after `apply`, `destroy-plan` and `destroy` have run, [`create-validation-summary`](../create-validation-summary/) renders again with the operation outcomes, counts, times and warnings; one tag is POSTed per operation that ran (markers `tf:tag:apply:` / `tf:tag:destroy-plan:` / `tf:tag:destroy:`, purged at the top of the job like the plan tag); and the head is PATCHed a second time. `pr-comment` short-circuits on an unchanged body, so a plan-only env costs one API read and no write. Every phase-2 step carries `always()`, and the three new `🧐 Validation outcome` gates for the mutating steps come **after** it — a gate exits 1 and would otherwise skip the render for exactly the failed apply the phase exists to report. The full rationale, ordering and pitfalls: [Apply-and-destroy-reporting.md §7.5](Apply-and-destroy-reporting.md).
+4. **Phase 2** — after `apply`, `destroy-plan` and `destroy` have run, [`create-validation-summary`](../create-validation-summary/) renders again with the operation outcomes, counts, times and warnings; one tag is POSTed per operation that ran (markers `tf:tag:apply:` / `tf:tag:destroy-plan:` / `tf:tag:destroy:`, purged at the top of the job like the plan tag); and the head is PATCHed a second time. `pr-comment` has no unchanged-body short-circuit: every upsert that finds its marker PATCHes, so a plan-only env costs one list read and one PATCH with the same body. Every phase-2 step carries `always()`, and the three `🧐 Validation outcome` gates for the mutating steps come **after** it — a gate exits 1 and would otherwise skip the render for exactly the failed apply the phase exists to report. The full rationale, ordering and pitfalls: [Apply-and-destroy-reporting.md §7.5](Apply-and-destroy-reporting.md).
 
 Phase 2's render also runs on non-PR events and for `add-pr-comment: false` envs — not to post anything, but to feed the per-env block that [`annotate-terraform-outcome`](../annotate-terraform-outcome/) writes to the job's `$GITHUB_STEP_SUMMARY`. That block, plus the run-level table the `run-summary` job writes, is the only reporting surface on `push` / `schedule` / `workflow_dispatch` runs and on fork PRs. See [Apply-and-destroy-reporting.md §8.7](Apply-and-destroy-reporting.md).
 
@@ -85,11 +85,13 @@ Trade-off of the early-purge placement: if the matrix job crashes between the pu
 
 [`aggregate-validation-summaries`](../aggregate-validation-summaries/) downloads all `matrix-job-meta-*.json` artifacts and the `relevance` artifact, builds the per-group rolled-up table, and upserts each `tf:head:group:<group>` head with the final rendered body. Seed job has already pre-allocated these heads, so the upsert resolves to a PATCH (preserving `created_at`). Its desired set of groups is every group `relevance.json` declares for a commenting env, affected or not, plus every group seen in metadata; an env with no metadata because the change did not touch it renders as a column of dashes ([Path-relevance.md §6.4](Path-relevance.md)).
 
+It also finalises the per-env head of every ungrouped commenting env that a failed or cancelled earlier stage held back: that env's matrix job never runs, so nothing else replaces the seed's placeholder. The body says `⏭️ Held back: …` with a collapsed "Ordering" section, and a held-back member of a group keeps its column as `⏭️` cells ([Environment-ordering.md §7.4](Environment-ordering.md)).
+
 ## 4. Re-run behavior
 
 ### Heads
 
-1. Seed phase PATCHes each head body to `⏳ Awaiting results (run #N)…`, or an unaffected ungrouped env's head straight to its final "not affected" body.
+1. Seed phase PATCHes each head body to `⏳ Awaiting results (run #N attempt #M)…`, or an unaffected ungrouped env's head straight to its final "not affected" (or "does not take part") body.
 2. Matrix / aggregator phase PATCHes each head body to its final state. The aggregator finalises every group on every pull-request run, including a group whose members are all unaffected.
 
 Heads keep their original `created_at` across runs (PATCH preserves it). Their position at the top of the conversation is fixed from the first POST onwards.
@@ -101,7 +103,7 @@ Heads keep their original `created_at` across runs (PATCH preserves it). Their p
 3. Envs whose matrix job *doesn't* re-run (e.g. "Re-run failed jobs" with that env having succeeded in the prior attempt) keep their existing plan tag untouched — their plan output didn't change.
 4. Envs the change does not touch have their tags purged by the seed (§3.1); their matrix job does not run at all.
 
-The tests head is PATCHed by the `terraform-test-summary` job on every pull-request run, and deleted by it when the run has no test files left (the last one removed, or the stage switched off, on an open pull request); a pull request that never had tests has nothing to delete.
+The tests head is PATCHed by the `terraform-test-summary` job on every pull-request run, and deleted by it when the run has no test files left (the last one removed or excluded, on an open pull request); a pull request that never had tests has nothing to delete. With `terraform-test-enabled: false` the job does not run, so an existing tests head is left as it is.
 
 The net visual effect on a re-run: heads briefly show "Awaiting results" while matrix is executing, and the prior attempt's plan tags disappear from the conversation within seconds of each matrix job starting. Envs that aren't being re-run keep their existing tags showing the right state.
 
@@ -130,7 +132,7 @@ The rows above are the plan-only shape — what an environment that runs no muta
 
 This table is kept structurally in sync with the per-group head (§5.3) — same row set, labels, col-1 icon tooltips (`<span title="…">`), and Plan-details / Plan-time / Warnings cell conventions and row-presence rules. Two differences are **intentional**, not drift: (1) step-status cells here use text (`` `success` `` / `<kbd>failure</kbd>`) vs emoji in the grouped head — a column-width adaptation (one wide Result column vs many narrow per-env columns); (2) the header shape and footer scope (`[Job log]` job-scoped here vs `[Workflow log]` run-scoped in §5.3). When changing one head's row set or cell shape, change the other to match unless it's one of these two.
 
-The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§5.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§5.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer that older versions emitted below the table.
+The Links row sits at the bottom of the table — same shape as the per-group head's Links column (§5.3) so reviewers learn one navigation pattern. `[log extract]` anchors at this env's plan tag (§5.2) for the current run; `[job log]` anchors at this matrix job's `#logs`. The Links row replaces the standalone `[Job log]` footer below the table; the footer remains only when no tag comment id is supplied, and in the job page's step summary.
 
 The Links row is rendered by `create-validation-summary` when any `*-tag-comment-id` input is supplied, one line per tag in operation order — `[log extract]`, `[apply log]`, `[destroy plan log]`, `[destroy log]` — then `[job log]`. The matrix calls `create-validation-summary` twice per phase for ungrouped envs: once to get the tag body files (used to POST the tags), then again with the resulting comment ids supplied to re-render the head with the Links row. Grouped envs skip the second call (their head body is unused — see grouped mode below).
 
@@ -138,7 +140,7 @@ Bodies leave the action as **file paths** (`head-summary-file`, `plan-extract-fi
 
 Status cells: `` `success` `` for successful steps, `<kbd>failure</kbd>` / `<kbd>cancelled</kbd>` / `<kbd>skipped</kbd>` / `<kbd></kbd>` (empty outcome) for everything else.
 
-Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan@v0` `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to the em-dash `—` (not backtick-wrapped) when the upstream action didn't supply a value — same empty-state convention as the per-group head (§5.3).
+Plan time row is always emitted in ungrouped mode. Renders the upstream `terraform-plan` action's `plan-time` output as `` `mm:ss` `` inside `<span title="mm:ss (minutes:seconds)">`; the tooltip surfaces the unit on desktop hover. Defaults to the em-dash `—` (not backtick-wrapped) when the upstream action didn't supply a value — same empty-state convention as the per-group head (§5.3).
 
 Warnings row is rendered between `📖 Plan` and `📊 Plan details` when `warning-count > 0`. Shape: `| <span title="Warnings">⚠️</span> | Warnings | <span title="Warnings from init+validate+plan">⚠️ N</span> |`. Absent when count is 0, missing, or `?`. The warning bodies live in the plan-tag comment (§5.2), not the head. See [Plan-warnings.md](Plan-warnings.md).
 
@@ -153,6 +155,8 @@ Optional badges (move / import / remove) are appended `<br>`-separated when the 
 #### Not affected
 
 An ungrouped env the change does not touch gets its head written once, at seed time, as its final body: the same title as above, a `➖ Not affected by this pull request: no changed file matches this environment's paths (run #N attempt #M).` line, and a collapsed "Path rules" section listing its included and ignored patterns and the relevance mode, so a reviewer can tell a `diff` run from a fail-open `all` run, in which no head says "not affected". Exact body: [Path-relevance.md §6.1](Path-relevance.md).
+
+An ungrouped env whose `trigger-events` lack `pull_request` gets its head written once at seed time the same way, with a `➖ Does not take part in pull requests: this environment's trigger-events are <events> (run #N attempt #M).` line and no "Path rules" section.
 
 #### Grouped mode
 
@@ -172,11 +176,11 @@ When the env's goals contain `apply-on-pr` and/or `destroy-on-pr`, a blockquote 
 
 1. `Plan: no changes ✅` — when `count-total` is numeric 0 and `has-output-only-changes` is not true.
 2. `<details><summary>Plan: output-only changes ℹ️</summary>…</details>` — when `count-total` is 0 but `has-output-only-changes=true` (the plan changes outputs but no resources).
-3. `<details><summary>Plan: A to add, C to change, D to destroy ℹ️</summary>…</details>` — when `count-total` is numeric > 0. `, I to import` / `, M to move` / `, R to remove` are appended when those counts are non-zero, matching the head's Plan details row: the same badge vocabulary, the same order, the same only-when-non-zero rule. If any of the three core counts is not numeric the line falls back to `Plan: N changes ℹ️`.
+3. `<details><summary>Plan: A to add, C to change, D to destroy ℹ️</summary>…</details>` — when `count-total` is numeric > 0. `, I to import` / `, M to move` / `, R to remove` are appended, in that order, when those counts are non-zero, matching the head's Plan details row in vocabulary and in the only-when-non-zero rule (the row lists move before import). If any of the three core counts is not numeric the line falls back to `Plan: N changes ℹ️`.
 4. `<details><summary>Show Plan (last 65k characters)</summary>…</details>` — fallback when `count-total` is missing or `?` (parse failed).
 5. `Plan not available 🤷‍♀️` — when no plan output is available at all.
 
-All `<details>` shapes wrap the plan text in a `` ```terraform `` code fence. The plan text is capped at 65000 characters (tail-trimmed) to stay under GitHub's 65536-char comment limit.
+All `<details>` shapes wrap the plan text in a `` ```terraform `` code fence. The plan text is the tail of the plan, cut on a line boundary to a byte budget of 65000 less a 500-byte overhead, the warnings and the banner, to stay under GitHub's 65536-char comment limit ([Plan-warnings.md §5](Plan-warnings.md)).
 
 When `warning-count > 0`, a sibling `<details><summary>⚠️ N warnings</summary>…</details>` collapser is appended after the `<plan-block>` inside the same plan-tag comment. The two collapsers are siblings, not nested; the warnings collapser is **not** a sixth `<plan-block>` shape. See [Plan-warnings.md §5–§6](Plan-warnings.md) for the budgeting algorithm (warnings have priority over plan output when the combined body would exceed 65000 chars) and the rendered shape.
 
@@ -214,9 +218,11 @@ Warnings row is rendered between the step rows and `📊 Plan details`, and only
 
 Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missing. Both wrapped in `<span title="mm:ss (minutes:seconds)">` so desktop hover surfaces the unit.
 
-Links cells contain up to two `<br>`-separated lines: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag, located by the `<!-- tf:tag:plan:<env>:run-id-<run-id>:` marker-prefix substring — matches any attempt of the current run; stale tags from prior runs are ignored) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
+Links cells contain up to two `<br>`-separated lines in the plan-only shape, up to five with the operation tags' lines between them: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag, located by the `<!-- tf:tag:plan:<env>:run-id-<run-id>:` marker-prefix substring — matches any attempt of the current run; stale tags from prior runs are ignored) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
 An env the change does not touch keeps its column: every cell `<span title="not affected by this pull request">—</span>`, an empty Links cell, excluded from the group-wide row gates, and a `➖ Not affected by this pull request: \`<env>\`` line above the footer names it. A group whose members are all unaffected is rendered all dashes, never deleted. [Path-relevance.md §6.2](Path-relevance.md).
+
+An env a failed or cancelled earlier stage held back keeps its column the same way, every cell but the empty Links cell `<span title="held back: stage 2; stage 1 failed">⏭️</span>`, and a ``⏭️ Held back: `<env>` `` line, below the not-affected line, names it. [Environment-ordering.md §7.4](Environment-ordering.md).
 
 The footer of the per-group head is a single `[Workflow log](<run-url>)` line pointing at the workflow run page. Per-env heads (§5.1) instead use `[Job log]` because their URL targets the specific job's `#logs` anchor — different scope, different label.
 
@@ -230,7 +236,7 @@ One tag per mutating invocation that ran, same lifecycle as the plan tag:
 ### Terraform destroy for environment: `<env>`
 ```
 
-The destroy plan is a plan and reuses the five plan-block shapes, labelled `Destroy plan` rather than `Plan` in every one of them (it previously said `Plan:` under a `destroy plan` heading). Apply and destroy have their own: `Apply: no changes ✅` · `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…` (applied/planned per kind, `?` for an unknown side, `, I/P imported` appended when the apply imported anything) · `<details><summary>⚠️ Apply finished, but its counts could not be read</summary>…` (the step succeeded, only its output was unreadable) · `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…` (the step itself failed) · `Apply not available 🤷‍♀️`, with destroy wording for the destroy tag. The failure shape is the **only** `<details open>` in the system. Each body has its own 65k budget with the same warnings-over-console priority as the plan tag, and carries its own warnings collapser (apply warnings live in the apply tag, never the plan tag).
+The destroy plan is a plan and reuses the five plan-block shapes, labelled `Destroy plan` rather than `Plan` in every one of them. Apply and destroy have their own: `Apply: no changes ✅` · `<details><summary>Apply: A/P added, C/P changed, D/P destroyed ✅</summary>…` (applied/planned per kind, `?` for an unknown side, `, I/P imported` appended when the apply imported anything) · `<details><summary>⚠️ Apply finished, but its counts could not be read</summary>…` (the step succeeded, only its output was unreadable) · `<details open><summary>❌ Apply failed — infrastructure may be partially applied</summary>…` (the step itself failed) · `Apply not available 🤷‍♀️`, with destroy wording for the destroy tag. The failure shape is the **only** `<details open>` in the system. Each body has its own 65k budget with the same warnings-over-console priority as the plan tag, and carries its own warnings collapser (apply warnings live in the apply tag, never the plan tag).
 
 By default the apply and destroy bodies strip everything from terraform's `Outputs:` line onward and append `_(outputs section omitted)_`: `terraform apply` prints every non-sensitive output's actual value there, which `terraform plan` never does. The workflow input `apply-extract-include-outputs` (per-env overridable) opts back in. Normative shapes and rationale: [Apply-and-destroy-reporting.md §8.6 and P3](Apply-and-destroy-reporting.md).
 
@@ -247,7 +253,7 @@ Workflow inputs:
 
 Triggering rules: comments are only posted when the workflow runs against a `pull_request` event whose action is not `closed` or `converted_to_draft`. Forks cannot post (the workflow guards against `github.event.pull_request.head.repo.fork == true` at the seed-job level).
 
-Required token permission: `pull-requests: write` (and `issues: write` if the comment thread is a plain issue). Declared at the top of `terraform-ci-cd-default.yml`.
+Required token permission: `pull-requests: write`, granted by the calling workflow; the requirement is listed in the comment at the top of `terraform-ci-cd-default.yml`. The environment jobs inherit it; the seed, aggregator and tests-summary jobs declare it in their own `permissions:`.
 
 ## 7. Ordering guarantees
 
