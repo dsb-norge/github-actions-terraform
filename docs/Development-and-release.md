@@ -153,20 +153,20 @@ lightly rephrased where a literal subject would be confusing as a release note.
 
 Ex. for smaller backwards compatible changes. Add a new minor version tag ex `v1.0` with a description of the changes and amend the description to the major version tag.
 
-Example for release `v0.33`:
+Example for release `v0.34`, a v0 fix on the `release/v0` branch (see "Release lines"):
 
 ```bash
-git checkout origin/main
-git pull origin main
+git switch release/v0
+git pull origin release/v0
 # review latest release tag to determine which is the next one
 git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
 # output changes since last release
 git log v0..HEAD --pretty=format:"%s"
-git tag -a 'v0.33'
+git tag -a 'v0.34'
 # you are prompted for the tag annotation (change description)
 git tag -f -a 'v0'
 # you are prompted for the tag annotation: keep every earlier block (see "Release lines")
-git push origin 'refs/tags/v0.33'
+git push origin 'refs/tags/v0.34'
 git push -f origin 'refs/tags/v0'
 ```
 
@@ -176,7 +176,7 @@ git push -f origin 'refs/tags/v0'
 
 Same as minor release except that the major version tag is a new one. I.e. we do not need to force tag/push.
 
-Example for release `v1`:
+Example for release `v2`:
 
 ```bash
 git checkout origin/main
@@ -184,13 +184,13 @@ git pull origin main
 # review latest release tag to determine which is the next one
 git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
 # output changes since last release
-git log v0..HEAD --pretty=format:"%s"
-git tag -a 'v1.0'
+git log v1..HEAD --pretty=format:"%s"
+git tag -a 'v2.0'
 # you are prompted for the tag annotation (change description)
-git tag -a 'v1'
+git tag -a 'v2'
 # you are prompted for the tag annotation
-git push -f origin 'refs/tags/v1.0'
-git push -f origin 'refs/tags/v1'
+git push origin 'refs/tags/v2.0'
+git push origin 'refs/tags/v2'
 ```
 
 **Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
@@ -210,7 +210,7 @@ moveToTag='v0.8'
 moveToHash=$(git rev-parse --verify ${moveToTag})
 
 git push origin ":refs/tags/${moveTag}"     # delete the old tag remotely
-git tag -fa ${moveTag} ${moveToHash}        # move tag locally
+git tag -f -a ${moveTag} -m "$(git for-each-ref --format='%(contents)' refs/tags/${moveTag})" ${moveToHash}   # move tag locally, keep the changelog
 git push -f origin "refs/tags/${moveTag}"   # push the updated tag remotely
 
 ```
