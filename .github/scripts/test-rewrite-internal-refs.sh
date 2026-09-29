@@ -245,7 +245,7 @@ if [[ -f "${WORKFLOW}" ]]; then
   # Comment lines are stripped before these negative greps: the workflow explains
   # both wrong forms in prose, and a test that matches its own warning fails for
   # the wrong reason. (Reported by the maintainers who hit exactly that.)
-  local wf_code; wf_code="$(grep -vE '^[[:space:]]*#' "${WORKFLOW}")"
+  wf_code="$(grep -vE '^[[:space:]]*#' "${WORKFLOW}")"
   if [[ "${wf_code}" == *'git/${ref#refs/}'* ]]; then
     fail "cleanup must not strip the refs/ prefix (P33)" "found: git/\${ref#refs/}"
   else
