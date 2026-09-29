@@ -20,10 +20,10 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 4 | Dispatch and trigger events: `triggers.py` in the engine (trigger events, the dispatch filter, the granted goals and the dispatch cap), the adapter's dispatch facts, the run summary's trigger lines, the `trigger-events-yml` input and the `goals-granted` gate switch | [#65](https://github.com/dsb-norge/github-actions-terraform/pull/65) | merged 2026-09-27 | yes |
 | 5 | Hardening of caller configuration and auto-merge (§5): configuration validation in the engine (keys, goals and prerequisites, variables as written, init directories, auto-merge settings, the ref type, dispatch inputs), counts from the JSON plan, the evaluator and the merger hardened, the workflow wiring, and a thorough docs refresh with flow charts of the engine and worked examples | [#66](https://github.com/dsb-norge/github-actions-terraform/pull/66) | merged 2026-09-28 | yes |
 | 6 | Environment ordering: `ordering.py` in the engine (the declared graph validated, the stages assigned), the adapter's per-stage matrices, the three stage jobs sharing one step list, held-back reporting in the run summary, the PR comments and the auto-merge reason | [#67](https://github.com/dsb-norge/github-actions-terraform/pull/67) | merged 2026-09-28 | yes |
-| 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | — (branch `feat/open-questions`) | in progress | no |
-| 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69), stacked on #68 | draft | no |
-| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70), stacked on #69 | draft: built and validated on the test bed | no |
-| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | — (branch `feat/docs-finalisation`, stacked on step 9) | in progress: the stale statements and status lines, first drafts of `V1-changes.md` and `Migration-v0-to-v1.md` | no |
+| 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | [#68](https://github.com/dsb-norge/github-actions-terraform/pull/68) | merged 2026-09-29 | yes |
+| 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69) | merged 2026-09-29 | yes |
+| 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70) | merged 2026-09-29 | yes |
+| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | [#71](https://github.com/dsb-norge/github-actions-terraform/pull/71) | draft: every doc and code comment checked against the code | no |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
 ### Outside the road steps
@@ -531,7 +531,7 @@ Test bed, through `preview/pr-70`, on a module-shaped branch of the test-bed rep
 
 Kept on the test bed for module work, and cleaned up once v1 is ready: the module branch, the `ORG_TF_CICD_APP_ID` variable and `ORG_TF_CICD_APP_PRIVATE_KEY` secret, the test identity and the sandbox resource group.
 
-### Step 10: docs finalisation (in progress)
+### Step 10: docs finalisation
 
 - The specs' status lines are gone where their open questions are closed, and so are their links to
   the road documents. Terraform-tests.md's OIDC question is closed by the test-bed run of
@@ -565,7 +565,18 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
     the headline. The mutation gate's row counts from its first shard.
   - **Module repositories get a migration guide of their own**, `Migration-v0-to-v1-modules.md`;
     the project guide's §9 points at it.
-- Still to do: a last as-built pass.
+- **The last as-built pass**: every spec, guide, the README and CLAUDE.md checked statement by
+  statement against the code, and every code comment's section reference against the docs. Each
+  doc's corrections are one commit. What it turned up beyond wording: the Action tests spec had
+  not caught up with the sharded mutation gate; the tests summary's comment and Workflow-pr-comments
+  said switching the test stage off removes its head (the job is skipped, so the head stays);
+  `pr-comment` was described with a hash short-circuit it no longer has; release and un-release
+  commands in Development-and-release that did the wrong thing; a schedule example that did not
+  parse; and a refs-suite line that printed an error on every run.
+- Carried to step 11: the module template has no test file and its CI workflow is commented out,
+  so it gains a unit suite and the v1 module workflow when templates move to `@v1`. The docs no
+  longer claim it ships one. Six older step scripts end with a `return` when sourced instead of
+  the guide's `exit`; equivalent in the shim, left as they are.
 
 ## 5. Findings to carry
 
