@@ -280,14 +280,16 @@ jobs:
         if: always()
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
         with:
-          environment-name: "module"
+          # the head reads "Terraform validation summary for module: `<repository>`"
+          environment-name: ${{ github.event.repository.name }}
+          subject: module
           status-init: ${{ steps.init.outcome }}
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
-          # a module has no lock file and no plan
-          status-verify-lock: "N/A"
-          status-plan: "N/A"
+          # a module has no lock file and no plan: no rows for them
+          status-verify-lock: absent
+          status-plan: absent
           warning-count: ${{ steps.warnings.outputs.warning-count }}
         continue-on-error: true # reporting only
 
