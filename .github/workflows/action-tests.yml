@@ -286,6 +286,12 @@ jobs:
           if api_jobs=$(gh api --paginate "/repos/${REPO}/actions/runs/${RUN_ID}/jobs" 2>/dev/null); then
             resolved=$(jq -r '.jobs[] | select(.name == "🧬 Engine mutation gate") | .html_url' <<<"${api_jobs}" | head -n1)
             [[ -n "${resolved}" ]] && job_url="${resolved}"
+            # The gate's time is the shards' too: from the first shard's start, not this job's.
+            first_shard=$(jq -r '[.jobs[] | select(.name | test("^🧬 Engine mutation [0-9]+/[0-9]+$")) | .started_at
+                                  | select(. != null)] | min // empty' <<<"${api_jobs}")
+            if [[ -n "${first_shard}" ]] && first_epoch=$(date -d "${first_shard}" +%s 2>/dev/null); then
+              start_ts="${first_epoch}"
+            fi
           fi
           mkdir -p _artifact
           jq -n \
@@ -319,6 +325,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      actions: read # the run's start, for the headline's wall-clock time
     steps:
       - name: "📥 Checkout"
         uses: actions/checkout@v7

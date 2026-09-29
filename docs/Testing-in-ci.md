@@ -180,16 +180,16 @@ Body layout (red example shown; on a green run the row table is all ✅ and the 
 <!-- action-tests-summary -->
 ### 🧪 Action test results
 
-**Total: 212 tests across 8 suites — 210 passed, 2 failed, 1 suite(s) not passing**
+**Total: 212 tests across 8 suites — 210 passed, 2 failed, 1 suite(s) not passing** · ⏱ 4:31 since the run started
 
 **Tested (8)**
 
-| Action | Result | Tests | Details |
+| Action | Result | Tests | Time | Details |
 |---|:---:|:---:|---|
-| aggregate-validation-summaries | ✅ Pass | 28 / 28 | [job log](…) |
-| auto-merge-pr | ✅ Pass | 24 / 24 | [job log](…) |
-| parse-terraform-plan | ❌ Fail | 5 / 7 | [job log](…) |
-| … | … | … | … |
+| aggregate-validation-summaries | ✅ Pass | 28 / 28 | 0:31 | [job log](…) |
+| auto-merge-pr | ✅ Pass | 24 / 24 | 0:02 | [job log](…) |
+| parse-terraform-plan | ❌ Fail | 5 / 7 | 0:03 | [job log](…) |
+| … | … | … | … | … |
 
 **Not tested yet (0)** — modernization candidates
 
@@ -203,6 +203,7 @@ Conventions:
 - Status icons match `aggregate-validation-summaries`: ✅ success, ❌ failure, ⚠ cancelled, ⏭ skipped. In practice only ✅ and ❌ show up — see §5 (outcomes that reach the artifact).
 - The headline has two variants: `… <passed> passed, <failed> failed` on a fully green run, and `… <passed> passed, <failed> failed, <N> suite(s) not passing` whenever any suite isn't a clean pass. Same logic powers the headline annotation (§11.2).
 - The "Tests" column shows `passed / run`. Failed count = `run - passed`; not shown explicitly to keep the table tight. A drifted suite shows as `?` here.
+- The "Time" column is each result's `duration-seconds` as `m:ss` (`h:mm:ss` from an hour, `—` when missing): the suite's own run, and for `engine-mutation-gate` the time from its first shard's start to the merge, which is the gate's real cost. The headline's `⏱` is the run's wall-clock from its start (the Actions API's `run_started_at`) to the summary, which waits for the gate, so it is how long the pull request waited for its result. It is left out when the start cannot be read.
 - "Not tested yet" is collapsed by default (`<details>`) so it doesn't dominate once it shrinks. It is *always* present, even when empty — an empty list communicates "we test everything", which is a meaningful state.
 - Both action lists are alphabetically sorted.
 - Tested rows are sorted alphabetically. Failed rows are *not* hoisted to the top — relative ordering stays stable across PRs and the status icon already draws the eye.
