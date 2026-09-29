@@ -23,7 +23,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 7 | Open questions pass: every question bearing on implementation, delivery or v1 closed, and the fixes it turned up | [#68](https://github.com/dsb-norge/github-actions-terraform/pull/68) | merged 2026-09-29 | yes |
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69) | merged 2026-09-29 | yes |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70) | merged 2026-09-29 | yes |
-| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | [#71](https://github.com/dsb-norge/github-actions-terraform/pull/71) | draft: every doc and code comment checked against the code | no |
+| 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | [#71](https://github.com/dsb-norge/github-actions-terraform/pull/71) | merged 2026-09-29 | yes |
 | 11 | v1 released to callers: minors begin, migration guide complete, templates on `@v1` | — | outstanding | — |
 
 ### Outside the road steps
@@ -34,6 +34,7 @@ Changes the road does not list, made on the v1 line because a step's review surf
 |---|---|---|---|
 | Heredoc captures hardened: free text (`pr-comment`'s body, `pr-comments-reconcile`'s YAML, the module cache's paths) captured as `toJSON` of the input, out of envp; every capture under a unique delimiter; structural test F9; the implementation guide's input rule | [#60](https://github.com/dsb-norge/github-actions-terraform/pull/60) | merged 2026-09-24 | yes |
 | The engine reviewed for what should change after the port: per-environment values of workflow inputs take the inputs' types (per-environment booleans were silently ignored by the gates), environment names follow one rule, one environment per github-environment | [#61](https://github.com/dsb-norge/github-actions-terraform/pull/61) | merged 2026-09-24 | yes |
+| Every step script ends with `exit`, as the implementation guide says: six scripts that returned when sourced, their shims' trailing lines, the plugin cache's helpers path; structural test F23 | [#72](https://github.com/dsb-norge/github-actions-terraform/pull/72) | draft | no |
 
 ## 2. Status per spec
 
@@ -575,8 +576,8 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
   parse; and a refs-suite line that printed an error on every run.
 - Carried to step 11: the module template has no test file and its CI workflow is commented out,
   so it gains a unit suite and the v1 module workflow when templates move to `@v1`. The docs no
-  longer claim it ships one. Six older step scripts end with a `return` when sourced instead of
-  the guide's `exit`; equivalent in the shim, left as they are.
+  longer claim it ships one. Six older step scripts ended with a `return` when sourced instead
+  of the guide's `exit`; fixed outside the road steps, with a structural test.
 
 ## 5. Findings to carry
 
