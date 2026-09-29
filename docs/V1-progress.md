@@ -557,12 +557,15 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
 - The Path-relevance §7.3 and §8 wiring examples are the workflow's, §8's condition word for word.
 - The module sections: the migration guide's §9 (must, should, could, what a pull request
   shows) and the v1 changes' §11.
-- Still to do, as the maintainer asked on 2026-09-29 for this pull request:
-  - modernise `setup-terraform-plugin-cache`, the last action with bash inline in its
-    `action.yml`;
-  - the Action tests PR comment in this repository shows how long the tests took;
-  - make sure the migration guide covers module repositories, or give them a guide of their own;
-  - a last as-built pass.
+- The maintainer's items for this pull request (2026-09-29):
+  - **`setup-terraform-plugin-cache` in the modern layout**, with a suite. The old inline blocks
+    and the new script gave byte-identical outputs and files for a fresh and an existing home;
+    every action now has a suite.
+  - **The Action tests comment shows times**: each suite's duration, and the run's wall-clock in
+    the headline. The mutation gate's row counts from its first shard.
+  - **Module repositories get a migration guide of their own**, `Migration-v0-to-v1-modules.md`;
+    the project guide's §9 points at it.
+- Still to do: a last as-built pass.
 
 ## 5. Findings to carry
 
