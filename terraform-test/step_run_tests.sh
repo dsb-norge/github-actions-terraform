@@ -16,7 +16,7 @@
 #   input_test_file              - test file, relative to input_working_directory
 #   input_working_directory      - the test root, relative to the workspace or
 #                                  absolute; '.' for the workspace
-#   input_junit                  - 'true' passes -junit-xml (Terraform >= 1.11)
+#   input_junit                  - 'true' passes -junit-xml
 #   input_slug                   - directory name under RUNNER_TEMP; derived
 #                                  from root and file when empty
 #   input_status_credentials     - outcome of the credential check, or empty
@@ -80,7 +80,7 @@ function check_terraform_version {
 # never through a variable (P15).
 function run_terraform_test {
   local -a args=(test -json -no-color "-filter=${TT_REL}")
-  if [ "${input_junit}" == "true" ] && tt-version-ge "${TT_TERRAFORM_VERSION}" "${TT_JUNIT_FROM}"; then
+  if [ "${input_junit}" == "true" ]; then
     args+=("-junit-xml=${TT_JUNIT_FILE}")
   fi
 

@@ -24,7 +24,7 @@ inputs:
       for the workspace itself.
     required: true
   junit:
-    description: Write a JUnit XML report (takes effect from Terraform 1.11).
+    description: Write a JUnit XML report.
     required: false
     default: "true"
   slug:
