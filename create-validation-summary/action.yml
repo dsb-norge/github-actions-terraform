@@ -10,6 +10,12 @@ author: "Peder Schmedling"
 inputs:
   environment-name:
     description: Name of the current deployment environment.
+  subject:
+    description: |
+      What the head is for: 'environment' (the default), or 'module' for the module workflow, whose
+      head reads "… for module: `<environment-name>`" (docs/Module-ci.md §7).
+    required: false
+    default: "environment"
   plan-console-file:
     description: Path of file with plan output captured from the console.
     required: false
@@ -22,7 +28,7 @@ inputs:
     description: Outcome of init step.
     required: true
   status-verify-lock:
-    description: Outcome of the lock file verification step.
+    description: Outcome of the lock file verification step; 'absent' leaves the Lock file row out (a module has no lock).
     required: true
   status-fmt:
     description: Outcome of fmt step.
@@ -34,7 +40,7 @@ inputs:
     description: Outcome of lint step.
     required: true
   status-plan:
-    description: Outcome of plan step.
+    description: Outcome of plan step; 'absent' leaves the Plan row out (a module plans nothing).
     required: true
   pr-comment-group:
     description: |
@@ -408,6 +414,7 @@ runs:
       shell: bash
       env:
         input_environment_name: ${{ inputs.environment-name }}
+        input_subject: ${{ inputs.subject }}
         input_plan_console_file: ${{ inputs.plan-console-file }}
         input_plan_txt_output_file: ${{ inputs.plan-txt-output-file }}
         input_status_init: ${{ inputs.status-init }}
