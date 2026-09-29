@@ -1793,10 +1793,11 @@ jobs:
           output-file-suffix: phase2-final
         continue-on-error: true
 
-      # Second PATCH of the per-env head this run. pr-comment short-circuits
-      # on an unchanged body, so a plan-only env costs one API read and no
-      # write (P16). Falls back through phase-2 → phase-1 bodies, each in its
-      # own suffixed file (P12).
+      # Second PATCH of the per-env head this run. pr-comment has no
+      # unchanged-body short-circuit, so a plan-only env costs one list read
+      # and one PATCH with the same body (docs/Apply-and-destroy-reporting.md
+      # P16). Falls back through phase-2 → phase-1 bodies, each in its own
+      # suffixed file (P12).
       - name: 🏷️ Upsert per-env head comment (phase 2)
         id: upsert-head-apply
         if: |

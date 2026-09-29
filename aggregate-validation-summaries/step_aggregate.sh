@@ -587,10 +587,8 @@ function list_pr_state {
 # ============================================================================
 
 # Renders the user-visible portion of one group's body (H3 + table + footer).
-# Writes to stdout. The caller wraps this with the HTML marker + a
-# `<!-- comment-hash:<sha> -->` line via _render_full_body before
-# POSTing/PATCHing, so re-runs with unchanged content hash-short-circuit
-# the PATCH and don't re-ping subscribers.
+# Writes to stdout. The caller prepends the HTML marker via
+# _render_full_body before POSTing/PATCHing.
 #
 # Kept in sync with the per-env head (create-validation-summary's
 # render_head_summary): same row set, labels, col-1 icon tooltips, and
@@ -801,8 +799,8 @@ function render_group_body {
   # ---- Assembly ----
   # Returns the user-visible portion (H3 + table + footer). The HTML
   # marker (load-bearing for upsert identity, see Workflow-pr-comments.md
-  # §2) and the inline comment-hash line are prepended by _render_full_body
-  # in _upsert_one_group / _post_fresh.
+  # §2) is prepended by _render_full_body in _upsert_one_group /
+  # _post_fresh.
   #
   # Optional rows (Warnings, Plan details) are assembled into mid_rows and
   # omitted from the string entirely when their group-wide condition is
@@ -1162,7 +1160,7 @@ function upsert_pass {
     marker=$(_group_marker "${group}")
     body=$(render_group_body "${group}" "${envs_sorted}")
 
-    # Log the assembled body (marker + hash marker + user body) so the
+    # Log the assembled body (marker + user body) so the
     # ##[group] block shows exactly what gets written on PATCH/POST and
     # so byte-exact tests can grep the marker line in step output.
     log-info "Body:"
@@ -1178,10 +1176,8 @@ function upsert_pass {
 # Upsert a single group's comment. Picks the oldest existing marker
 # comment (lowest created_at, since GitHub IDs are monotonic but the
 # created_at field is the canonical timestamp) to keep, deletes any
-# others, then PATCHes the keeper. If none exist, POSTs fresh. Skips the
-# PATCH entirely when the existing comment's embedded comment-hash
-# matches the new body — no updated_at churn, no subscriber re-ping on
-# no-op runs.
+# others, then PATCHes the keeper. If none exist, POSTs fresh. The keeper
+# is PATCHed on every run, even when its body is unchanged.
 #
 # In degraded mode (PR comments listing failed) we don't know what
 # exists, so we always POST fresh — duplicates will self-heal on the
