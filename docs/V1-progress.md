@@ -24,7 +24,7 @@ One pull request per step of Road-to-v1.md §6, targeting `main`. After a merge,
 | 8 | CI optimisation: this repository's CI time brought down, coverage and gates kept: the mutation gate faster and run once in eight shards, suites writing to files of their own | [#69](https://github.com/dsb-norge/github-actions-terraform/pull/69) | merged 2026-09-29 | yes |
 | 9 | Module CI on v1: the module workflows ported, updated and improved; module repositories on v1 | [#70](https://github.com/dsb-norge/github-actions-terraform/pull/70) | merged 2026-09-29 | yes |
 | 10 | Docs finalisation: gaps in the refresh, as built everywhere, the road docs' content captured, the migration guide, the v1 changes document | [#71](https://github.com/dsb-norge/github-actions-terraform/pull/71) | merged 2026-09-29 | yes |
-| 11 | v1 released to callers: release-please and CHANGELOG.md, templates on `@v1`, the first module repository moved, 1.0.0 cut | [#73](https://github.com/dsb-norge/github-actions-terraform/pull/73) | draft: release-please built; templates and the first module repository in progress | no |
+| 11 | v1 released to callers: release-please and CHANGELOG.md, templates on `@v1`, the first module repository moved, 1.0.0 cut | [#73](https://github.com/dsb-norge/github-actions-terraform/pull/73) | draft: release-please built; the templates and the first module repository green, in review | no |
 
 ### Outside the road steps
 
@@ -585,8 +585,8 @@ The maintainer's decisions (2026-09-29): v1 releases by release-please; the hist
 `CHANGELOG.md` migrated from the tag annotations, release-please maintaining it from then on;
 tags `v1.X.Y` plus a moving `v1`, no moving `v1.X`; the release pull request opened with a new
 App, `dsb-norge-tf-actions-releaser`; 1.0.0 cut by hand; `terraform-azurerm-mgmt-resource-lock`
-the first module repository moved; the module template's workflows active in the template itself,
-with a unit test. Order: the templates and the first module repository on `@v1` first, then the
+the first module repository moved; the module template's workflows on v1 with a unit test, and the
+template a silent repository, where no automation runs. Order: the templates and the first module repository on `@v1` first, then the
 cut, so the release includes what they turn up.
 
 - **Release mechanics** (#73): `release.yml`, the config and manifest at 1.0.0, `CHANGELOG.md`
@@ -594,21 +594,28 @@ cut, so the release includes what they turn up.
   release section and CLAUDE.md.
 - **The module template**
   ([tf-module-template#7](https://github.com/dsb-norge/tf-module-template/pull/7)): both
-  workflows on `@v1` and active, a `unit` and an environment-isolated `integration` lane, a unit
-  suite, the docs, the maintainer's unmerged terraform-docs configuration, the AI configuration.
-  Its first run: validation, the unit test and the tests summary green; the docs job cannot read
-  `ORG_TF_CICD_APP_ID`, since the template repository has no access to the organisation's
-  variable and secret yet. Found: a missing App variable fails with the token action's
-  "client-id must be set", which does not name the setup; worth a check of its own in the docs
-  job.
+  workflows on `@v1`, skipped in the template itself and run in every repository made from it; a
+  `unit` and an environment-isolated `integration` lane, a unit suite, the docs, the maintainer's
+  unmerged terraform-docs configuration, the AI configuration. Its one run before the skip went
+  in: validation, the unit test and the tests summary green; the docs job could not read
+  `ORG_TF_CICD_APP_ID`, which a silent template has no access to. Found: a missing App variable
+  fails with the token action's "client-id must be set", which does not name the setup (now a
+  pitfall in the modules guide; a check of its own in the docs job is offered, not decided).
 - **The project template**
   ([terraform-template-project#12](https://github.com/dsb-norge/terraform-template-project/pull/12)):
   `@v1` and the standard dispatch block. Both scaffold modes run through v1's engine: accepted, a
   dispatch of every environment or of one runs, `goal: apply` refused.
-- **The first module repository**: its change is prepared as the guide's §5 shape (a credential-
-  free `unit` lane, the repository's principal in an `integration` lane for every other file, as
-  every file had on v0). It keeps v0's exposure; the identity audit (below) is raised with the
-  maintainer before it is pushed.
+- **The first module repository**
+  ([terraform-azurerm-mgmt-resource-lock#8](https://github.com/dsb-norge/terraform-azurerm-mgmt-resource-lock/pull/8)):
+  the guide's §5 shape, a credential-free `unit` lane and the repository's principal in an
+  `integration` lane for every other file, as every file had on v0 (v0's exposure, on the
+  maintainer's OK). Its first run: the three integration files green, logged in through OIDC;
+  the unit suite red in its lane, because it configured the real provider and mocked only an
+  alias (`unable to build authorizer`). With the mock as its only provider all seven runs pass
+  without credentials (locally with no Azure login, then in CI): conclusion `green — validation
+  succeeded; tests: 4`, the lanes as the decision record says, one module head and one tests
+  summary, the README already current. The pitfall is in the modules guide. Follow-up: the
+  integration lane into `tftest-integration` and the principal's `pull_request` trust removed.
 - **The cut, once the above is green:**
   1. Set 1.0.0's date in `CHANGELOG.md`, merge #73, and tag its merge `v1.0.0`
      (`git tag -a v1.0.0 -m "v1.0.0" origin/main`), push it, and move `v1` to it.
