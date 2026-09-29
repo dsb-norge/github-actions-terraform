@@ -12,11 +12,9 @@ A collection of composite GitHub Actions and reusable workflows for terraform pr
 
 Calling repos pin a rolling major tag (`@v0`, or `@v1` for the v1 line) or a specific release (`@v0.21`, `@v1.2.0`). A major tag is force-moved on release, so what ships on it reaches every caller pinned to it at once — be mindful when touching anything in here.
 
-**`main` is the v1 line.** Its workflows' internal refs say `@v1`, and `v1` is a moving tag that follows every v1 release; callers pin `@v1` or an exact `@v1.X.Y` (`CHANGELOG.md`). `v0` is frozen at v0.33 and takes fixes only, on a `release/v0` branch cut from that commit when the first fix is needed (`docs/Development-and-release.md` → "Release lines"). The plan is `docs/Road-to-v1.md`; progress, per pull request, is `docs/V1-progress.md`.
+**`main` is the v1 line.** Its workflows' internal refs say `@v1`, and `v1` is a moving tag that follows every v1 release; callers pin `@v1` or an exact `@v1.X.Y` (`CHANGELOG.md`). `v0` is frozen at v0.33 and takes fixes only, on a `release/v0` branch cut from that commit when the first fix is needed (`docs/Development-and-release.md` → "Release lines").
 
-**`docs/README.md` indexes every document by kind** (user guide, migration, spec, contributor guide, tracking); a new document gets its row in the change that adds it, and F22 in `evaluate-automerge-eligibility/run_all_tests.sh` fails otherwise.
-
-**Road-to-v1 work rules:** one pull request per road step; each ends with a doc-refresh pass that brings its specs to "as built" and updates `docs/V1-progress.md`, then validation on the test-bed repository, then hand-off. Tracking documents (`Road-to-v1.md`, `V1-progress.md`) may reference each other; **specs and code comments never reference them and carry no progress markers** (no pull request numbers, no road steps, no "done"/"pending").
+**`docs/README.md` indexes every document by kind** (user guide, migration, spec, contributor guide); a new document gets its row in the change that adds it, and F22 in `evaluate-automerge-eligibility/run_all_tests.sh` fails otherwise.
 
 ## Architecture
 
