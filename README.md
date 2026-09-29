@@ -1,7 +1,7 @@
 # DSB's github actions for terraform
 
 Collection of DSB custom GitHub actions and reusable workflows for terraform projects.  
-For workflow and development documentation refer to the [docs](/docs).
+For workflow and development documentation start at the [documentation index](docs/README.md).
 
 ## Actions
 
