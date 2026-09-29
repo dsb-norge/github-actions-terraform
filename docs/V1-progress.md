@@ -75,7 +75,7 @@ table only says where.
 | Terraform-tests.md | the role that sets environment secrets; the step anchor in the web view | closed 2026-09-25: a write-role account set, updated, listed and deleted environment secrets with `gh`, but could not create, configure or delete the environment; the maintainer confirmed the anchor opens the right step |
 | Terraform-tests.md | isolation end to end; a real environment lane; case in flexible credential `matches` | closed 2026-09-25 in a session with the maintainer, with throwaway identities and a resource group in a sandbox subscription: an environment-only credential refused tokens to jobs outside its environment, the flexible credential granted one only to `tftest-*` jobs, a lane ran a `command = apply` test and cleaned up, and `matches` is case-sensitive |
 | Terraform-tests.md | Dependabot runs and OIDC; fork runs and environment creation | open (spec §12): the first needs a Dependabot pull request, fork creation is blocked by the organisation's fork policy for private repositories; neither changes the design |
-| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | open: deferred by the maintainer on 2026-09-25, not gating step 3 (the Entra probes before implementation covered the identities, the test bed the lane mechanics with placeholder secrets); **required before v1 is tagged** (Road-to-v1.md §6, step 11) |
+| Terraform-tests.md | a real OIDC login in an environment lane, run through the workflow on the test bed | closed 2026-09-29: through `@v1` on the test bed, with a kept identity (Reader on a sandbox subscription, one environment-subject credential); the token's subject, `azure/login` and a `command = apply` test asserting the client and the subscription (Terraform-tests.md §15) |
 | Terraform-tests.md | lower-case `TF_VAR_` names from environment secrets; the version floor | decided 2026-09-25 by the maintainer after the test bed showed GitHub upper-casing secret names and 1.12 refusing a test file's `variable` block: environment lanes export a lower-cased copy of every `TF_VAR_*` secret, and the floor is 1.13 |
 | Terraform-tests.md | the copied lock and the runner's platform; the shared plugin-cache key | decided 2026-09-25 by the maintainer: every lock a test job uses must record the runner's platform, checked before init as `lock-platform`; the test job's cache key gets a `-tftest` suffix and falls back to the environment job's |
 | Configuration-validation.md, Auto-merge.md | auto-merge with no actors; a per-environment actor list; goals whose prerequisite is missing | decided 2026-09-27 by the maintainer: an error that says plainly what is wrong; it replaces the global list; an error |
@@ -384,7 +384,7 @@ closed or assigned. Decisions of the maintainer on 2026-09-28 are marked as such
 | The mode row's raw goals elsewhere: the engine's seed placeholder (`comments.py`) and the aggregator's group head (`_extract_goal_flag`) | found while fixing the per-environment row; the same fix: the engine's `mutates-on-pr` lists only the on-PR goals the event grants, and the aggregator narrows by the metadata's `goals-granted` | step 7 |
 | Non-breaking spaces inside `${{ secrets.… }}` in `terraform-module-ci.yaml` (actionlint flags them) | may break those expressions | step 9 |
 | A per-environment `runs-on` written as a list of runner labels is refused as not a string (the rule of #61 for string inputs); no surveyed caller writes one | for the migration guide | step 10 |
-| The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | through a hand-published tag; all but the OIDC lane done (below). The lane waits for a directory role to register its throwaway identity | step 7, the OIDC lane still to do |
+| The test-bed round of this step: the OIDC lane login, auto-merge through the App, a zero-match download under v8, the cases covered by tests only | through a hand-published tag; all done (below). The OIDC lane ran on 2026-09-29 through `@v1`, since lanes shipped in step 3 | closed |
 | `actions/create-github-app-token@v2` in the auto-merge job (Node 20; the runner forces it onto Node 24 with a deprecation warning) | found on the test bed. The maintainer: always on the latest, no permission needed. v3, passing the App ID as `client-id` (v3 deprecates `app-id`, which reads the same value), run as upstream documents it: the maintainer decided on 2026-09-29 that no HTTP(S) proxy is supported, so the `NODE_USE_ENV_PROXY=1` of the first bump is gone and later bumps stay plain; with it `actions/checkout@v7` and `actions/cache@v6`, the other actions behind their latest major | step 7 |
 
 Test bed, through the hand-published tag `test/step7-81c7372`, on
@@ -534,7 +534,8 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
 ### Step 10: docs finalisation (in progress)
 
 - The specs' status lines are gone where their open questions are closed, and so are their links to
-  the road documents. Terraform-tests.md keeps its open question, the OIDC lane login.
+  the road documents. Terraform-tests.md's OIDC question is closed by the test-bed run of
+  2026-09-29 (§15 there).
 - The stale statements the step-7 inventory listed are brought to as built, each checked against
   the code: in Dispatch-and-triggers, Path-relevance, Terraform-tests, Decision-engine,
   Per-goal-environment-variables, Testing-in-ci, Preview-refs, Apply-and-destroy-reporting and
