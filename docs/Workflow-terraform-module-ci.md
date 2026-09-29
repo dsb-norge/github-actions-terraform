@@ -111,6 +111,8 @@ flowchart LR
   matrix --> test
   docs --> test
   matrix --> summary
+  docs --> summary
+  validate --> summary
   test --> summary
   matrix --> conclusion
   docs --> conclusion
@@ -126,7 +128,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | `generate-docs` (Update documentation) | on every run | From the repository: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
 | `validate` (Validate module) | unless the docs job pushed a commit | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
-| `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
+| `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
 | `conclusion` (Terraform conclusion) | on every run | — | One line, in the log, the step summary and an annotation. |
 
 The comments are not posted on a pull request from a fork, with `add-pr-comment: false`, or on a closed or draft-converted pull request; the step summaries are written on every run. The tests summary job is not among the conclusion's `needs`, so reporting can never turn the check red.
