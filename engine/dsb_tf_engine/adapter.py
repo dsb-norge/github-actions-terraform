@@ -55,6 +55,8 @@ NOTICE_TITLE = "Terraform CI"
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
              "record", "trigger", "ordering")
+# A module's decision has its test stage alone (docs/Module-ci.md §5).
+MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -341,12 +343,12 @@ def run_number(environ, name):
     return int(value)
 
 
-def write_relevance_file(runner_temp, output):
+def write_relevance_file(runner_temp, output, published=PUBLISHED):
     """The decision without its matrices, in a directory of its own under the runner's temp."""
     try:
         path = os.path.join(tempfile.mkdtemp(dir=runner_temp), "relevance.json")
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps({key: output[key] for key in PUBLISHED}, indent=2, sort_keys=True,
+            handle.write(json.dumps({key: output[key] for key in published}, indent=2, sort_keys=True,
                                     ensure_ascii=False) + "\n")
     except OSError as error:
         raise AdapterError(f"the relevance file cannot be written under '{runner_temp}': {error}") from None
@@ -394,10 +396,11 @@ def read_inputs(path):
     return inputs
 
 
-def build_document(inputs, facts, tools, isdir):
-    """The engine's input document (docs/Decision-engine.md §4) from the inputs and the run's facts."""
+def build_document(inputs, facts, tools, isdir, module=False):
+    """The engine's input document (docs/Decision-engine.md §4) from the inputs and the run's facts;
+    a module's has no environments and no changed files (docs/Module-ci.md §5)."""
     yaml_inputs = parse_inputs(tools, inputs)
-    # A parse that failed carries the value null, which yields no entries.
+    # A parse that failed carries the value null, which yields no entries; a module has no such input.
     entries = yaml_inputs.get("environments-yml", {}).get("value")
     event = {"name": facts["event_name"], "ref_name": facts["ref_name"], "ref_type": facts["ref_type"],
              **event_facts(facts["event_name"], facts["payload"])}
@@ -415,8 +418,10 @@ def build_document(inputs, facts, tools, isdir):
         "directories_exist": check_directories(entries, isdir),
         "run": facts["run"],
     }
-    # Switched off, relevance needs no facts, so it makes no requests.
-    if inputs.get(relevance.SWITCH) not in (False, "false"):
+    if module:
+        document["mode"] = "module"
+    # Switched off, relevance needs no facts, so it makes no requests; a module has none.
+    if not module and inputs.get(relevance.SWITCH) not in (False, "false"):
         changed = fetch_changed_files(tools, facts["repository"], facts["default_branch"], event, facts["payload"])
         if changed is not None:
             document["changed_files"] = changed
@@ -440,7 +445,7 @@ def union_matrix(output):
     return {"environment": [row["environment"] for row in rows], "include": rows}
 
 
-def run(inputs_file, environ, stream, tools, isdir):
+def run(inputs_file, environ, stream, tools, isdir, module=False):
     """Run the create-matrix step. Returns the exit code: 0, 1 a fault, 2 an invalid configuration."""
     log = workflow.Log(stream, TITLE)
     try:
@@ -465,7 +470,7 @@ def run(inputs_file, environ, stream, tools, isdir):
             "triggering_actor": environ.get("GITHUB_TRIGGERING_ACTOR", ""),
             "base_ref": environ.get("GITHUB_BASE_REF", ""),
         }
-        document = build_document(inputs, facts, tools, isdir)
+        document = build_document(inputs, facts, tools, isdir, module)
     except AdapterError as error:
         log.error(error.message)
         if error.detail:
@@ -487,7 +492,8 @@ def run(inputs_file, environ, stream, tools, isdir):
         return EXIT_INVALID
 
     try:
-        relevance_file = write_relevance_file(environ["RUNNER_TEMP"], output)
+        relevance_file = write_relevance_file(environ["RUNNER_TEMP"], output,
+                                              MODULE_PUBLISHED if module else PUBLISHED)
     except AdapterError as error:
         log.error(error.message)
         return EXIT_FAULT
@@ -497,6 +503,17 @@ def run(inputs_file, environ, stream, tools, isdir):
         log.notice(NOTICE_TITLE, notice)
     for warning in output["warnings"]:
         log.warning(warning)
+    if module:
+        outputs = {
+            "relevance-file": relevance_file,
+            "tests-matrix-json": compact(output["tests"]["matrix"]),
+            "tests-count": str(output["tests"]["count"]),
+            "tests-active": "true" if output["tests"]["active"] else "false",
+            "tests-required-missing": "true" if output["tests"]["missing"] else "false",
+        }
+        for name, value in outputs.items():
+            workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
+        return EXIT_OK
     matrix = union_matrix(output)
     log.group("matrix-json", json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
     outputs = {

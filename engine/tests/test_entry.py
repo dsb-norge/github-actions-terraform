@@ -74,13 +74,26 @@ class CreateMatrixCommandTest(unittest.TestCase):
     def test_the_command_runs_the_adapter_with_the_runners_environment(self):
         calls = []
         with mock.patch.object(adapter, "run", lambda *args: calls.append(args) or 7):
-            self.assertEqual(7, cli.main(["create-matrix", "--inputs-file", "/tmp/inputs.json"]))
-        inputs_file, environ, stream, tools, isdir = calls[0]
+            self.assertEqual(7, cli.main(["create-matrix", "--inputs-file", "/tmp/inputs.json", "--mode", "project"]))
+        inputs_file, environ, stream, tools, isdir, mode = calls[0]
         self.assertEqual("/tmp/inputs.json", inputs_file)
         self.assertIs(os.environ, environ)
         self.assertIs(sys.stdout, stream)
         self.assertIsInstance(tools, adapter.Tools)
         self.assertIs(os.path.isdir, isdir)
+        self.assertIs(False, mode)
+        with mock.patch.object(adapter, "run", lambda *args: calls.append(args) or 0):
+            self.assertEqual(0, cli.main(["create-matrix", "--inputs-file", "/tmp/x.json", "--mode", "module"]))
+        self.assertIs(True, calls[1][5])
+
+    def test_the_mode_is_required_and_one_of_two(self):
+        for argv in (["create-matrix", "--inputs-file", "/tmp/x.json"],
+                     ["create-matrix", "--inputs-file", "/tmp/x.json", "--mode", "modules"]):
+            with self.subTest(argv=argv):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
+                    cli.main(argv)
+                self.assertEqual(1, raised.exception.code)
+                self.assertIn("--mode", stderr.getvalue())
 
     def test_the_help_describes_the_command(self):
         with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
@@ -89,12 +102,13 @@ class CreateMatrixCommandTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
             cli.main(["create-matrix", "--help"])
         self.assertIn("path of the file holding toJSON(inputs)", stdout.getvalue())
+        self.assertIn("the calling workflow's kind of repository", stdout.getvalue())
 
     def test_the_inputs_file_is_required(self):
         with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
-            cli.main(["create-matrix"])
+            cli.main(["create-matrix", "--mode", "project"])
         self.assertEqual(cli.EXIT_CRASH, raised.exception.code)
-        self.assertIn("--inputs-file", stderr.getvalue())
+        self.assertIn("the following arguments are required: --inputs-file", stderr.getvalue())
 
 
 if __name__ == "__main__":

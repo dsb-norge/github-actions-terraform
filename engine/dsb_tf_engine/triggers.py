@@ -68,13 +68,19 @@ def resolve(document, declared):
     return [entry[FIELD] if FIELD in entry else default for entry in declared]
 
 
+def check_event(document):
+    """A ConfigError unless the event is one of the four the workflows support."""
+    event = document["event"]["name"]
+    if event not in EVENTS:
+        raise ConfigError([f"event {shown(event)} is not supported by this workflow; supported: {', '.join(EVENTS)}"])
+
+
 def participation(document, declared, rows):
     """Per row, the reason rules 2 and 3 drop it or None, beside the resolved events; a ConfigError
     for the whole run when the event, the configuration or the dispatch cannot be honoured."""
     resolved = resolve(document, declared)
+    check_event(document)
     event = document["event"]["name"]
-    if event not in EVENTS:
-        raise ConfigError([f"event {shown(event)} is not supported by this workflow; supported: {', '.join(EVENTS)}"])
     dropped = [None if event in events else f"{FIELD}: {event} not enabled" for events in resolved]
     name = dispatch_inputs(document)["environment"] if event == DISPATCH else ""
     if name:

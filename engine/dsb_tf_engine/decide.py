@@ -45,12 +45,33 @@ def _decided(document, block, rows, entries, staged, tests_block, warnings, noti
     }
 
 
+def _module(document):
+    """A module's decision: its test stage alone (docs/Module-ci.md §5)."""
+    try:
+        triggers.check_event(document)
+        tests_block, warnings, notices = tests.decide_tests(document, [], tests.MODULE_TEST_EVENTS)
+    except environments.ConfigError as error:
+        return _failed(error.messages)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "module",
+        "errors": [],
+        "notices": notices,
+        "warnings": warnings,
+        "tests": tests_block,
+        "trigger": {"event": document["event"]["name"], "lines": []},
+        "record": tests.record(tests_block),
+    }
+
+
 def decide(document):
     """Return the output document; configuration errors are in its `errors`, not raised.
 
     Raises model.DocumentError when the document itself is malformed.
     """
     model.check(document)
+    if document.get("mode") == "module":
+        return _module(document)
     try:
         rows = environments.build_rows(document)
         declared = environments.parsed_inputs(document)["environments-yml"]

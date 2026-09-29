@@ -366,7 +366,7 @@ class ActiveTest(unittest.TestCase):
                 # With the stage on and no files, the provider sets are still known; elsewhere nothing is.
                 sets = tests["provider_sets"] if files == [] else []
                 self.assertEqual({"matrix": {"include": []}, "count": 0, "active": False, "not_run": [],
-                                  "provider_sets": sets}, tests)
+                                  "provider_sets": sets, "missing": False}, tests)
 
 
 class SecretsUnavailableTest(unittest.TestCase):
