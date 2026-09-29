@@ -276,7 +276,7 @@ and its suite runs on 3.12 and on the newest 3.x.
 
 For a module repository calling `terraform-module-ci.yaml` and `terraform-module-release.yaml`.
 The design is [Module-ci.md](Module-ci.md), and moving a repository is
-[Migration-v0-to-v1.md §9](Migration-v0-to-v1.md).
+[Migration-v0-to-v1-modules.md](Migration-v0-to-v1-modules.md).
 
 | Change | v0.33 | v1 |
 |---|---|---|

@@ -10,6 +10,8 @@ The reusable CI workflow for a Terraform **module** repository: one module at th
 
 Repositories of environments that are planned and applied use the sibling [`terraform-ci-cd-default`](Workflow-terraform-ci-default.md) instead; the two share the test stage, so lanes, credentials and the test reports work the same in both. The design is [Module-ci.md](Module-ci.md), the test stage [Terraform-tests.md](Terraform-tests.md), and releases are [`terraform-module-release`](Workflow-terraform-module-release.md). The module template, [dsb-norge/tf-module-template](https://github.com/dsb-norge/tf-module-template), is set up for all of this.
 
+Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration-v0-to-v1-modules.md).
+
 ## Requirements
 
 - **Permissions and secrets on the calling job:**
