@@ -191,15 +191,9 @@ Body layout (red example shown; on a green run the row table is all ✅ and the 
 | parse-terraform-plan | ❌ Fail | 5 / 7 | [job log](…) |
 | … | … | … | … |
 
-**Not tested yet (3)** — modernization candidates
+**Not tested yet (0)** — modernization candidates
 
-<details><summary>Show list</summary>
-
-- create-tftest-matrix
-- setup-terraform-plugin-cache
-- terraform-docs
-
-</details>
+_Empty — every action has a test suite._
 
 _Run: [workflow run](https://github.com/…/actions/runs/<id>) · Commit: `<sha>`_
 ````
