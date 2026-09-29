@@ -2428,8 +2428,8 @@ jobs:
           marker: ${{ steps.summary.outputs.head-marker }}
           body-file: ${{ steps.summary.outputs.body-file }}
         continue-on-error: true # never fail the workflow over PR comments
-      # The last test file removed, or the stage switched off, on an open pull request: the head
-      # would otherwise show a stale result.
+      # The last test file removed on an open pull request: the head would otherwise show a stale
+      # result. A stage switched off skips this job, so its head stays as it was.
       - name: "🧹 Remove the tests summary"
         if: |
           steps.summary.outcome == 'success'
