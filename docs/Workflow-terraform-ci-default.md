@@ -63,7 +63,11 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`;
 on:
   schedule: [{ cron: "0 2 * * *" }]
   # … pull_request, push, workflow_dispatch as usual
-# …
+
+jobs:
+  tf:
+    # … uses, secrets and permissions as usual
+    with:
       environments-yml: |
         - environment: prod
         - environment: staging
