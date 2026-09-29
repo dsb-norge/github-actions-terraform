@@ -321,11 +321,17 @@ Each of the six goal actions gains exactly one input. None of them gains
   extra-envs-file:
     description: |
       Path to a JSON file with environment variables to apply to this action's
-      invocations only. A JSON null value unsets the variable rather than setting
-      it empty.
+      invocations only, as produced by the 'resolve-goal-envs' action. A JSON
+      null value unsets the variable rather than setting it to the empty
+      string.
 
-      A path rather than a payload so that values — which may be secrets — never
-      enter argv, envp, or this step's script text.
+      A path rather than a payload so that the values — which may be secrets —
+      never enter argv, envp, or this step's script text.
+
+      The values are applied before this action's own exports, so an action-managed
+      variable set by the step script at runtime (e.g. TF_PLUGIN_CACHE_DIR) wins,
+      while one set in the step's env: block (e.g. TF_IN_AUTOMATION) is overridden
+      by the caller. See docs/Per-goal-environment-variables.md §6.3.
     required: false
     default: ""
 ```
@@ -338,8 +344,12 @@ Shim side it is just a path, so it is safe in the `env:` block under allexport:
       env:
         TF_IN_AUTOMATION: "true"
         input_working_directory: ${{ inputs.working-directory }}
+        input_environment_name: ${{ inputs.environment-name }}
+        input_extra_global_args: ${{ inputs.extra-global-args }}
+        input_extra_plan_args: ${{ inputs.extra-plan-args }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
+        # Run 'terraform plan' and save the plan file
         set -o allexport
         source "${{ github.action_path }}/step_plan.sh"
 ```
@@ -402,7 +412,7 @@ wins, and the result is asymmetric:
 
 | variable | set by | who wins |
 |---|---|---|
-| `TF_PLUGIN_CACHE_DIR`, `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` | [terraform-init/step_init.sh:80-82](../terraform-init/step_init.sh#L80-L82) — the script, at runtime | **the action** |
+| `TF_PLUGIN_CACHE_DIR`, `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` | [terraform-init/step_init.sh:137-139,174-176](../terraform-init/step_init.sh#L137-L139) — the script, at runtime | **the action** |
 | `TF_IN_AUTOMATION` | the shim's `env:` block, before the script runs | **the caller** |
 | `GITHUB_TOKEN` (lint) | the shim's `env:` block | **the caller** |
 
@@ -413,18 +423,18 @@ disable provider plugin caching — and callers who deliberately want to overrid
 
 ### 6.4 Call sites
 
-| action | step scripts to touch | notes |
+| action | step scripts that call it | notes |
 |---|---|---|
 | `terraform-init` | `step_init.sh` | modern already |
 | `terraform-validate` | `step_validate.sh` | modern already |
 | `terraform-plan` | `step_plan.sh`, `step_plan_show.sh`, `step_plan_json.sh` | **three** — see below |
-| `terraform-fmt` | *(new)* `step_fmt.sh` | requires conversion, [§9.1](#91-blocker-three-legacy-actions-must-be-converted-first) |
-| `lint-with-tflint` | *(new)* `step_lint.sh` | requires conversion |
-| `terraform-apply` | *(new)* `step_apply.sh` | requires conversion |
+| `terraform-fmt` | `step_fmt.sh` | converted to the modern layout, [§9.1](#91-prerequisite-three-legacy-actions-converted) |
+| `lint-with-tflint` | `step_lint.sh` | converted; `step_get_config.sh` runs no terraform or tflint and applies nothing |
+| `terraform-apply` | `step_apply.sh` | converted |
 
 `terraform-plan` runs terraform three times in three separate composite steps —
 `plan`, `plan-show`, `plan-json`
-([terraform-plan/action.yml:69-100](../terraform-plan/action.yml#L69-L100)) —
+([terraform-plan/action.yml:93-142](../terraform-plan/action.yml#L93-L142)) —
 each in its own shell. **Apply the envs in all three.** `terraform show -json` on
 a large plan is itself a significant allocator, so for the motivating
 `GOMEMLIMIT` case, covering only `step_plan.sh` would miss a likely OOM site.
@@ -435,22 +445,23 @@ In scope for this work: every terraform/tflint invocation these actions make is
 built as a bash **array** and invoked as `"${cmd[@]}"`, so arguments are never
 word-split or glob-expanded.
 
-Most invocations are already direct and correctly quoted —
-`step_init.sh:59,94`, `step_validate.sh:39`, `step_plan_show.sh:33`,
-`step_plan_json.sh:33` need no change. The work is confined to four places:
+Most invocations were already direct and correctly quoted —
+`step_init.sh:148,187`, `step_validate.sh:54`, `step_plan_show.sh:48`,
+`step_plan_json.sh:63` needed no change. The work was confined to four places:
 
-| site | current | why it matters |
+| site, as built | before | why it matters |
 |---|---|---|
-| [terraform-plan/step_plan.sh:54,70](../terraform-plan/step_plan.sh#L54) | `plan_cmd="… ${input_extra_global_args} plan … ${input_extra_plan_args}"` then bare `${plan_cmd}` | the **only** invocation interpolating caller-controlled argument strings, then relying on word-splitting to re-split them |
-| [terraform-apply/action.yml:51-54](../terraform-apply/action.yml#L51-L54) | `APPLY_CMD="terraform apply … ${{ inputs.terraform-plan-file }}"` then bare `${APPLY_CMD}` | plan-file path is unquoted; converted anyway under [§9.1](#91-blocker-three-legacy-actions-must-be-converted-first) |
-| [terraform-fmt/action.yml:56](../terraform-fmt/action.yml#L56) | `TF_FMT_DIRS` is a newline-joined **string** iterated as `${TF_FMT_DIRS[*]}` | `[*]` on a scalar is not array iteration — it word-splits. A project path containing a space silently lints the wrong directories |
-| [lint-with-tflint/action.yml:100,111](../lint-with-tflint/action.yml#L100) | same pattern for `TFLINT_DIRS` | same |
+| [terraform-plan/step_plan.sh:76-79](../terraform-plan/step_plan.sh#L76-L79) | `plan_cmd="… ${input_extra_global_args} plan … ${input_extra_plan_args}"` then bare `${plan_cmd}` | the **only** invocation interpolating caller-controlled argument strings, then relying on word-splitting to re-split them |
+| [terraform-apply/step_apply.sh:75-82](../terraform-apply/step_apply.sh#L75-L82) | `APPLY_CMD="terraform apply … ${{ inputs.terraform-plan-file }}"` in `action.yml`, then bare `${APPLY_CMD}` | plan-file path was unquoted; converted anyway under [§9.1](#91-prerequisite-three-legacy-actions-converted) |
+| [terraform-fmt/step_fmt.sh:76](../terraform-fmt/step_fmt.sh#L76) | `TF_FMT_DIRS` was a newline-joined **string** iterated as `${TF_FMT_DIRS[*]}` | `[*]` on a scalar is not array iteration — it word-splits. A project path containing a space silently checked the wrong directories |
+| [lint-with-tflint/step_lint.sh:78-79](../lint-with-tflint/step_lint.sh#L78-L79) | same pattern for `TFLINT_DIRS` | same |
 
-The last two are pre-existing latent bugs, not regressions introduced here. They
-are in the files being rewritten anyway, and `jq -r` output over
+The last two were pre-existing latent bugs, not regressions introduced here. They
+were in the files being rewritten anyway, and `jq -r` output over
 `.terraform/modules/modules.json` paths is exactly where a space eventually shows
-up — fix them as part of the conversion using `mapfile -t` (or `read -r -d ''`
-over `jq --raw-output0`) into a real array.
+up — the conversion fixed them with `read -r -d ''` over `jq --raw-output0` into a
+real array (`read-terraform-module-dirs` in each action's
+`helpers_additional.sh`).
 
 Keep the existing `log-info "command string is …"` diagnostics; render the array
 with `${cmd[*]@Q}` so the log stays copy-pasteable and shows the real quoting.
@@ -465,13 +476,15 @@ on their own merits.
 
 One resolver step, placed immediately after the existing
 `🎰 Export environment variables and secrets` step at
-[terraform-ci-cd-default.yml:524](../.github/workflows/terraform-ci-cd-default.yml#L524)
-and before `🔑 Login to Azure`:
+[terraform-ci-cd-default.yml:808](../.github/workflows/terraform-ci-cd-default.yml#L808)
+and before `🔑 Login to Azure`. It is part of the shared `&environment-steps`
+list, so every stage job (`terraform-ci-cd`, `terraform-ci-cd-2`,
+`terraform-ci-cd-3`) runs it:
 
 ```yaml
       - name: "🎰 Resolve per-goal environment variables"
         id: goal-envs
-        uses: dsb-norge/github-actions-terraform/resolve-goal-envs@v0
+        uses: dsb-norge/github-actions-terraform/resolve-goal-envs@v1
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
@@ -493,18 +506,21 @@ Then one line added to each goal step's `with:`:
 | `destroy-plan` | `.../destroy-plan.json` |
 | `destroy` | `.../destroy.json` |
 
-Plus a cleanup step at the end of the `terraform` job:
+Plus a cleanup step as the last of the environment steps:
 
 ```yaml
       - name: "🧹 Shred resolved environment files"
         if: always()
+        env:
+          ENVS_DIR: ${{ steps.goal-envs.outputs.envs-dir }}
         run: |
-          dir='${{ steps.goal-envs.outputs.envs-dir }}'
+          dir="${ENVS_DIR}"
           [ -n "${dir}" ] && [ -d "${dir}" ] && rm -rf "${dir}" || :
+        continue-on-error: true # never fail the job over cleanup
 ```
 
 `$RUNNER_TEMP` is documented as emptied per job, but `runs-on` is caller-overridable
-to self-hosted groups ([:317-326](../.github/workflows/terraform-ci-cd-default.yml#L317-L326))
+to self-hosted groups ([:537-546](../.github/workflows/terraform-ci-cd-default.yml#L537-L546))
 and composite actions cannot declare `post:` steps, so cleanup is explicit rather
 than delegated to runner behavior.
 
@@ -522,18 +538,19 @@ Rules for this feature:
 
 1. **`secrets-json` is heredoc'd to a `mktemp` file before `set -o allexport`,
    and only the path is exported.** `toJSON(secrets)` is the one genuinely large
-   payload here — a bag containing a PEM private key (this repo references
-   `TF_CICD_APP_PRIVATE_KEY`) is single-handedly enough to matter. Note that
-   [export-env-vars/action.yml:40-59](../export-env-vars/action.yml#L40-L59) is
-   already safe by construction: it does `set +o allexport` *before* assigning
-   `SECRETS_JSON`. A modern-layout shim defaults to the opposite, so this must be
-   deliberate.
+   payload here — a bag containing a PEM private key (the auto-merge App's key
+   named by `pr-auto-merge-app-private-key-secret` is one) is single-handedly
+   enough to matter. Note that
+   [export-env-vars/action.yml:67-100](../export-env-vars/action.yml#L67-L100) is
+   safe by construction: its shim never sets `allexport`, so the heredoc'd
+   `secrets-json` stays a shell-local. A modern-layout shim defaults to the
+   opposite, so this must be deliberate.
 2. **Goal actions receive a path, never a payload.** This is the whole point of
    [§5.2](#52-output-contract) — it is what keeps six actions from each needing
    the discipline in rule 1.
 3. **`apply-extra-envs` never assigns the JSON to a variable.** `jq` reads the
-   file; the loop consumes a stream. Only individual keys and base64-encoded
-   values transit shell variables, and those are bounded by the size of a single
+   file; the loop consumes a NUL-delimited stream. Only one key and one value at a
+   time transit shell variables, and those are bounded by the size of a single
    env var.
 4. The resolved per-goal env values do of course end up in `envp` — that is what
    an environment variable is. They are bounded by whatever the caller configures,
@@ -541,17 +558,18 @@ Rules for this feature:
 
 ## 9. Constraints, decisions and blockers
 
-### 9.1 Blocker: three legacy actions must be converted first
+### 9.1 Prerequisite: three legacy actions converted
 
-`terraform-fmt`, `lint-with-tflint`, and `terraform-apply` still embed their bash
-in `action.yml` and have no `step_*.sh` to host `apply-extra-envs`. Per
+`terraform-fmt`, `lint-with-tflint`, and `terraform-apply` embedded their bash in
+`action.yml` and had no `step_*.sh` to host `apply-extra-envs`. Per
 [CLAUDE.md](../CLAUDE.md), touching a legacy action for non-trivial work means
 converting it to the modern layout per
-[Action-implementation-guide.md §"Converting an Existing Inline-Bash Action"](Action-implementation-guide.md).
+[Action-implementation-guide.md §"Converting an Existing Inline-Bash Action"](Action-implementation-guide.md),
+and all three are now in that layout.
 
-**This is the bulk of the effort in this feature.** Assessment per action:
+**This was the bulk of the effort in this feature.** Assessment per action:
 
-| action | lines | scope | difficulty |
+| action | legacy lines | scope | difficulty |
 |---|---|---|---|
 | [terraform-apply](../terraform-apply/action.yml) | 56 | `check-prereqs` stays inline; `apply` step → `step_apply.sh` (~8 lines of logic) | low |
 | [terraform-fmt](../terraform-fmt/action.yml) | 70 | `check-prereqs` stays inline; `fmt` step → `step_fmt.sh`: `modules.json` discovery, loop over dirs, associative array of exit codes, summed exit | medium — tests need a fake `.terraform/modules/modules.json` fixture and a `terraform` stub |
@@ -567,12 +585,11 @@ Consequences:
   no matrix edit in `action-tests.yml`. But each new `run_all_tests.sh` must emit
   the canonical `Tests run:` / `Tests passed:` / `Tests failed:` lines verbatim or
   CI fails the suite on format drift ([Testing-in-ci.md](Testing-in-ci.md)).
-- These three actions currently have **zero test coverage**. Conversion is where
-  it gets written — which is a benefit, but it is also why the estimate is not
-  small.
-- Rewriting the internals of `terraform-apply` is the highest-risk change in this
-  feature. It is the only step that mutates infrastructure, and it ships to every
-  `@v0` caller the moment the tag moves ([§9.9](#99-v0-force-move-blast-radius)).
+- These three actions had **zero test coverage**. The conversion wrote their
+  suites — which is a benefit, but it is also why the estimate was not small.
+- Rewriting the internals of `terraform-apply` was the highest-risk change in this
+  feature. It is the only step that mutates infrastructure, and it shipped to
+  every `@v0` caller the moment the tag moved ([§9.9](#99-v0-force-move-blast-radius)).
 
 ### 9.2 Assumption: jq 1.7 baseline
 
@@ -582,8 +599,12 @@ where jq is 1.7.x, and the standing convention is to assume preinstalled runner
 tooling rather than probe or install it.
 
 `runs-on` is nominally caller-overridable to a self-hosted group
-([:317-326](../.github/workflows/terraform-ci-cd-default.yml#L317-L326)), so a
-sufficiently old self-hosted image would fail here. Not designed around. If it
+([:537-546](../.github/workflows/terraform-ci-cd-default.yml#L537-L546)), so a
+sufficiently old self-hosted image would fail here. It fails loudly: the helper
+counts the file's entries with `length`, which any jq supports, and fails the
+step when fewer were applied, naming jq older than 1.7 as the likely cause
+([§13.1](#131-apply-extra-envs-locals-renamed-constants-not-readonly)). Not
+designed around beyond that. If it
 ever matters, the fallback is to base64-encode values in the jq filter
 (`.value | tostring | @base64`) and decode per variable, which is line-oriented
 and works on jq 1.5+ at the cost of a subshell per variable.
@@ -600,7 +621,7 @@ under this design**, and the failure is silent.
         if: env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
 ```
 
-[:533](../.github/workflows/terraform-ci-cd-default.yml#L533) — the consumer of
+[:830-832](../.github/workflows/terraform-ci-cd-default.yml#L830-L832) — the consumer of
 `ARM_*` is `azure/login`, not terraform, it runs **once, early**, and it reads
 `env.`, i.e. job-wide `$GITHUB_ENV`. Variables that exist only inside
 `terraform-apply`'s step process are invisible to it. Handing terraform a
@@ -666,7 +687,9 @@ longer a merge field: a per-environment actor list replaces the global one
 ([Configuration-validation.md](Configuration-validation.md) D6). After the merge,
 the job-wide maps `extra-envs` and `extra-envs-from-secrets` drop their null
 values ([Configuration-validation.md](Configuration-validation.md) §3.5); the
-per-goal maps keep them for `resolve-goal-envs`, where a `null` unsets.
+per-goal maps keep them for `resolve-goal-envs`, where a `null` in
+`extra-envs-per-goal` unsets and one in `extra-envs-from-secrets-per-goal` is
+refused ([§13.5](#135-extra-validation-in-resolve-goal-envs)).
 
 Regression tests: [§10](#10-test-scenarios) T31-T37.
 
@@ -674,8 +697,8 @@ Regression tests: [§10](#10-test-scenarios) T31-T37.
 
 `helpers.sh` must stay byte-identical across actions and be cherry-picked
 unmodified ([CLAUDE.md](../CLAUDE.md)), so `apply-extra-envs` goes into each
-action's `helpers_additional.sh` — **six copies**. Three of those actions have no
-`helpers_additional.sh` today and get one during conversion.
+action's `helpers_additional.sh` — **six copies**. Three of those actions had no
+`helpers_additional.sh` before and got one in their conversion.
 
 **This is by design, not a compromise.** A shared file at the repo root would
 technically resolve via `${{ github.action_path }}/../`, since GitHub checks out
@@ -708,21 +731,21 @@ silently dropped.
 
 ### 9.9 `@v0` force-move blast radius
 
-The major tag is force-moved on every minor release, so everything here reaches
-every `@v0` caller immediately. The two new workflow inputs and six new action
-inputs are additive and defaulted, so they are safe. The **rewritten internals of
-`terraform-fmt`, `lint-with-tflint`, and `terraform-apply` are not** — those are
-behavior-preserving-by-intention rewrites of untested code.
+The feature shipped on the v0 line, whose major tag is force-moved on every minor
+release, so everything here reached every `@v0` caller immediately. (`main` is now
+the v1 line and v0 is frozen, taking fixes only —
+[Development-and-release.md](Development-and-release.md) → "Release lines"; the
+same care applies to a change here on `@v1`.) The two new workflow inputs and six
+new action inputs are additive and defaulted, so they are safe. The **rewritten
+internals of `terraform-fmt`, `lint-with-tflint`, and `terraform-apply` are not**
+— those are behavior-preserving-by-intention rewrites of untested code.
 
-**Decision: one release for all of it.** The dev-tag swap flow in
-[Development-and-release.md](Development-and-release.md) is mandatory, and
-verification happens from a calling repo's PR that exercises `fmt`, `lint`, and
-`apply` against real infrastructure — not just this repo's own test suites. That
-end-to-end verification is what makes a single release acceptable despite the
-conversions riding along; do not merge on green `action-tests` alone.
-
-Re-tag and force-push the dev tag on every pushed commit, and delete it from
-local and origin before merge ([§11](#11-implementation-order)).
+**Decision: one release for all of it.** Verification happens from a calling
+repo's PR, through the development flow in
+[Development-and-release.md](Development-and-release.md), that exercises `fmt`,
+`lint`, and `apply` against real infrastructure — not just this repo's own test
+suites. That end-to-end verification is what makes a single release acceptable
+despite the conversions riding along; do not merge on green `action-tests` alone.
 
 ## 10. Test scenarios
 
@@ -781,8 +804,8 @@ auto-merge configuration.
 
 ## 11. Implementation order
 
-One PR, one minor release — the dev tag is verified end-to-end from a calling
-repo's PR, which covers the conversions and the feature together
+One PR, one minor release — verified end-to-end from a calling repo's PR, which
+covers the conversions and the feature together
 ([§9.9](#99-v0-force-move-blast-radius)). Ordering within the PR, so that each
 step is independently reviewable:
 
@@ -795,14 +818,16 @@ anyway, and doing it now means the new suites cover the fixed behavior from the
 start rather than being written twice.
 
 **2 — array-built invocation in `terraform-plan`**
-[step_plan.sh:54,70](../terraform-plan/step_plan.sh#L54) to an array. Separate
+The `plan_cmd` string to an array
+([step_plan.sh:76-79](../terraform-plan/step_plan.sh#L76-L79)). Separate
 from step 1 because this action is already modern and already tested — the
 existing suite should pass unchanged, with T27-T29 added.
 
 **3 — matrix builder + inputs**
-Both new workflow inputs, `environments-yml` docs, the five alignment points,
-type-dispatched merge ([§9.5](#95-deep-merge-of-the-per-goal-maps)),
-goal-key normalization, fixtures. Land the deep-merge regression suite (T31-T35) *with* this change, not after.
+Both new workflow inputs, `environments-yml` docs, the alignment points
+([§4](#4-matrix-builder-changes)), type-dispatched merge
+([§9.5](#95-deep-merge-of-the-per-goal-maps)), goal-key normalization, fixtures.
+Land the deep-merge regression suite (T31-T35) *with* this change, not after.
 
 **4 — `resolve-goal-envs`**
 The new action plus its full suite. Fold the `export-env-vars` missing-secret fix
@@ -819,7 +844,7 @@ Caller-facing section in
 the existing `extra-envs-yml` material, with the
 [§9.3](#93-limitation-per-goal-secrets-cannot-swap-cloud-identity) caveat and the
 [§6.3](#63-ordering-and-overriding-action-managed-variables) override behavior
-stated plainly. Update this document's status line.
+stated plainly.
 
 ## 12. Out of scope / follow-ups
 
@@ -872,6 +897,15 @@ and `readonly` constants. Shipped as `_extra_envs_file` / `_extra_envs_key` /
   then hard-fail on the re-assignment. Nothing does that today; the cost of
   guarding is zero.
 
+The shipped helper is also stricter than the sketch. Before applying anything it
+refuses a file that is not valid JSON or does not hold an object, since applying
+nothing would otherwise pass silently. It checks every name against
+`^[A-Za-z_][A-Za-z0-9_]*$`, because `export` given the key `FOO=BAR` sets `FOO`
+instead of failing, and it fails when `unset` or `export` does (a readonly
+variable). It counts the entries with `length` and fails when fewer were applied,
+which is how a jq older than 1.7 shows up ([§9.2](#92-assumption-jq-17-baseline)).
+It logs inside a group and says so when no file is configured.
+
 ### 13.2 Caller-supplied argument strings are still whitespace-split
 
 [§6.5](#65-array-built-invocations) lists T27 as "an argument containing a space
@@ -915,3 +949,9 @@ literal-`null` input as `{}` (`toJSON(...)` renders `null` for a matrix key that
 does not exist). It also checks the validation pass's own exit code separately
 from whether it produced error lines — a jq failure would otherwise have read as
 "no problems found" and let bad input through.
+
+Two more checks refine the §5.4 ones. A secret name must be a non-empty string,
+so a `null` in `extra-envs-from-secrets-per-goal` is refused rather than read as
+an unset; unsetting a variable for one goal is done with `~` in
+`extra-envs-per-goal`. A goal's value must be a mapping, except that `null` (a
+goal key written with nothing under it) resolves as an absent key.
