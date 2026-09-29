@@ -70,8 +70,8 @@ the same rules and messages ([Configuration-validation.md](Configuration-validat
     secrets: inherit
 ```
 
-No job asks for more than `contents: read`: the docs commit is pushed with the App token, which
-carries its own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
+No job asks for `contents: write`: the docs commit is pushed with the App token, which carries its
+own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
 `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`. `vars.ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
 
 ## 4. Jobs
@@ -83,6 +83,8 @@ flowchart LR
     docs --> tests
     tests --> summary["terraform-test-summary: tests head, step summary"]
     matrix --> summary
+    docs --> summary
+    validate --> summary
     docs --> conclusion["conclusion: the required check"]
     validate --> conclusion
     tests --> conclusion
@@ -160,8 +162,8 @@ Lanes are the project workflow's, key for key ([Terraform-tests.md §3.2, §3.6]
 | Step summaries | validation block, each test job's block, the tests block, the conclusion line | the same |
 | Annotations | one per failed gate, the tests headline, the conclusion | the same |
 
-The docs job writes one line to its step summary: regenerated and pushed, up to date, or needs
-regenerating.
+The docs job writes one line to its step summary: regenerated and pushed, up to date, needs
+regenerating, or failed.
 
 ## 8. The conclusion
 
@@ -205,12 +207,14 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 - Engine: module mode for every event, the required finding, lanes and exclusions without
   environments, the record, the published outputs; under both gates.
 - F20: `terraform-test` and `terraform-test-summary` of the two workflows have the same steps, the
-  same permissions, environment, strategy and concurrency; they differ only in `needs` and in `if`
-  where the module mode's events differ.
+  same name, runner, timeout, permissions, environment, strategy and concurrency; they differ only
+  in `needs` and `if`: the module jobs wait for the docs job (the summary for validation too) and
+  skip after a docs push, and the module summary runs on every event with test files.
 - F21: the module conclusion's needs, named results and lines; F9, F16 and F19 already cover the
   module workflows.
-- `terraform-docs`: a suite for the converted step (push on a pull request only, fail on a diff
-  elsewhere, the counts).
+- `terraform-docs`: a suite for the converted steps (a push with `push: true` only, fail on a diff
+  otherwise, the counts); the workflow passes `push: true` on a pull request from the repository
+  alone.
 - The test bed: no test file, a unit suite only, the one-credential lane, an environment lane with
   OIDC, a docs change on a pull request, a dispatch.
 
