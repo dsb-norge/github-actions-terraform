@@ -94,11 +94,13 @@ An entry may hold exactly these keys:
 | `add-pr-comment`, `apply-extract-include-outputs`, `cache-terraform-modules`, `format-check-in-root-dir`, `pr-auto-merge-enabled`, `pr-comment-group`, `runs-on`, `terraform-version`, `tflint-version`, `verify-lock-file` | override the workflow input of the same name for this environment |
 
 The last row is an explicit list in the engine (`PER_ENVIRONMENT_INPUTS`), and a test holds every
-input the workflow declares to one of two classes: per environment (that list) or workflow only
-(`environments-yml`, `trigger-events-yml`, `path-relevance-enabled`, the test stage's inputs,
-`pr-auto-merge-app-id`, `pr-auto-merge-app-private-key-secret`). A new input fails that test until
-someone decides its class. A spec that adds a key adds it to the first rows, as
-Environment-ordering.md's `depends-on` did.
+input the workflow declares to exactly one of three classes: per environment (that list), a
+per-environment YAML setting (the two rows above it, `REPLACE_FIELDS` and `MERGE_FIELDS`), or
+workflow only (`WORKFLOW_ONLY_INPUTS`: `environments-yml`, `trigger-events-yml`,
+`path-relevance-enabled`, the test stage's inputs, `pr-auto-merge-app-id`,
+`pr-auto-merge-app-private-key-secret`). A new input fails that test until someone decides its
+class. A spec that adds a key adds it to the first rows, as Environment-ordering.md's `depends-on`
+did.
 
 Refused, each with its own message:
 
@@ -162,7 +164,7 @@ As [Dispatch-and-triggers.md](Dispatch-and-triggers.md) §3.2 and [Path-relevanc
 ### 3.4 Additional init directories
 
 `terraform-init-additional-dirs-yml` is a list of directories, relative to the repository root. A
-single directory written alone is that one directory; today a string inits nothing, silently.
+single directory written alone is that one directory; on v0 a string inited nothing, silently.
 Each entry is non-empty text. The init step quotes each directory, so one holding a space is one
 directory.
 
@@ -182,9 +184,10 @@ and `extra-envs-from-secrets-per-goal-yml` hold secret names by variable name.
   `TF_VAR_version: 1.10` is `1.10`, `ACCOUNT: 012345678901` keeps its zero, `ARM_USE_OIDC: true` is
   `true`, `COUNT: 0x1F` is `0x1F`. A quoted or block scalar is its YAML value (chomping applies).
   The adapter reads these four settings, global and per environment, as a YAML string or as a
-  mapping inside `environments-yml`, with every plain scalar's tag rewritten to a string before it
-  becomes JSON; no other setting is read that way, so a per-environment `terraform-version: 1.10`
-  is still refused with "quote it". A test lane's `extra-envs-yml` follows the same rule.
+  mapping inside `environments-yml`, with the tag of every scalar YAML reads as an integer, a float
+  or a boolean rewritten to a string before it becomes JSON (a null stays null); no other setting
+  is read that way, so a per-environment `terraform-version: 1.10` is still refused with "quote
+  it". A test lane's `extra-envs-yml` follows the same rule.
 - A null value (`~`, `null`, `Null`, `NULL`, or the key with no value) means **not set**. In the
   job-wide maps the engine drops a null after the global and per-environment values are merged,
   so a per-environment null removes a global variable for that environment; it is never exported
