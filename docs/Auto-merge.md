@@ -60,7 +60,7 @@ and not a draft, when the input `pr-auto-merge-enabled` is `true`, and now (D9) 
 default branch from the same repository. It:
 
 1. checks the App settings (`pr-auto-merge-app-id`, the key secret's name);
-2. downloads every environment job's metadata and `relevance.json`;
+2. downloads every environment job's metadata, `relevance.json` and the test jobs' metadata;
 3. evaluates every environment of the run (§5);
 4. when every one is eligible, mints an App token (contents and pull requests: write) and merges
    (§6).
@@ -83,7 +83,7 @@ flowchart TD
 
 ## 4. Changes
 
-| Area | Today | Then |
+| Area | Before | As built |
 |---|---|---|
 | Counts | parsed from the console text | from the JSON plan, in the environment's job (§5.2) |
 | Merge | `gh pr merge <n> --admin --rebase --delete-branch` | the same with `--match-head-commit`, after the base check (§6) |
@@ -145,7 +145,7 @@ The reasons, as the evaluator logs them:
 - `The plan of 'prod' was not counted from its JSON plan (counts-source: console), so its counts cannot be trusted for auto-merge`
 - `The plan of 'prod' is not complete (a -target plan, or changes deferred to a later plan), so its counts do not cover every change`
 - `The plan of 'prod' does not say it is complete (plan-complete: ?), so its counts may not cover every change`
-- `Terraform operation(s) did not succeed: lint. A failure allow-failing-terraform-operations tolerates still blocks auto-merge, environment is ineligible for PR auto merge`
+- `Terraform operation(s) did not succeed: lint (failure). A failure allow-failing-terraform-operations tolerates still blocks auto-merge, environment is ineligible for PR auto merge`
 - `The actor list that applies to this environment (pr-auto-merge-from-actors) names nobody, so no pull request may auto-merge; name the accounts in pr-auto-merge-from-actors-yml`
 - `The change touches 'nightly', which takes no part in pull requests, so it was never planned, environment is ineligible for PR auto merge`
 
@@ -172,8 +172,9 @@ failing test is only logged, since the conclusion it turned red keeps the job fr
 ### 5.2 The counts
 
 The JSON step writes `terraform show -json` to a file on the runner and its stderr apart.
-`parse-terraform-plan` gains an input for that file and computes the six counts from it with `jq`,
-reading from disk and never through a shell variable (the ARG_MAX rule of CLAUDE.md):
+`parse-terraform-plan` takes that file as its input `plan-json-file` and computes the six counts
+from it with `jq`, reading from disk and never through a shell variable (the ARG_MAX rule of
+CLAUDE.md):
 
 | Count | From each `resource_changes[]` entry with `mode: managed` |
 |---|---|
@@ -200,16 +201,16 @@ see them. Completeness is reported apart, as the parse step's `plan-complete`: `
 JSON says `"complete": true`, `false` when it says `false` or does not say, `?` when the counts are
 `?`, and empty for console counts. The parse step also says where its counts came from,
 `counts-source` (`json` or `console`), and the evaluator judges limits only on `json` and `true`
-(§5.1). Without the JSON file, as the module workflows call it, the parse step counts from the
+(§5.1). Without the JSON file (`plan-json-file` empty, its default), the parse step counts from the
 console exactly as before.
 
 Terraform's `Plan:` summary line has no segment for moves or removals, so the oracle is the
 repository's contract-test harness: `contract-tests/scenarios/*/expected.json` records all six
-counts per scenario under the supported Terraform minors, and `contract-tests/run.sh` gains the
-JSON capture and the comparison. Verified by hand with Terraform 1.16 before this spec: a
-replacement counted under add and destroy, an import that is also a replacement counted as an
-import, a moved and updated resource counted as a change and a move, a `removed` block as a
-`forget` action, a deferred data-source read as `read`.
+counts per scenario under the supported Terraform minors, and `contract-tests/run.sh` also counts
+each scenario's plan from its JSON plan and compares those counts with the same values. Verified by
+hand with Terraform 1.16 before this spec: a replacement counted under add and destroy, an import
+that is also a replacement counted as an import, a moved and updated resource counted as a change
+and a move, a `removed` block as a `forget` action, a deferred data-source read as `read`.
 
 The console text keeps feeding the comment's plan extract; the comment's "no changes" comes from
 the counts.
@@ -218,35 +219,39 @@ the counts.
 
 ```mermaid
 flowchart TD
-  start(["every environment eligible"]) --> inputs{"head-sha and merge-sha<br/>full SHAs?"}
-  inputs -->|no| refuse(["refused: an error annotation,<br/>the pull request stays open"])
+  start(["every environment eligible"]) --> inputs{"head-sha and merge-sha full SHAs,<br/>the event's base.ref set?"}
+  inputs -->|no| stop(["not merged: an ERROR line in the log,<br/>the step fails"])
   inputs -->|yes| base{"the merge commit's first parent<br/>still the base branch's tip?"}
-  base -->|"no, or a lookup failed"| refuse
+  base -->|"no, or a lookup failed"| refuse(["refused: an error annotation,<br/>the pull request stays open"])
   base -->|yes| merge["gh pr merge --admin --rebase --delete-branch<br/>--match-head-commit head-sha"]
   merge -->|merged| done(["merged"])
   merge -->|failed| why{"why?"}
   why -->|the head moved| refuse
-  why -->|CONFLICTING| refuse
-  why -->|otherwise| retry{"attempts left?"}
-  retry -->|yes| base
-  retry -->|no| refuse
+  why -->|otherwise| retry{"retrying (the event's mergeable<br/>was null), attempts left?"}
+  retry -->|no| stop
+  retry -->|yes| conflict{"mergeable now CONFLICTING?"}
+  conflict -->|yes| refuse
+  conflict -->|no| base
 ```
 
-`auto-merge-pr` takes two required inputs, `head-sha` (`github.event.pull_request.head.sha`) and
-`merge-sha` (`github.sha`, the event's merge commit). Before every merge attempt it reads the merge
-commit's first parent (`gh api repos/<repo>/commits/<merge-sha>`), the base the plans saw, and the
-base branch's tip (`gh api repos/<repo>/branches/<base.ref of the event>`); a lookup that fails, or
-an event without `base.ref`, refuses to merge, and so does a `head-sha` or `merge-sha` that is not a
-full hexadecimal SHA, before any `gh` call:
+`auto-merge-pr` takes, beside the token and the event, two required inputs, `head-sha`
+(`github.event.pull_request.head.sha`) and `merge-sha` (`github.sha`, the event's merge commit).
+Before every merge attempt it reads the merge commit's first parent
+(`gh api repos/<repo>/commits/<merge-sha>`), the base the plans saw, and the base branch's tip
+(`gh api repos/<repo>/branches/<base.ref of the event>`); a lookup that fails refuses to merge. A
+`head-sha` or `merge-sha` that is not a full hexadecimal SHA fails the step before any `gh` call,
+and an event without `base.ref` fails it before any merge attempt. Each attempt then:
 
 - base tip differs from the merge commit's first parent: not merged, `The base branch 'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>), so the merged result was never planned. The next run, after the pull request is brought up to date, decides.`
 - otherwise `gh pr merge --admin --rebase --delete-branch --match-head-commit <head-sha>`; GitHub
   refuses a moved head: `The pull request's head moved after this run planned it (planned <sha7>, now <sha7>), so it was not merged; the run for the new head decides.` (the current head read with `gh pr view --json headRefOid` after the failed merge; when it cannot be read,
   GitHub's `Head branch was modified` wording is the sign, and the head is `now unknown`).
 
-Every refusal is an `::error title=Auto-merge refused::` annotation. The retry stops on
-`CONFLICTING` and never repeats a refusal for a moved head or base (D11): another attempt could only
-merge something the run never planned.
+Every refusal is an `::error title=Auto-merge refused::` annotation; an input the step cannot use,
+and a merge that fails for any other reason, is an `ERROR:` line in the log, and the step fails.
+The retry, used only while the event's `mergeable` is still null (not yet computed by GitHub),
+stops on `CONFLICTING` and never repeats a refusal for a moved head or base (D11): another attempt
+could only merge something the run never planned.
 
 A small window remains between the base check and the merge; a merge landing inside it is the
 same race any merge queue closes, and is accepted.
@@ -337,7 +342,7 @@ the test and its lane.
 
 ## 11. Open questions
 
-None; the decisions are the maintainer's (D3, D9, D10, D13).
+None; the decisions are the maintainer's (D3, D7, D9, D10, D13).
 
 ## 12. Implementation order
 
