@@ -10,9 +10,9 @@ A collection of composite GitHub Actions and reusable workflows for terraform pr
 - **`.github/workflows/terraform-module-ci.yaml`** (and `terraform-module-release.yaml`) — the module repositories' workflow: terraform-docs (a commit only on a pull request), validation, and the project workflow's test stage through the engine's **module mode** (`create-tf-vars-matrix` with `mode: module`, `docs/Module-ci.md`). Its `terraform-test` and `terraform-test-summary` jobs are the project workflow's, **copied**: F20 fails unless the two are equal but for `needs` and `if`, so **a change to either workflow's test jobs is made in both**. A module needs at least one test file by default (`terraform-test-required`).
 - **Composite actions** in top-level directories (e.g. `terraform-init/`, `terraform-plan/`, `verify-terraform-lock/`, `create-validation-summary/`, …).
 
-Calling repos pin a rolling major tag (`@v0`, or `@v1` for the v1 line) or a specific minor (`@v0.21`). A major tag is force-moved on release, so what ships on it reaches every caller pinned to it at once — be mindful when touching anything in here.
+Calling repos pin a rolling major tag (`@v0`, or `@v1` for the v1 line) or a specific release (`@v0.21`, `@v1.2.0`). A major tag is force-moved on release, so what ships on it reaches every caller pinned to it at once — be mindful when touching anything in here.
 
-**`main` is the v1 line.** Its workflows' internal refs say `@v1`, and `v1` is a moving annotated tag that has no consumers yet. `v0` is frozen at v0.33 and takes fixes only, on a `release/v0` branch cut from that commit when the first fix is needed (`docs/Development-and-release.md` → "Release lines"). The plan is `docs/Road-to-v1.md`; progress, per pull request, is `docs/V1-progress.md`.
+**`main` is the v1 line.** Its workflows' internal refs say `@v1`, and `v1` is a moving tag that follows every v1 release; callers pin `@v1` or an exact `@v1.X.Y` (`CHANGELOG.md`). `v0` is frozen at v0.33 and takes fixes only, on a `release/v0` branch cut from that commit when the first fix is needed (`docs/Development-and-release.md` → "Release lines"). The plan is `docs/Road-to-v1.md`; progress, per pull request, is `docs/V1-progress.md`.
 
 **`docs/README.md` indexes every document by kind** (user guide, migration, spec, contributor guide, tracking); a new document gets its row in the change that adds it, and F22 in `evaluate-automerge-eligibility/run_all_tests.sh` fails otherwise.
 
@@ -134,38 +134,23 @@ To test changes from a calling repo, use the PR's **preview ref**. There is no d
 
 If the comment says *unavailable (bootstrap)*, the repository variable `PREVIEW_APP_ID` / secret `PREVIEW_APP_PRIVATE_KEY` are missing — `docs/Preview-refs.md` §5 has the one-time App setup. Fallback for fork PRs: `bash .github/scripts/rewrite-internal-refs.sh <ref>`, commit, tag and push by hand (Development-and-release.md → "Fallback: publishing by hand"), and revert with the same script and `v1` before merge.
 
-## Release process (see `docs/Development-and-release.md`)
+## Release process (see `docs/Development-and-release.md` → "Release")
 
-Minor and major releases both use annotated tags. Critical points beyond the doc:
-
-- **While v1 has no consumers, only `v1` moves** — no `v1.X` minors. After the maintainer merges a v1 pull request, move `v1` to the merge's tip on `main`, appending one block per pull request to its annotation (append-only, same technique as below; the first creation starts the changelog fresh):
-  ```bash
-  git fetch origin --tags -f
-  old=$(git for-each-ref --format='%(contents)' refs/tags/v1)   # empty the first time
-  new_block="#<PR>: <PR title>
-    - <commit subject>
-    - <commit subject>"
-  combined="${old:+${old}
-  }${new_block}"
-  # --cleanup=verbatim: the default cleanup drops every line that starts with '#', the block header too
-  git tag -f -a --cleanup=verbatim v1 -m "${combined}" origin/main
-  git push -f origin refs/tags/v1
-  ```
-- **The `v0` major tag's annotation is an append-only changelog.** Every prior `v0.X:` block must be preserved when force-recreating `v0`. The doc shows interactive `git tag -f -a 'v0'` which prompts for fresh annotation — that overwrites. To **amend** properly:
+- **v1 releases are release-please's** (`.github/workflows/release.yml`, `release-please-config.json`, `.release-please-manifest.json`). Every push to `main` updates one release pull request (`chore(main): release 1.X.Y`); merging it tags `v1.X.Y`, publishes the GitHub Release and moves `v1`. Never tag a v1 release or move `v1` by hand, except to un-release (the doc's command). **Commit subjects are the release notes**: `feat:` and `fix:` (and breaking changes) are listed in `CHANGELOG.md` and decide the bump; `docs:`, `test:`, `refactor:`, `chore:`, `ci:` release nothing on their own. Mark a breaking change `feat!:` or with a `BREAKING CHANGE:` footer only when it is one: it proposes v2.
+- The release pull request is opened with the releaser App (`vars.RELEASER_APP_ID`, `secrets.RELEASER_APP_PRIVATE_KEY`) so its CI runs; without the variable the job is skipped.
+- **v0 fixes are released by hand** from `release/v0`, and **`v0`'s annotation is an append-only changelog**: every prior `v0.X:` block is kept when `v0` is force-recreated. `git tag -f -a v0` without `-m` prompts for a fresh annotation and overwrites it. To **amend**:
   ```bash
   old=$(git for-each-ref --format='%(contents)' refs/tags/v0)
   new_block="v0.X:
     - <commit subject>
     - <commit subject>"
-  combined="${old}
-  ${new_block}"
   git tag -a v0.X -m "${new_block}"
-  git tag -f -a v0 -m "${combined}"
+  git tag -f -a v0 -m "${old}
+  ${new_block}"
   git push origin refs/tags/v0.X
   git push -f origin refs/tags/v0
   ```
-- The new minor's annotation block follows the format `vX.Y:\n  - <commit subject>\n  ...`. Mirror commit subjects since `vX.(Y-1)`, lightly rephrasing if a literal subject would be confusing as a release note.
-- Force-pushing `v0` is intentional and is the supported mechanism — every calling repo on `@v0` moves to the new commit immediately.
+  Mirror the commit subjects since the previous minor, lightly rephrased where a literal subject would confuse as a release note, and add the block to `CHANGELOG.md`'s v0 section. Force-pushing `v0` is intentional: every caller on `@v0` moves at once.
 
 ## Conventions
 
