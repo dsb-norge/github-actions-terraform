@@ -2677,10 +2677,6 @@ jobs:
         id: app-token
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
         uses: actions/create-github-app-token@v3
-        env:
-          # v3 dropped its own proxy handling; this makes Node honour HTTP(S)_PROXY as v2 did, on a
-          # caller's self-hosted runner behind a proxy. Without proxy variables it changes nothing.
-          NODE_USE_ENV_PROXY: "1"
         with:
           # v3 takes the App ID or the client ID here and deprecates 'app-id', which reads the same.
           client-id: ${{ inputs.pr-auto-merge-app-id }}
