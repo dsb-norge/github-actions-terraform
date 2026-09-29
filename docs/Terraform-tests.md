@@ -1288,8 +1288,8 @@ Indexed so implementation commits and future specs can cite them.
 secrets reaching a called job, `deployment: false`, a collaborator with write access setting
 environment secrets, `azure/login` skipping, artifact URL validity, the `#step:N:1` anchor, the
 256-job cap, the exact behaviour of an environment root with a real backend. These are verified
-through a preview ref on a test-bed calling repository and recorded in §15, except a real OIDC
-login in an environment lane, which is open (§12).
+through a preview ref on a test-bed calling repository and recorded in §15, a real OIDC login in an
+environment lane included.
 
 ## 12. Open questions
 
@@ -1305,12 +1305,6 @@ the documentation could answer is answered in the text above. What remains:
    missing environment creates it. The docs are silent on forks; the design never references one
    from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
    its private repositories into a personal account. Needs a public repository to fork.
-3. **A real OIDC login in an environment lane, through the workflow**: whether `azure/login` in a
-   lane whose GitHub Environment holds a real identity's secrets gets a token and logs in, and a
-   `command = apply` test then runs with it. The identities, their federated credentials and a lane
-   running such a test in a sandbox subscription were probed before the stage was built, and the
-   test bed ran the lanes' mechanics through the workflow with placeholder secrets (§15); no run of
-   the workflow has logged in from a lane with a real identity.
 
 ## 13. Implementation order
 
@@ -1390,3 +1384,15 @@ AI-assistant configuration files are never in these commits.
   root reports a `test_abstract` with a run error, a single missing package says "there is no
   package for", and a file-level error still emits skipped runs. `test_summary`'s text counts an
   errored run as failed; the counts come from its numeric fields.
+- **A real OIDC login from an environment lane**, through the workflow at `@v1` on a test-bed
+  calling repository: a lane with `github-environment: auto` whose `tftest-oidc` environment held a
+  real identity's `ARM_TENANT_ID`, `ARM_CLIENT_ID` and `ARM_SUBSCRIPTION_ID`, plus two `TF_VAR_*`
+  values the test asserts. The identity trusts one federated credential, the environment subject,
+  and holds Reader on a sandbox subscription. The job's token carried the subject
+  `repo:<owner>/<repo>:environment:tftest-oidc` and a `job_workflow_ref` naming this repository's
+  reusable workflow at `refs/tags/v1`; `azure/login` logged in with it ("Azure CLI login succeeds by
+  using OIDC"); a `command = apply` test over data sources only passed, asserting that
+  `azuread_client_config` returned the lane identity's client ID and `azurerm_subscription` the
+  sandbox subscription, with `azurerm` minting its own token from `ARM_USE_OIDC`. The upper-case
+  `TF_VAR_*` secrets reached lower-case variables through the export's copies (P44), and the lane
+  left no deployment record.
