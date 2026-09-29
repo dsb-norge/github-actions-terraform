@@ -350,9 +350,6 @@ run_error_test() {
   (
     set -o allexport
     source "${_this_script_dir}/step_evaluate.sh"
-    exit_code=$?
-    set +o allexport
-    exit ${exit_code}
   ) > "${_test_output}" 2>&1
   local exit_code=$?
 

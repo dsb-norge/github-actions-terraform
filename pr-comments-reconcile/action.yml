@@ -103,6 +103,3 @@ runs:
         )
         set -o allexport
         source "${{ github.action_path }}/step_reconcile.sh"
-        exit_code=$?
-        set +o allexport
-        exit ${exit_code}

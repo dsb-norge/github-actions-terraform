@@ -121,8 +121,6 @@ runs:
         )
 
         source "${GITHUB_ACTION_PATH}/step_capture.sh"
-        exit_code=$?
-        exit ${exit_code}
 
     - name: "📦 Upload matrix job metadata"
       id: upload-metadata
