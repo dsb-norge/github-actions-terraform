@@ -31,7 +31,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | D3 | **Tests run on `pull_request`, `push`, `workflow_dispatch` and `schedule`** in module mode. | Module callers use a dispatch as their manual build, and a nightly schedule catches provider and API drift; a module has no environment to recover, which is why the project mode keeps tests off dispatches. |
 | D4 | **Credentials come only from lanes**: none by default; one credential, the normal case, is one fallback lane that maps the repository's secrets; several are several lanes, and a lane may run in its own GitHub Environment with OIDC (§6). | The v0 workflow gave every file the repository's principal through workflow-level `env:`. Every module caller already carries the same three secret names in a calling-workflow `env:` block that never reached the called workflow; the lane replaces that block line for line. An implicit default lane would fail every repository without those secrets and keep unit tests on the principal. |
 | D5 | **Terraform 1.13 or later** for the test jobs, as in the project workflow. | One floor, one authoring rule (Terraform-tests.md D11). |
-| D6 | **terraform-docs pushes only on a pull request**; on any other event a README that needs regenerating fails the docs check. The action is converted to the modern layout and keeps the upstream Docker action. | A dispatch or a push must never commit to the branch it runs on, `main` included. The Docker action's pinned terraform-docs keeps every README's table spacing. |
+| D6 | **terraform-docs pushes only on a pull request from the repository**, not from a fork or Dependabot; everywhere else a README that needs regenerating fails the docs check. The action is converted to the modern layout and keeps the upstream Docker action. | A dispatch or a push must never commit to the branch it runs on, `main` included. The Docker action's pinned terraform-docs keeps every README's table spacing. |
 | D7 | **App tokens come from `actions/create-github-app-token@v3`**, in module CI and module release. | The organisation's own token action needs Deno from v3, which the hosted runners do not carry; the project workflow already uses the upstream action. |
 | D8 | **Reporting follows the project workflow**: a validation head and a tests head on a pull request, a step summary from every job, and a conclusion line in the log, the step summary and an annotation. The per-file test comments of v0 are deleted once. | One reporting model for both kinds of repository ([Workflow-pr-comments.md](Workflow-pr-comments.md)); the actions exist. |
 | D9 | **A module needs at least one test file**: with none, the conclusion is red, `terraform-test-required: false` opts out. Everything from a unit suite up is supported: lanes, GitHub Environments, OIDC, several credentials. | A module's tests are its contract with its callers; the template ships a unit suite. |
@@ -66,14 +66,14 @@ the same rules and messages ([Configuration-validation.md](Configuration-validat
 ```yaml
     permissions:
       id-token: write      # OIDC, for the test jobs
-      contents: write      # checkout; the docs job pushes with the App token, not this one
+      contents: read       # checkout; the docs job pushes with the App token, not this one
       pull-requests: write # the heads
       actions: read        # job links in the tests head
     secrets: inherit
 ```
 
-`contents: read` suffices when the repository never needs a docs commit; the App token carries its
-own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
+No job asks for more than `contents: read`: the docs commit is pushed with the App token, which
+carries its own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
 `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`. `vars.ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
 
 ## 4. Jobs
@@ -82,6 +82,7 @@ own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID`
 flowchart LR
     matrix["create-matrix: the engine, module mode"] --> tests["terraform-test: one job per test file"]
     docs["generate-docs: terraform-docs"] --> validate["validate: init, fmt, validate, lint"]
+    docs --> tests
     tests --> summary["terraform-test-summary: tests head, step summary"]
     matrix --> summary
     docs --> conclusion["conclusion: the required check"]
@@ -96,7 +97,7 @@ flowchart LR
 | `generate-docs` | `Update documentation` | terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run; elsewhere a README that needs regenerating fails it. |
 | `validate` | `Validate module` | Init (no backend), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. |
 | `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
-| `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, on every event with test files, and on a pull request. |
+| `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, while the stage is on: on every event with test files, and on a pull request. |
 | `conclusion` | `Terraform conclusion` | §8. The only check a caller requires. |
 
 The test jobs do not wait for validation: they install their own providers, and a failing test is
@@ -114,8 +115,9 @@ directories with `.tf` files; no locks, since a module commits none). The docume
 2. refuses an event other than the four of D3, as the project mode does;
 3. decides the test stage on `pull_request`, `push`, `workflow_dispatch` and `schedule`, with no
    provider sets: every test root floats its providers;
-4. with `terraform-test-required` true, the stage on and no test file left after exclusions, adds
-   the error-level finding `required` to the tests block (§8), and a notice saying what to add.
+4. with `terraform-test-required` true and the stage run, sets the tests block's `missing` when no
+   test file runs or is held back from a fork (a misplaced or excluded file counts as none), with
+   a warning naming the fix; the adapter publishes it as `tests-required-missing` (§8).
 
 The output carries `tests`, `notices`, `warnings`, `trigger` and a record of one line per test
 file (`tests/unit-tests.tftest.hcl: run, lane unit` or `…: not run, misplaced`). The adapter
@@ -156,7 +158,7 @@ Lanes are the project workflow's, key for key ([Terraform-tests.md §3.2, §3.6]
 |---|---|---|
 | Validation head `<!-- tf:head:module -->` | `create-validation-summary` with `subject: module`: the title "Terraform validation summary for module: `<repository>`", init, fmt, validate, lint and the warnings count; no lock and no plan rows (`absent`) | — |
 | Tests head `<!-- tf:head:tests:<caller> -->` | `create-test-summary`, one comment for every file | — |
-| Legacy `<!-- tf:head:test:<file> -->` comments | deleted by the summary job | — |
+| Legacy `<!-- tf:head:test:<file> -->` comments | deleted by the validate job | — |
 | Step summaries | validation block, each test job's block, the tests block, the conclusion line | the same |
 | Annotations | one per failed gate, the tests headline, the conclusion | the same |
 
@@ -171,7 +173,7 @@ Judges named results and the engine's outputs, like the project workflow's
 | Condition | Verdict |
 |---|---|
 | `create-matrix` not successful | red: the matrix could not be built |
-| docs job failed or cancelled | red |
+| docs job not successful | red |
 | docs job pushed a commit (validation skipped on purpose) | green: the run the push started decides |
 | validation not successful, docs not pushed | red |
 | tests required, stage on, no test file | red: a module needs at least one test file |
@@ -183,7 +185,7 @@ summary and a `::notice` or `::error`.
 
 ## 9. Moving a module repository from v0
 
-In [Migration-v0-to-v1.md §9](Migration-v0-to-v1.md). In short: `@v1`; Terraform 1.13 or later;
+The user guide, [Workflow-terraform-module-ci.md](Workflow-terraform-module-ci.md), has the calling workflow and the lanes. In short: `@v1`; Terraform 1.13 or later;
 `actions: read`; the calling workflow's `env:` block becomes a lane (§6); a repository without
 tests adds a unit suite or sets `terraform-test-required: false` for the move.
 
