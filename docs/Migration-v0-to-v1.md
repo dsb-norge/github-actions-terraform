@@ -707,5 +707,83 @@ the v1-only parts at the same time:
 
 ## 9. Module repositories
 
-Module CI moves to v1 separately, and its migration notes are added to this guide with the module
-workflow's port.
+A module repository calls `terraform-module-ci.yaml` and `terraform-module-release.yaml`. Both
+move to `@v1` together. The design is [Module-ci.md](Module-ci.md), and the user guide is
+[Workflow-terraform-module-ci.md](Workflow-terraform-module-ci.md).
+
+### 9.1 Must do / check
+
+1. **The ref.** `@v0` becomes `@v1` in the test workflow and in the release workflow.
+2. **Terraform 1.13 or later** for the tests: `terraform-version: "1.14.x"`, for example. Below
+   the floor, every test job fails with `terraform-version`.
+3. **Permissions.** Add `actions: read`, which the tests head needs for its job links:
+
+   ```yaml
+       permissions:
+         id-token: write
+         contents: write
+         pull-requests: write
+         actions: read
+   ```
+
+4. **Credentials move into a lane.** v0 gave every test file the repository's Azure principal, via
+   the called workflow's own `env:`. The calling workflow's `env:` block with the same three
+   secrets never reached the called workflow; delete it. v1 gives credentials only through lanes.
+   The lane that keeps v0's behaviour, one credential for every file, maps the same three secrets:
+
+   ```yaml
+       with:
+         terraform-test-lanes-yml: |
+           - name: azure
+             extra-envs-yml:
+               ARM_USE_OIDC: true
+               ARM_USE_AZUREAD: true
+             extra-envs-from-secrets-yml:
+               ARM_TENANT_ID: REPO_AZURE_DSB_TENANT_ID
+               ARM_SUBSCRIPTION_ID: REPO_AZURE_SUBSCRIPTION_ID
+               ARM_CLIENT_ID: REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL
+   ```
+
+   A repository whose tests all mock their providers needs no lane at all.
+5. **A test file is required.** With none, the conclusion is red: `a module needs at least one
+   test file`. Add a unit suite (`tests/unit-*.tftest.hcl` with `mock_provider`), or set
+   `terraform-test-required: false` for the move.
+6. **Test files where Terraform finds them**, in `tests/` or beside the module's `.tf` files, and
+   committed. Discovery now reads committed files only. A misplaced file is listed and does not
+   run.
+7. **The README.** Only a pull request from the repository gets a docs commit. On a push, a
+   dispatch, a schedule or a fork's pull request, a README that needs regenerating fails the docs
+   check. Merge a regenerated README before relying on those events.
+8. **The App.** Both workflows read `vars.ORG_TF_CICD_APP_ID` and
+   `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`. `ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
+
+### 9.2 Should do / check
+
+1. **Take unit tests off the credential.** A `unit` lane matching `**/unit-*.tftest.hcl` with no
+   credentials, before the credentialed lane. A unit suite that does not mock its providers needs
+   `mock_provider` first.
+2. **Isolate the credential in a GitHub Environment.** Use `github-environment: auto` on the
+   credentialed lane instead of the mappings. Its environment holds `ARM_TENANT_ID`,
+   `ARM_SUBSCRIPTION_ID` and `ARM_CLIENT_ID`, and the identity trusts only
+   `repo:<owner>/<repo>:environment:tftest-<lane>` (§2.7 and §4.2 apply as for a project).
+3. **Remove the repository secrets and the `pull_request` trust** from the principal once the
+   environment lane runs.
+4. **Require only `tf / Terraform conclusion`.** Test jobs are now named
+   `Terraform test (<file>)`.
+
+### 9.3 Could do / check
+
+- **A nightly schedule** on the test workflow: a module's tests run on `schedule` and on
+  `workflow_dispatch` too, catching provider and API drift.
+- **Several credentials**, with one lane per identity and each matching its files.
+- **`allow-failing-terraform-tests`** while a lane is being brought up, and per-lane `runs-on`,
+  `timeout-minutes` and `terraform-version`.
+
+### 9.4 What the pull request shows
+
+- The validation head, titled "Terraform validation summary for module: `<repository>`", with no
+  lock or plan rows.
+- One `Terraform tests summary` comment in place of v0's per-file comments, which the first v1 run
+  deletes.
+- On the run page: the validation block, each test job's block, the tests block and the conclusion
+  line.

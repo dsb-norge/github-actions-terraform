@@ -6,7 +6,7 @@ moves from `@v0` (frozen at v0.33) to `@v1`. How to move a repository, with the 
 a way back, is [Migration-v0-to-v1.md](Migration-v0-to-v1.md). How to use the workflow is the user
 guide, [Workflow-terraform-ci-default.md](Workflow-terraform-ci-default.md).
 
-The module workflows (`terraform-module-ci`, `terraform-module-release`) are not covered here.
+The module workflows (`terraform-module-ci`, `terraform-module-release`) are §11.
 
 ## 1. In short
 
@@ -271,3 +271,26 @@ and its suite runs on 3.12 and on the newest 3.x.
   the per-goal variables, module download authentication and the module cache.
 - `v0` stays frozen at v0.33 and takes fixes only, so a repository can move back
   ([Migration-v0-to-v1.md §7](Migration-v0-to-v1.md)).
+
+## 11. The module workflows
+
+For a module repository calling `terraform-module-ci.yaml` and `terraform-module-release.yaml`.
+The design is [Module-ci.md](Module-ci.md), and moving a repository is
+[Migration-v0-to-v1.md §9](Migration-v0-to-v1.md).
+
+| Change | v0.33 | v1 |
+|---|---|---|
+| Test discovery | `find` over the working tree, one job per file name | the project workflow's test stage, in the engine's module mode: committed files, the root rule, lanes, misplaced files listed |
+| Credentials | every test file got the repository's Azure principal, through the called workflow's `env:` | only from lanes: none by default, one fallback lane for the usual single credential, a GitHub Environment with OIDC per lane |
+| No test file | green | red: a module needs at least one test file; `terraform-test-required: false` opts out |
+| Terraform version | any | 1.13 or later for the tests |
+| Events that test | `pull_request`, `workflow_dispatch` | also `push` and `schedule` |
+| Test jobs | per file, legacy call shape, embedded login | the project workflow's test job and summary job, held equal by a structural test |
+| PR comments | the validation head, and one comment per test file | the validation head for the module (no lock and no plan rows), and one tests summary; v0's per-file comments are deleted |
+| Run page | nothing on a dispatch | the validation block, each test job's block, the tests block and the conclusion line on every event |
+| Docs | terraform-docs pushed on every event, a dispatch included | a docs commit only on a pull request from the repository; elsewhere a README that needs regenerating fails the check |
+| App token | the organisation's token action, with the installation ID | `actions/create-github-app-token@v3`; the installation ID is not read |
+| release-please | v4.2.0 | v5.0.0 |
+| Conclusion | red on any failed, cancelled or skipped job | named results: the matrix, the docs, validation, the tests, and a missing test file |
+| New inputs | — | `runs-on`, `add-pr-comment`, `cache-terraform-modules`, `terraform-test-enabled`, `terraform-test-required`, `allow-failing-terraform-tests`, `terraform-test-runs-on`, `terraform-test-timeout-minutes`, `terraform-test-lanes-yml`, `terraform-test-exclude-paths-yml` |
+| Retired actions | `create-tftest-matrix`, `create-test-report` | gone from the v1 line; v0 keeps them |
