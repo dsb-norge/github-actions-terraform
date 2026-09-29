@@ -25,7 +25,7 @@ calling workflow's `env:` block into a lane, and make sure there is at least one
 | Every test file committed, under `tests/` or beside the module's `.tf` files | §2.6 |
 | The README is current (regenerated with terraform-docs 0.20) | §2.7 |
 | The App's variable and secret reach the repository | §2.8 |
-| `.tflint.hcl` committed (the template's `.gitignore` matches it) | §6 |
+| `.tflint.hcl` committed (the template's `.gitignore` matches it) | §8 |
 
 ## 2. Must do / check
 
