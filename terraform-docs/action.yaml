@@ -1,13 +1,21 @@
 name: "Run terraform docs"
 description: |
   Inject terraform docs for modules into README.md, and into the README.md of
-  every examples/ subfolder when the repository has an examples/ folder, and
-  push the result.
+  every examples/ subfolder when the repository has an examples/ folder.
+
+  With push 'true' the regenerated docs are committed and pushed. With push
+  'false' nothing is committed: a README that differs from what terraform-docs
+  generates fails the action, status 'needs-regeneration'.
 
   Where the repository has no .terraform-docs.yml (in its root, or in
-  examples/), the action's default config is added and committed with the
-  docs. A README.md without the BEGIN_TF_DOCS / END_TF_DOCS delimiters gets
-  them appended; delimiters in the wrong order fail the action.
+  examples/), the action's default config is used: with push 'true' it is
+  committed with the docs, with push 'false' it stays in the working tree,
+  excluded from git, and never counts as a change. A README.md without the
+  BEGIN_TF_DOCS / END_TF_DOCS delimiters gets them appended; delimiters in the
+  wrong order, or twice, fail the action.
+
+  The action fails on status 'failed' and 'needs-regeneration', and succeeds
+  on 'pushed' and 'up-to-date'. It writes one line to the step summary.
 
   terraform-docs/gh-actions is a Docker action, so its two steps stay in this
   file; the logic around them lives in the step_*.sh scripts.
@@ -22,20 +30,45 @@ inputs:
       delimiter check handles a single directory only.
     required: false
     default: "."
+  push:
+    description: |
+      'true' commits and pushes the regenerated docs to the checked-out branch.
+      'false' pushes nothing and fails the action when a README needs
+      regenerating. Pass 'true' only where a push is wanted, on a pull
+      request's head branch.
+    required: false
+    default: "false"
 
 outputs:
   number-of-files-changed:
     description: |
       Total number of files changed by this action: the num_changed of the
-      project and the examples terraform-docs steps.
+      project and the examples terraform-docs steps. With push 'true', the
+      files pushed; with push 'false', the files that need regenerating.
       ref. https://github.com/terraform-docs/gh-actions?tab=readme-ov-file#outputs
     value: ${{ steps.report.outputs.number-of-files-changed }}
+  pushed:
+    description: |
+      'true' when push is 'true' and at least one file changed, so a commit
+      was pushed; 'false' otherwise.
+    value: ${{ steps.report.outputs.pushed }}
+  needs-regeneration:
+    description: |
+      'true' when push is 'false' and a README differs from what terraform-docs
+      generates; 'false' otherwise.
+    value: ${{ steps.report.outputs.needs-regeneration }}
+  status:
+    description: |
+      One of 'pushed', 'up-to-date', 'needs-regeneration' or 'failed'.
+    value: ${{ steps.report.outputs.status }}
 
 runs:
   using: "composite"
   steps:
     - id: inject-config-files
       shell: bash
+      env:
+        input_push: ${{ inputs.push }}
       run: |
         # Add default terraform-docs config files where the repo has none
         set -o allexport
@@ -51,34 +84,45 @@ runs:
         source "${{ github.action_path }}/step_validate_root_readme.sh"
       continue-on-error: true
 
+    # Both terraform-docs steps: git-push with push 'true'; otherwise fail-on-diff, which
+    # fails the step after it writes num_changed when any README would change (upstream
+    # ignores fail-on-diff when git-push is set). continue-on-error so the report step
+    # judges them. The module step waits for the examples step: with push 'false' the
+    # examples' changes stay staged and would be counted again by the module step.
     - id: generate-example-docs
       name: Generate the examples' docs
       if: steps.inject-config-files.outputs.examples-folder-exists == 'true'
       uses: terraform-docs/gh-actions@6de6da0cefcc6b4b7a5cbea4d79d97060733093c # v1.4.1
       with:
         working-dir: ${{ steps.inject-config-files.outputs.examples-subfolders }}
-        git-push: "true"
+        git-push: ${{ inputs.push == 'true' && 'true' || 'false' }}
+        fail-on-diff: ${{ inputs.push == 'true' && 'false' || 'true' }}
         config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
+      continue-on-error: true
 
     - id: generate-project-docs
       name: Generate the module's docs
-      if: steps.validate-root-readme.outcome == 'success'
+      if: steps.validate-root-readme.outcome == 'success' && steps.generate-example-docs.outcome != 'failure'
       uses: terraform-docs/gh-actions@6de6da0cefcc6b4b7a5cbea4d79d97060733093c # v1.4.1
       with:
         working-dir: ${{ inputs.readme-file-path }}
-        git-push: "true"
+        git-push: ${{ inputs.push == 'true' && 'true' || 'false' }}
+        fail-on-diff: ${{ inputs.push == 'true' && 'false' || 'true' }}
         config-file: .terraform-docs.yml
+      continue-on-error: true
 
     - id: report
       if: always()
       shell: bash
       env:
+        input_push: ${{ inputs.push }}
+        input_inject_outcome: ${{ steps.inject-config-files.outcome }}
         input_validate_outcome: ${{ steps.validate-root-readme.outcome }}
         input_examples_outcome: ${{ steps.generate-example-docs.outcome }}
         input_examples_num_changed: ${{ steps.generate-example-docs.outputs.num_changed }}
         input_project_outcome: ${{ steps.generate-project-docs.outcome }}
         input_project_num_changed: ${{ steps.generate-project-docs.outputs.num_changed }}
       run: |
-        # Count the files terraform-docs changed and judge the README check
+        # Judge the docs, publish the status and write the step summary
         set -o allexport
         source "${{ github.action_path }}/step_report.sh"

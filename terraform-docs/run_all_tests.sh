@@ -43,7 +43,7 @@ setup() {
   git -C "${WS}" init -q
   git -C "${WS}" config user.name "test"
   git -C "${WS}" config user.email "test@example.com"
-  unset input_readme_file_path input_validate_outcome \
+  unset input_push input_inject_outcome input_readme_file_path input_validate_outcome \
     input_examples_outcome input_examples_num_changed \
     input_project_outcome input_project_num_changed
 }
@@ -67,6 +67,24 @@ get_output() {
 # Print the staged paths of the checkout, one per line.
 staged() {
   git -C "${WS}" diff --cached --name-only
+}
+
+# Do what terraform-docs/gh-actions does after it writes a README: stage the whole working
+# directory ('git add <dir>/'), then count the staged changes with its own pattern. Prints
+# its num_changed.
+upstream_num_changed() {
+  git -C "${WS}" add ./
+  git -C "${WS}" status --porcelain | grep -c -E '([MA]\W).+' || true
+}
+
+# Succeed when the checkout's info/exclude lists no terraform-docs config.
+nothing_excluded() {
+  ! exclude_file_content | grep -q 'terraform-docs'
+}
+
+# Print the checkout's info/exclude, empty when there is none.
+exclude_file_content() {
+  cat "$(git -C "${WS}" rev-parse --path-format=absolute --git-path info/exclude)" 2>/dev/null || true
 }
 
 # Common assertion + reporting wrapper.
@@ -100,6 +118,7 @@ echo -e "${YELLOW}============================================${NC}"
 
 # No config and no examples/: the root config is injected and staged
 setup
+export input_push="true"
 run_step inject_config_files
 assert "no config: step succeeds" test "${LAST_EXIT}" -eq 0
 assert "no config: root config is the action's default" \
@@ -114,6 +133,7 @@ assert "no examples/: examples/ is not created" test ! -e "${WS}/examples"
 
 # The repository's own configs are left alone and not staged
 setup
+export input_push="true"
 mkdir -p "${WS}/examples/basic"
 echo "own: root" >"${WS}/.terraform-docs.yml"
 echo "own: examples" >"${WS}/examples/.terraform-docs.yml"
@@ -127,6 +147,7 @@ assert "own configs: nothing staged" test -z "$(staged)"
 
 # examples/ without a config: the examples default is injected and staged
 setup
+export input_push="true"
 mkdir -p "${WS}/examples/basic" "${WS}/examples/complete"
 echo "own: root" >"${WS}/.terraform-docs.yml"
 run_step inject_config_files
@@ -142,6 +163,7 @@ assert "examples subfolders: sorted, relative, with trailing slash and comma" \
 
 # Both missing, examples/ present: both injected and staged
 setup
+export input_push="true"
 mkdir -p "${WS}/examples/basic"
 run_step inject_config_files
 assert "both missing: both configs staged" \
@@ -149,6 +171,7 @@ assert "both missing: both configs staged" \
 
 # examples/ with files but no subfolders, and a hidden folder: an empty list
 setup
+export input_push="true"
 mkdir -p "${WS}/examples/.hidden"
 echo "x" >"${WS}/examples/notes.md"
 run_step inject_config_files
@@ -158,6 +181,7 @@ assert "no example subfolders: examples-subfolders is empty" \
 
 # A folder name with a space survives the list
 setup
+export input_push="true"
 mkdir -p "${WS}/examples/with space"
 run_step inject_config_files
 assert "example subfolder with a space is listed as is" \
@@ -165,11 +189,80 @@ assert "example subfolder with a space is listed as is" \
 
 # Outside a git repository the staging fails the step
 setup
+export input_push="true"
 rm -rf "${WS}/.git"
 export GIT_CEILING_DIRECTORIES="${_test_root}"
 run_step inject_config_files
 unset GIT_CEILING_DIRECTORIES
 assert "not a git repository: step fails" test "${LAST_EXIT}" -ne 0
+
+# push false: injected configs stay in the working tree, excluded from git
+setup
+export input_push="false"
+mkdir -p "${WS}/examples/basic"
+run_step inject_config_files
+assert "push false: step succeeds" test "${LAST_EXIT}" -eq 0
+assert "push false: root config injected into the working tree" \
+  cmp -s "${_this_script_dir}/terraform-docs-module-root.yml" "${WS}/.terraform-docs.yml"
+assert "push false: examples config injected into the working tree" \
+  cmp -s "${_this_script_dir}/terraform-docs-module-examples.yml" "${WS}/examples/.terraform-docs.yml"
+assert "push false: nothing staged" test -z "$(staged)"
+assert "push false: both configs listed in info/exclude" \
+  test "$(exclude_file_content | grep -c -x -e '/.terraform-docs.yml' -e '/examples/.terraform-docs.yml')" = "2"
+assert "push false: terraform-docs' 'git add <dir>/' does not count the injected configs" \
+  test "$(upstream_num_changed)" = "0"
+assert "push false: the configs do not show in git status" \
+  test -z "$(git -C "${WS}" status --porcelain)"
+assert "push false: examples subfolders still listed" \
+  test "$(get_output examples-subfolders)" = "examples/basic/,"
+
+# push false: a README change still counts, the injected config does not
+setup
+export input_push="false"
+echo "# Module" >"${WS}/README.md"
+git -C "${WS}" add README.md
+git -C "${WS}" commit -q -m "initial"
+run_step inject_config_files
+echo "regenerated" >>"${WS}/README.md"
+assert "push false: a changed README is the one change counted" \
+  test "$(upstream_num_changed)" = "1"
+
+# push false: the repository's own configs are left alone and not excluded
+setup
+export input_push="false"
+mkdir -p "${WS}/examples/basic"
+echo "own: root" >"${WS}/.terraform-docs.yml"
+echo "own: examples" >"${WS}/examples/.terraform-docs.yml"
+run_step inject_config_files
+assert "push false, own configs: root config unchanged" \
+  test "$(cat "${WS}/.terraform-docs.yml")" = "own: root"
+assert "push false, own configs: nothing excluded" nothing_excluded
+
+# push false in a linked worktree: the exclude lands where git reads it
+setup
+export input_push="false"
+git -C "${WS}" commit -q --allow-empty -m "initial"
+git -C "${WS}" worktree add -q "${WS}.linked" 2>/dev/null
+export GITHUB_WORKSPACE="${WS}.linked"
+_main_ws="${WS}"
+WS="${WS}.linked"
+run_step inject_config_files
+assert "push false, linked worktree: step succeeds" test "${LAST_EXIT}" -eq 0
+assert "push false, linked worktree: injected config not counted" \
+  test "$(upstream_num_changed)" = "0"
+git -C "${_main_ws}" worktree remove --force "${WS}" 2>/dev/null
+unset _main_ws
+
+# push must be 'true' or 'false': anything else fails before anything is injected
+for _push in "" "yes" "TRUE"; do
+  setup
+  export input_push="${_push}"
+  run_step inject_config_files
+  assert "push '${_push}': step fails" test "${LAST_EXIT}" -eq 1
+  assert "push '${_push}': error names the input" grep -q "Input 'push' must be" "${_test_output}"
+  assert "push '${_push}': nothing injected" test ! -e "${WS}/.terraform-docs.yml"
+done
+unset _push
 
 # --------------------------------------------------------------------------
 # validate-root-readme
@@ -251,65 +344,174 @@ echo -e "${YELLOW}                REPORT TESTS                ${NC}"
 echo -e "${YELLOW}============================================${NC}"
 
 # Set the report step's inputs.
-#   $1 validate outcome, $2 examples outcome, $3 examples num_changed,
-#   $4 project outcome, $5 project num_changed
+#   $1 push, $2 inject outcome, $3 validate outcome,
+#   $4 examples outcome, $5 examples num_changed, $6 project outcome, $7 project num_changed
 report_inputs() {
-  export input_validate_outcome="${1}"
-  export input_examples_outcome="${2}"
-  export input_examples_num_changed="${3}"
-  export input_project_outcome="${4}"
-  export input_project_num_changed="${5}"
+  export input_push="${1}"
+  export input_inject_outcome="${2}"
+  export input_validate_outcome="${3}"
+  export input_examples_outcome="${4}"
+  export input_examples_num_changed="${5}"
+  export input_project_outcome="${6}"
+  export input_project_num_changed="${7}"
 }
 
-setup
-report_inputs success success 2 success 1
-run_step report
-assert "both steps changed files: exit 0" test "${LAST_EXIT}" -eq 0
-assert "both steps changed files: total is the sum" test "$(get_output number-of-files-changed)" = "3"
+# Run the report step and assert everything it publishes.
+#   $1 test name, $2 exit code, $3 status, $4 number-of-files-changed, $5 pushed,
+#   $6 needs-regeneration, $7 the one step-summary line
+check_report() {
+  local name="${1}"
+  run_step report
+  assert "${name}: exit ${2}" test "${LAST_EXIT}" -eq "${2}"
+  assert "${name}: status ${3}" test "$(get_output status)" = "${3}"
+  assert "${name}: number-of-files-changed ${4}" test "$(get_output number-of-files-changed)" = "${4}"
+  assert "${name}: pushed ${5}" test "$(get_output pushed)" = "${5}"
+  assert "${name}: needs-regeneration ${6}" test "$(get_output needs-regeneration)" = "${6}"
+  assert "${name}: step summary is the one line" \
+    test "$(cat "${GITHUB_STEP_SUMMARY}")" = "${7}"
+}
+
+# --- push true ---
 
 setup
-report_inputs success skipped "" success 0
-run_step report
-assert "no examples, nothing changed: total 0" test "$(get_output number-of-files-changed)" = "0"
+report_inputs true success success success 2 success 1
+check_report "push true, both steps changed files" 0 pushed 3 true false \
+  "📝 Docs: regenerated and pushed (3 files)"
 
 setup
-report_inputs success success "" success ""
-run_step report
-assert "empty num_changed on success: exit 0" test "${LAST_EXIT}" -eq 0
-assert "empty num_changed on success: counts as 0" test "$(get_output number-of-files-changed)" = "0"
+report_inputs true success success skipped "" success 1
+check_report "push true, one file" 0 pushed 1 true false \
+  "📝 Docs: regenerated and pushed (1 file)"
 
 setup
-report_inputs success success "abc" success 1
-run_step report
-assert "non-numeric num_changed: counts as 0" test "$(get_output number-of-files-changed)" = "1"
+report_inputs true success success success 0 success 0
+check_report "push true, nothing changed" 0 up-to-date 0 false false \
+  "📝 Docs: up to date"
+
+setup
+report_inputs true success success success 2 failure 1
+check_report "push true, examples pushed, module push failed" 1 failed 2 true false \
+  "📝 Docs: failed (terraform-docs failed for the module)"
+assert "push true, module push failed: error annotation" \
+  grep -q "^::error title=terraform-docs failed::" "${_test_output}"
+
+setup
+report_inputs true success success failure 3 skipped ""
+check_report "push true, a failed step's num_changed is not counted" 1 failed 0 false false \
+  "📝 Docs: failed (terraform-docs failed for the examples)"
+
+# --- push false ---
+
+setup
+report_inputs false success success success 0 success 0
+check_report "push false, up to date" 0 up-to-date 0 false false \
+  "📝 Docs: up to date"
+
+setup
+report_inputs false success success skipped "" success 0
+check_report "push false, no examples, up to date" 0 up-to-date 0 false false \
+  "📝 Docs: up to date"
+
+setup
+report_inputs false success success failure 2 skipped ""
+check_report "push false, examples differ" 1 needs-regeneration 2 false true \
+  "📝 Docs: README needs regenerating (2 files) — run terraform-docs, or push to a pull request where CI regenerates it"
+assert "push false, examples differ: error annotation" \
+  grep -q "^::error title=README needs regenerating::" "${_test_output}"
+
+setup
+report_inputs false success success success 0 failure 1
+check_report "push false, module README differs" 1 needs-regeneration 1 false true \
+  "📝 Docs: README needs regenerating (1 file) — run terraform-docs, or push to a pull request where CI regenerates it"
+
+setup
+report_inputs false success success success 1 success 0
+check_report "push false, a diff on a successful step still needs regenerating" 1 needs-regeneration 1 false true \
+  "📝 Docs: README needs regenerating (1 file) — run terraform-docs, or push to a pull request where CI regenerates it"
+
+setup
+report_inputs false success success success 0 failure ""
+check_report "push false, terraform-docs failed without a count" 1 failed 0 false false \
+  "📝 Docs: failed (terraform-docs failed for the module)"
+
+setup
+report_inputs false success success success 0 failure 0
+check_report "push false, terraform-docs failed with zero changes" 1 failed 0 false false \
+  "📝 Docs: failed (terraform-docs failed for the module)"
+
+# --- the steps before terraform-docs ---
+
+setup
+report_inputs false success failure success 0 skipped ""
+check_report "README delimiters invalid" 1 failed 0 false false \
+  "📝 Docs: failed (README delimiters are invalid, see the log)"
+
+setup
+report_inputs false success failure failure 2 skipped ""
+check_report "README delimiters invalid and examples differ" 1 failed 2 false true \
+  "📝 Docs: failed (README delimiters are invalid, see the log)"
+
+setup
+report_inputs true success cancelled skipped "" skipped ""
+check_report "README validation cancelled" 1 failed 0 false false \
+  "📝 Docs: failed (README delimiters are invalid, see the log)"
+
+setup
+report_inputs true failure skipped skipped "" skipped ""
+check_report "config injection failed" 1 failed 0 false false \
+  "📝 Docs: failed (injecting the default terraform-docs config failed)"
+
+setup
+report_inputs true success success cancelled "" skipped ""
+check_report "terraform-docs cancelled" 1 failed 0 false false \
+  "📝 Docs: failed (terraform-docs was cancelled for the examples)"
+
+setup
+report_inputs true success failure failure "" skipped ""
+check_report "two failures are both named" 1 failed 0 false false \
+  "📝 Docs: failed (README delimiters are invalid, see the log; terraform-docs failed for the examples)"
+
+setup
+report_inputs yes failure skipped skipped "" skipped ""
+check_report "push neither true nor false" 1 failed 0 false false \
+  "📝 Docs: failed (input 'push' must be 'true' or 'false', got 'yes')"
+
+setup
+report_inputs "" "" "" "" "" "" ""
+check_report "every input empty" 1 failed 0 false false \
+  "📝 Docs: failed (input 'push' must be 'true' or 'false', got '')"
+
+# --- num_changed arithmetic ---
+
+setup
+report_inputs true success success success "" success ""
+check_report "empty num_changed on success counts as 0" 0 up-to-date 0 false false \
+  "📝 Docs: up to date"
+
+setup
+report_inputs true success success success "abc" success 1
+check_report "non-numeric num_changed counts as 0" 0 pushed 1 true false \
+  "📝 Docs: regenerated and pushed (1 file)"
 assert "non-numeric num_changed: warns" grep -q "is not a number" "${_test_output}"
 
 setup
-report_inputs success success 08 success 1
-run_step report
-assert "leading zero num_changed: read as decimal" test "$(get_output number-of-files-changed)" = "9"
+report_inputs true success success success 08 success 1
+check_report "leading zero num_changed is read as decimal" 0 pushed 9 true false \
+  "📝 Docs: regenerated and pushed (9 files)"
 
 setup
-report_inputs success failure 3 success 1
-run_step report
-assert "a failed step's num_changed is not counted" test "$(get_output number-of-files-changed)" = "1"
+report_inputs false success success failure " 2" skipped ""
+check_report "padded num_changed on a failed step is not a diff" 1 failed 0 false false \
+  "📝 Docs: failed (terraform-docs failed for the examples)"
 
+# The summary is appended, not overwritten: earlier steps' lines survive
 setup
-report_inputs failure success 2 skipped ""
+echo "earlier line" >"${GITHUB_STEP_SUMMARY}"
+report_inputs true success success success 0 success 0
 run_step report
-assert "README validation failed: exit 1" test "${LAST_EXIT}" -eq 1
-assert "README validation failed: total still reported" test "$(get_output number-of-files-changed)" = "2"
-
-setup
-report_inputs cancelled skipped "" skipped ""
-run_step report
-assert "README validation cancelled: exit 1" test "${LAST_EXIT}" -eq 1
-
-setup
-report_inputs "" "" "" "" ""
-run_step report
-assert "all inputs empty: exit 0" test "${LAST_EXIT}" -eq 0
-assert "all inputs empty: total 0" test "$(get_output number-of-files-changed)" = "0"
+assert "step summary is appended to" \
+  test "$(cat "${GITHUB_STEP_SUMMARY}")" = "earlier line
+📝 Docs: up to date"
 
 # --------------------------------------------------------------------------
 # Summary

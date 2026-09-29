@@ -4,7 +4,8 @@
 # Simulates GitHub Actions environment for testing locally.
 #
 # Feeds the step the outcomes and num_changed outputs the two terraform-docs
-# steps would have produced.
+# steps would have produced: here, push 'false' and an examples README that
+# differs from what terraform-docs generates (status 'needs-regeneration').
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -17,11 +18,13 @@ export GITHUB_STEP_SUMMARY=$(mktemp)
 export GITHUB_ACTION_PATH="${_this_script_dir}"
 
 # Required input variables (match what action.yaml would export)
+export input_push="false"
+export input_inject_outcome="success"
 export input_validate_outcome="success"
-export input_examples_outcome="success"
+export input_examples_outcome="failure"
 export input_examples_num_changed="1"
-export input_project_outcome="success"
-export input_project_num_changed="1"
+export input_project_outcome="skipped"
+export input_project_num_changed=""
 
 # Source the main script in a subshell so 'exit' doesn't terminate this runner
 (

@@ -4,7 +4,8 @@
 # Simulates GitHub Actions environment for testing locally.
 #
 # Builds a throwaway module repository with an examples/ folder and no
-# terraform-docs configs, then runs the step in it.
+# terraform-docs configs, then runs the step in it. Set input_push to 'true'
+# to see the configs staged instead of excluded.
 #
 
 _this_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -22,6 +23,9 @@ mkdir -p "${GITHUB_WORKSPACE}/examples/basic" "${GITHUB_WORKSPACE}/examples/comp
 git -C "${GITHUB_WORKSPACE}" init -q
 echo 'variable "name" {}' >"${GITHUB_WORKSPACE}/main.tf"
 
+# Required input variables (match what action.yaml would export)
+export input_push="false"
+
 # Source the main script in a subshell so 'exit' doesn't terminate this runner
 (
   cd "${GITHUB_WORKSPACE}" || exit 1
@@ -35,6 +39,12 @@ echo "========================================"
 echo "git status of the module repository:"
 echo "========================================"
 git -C "${GITHUB_WORKSPACE}" status --short
+
+echo ""
+echo "========================================"
+echo "info/exclude of the module repository:"
+echo "========================================"
+cat "${GITHUB_WORKSPACE}/.git/info/exclude"
 
 # Display GitHub Actions outputs
 echo ""
