@@ -9,23 +9,34 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 
 ```text
 .
-├── annotate-terraform-outcome    --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
-├── create-run-summary            --> run-level table of every environment on the run page
-├── create-test-summary           --> one structured summary of the terraform test stage, for both workflows (PR comment and run summary)
-├── create-tf-vars-matrix         --> creates the environment matrix and decides which environments a change is relevant to; in mode module, a module's test matrix (runs the engine's create-matrix adapter)
-├── create-validation-summary     --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
-├── export-env-vars               --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
-├── lint-with-tflint              --> run linting of terraform code with TFLint
-├── parse-terraform-apply         --> parses apply/destroy console output: counts, completed flag, tick-free copy
-├── pr-comment                    --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
-├── pr-comments-reconcile         --> bulk seed + GC PR/issue comments by HTML marker
-├── setup-terraform-plugin-cache  --> setup and configure plugin cache on runners
-├── setup-tflint                  --> install TFLint and make available to subsequent action steps
-├── terraform-docs                --> inject terraform-docs config and terraform module documentation into README.md
-├── terraform-fmt                 --> checks if terraform code is formatted
-├── terraform-plan                --> run terraform plan in directory
-├── terraform-apply               --> run terraform apply in directory
-└── terraform-test                --> run and classify one terraform test file (the test stage of both workflows)
+├── aggregate-validation-summaries  --> reconciles the per-group validation summary PR comments from the matrix jobs' metadata artifacts
+├── annotate-terraform-outcome      --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
+├── auto-merge-pr                   --> merges an eligible pull request with the rebase strategy
+├── capture-matrix-job-meta         --> captures a matrix job's step outputs, outcomes and matrix context into one JSON file for artifact upload
+├── create-run-summary              --> run-level table of every environment on the run page
+├── create-test-summary             --> one structured summary of the terraform test stage, for both workflows (PR comment and run summary)
+├── create-tf-vars-matrix           --> creates the environment matrix and decides which environments a change is relevant to; in mode module, a module's test matrix (runs the engine's create-matrix adapter)
+├── create-validation-summary       --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
+├── evaluate-automerge-eligibility  --> decides whether a pull request may be auto-merged, from the plans' changes, the limits and the actor
+├── export-env-vars                 --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
+├── lint-with-tflint                --> run linting of terraform code with TFLint
+├── parse-terraform-apply           --> parses apply/destroy console output: counts, completed flag, tick-free copy
+├── parse-terraform-plan            --> counts what a plan adds, changes, destroys, imports, moves and removes
+├── parse-terraform-warnings        --> annotates and summarises the Warning: blocks in a terraform console output
+├── pr-comment                      --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
+├── pr-comments-reconcile           --> bulk seed + GC PR/issue comments by HTML marker
+├── resolve-goal-envs               --> resolves the environment variables of every terraform goal (global and per-goal maps, secrets expanded)
+├── setup-terraform-plugin-cache    --> setup and configure plugin cache on runners
+├── setup-tflint                    --> install TFLint and make available to subsequent action steps
+├── terraform-docs                  --> inject terraform-docs config and terraform module documentation into README.md
+├── terraform-fmt                   --> checks if terraform code is formatted
+├── terraform-init                  --> run terraform init in directory, and in additional directories
+├── terraform-module-cache          --> decides what of terraform's .terraform/modules trees may be cached, under what key
+├── terraform-plan                  --> run terraform plan in directory
+├── terraform-apply                 --> run terraform apply in directory
+├── terraform-test                  --> run and classify one terraform test file (the test stage of both workflows)
+├── terraform-validate              --> run terraform validate in directory
+└── verify-terraform-lock           --> fails if .terraform.lock.hcl lacks h1: hashes for a required platform
 ```
 
 The decision engine the matrix is built by lives in [engine](engine), a Python 3.12+ standard-library
@@ -37,11 +48,10 @@ Which environments a pull request or push runs is its path relevance:
 
 ```text
 .
-└── .github/workflows                           --> directory for reusable workflows
-    ├── terraform-terraform-ci-cd-default.yml   --> default ci/cd workflow for DSB's 
-    ├── terraform-module-release                --> tag and release module. Creates release plan PR. 
-    └── terraform-module-ci                     --> default ci workflow for module testing
-    terraform projects
+└── .github/workflows                     --> directory for reusable workflows
+    ├── terraform-ci-cd-default.yml       --> default ci/cd workflow for DSB's terraform projects
+    ├── terraform-module-release.yaml     --> tag and release module. Creates release plan PR.
+    └── terraform-module-ci.yaml          --> default ci workflow for module testing
 ```
 
 ### Workflow [`terraform-ci-cd-default`](.github/workflows/terraform-ci-cd-default.yml)
