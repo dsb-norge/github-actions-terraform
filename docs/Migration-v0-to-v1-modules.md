@@ -298,8 +298,9 @@ them back.
 | A repository without test files | The conclusion is red | Add a unit suite, or `terraform-test-required: false` (§2.5) |
 | Terraform below 1.13 | Every test job fails with `terraform-version` | Raise `terraform-version` (§2.2) |
 | A unit test without `mock_provider` in a lane without credentials | The provider fails to configure | Mock it, or give the lane the credential (§3.1) |
+| A unit test that configures the real provider and mocks only an alias (`mock_provider "azurerm" { alias = "mock" }`) | In a lane without credentials the file fails before its runs: `unable to build authorizer for Resource Manager API`, every run skipped | Make the mock the file's only provider (`mock_provider "azurerm" {}`) and drop the runs' `providers` maps; a run that only plans needs nothing else (§3.1) |
 | `.tflint.hcl` not committed | Lint fails: "could not find a TFLint config file" | The template's `.gitignore` matches `**/.tflint.hcl`; keep it force-added (`git add -f .tflint.hcl`) |
 | A stale README on a push, dispatch, schedule, fork or Dependabot pull request | The docs check fails | Regenerate with terraform-docs 0.20, or through a pull request (§2.7) |
-| The App variable or secret missing | The docs job fails on a pull request | Give the repository access to both (§2.8) |
+| The App variable or secret missing | The docs job fails on a pull request at `🔑 Create GitHub App token`: "The 'client-id' (or deprecated 'app-id') input must be set to a non-empty string" | Give the repository access to both (§2.8) |
 | A test file outside `tests/` or not committed | It is misplaced or not seen | Move it, commit it (§2.6) |
 | `actions: read` missing | The run fails at startup, with no job and no check | Grant it (§2.3) |
