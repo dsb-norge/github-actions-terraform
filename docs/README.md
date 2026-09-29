@@ -20,7 +20,6 @@ once, under the kind of document it is.
   their reasons, the pitfalls met (`P<n>`) and how it is tested. Written for whoever changes the
   feature; a spec and its code change together.
 - **Contributor guide.** How this repository is developed, tested and released.
-- **Tracking.** The plan and progress of a major release, not a description of the system.
 
 ## User guides
 
@@ -80,12 +79,5 @@ Reporting:
 Outside this folder: [CHANGELOG.md](../CHANGELOG.md) lists every release and what it changed,
 and [contract-tests/](../contract-tests/README.md) runs real Terraform weekly to prove the console
 parsers' fixtures still match what Terraform prints.
-
-## Tracking
-
-| Document | Covers |
-|---|---|
-| [Road-to-v1.md](Road-to-v1.md) | The plan for v1: scope, breaking changes, order of work. |
-| [V1-progress.md](V1-progress.md) | What each pull request on the road to v1 delivered, and what is left. |
 
 A new document gets a row here, under its kind, in the change that adds it.
