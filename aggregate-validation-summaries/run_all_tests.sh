@@ -129,7 +129,7 @@ teardown() {
 # Create a metadata file in TEST_DIR.
 # Usage: write_meta <env> [group] [fmt_outcome] [extra-counts-json] [plan_time]
 # When plan_time is non-empty, the plan step's outputs include a
-# "plan-time" entry — mimicking what terraform-plan@v0 now publishes.
+# "plan-time" entry — mimicking what the terraform-plan action publishes.
 # Empty / unset preserves the pre-plan-time fixture shape so older tests
 # stay backwards-compatible.
 # 7th arg (ops): a JSON fragment of extra step entries — e.g. the output of

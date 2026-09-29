@@ -1191,7 +1191,7 @@ jobs:
           plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
           plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
           # Wall-clock duration of the terraform plan command (mm:ss). Always
-          # populated by terraform-plan@v0 — even when plan fails — so the
+          # populated by the terraform-plan action — even when plan fails — so the
           # Plan time row in the PR comment surfaces "slow + failing" at a
           # glance instead of forcing a click into the job log.
           plan-time: ${{ steps.plan.outputs.plan-time }}
