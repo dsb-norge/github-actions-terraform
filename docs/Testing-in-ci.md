@@ -32,6 +32,7 @@ flowchart LR
     discover --> shards["engine-mutation - eight shards"]
     shards --> gate["engine-mutation-gate - merge and judge"]
     test --> summary["summary - PR comment"]
+    gate --> summary
     test --> conclusion["tests-conclusion - required check"]
     python --> conclusion
     gate --> conclusion
@@ -57,13 +58,13 @@ Emits two job outputs:
 - `tests-matrix` — JSON array of action names with tests, fed straight into the `test` matrix.
 - `no-tests-list` — JSON array of action names without tests, consumed by `summary`.
 
-A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. The decision engine in [`engine/`](../engine) is the one such suite today: it is not an action, but its suite gates the pull request like every action's ([Decision-engine.md](Decision-engine.md) §8).
+A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. The decision engine in [`engine/`](../engine) is the one such suite: it is not an action, but its suite gates the pull request like every action's ([Decision-engine.md](Decision-engine.md) §8).
 
 Dynamic discovery means newly-added test suites are picked up automatically; no workflow edit is needed when a legacy action gets modernized.
 
 ### 2.2 `test` (matrix)
 
-One job per entry in `tests-matrix`. `fail-fast: false` so all suites run regardless of any single failure. Each job has two steps:
+One job per entry in `tests-matrix`. `fail-fast: false` so all suites run regardless of any single failure. Each job checks out the repository, then runs two steps:
 
 1. **🧪 Run `<action>` tests** — runs `bash <action>/run_all_tests.sh`, tee's stdout to a log file, enforces the canonical summary-line contract (§4), parses counts (§4), resolves the matrix job URL, writes the result JSON (§5), emits any failure/drift annotation (§11), and finally exits with the suite's real exit code.
 2. **📤 Upload result artifact** (`if: always()`) — uploads the result JSON as `test-result-<action>` so the summary job can aggregate it.
@@ -74,10 +75,10 @@ When a suite fails (real test failure, format drift, or non-zero exit for any ot
 
 ### 2.3 `summary`
 
-Runs after `discover` + `test`. Conditions:
+Runs after `discover`, `test` and `engine-mutation-gate`. Conditions:
 
 - `if: !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false`
-- `permissions: pull-requests: write, contents: read`
+- `permissions: pull-requests: write, contents: read, actions: read` (the run's start, for the headline's `⏱`)
 
 Steps:
 
@@ -105,9 +106,9 @@ Discovery globs both `*/action.yml` and `*/action.yaml` from the repo root. Dire
 |---|---|
 | *(none)* | — |
 
-Two suites run a step's `run:` block from `action.yml` itself: `export-env-vars` and `terraform-apply` each carry an `extract_step_source.py` that extracts the block with its expressions substituted as literal text, as GitHub does, and runs it against fixtures. For `export-env-vars` that tests the shim and, through it, `step_export_envs.sh`; for `terraform-apply`, the prerequisite check that stays inline.
+Three suites run a step's `run:` block from `action.yml` itself: `create-tf-vars-matrix` extracts it with `yq` and substitutes its expressions ([Decision-engine.md](Decision-engine.md) §8), and `export-env-vars` and `terraform-apply` each carry an `extract_step_source.py` that extracts the block with its expressions substituted as literal text, as GitHub does, and runs it against fixtures. For `export-env-vars` that tests the shim and, through it, `step_export_envs.sh`; for `terraform-apply`, the prerequisite check that stays inline.
 
-`.github/` is naturally excluded because the glob is `*/action.{yml,yaml}`, not `**/action.{yml,yaml}`; the second pass skips `.github/` and `.git/` explicitly. `contract-tests/` holds no `run_all_tests.sh` and is therefore not discovered; it has its own workflow (§13).
+`.github/` is excluded because discovery looks one level deep only (`find -mindepth 2 -maxdepth 2`) and both passes skip `.github/` explicitly; the second pass also skips `.git/`. `contract-tests/` holds no `run_all_tests.sh` and is therefore not discovered; it has its own workflow (§13).
 
 When an excluded directory gets a real `run_all_tests.sh` later, drop it from the exclusion list in the same PR.
 
@@ -123,7 +124,7 @@ Tests failed: <N>
 
 This format is set by the template in [Action-implementation-guide.md §`run_all_tests.sh`](Action-implementation-guide.md#run_all_testssh--automated-tests) and is emitted by every modern suite.
 
-Multi-step orchestrator scripts (e.g. [`aggregate-validation-summaries/run_all_tests.sh`](../aggregate-validation-summaries/run_all_tests.sh)) emit these lines once **per delegated step script**. The parser sums them, so the action's totals are the sum across its sub-suites.
+Multi-step orchestrator scripts (e.g. [`terraform-plan/run_all_tests.sh`](../terraform-plan/run_all_tests.sh)) emit these lines once **per delegated step script**. The parser sums them, so the action's totals are the sum across its sub-suites.
 
 ANSI color codes around the numbers are tolerated — escapes are stripped before matching. Each line is anchored on both ends (`^Tests run:[[:space:]]+[0-9]+[[:space:]]*$`) so a suffix like `Tests run: 7 (extra info)` is rejected as drift; a trailing space or two is fine.
 
@@ -185,7 +186,7 @@ Body layout (red example shown; on a green run the row table is all ✅ and the 
 **Tested (8)**
 
 | Action | Result | Tests | Time | Details |
-|---|:---:|:---:|---|
+|---|:---:|:---:|:---:|---|
 | aggregate-validation-summaries | ✅ Pass | 28 / 28 | 0:31 | [job log](…) |
 | auto-merge-pr | ✅ Pass | 24 / 24 | 0:02 | [job log](…) |
 | parse-terraform-plan | ❌ Fail | 5 / 7 | 0:03 | [job log](…) |
@@ -200,7 +201,7 @@ _Run: [workflow run](https://github.com/…/actions/runs/<id>) · Commit: `<sha>
 
 Conventions:
 
-- Status icons match `aggregate-validation-summaries`: ✅ success, ❌ failure, ⚠ cancelled, ⏭ skipped. In practice only ✅ and ❌ show up — see §5 (outcomes that reach the artifact).
+- Status icons: ✅ success, ❌ failure, ⚠️ cancelled, ⏭️ skipped, ❓ anything else. In practice only ✅ and ❌ show up — see §5 (outcomes that reach the artifact).
 - The headline has two variants: `… <passed> passed, <failed> failed` on a fully green run, and `… <passed> passed, <failed> failed, <N> suite(s) not passing` whenever any suite isn't a clean pass. Same logic powers the headline annotation (§11.2).
 - The "Tests" column shows `passed / run`. Failed count = `run - passed`; not shown explicitly to keep the table tight. A drifted suite shows as `?` here.
 - The "Time" column is each result's `duration-seconds` as `m:ss` (`h:mm:ss` from an hour, `—` when missing): the suite's own run, and for `engine-mutation-gate` the time from its first shard's start to the merge, which is the gate's real cost. The headline's `⏱` is the run's wall-clock from its start (the Actions API's `run_started_at`) to the summary, which waits for the gate, so it is how long the pull request waited for its result. It is left out when the start cannot be read.
@@ -218,7 +219,7 @@ Conventions:
 4. If zero matches: `gh api -X POST /repos/{owner}/{repo}/issues/{pr}/comments -F body=@<file>` (fresh).
 5. If two or more matches (shouldn't happen, but guard anyway): delete all but the oldest, then PATCH the oldest.
 
-GitHub API failure during list/post: log a warning, exit non-zero, fail the `summary` job. The `tests-conclusion` job does *not* depend on `summary`, so a posting failure doesn't gate the PR — but it does light up the workflow with a clear red signal.
+GitHub API failure during list/post/patch: `errexit` ends the script non-zero with `gh`'s error, failing the `summary` job (a failed delete of a duplicate is ignored). The `tests-conclusion` job does *not* depend on `summary`, so a posting failure doesn't gate the PR — but it does light up the workflow with a clear red signal.
 
 ## 7. Triggers and fork handling
 
@@ -234,13 +235,13 @@ Fork guard:
 if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
 ```
 
-This guard lives on `discover`, `summary`, and `tests-conclusion`. The `test` matrix job is implicitly gated because it has `needs: discover` — when discover is skipped, the matrix is too. The summary job has the same fork condition AND-ed into its existing `if:`.
+This guard lives on `discover`, `engine-mutation-gate`, `summary`, and `tests-conclusion`. The `test`, `engine-python` and `engine-mutation` jobs are implicitly gated because they have `needs: discover` — when discover is skipped, they are too. The summary job has the same fork condition AND-ed into its existing `if:`.
 
 The workflow does **not** run on PRs from forks. `GITHUB_TOKEN` is read-only on fork PRs and the summary job couldn't post the comment; running the matrix without a working summary defeats the purpose. DSB's working model is internal contributors, so this is acceptable. If a fork-PR use case appears later, revisit — the safe path would be to skip-only-the-comment, not switch to `pull_request_target`.
 
 `workflow_dispatch` is included for manual triggering during development of the workflow itself.
 
-Path filters: intentionally omitted. Suites are cheap (seconds each), and "did this workflow run at all" being load-bearing for branch protection is simpler with no filters.
+Path filters: intentionally omitted. "Did this workflow run at all" being load-bearing for branch protection is simpler with no filters.
 
 ## 8. Files involved
 
@@ -251,12 +252,12 @@ Path filters: intentionally omitted. Suites are cheap (seconds each), and "did t
 | `.github/scripts/discover-actions.sh` | Discovery script (§2.1, §3). |
 | `.github/scripts/aggregate-action-tests.sh` | Summary builder + PR-comment upsert (§6). |
 | `.github/scripts/rewrite-internal-refs.sh` | Not part of this workflow — rewrites internal `uses:` refs for [`pr-preview.yml`](../.github/workflows/pr-preview.yml); spec [Preview-refs.md](Preview-refs.md). |
-| `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs as the first step of `pr-preview.yml`, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
+| `.github/scripts/test-rewrite-internal-refs.sh` | Its offline test suite; runs in `pr-preview.yml`'s `publish-preview` job before anything is built, not here — a broken rewriter must block the preview, not the action tests. Same canonical summary lines (§4). |
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
 | `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). In CI it runs with `ENGINE_MUTATION=shards`, which leaves its mutation gate to §14; locally it runs both gates. |
 | `engine/tests/mutation.py` | The engine's mutation gate: `--shard K/N --out <file>` runs one shard, `--merge <files>` judges them (§14). |
 
-The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function, and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — they're internal to this one workflow.
+The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function (the test suite has none), and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — the first two serve this workflow, the rewrite pair `pr-preview.yml`.
 
 `jq`, `yq`, `gh`, `python3`, and standard coreutils are assumed to be present on the `ubuntu-latest` runner. No install logic is bundled.
 
@@ -431,7 +432,7 @@ Push the branch and open a draft PR. Then confirm each surface works.
 gh pr checks <pr-number>
 ```
 
-Expect rows for `🔎 Discover actions`, one `🧪 Test (<action>)` per modern suite, `📝 Aggregate summary`, and `tests-conclusion` (the gate job is intentionally plain so the required-check label reads cleanly).
+Expect rows for `🔎 Discover actions`, one `🧪 Test (<action>)` per modern suite, `🐍 Engine on Python 3.12` and `3.x`, `🧬 Engine mutation 1/8` to `8/8`, `🧬 Engine mutation gate`, `📝 Aggregate summary`, and `tests-conclusion` (the gate job is intentionally plain so the required-check label reads cleanly).
 
 **PR comment** — should appear once on the first run, edit in place on subsequent runs (`updated_at` advances; the comment count stays at one):
 
@@ -455,7 +456,7 @@ for job_id in $(gh api "repos/<owner>/<repo>/actions/runs/${run_id}/jobs" --pagi
 done
 ```
 
-Expect: at minimum a `[notice]` headline from the `📝 Aggregate summary` job; on a red run, also one `[error]` per failed suite from the corresponding `🧪 Test (<action>)` jobs.
+Expect: at minimum a `[notice]` headline from the `📝 Aggregate summary` job; on a red run, also one `[error]` per failed suite from the corresponding `🧪 Test (<action>)` jobs, and from `🧬 Engine mutation gate` when the gate fails.
 
 **Step summary** — open the workflow run page in the browser; the "Summary" tab should render the same markdown as the PR comment (totals, tested table, not-tested-yet list, footer with run link). This is the only surface that's not API-accessible; visual check only.
 
@@ -477,7 +478,7 @@ When converting a legacy action to gain a `run_all_tests.sh`, run the conformanc
 
 ## 13. Contract tests are a separate workflow
 
-[`.github/workflows/terraform-contract-tests.yml`](../.github/workflows/terraform-contract-tests.yml) is **not** part of this workflow and is not discovered by §2.1: `contract-tests/` has no `action.yml`. It runs real terraform binaries — the newest `newest-minors` minors (six today), resolved from the HashiCorp releases API at run time — against local-only scenarios, feeds the captured console through `parse-terraform-plan` and `parse-terraform-apply`, and diffs the summary-bearing lines against the fixtures those parsers pin; each plan is counted a second time from its JSON plan (`terraform show -json`) and held to the same expected counts. It needs the network, takes about a minute per version, runs on a path-filtered `pull_request`, on `workflow_dispatch` and **weekly on a schedule**, and is not a required check. Spec: [Apply-and-destroy-reporting.md §16](Apply-and-destroy-reporting.md); runner and version window: [`contract-tests/`](../contract-tests/README.md).
+[`.github/workflows/terraform-contract-tests.yml`](../.github/workflows/terraform-contract-tests.yml) is **not** part of this workflow and is not discovered by §2.1: `contract-tests/` has no `action.yml`. It runs real terraform binaries — the newest `newest-minors` minors (six, in `contract-tests/versions.json`), resolved from the HashiCorp releases API at run time — against local-only scenarios, feeds the captured console through `parse-terraform-plan` and `parse-terraform-apply`, and diffs the summary-bearing lines against the fixtures those parsers pin; each plan is counted a second time from its JSON plan (`terraform show -json`) and held to the same expected counts. It needs the network, takes about a minute per version, runs on a path-filtered `pull_request`, on `workflow_dispatch` and **weekly on a schedule**, and is not a required check. Spec: [Apply-and-destroy-reporting.md §16](Apply-and-destroy-reporting.md); runner and version window: [`contract-tests/`](../contract-tests/README.md).
 
 The suites here stay hermetic: every fixture the parsers test against is a file in the repo, and `run_all_tests.sh` never invokes terraform.
 
@@ -492,7 +493,7 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   prints `Mutation gate not run here (ENGINE_MUTATION=shards) …`, and counts one gate test, not
   two. Nothing else reads the variable, and locally it is unset, so `bash engine/run_all_tests.sh`
   still runs both gates.
-- **`engine-mutation`** is a matrix of N shards, eight today, on Python 3.12, the floor. The
+- **`engine-mutation`** is a matrix of N shards, eight, on Python 3.12, the floor. The
   mutants' keys are printed by `ast.unparse`, so every shard runs one Python and the keys match
   `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/N --out
   mutation-shard-K.json`: the unmutated baseline first, then every N-th mutant from the K-th,
@@ -503,7 +504,7 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   `mutation.py --merge`, which applies the gate the unsharded run applies: an unexplained
   survivor, a stale equivalent and a listed equivalent that is killed each fail it. Before it
   judges anything it checks that the shards ran every mutant exactly once. A missing shard would
-  otherwise hide its survivors, and it would also make every equivalent in it read as stale.
+  otherwise hide its survivors, and it would also make every equivalent in it read as killed.
 - **`tests-conclusion`** requires `engine-mutation-gate` to succeed.
 - **The PR comment includes the gate.** `engine-mutation-gate` writes `result-engine-mutation-gate.json`
   in the §5 shape, one test as the engine suite counts it locally, and uploads it as
@@ -524,7 +525,7 @@ the critical path; runners were not the limit. With eight it took 4.3 minutes, t
 91 and 243 seconds, the spread set by the few mutants that hang until their timeout. The merged
 verdict was the local one both times.
 
-**What made it fast**, measured on the full gate (4,038 mutants), before and after, on 12 local
+**What made it fast**, measured on the full gate (4,038 mutants at the time), before and after, on 12 local
 cores: 22 minutes became 3.6, and CI's three full runs of about 66 to 78 minutes each became one
 sharded run.
 - **Own tests first.** Each mutant runs the test module of the module it mutates first (`test_x`
