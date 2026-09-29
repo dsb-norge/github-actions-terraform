@@ -3251,6 +3251,150 @@ else
 fi
 
 # ============================================================================
+# F20 — the module workflow's test jobs are the project workflow's, step for step.
+#
+# docs/Module-ci.md D2: one test stage for both kinds of repository, written out in each workflow
+# and held together here. Everything but `needs` and `if` must be equal: the name, the runner, the
+# timeout, the permissions, the environment, the strategy, the concurrency and every step. The
+# module test job waits for the docs job and skips when it pushed; the module summary job runs on
+# every event with test files, since a module tests on dispatches and schedules too.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F20 - the module workflow's test jobs are the project workflow's${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f20_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import sys, yaml
+
+def jobs(path):
+    with open(path, encoding='utf-8') as fh:
+        return yaml.safe_load(fh)['jobs']
+
+project = jobs('.github/workflows/terraform-ci-cd-default.yml')
+module = jobs('.github/workflows/terraform-module-ci.yaml')
+problems = []
+for name in ('terraform-test', 'terraform-test-summary'):
+    if name not in module:
+        problems.append(f"the module workflow has no job '{name}'")
+        continue
+    ours = {k: v for k, v in module[name].items() if k not in ('needs', 'if')}
+    theirs = {k: v for k, v in project[name].items() if k not in ('needs', 'if')}
+    for key in sorted(set(ours) | set(theirs)):
+        if ours.get(key) != theirs.get(key):
+            problems.append(f"job '{name}': '{key}' differs from the project workflow's")
+    if len(module[name].get('steps', [])) != len(project[name].get('steps', [])):
+        problems.append(f"job '{name}': {len(module[name].get('steps', []))} steps, the project workflow has "
+                        f"{len(project[name].get('steps', []))}")
+
+test = module.get('terraform-test', {})
+if sorted(test.get('needs', [])) != ['create-matrix', 'generate-docs']:
+    problems.append(f"the module test job must need create-matrix and generate-docs, not {test.get('needs')}")
+condition = ' '.join(str(test.get('if', '')).split())
+for part in ("!cancelled()", "needs.create-matrix.result == 'success'",
+             "needs.create-matrix.outputs.tests-active == 'true'", "needs.generate-docs.outputs.pushed != 'true'"):
+    if part not in condition:
+        problems.append(f"the module test job's if lacks {part!r}")
+summary = module.get('terraform-test-summary', {})
+if sorted(summary.get('needs', [])) != ['create-matrix', 'terraform-test']:
+    problems.append(f"the module summary job must need create-matrix and terraform-test, not {summary.get('needs')}")
+condition = ' '.join(str(summary.get('if', '')).split())
+for part in ("always()", "needs.create-matrix.result == 'success'", "inputs.terraform-test-enabled == true",
+             "needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request'"):
+    if part not in condition:
+        problems.append(f"the module summary job's if lacks {part!r}")
+if "github.event_name == 'push'" in condition:
+    problems.append("the module summary job must run on every event with test files, not only pull_request and push")
+
+print(f"compared {sum(len(module.get(n, {}).get('steps', [])) for n in ('terraform-test', 'terraform-test-summary'))} step(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f20_rc=0 || _f20_rc=$?
+if [[ "${_f20_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f20_out}" | head -n1), equal but for needs and if"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f20_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F21 — the module workflow's conclusion judges named results (docs/Module-ci.md §8).
+#
+# The one required check: it needs the jobs that decide (never the reporting ones), reads each
+# by name with the engine's outputs, and states its verdict; the module test job reads the
+# engine's matrix, and the docs job's push gates validation and tests.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F21 - the module conclusion judges named results${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f21_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import sys, yaml
+
+with open('.github/workflows/terraform-module-ci.yaml', encoding='utf-8') as fh:
+    workflow = yaml.safe_load(fh)
+jobs = workflow['jobs']
+inputs = workflow[True]['workflow_call']['inputs'] if True in workflow else workflow['on']['workflow_call']['inputs']
+problems = []
+conclusion = jobs.get('conclusion', {})
+if conclusion.get('name') != 'Terraform conclusion' or conclusion.get('if') != 'always()':
+    problems.append("the conclusion must be named 'Terraform conclusion' and run always()")
+if conclusion.get('needs') != ['create-matrix', 'generate-docs', 'validate', 'terraform-test']:
+    problems.append(f"the conclusion must need create-matrix, generate-docs, validate and terraform-test, not {conclusion.get('needs')}")
+env = (conclusion.get('steps') or [{}])[0].get('env', {})
+expected = {
+    'CREATE_MATRIX_RESULT': '${{ needs.create-matrix.result }}', 'DOCS_RESULT': '${{ needs.generate-docs.result }}',
+    'DOCS_PUSHED': '${{ needs.generate-docs.outputs.pushed }}', 'VALIDATE_RESULT': '${{ needs.validate.result }}',
+    'TESTS_ACTIVE': '${{ needs.create-matrix.outputs.tests-active }}',
+    'TESTS_COUNT': '${{ needs.create-matrix.outputs.tests-count }}',
+    'TESTS_REQUIRED_MISSING': '${{ needs.create-matrix.outputs.tests-required-missing }}',
+    'TESTS_RESULT': '${{ needs.terraform-test.result }}',
+}
+for key, value in expected.items():
+    if env.get(key) != value:
+        problems.append(f"the conclusion's env {key} must be {value}")
+run = (conclusion.get('steps') or [{}])[0].get('run', '')
+for needle in ('GITHUB_STEP_SUMMARY', '::notice title=Terraform conclusion::', '::error title=Terraform conclusion::', 'exit 1'):
+    if needle not in run:
+        problems.append(f"the conclusion must write {needle!r}")
+if 'contains(needs.' in str(conclusion):
+    problems.append("the conclusion must read named results, not contains(needs.*.result, …)")
+create = jobs.get('create-matrix', {})
+step = next((s for s in create.get('steps', []) if 'create-tf-vars-matrix' in str(s.get('uses'))), {})
+if step.get('with', {}).get('mode') != 'module':
+    problems.append("create-matrix must run create-tf-vars-matrix with mode: module")
+for output in ('tests-matrix-json', 'tests-count', 'tests-active', 'tests-required-missing'):
+    if output not in create.get('outputs', {}):
+        problems.append(f"create-matrix must publish {output}")
+validate = jobs.get('validate', {})
+if "needs.generate-docs.outputs.pushed != 'true'" not in str(validate.get('if', '')):
+    problems.append("validation must skip when the docs job pushed a commit")
+for name in ('terraform-test-enabled', 'terraform-test-required', 'allow-failing-terraform-tests',
+             'terraform-test-runs-on', 'terraform-test-timeout-minutes', 'terraform-test-lanes-yml',
+             'terraform-test-exclude-paths-yml', 'runs-on', 'add-pr-comment', 'cache-terraform-modules'):
+    if name not in inputs:
+        problems.append(f"the module workflow must declare the input {name}")
+print(f"checked {len(expected)} named results")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f21_rc=0 || _f21_rc=$?
+if [[ "${_f21_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f21_out}" | head -n1), the wiring holds"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f21_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

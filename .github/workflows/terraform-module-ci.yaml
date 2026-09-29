@@ -1,59 +1,101 @@
 name: "DSB Terraform Module CI"
 #
-# A requirement for this workflow to run is that the following 'permissions' are granted by the calling workflow:
+# Validates, documents and tests a Terraform module repository: the module at the repository root,
+# its examples and its terraform test files. Spec: docs/Module-ci.md; user guide:
+# docs/Workflow-terraform-module-ci.md. The project workflow, terraform-ci-cd-default.yml, is its
+# sibling for repositories of environments; the two share the test stage (the decision engine's
+# module mode, and the test jobs, written out here again and held to the same steps by F20).
+#
+# The calling job grants:
 #   permissions:
-#     id-token: write       # required for Azure password-less auth
-#     contents: read        # required for actions/checkout
-#     pull-requests: write  # required for commenting on PRs
-#
-# The following secrets must be available in the github 'secrets' context:
-#   - secrets.REPO_AZURE_DSB_TENANT_ID                    <-- ID of the Azure tenant to run the workflow in context of
-#   - secrets.REPO_AZURE_SUBSCRIPTION_ID                  <-- ID of the Azure subscription to run the workflow in context of
-#   - secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL <-- ID of the Entra ID service principal with access to the Azure subscription
-#   - secrets.ORG_TF_CICD_APP_PRIVATE_KEY                 <-- generated from the app in github: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
-#
-# The following variables must be available in the github 'vars' context:
-#   - vars.ORG_TF_CICD_APP_ID                             <-- app id from here: https://github.com/organizations/dsb-norge/settings/apps/dsb-norge-terraform-cicd-access
-#   - vars.ORG_TF_CICD_APP_INSTALLATION_ID                <-- app installation id found in url if you "configure" the app 'dsb-norge-terraform-cicd-access' from here: https://github.com/organizations/dsb-norge/settings/installations
-#
-# From the calling workflow this can be achieved by either handing over all secrets:
+#     id-token: write       # OIDC, for the test jobs
+#     contents: write       # checkout; the docs job pushes with the App token
+#     pull-requests: write  # the validation and tests heads
+#     actions: read         # job links in the tests head
 #   secrets: inherit
-# or by handing over just the required secrets from the calling workflow:
-#   secrets:
-#     REPO_AZURE_DSB_TENANT_ID: "secret value"
-#     REPO_AZURE_SUBSCRIPTION_ID: "secret value"
-#     REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL: "secret value"
+#
+# The docs job's App token reads the organisation's CI App: vars.ORG_TF_CICD_APP_ID and
+# secrets.ORG_TF_CICD_APP_PRIVATE_KEY. Test credentials come from lanes only
+# (terraform-test-lanes-yml, docs/Module-ci.md §6).
 #
 on:
   workflow_call:
     inputs:
       terraform-version:
-        description: "Terraform version to use for the tests."
+        description: "Terraform version for validation and, unless a lane sets its own, the tests (1.13 or later for tests)."
         required: true
         type: string
       tflint-version:
-        description: "TFLint version to use for the tests."
+        description: "TFLint version for the lint step."
         required: true
         type: string
       readme-file-path:
-        description: |
-          "README.md file path to inject terraform docs into. Default is the root of the repository."
+        description: "Directory of the README.md terraform-docs maintains. Default: the repository root."
         type: string
         default: "."
+      runs-on:
+        description: "Runner of every job but the test jobs (terraform-test-runs-on)."
+        type: string
+        default: "ubuntu-latest"
+      add-pr-comment:
+        description: "Post the validation and tests heads on pull requests."
+        type: boolean
+        default: true
+      cache-terraform-modules:
+        description: "Cache the modules test roots download (docs/Terraform-module-cache.md); per lane too."
+        type: boolean
+        default: true
+      terraform-test-enabled:
+        description: "Run the committed terraform test files (docs/Terraform-tests.md). false removes the test stage."
+        type: boolean
+        default: true
+      terraform-test-required:
+        description: |
+          A module needs at least one test file, a unit suite (docs/Module-ci.md D9): with none the
+          conclusion is red. false lets a repository without test files conclude green.
+        type: boolean
+        default: true
+      allow-failing-terraform-tests:
+        description: "A failing or erroring test does not fail the check; rendered as tolerated. Per lane too."
+        type: boolean
+        default: false
+      terraform-test-runs-on:
+        description: "Runner of the test jobs. Per lane 'runs-on'."
+        type: string
+        default: "ubuntu-latest"
+      terraform-test-timeout-minutes:
+        description: "timeout-minutes of each test job. Per lane 'timeout-minutes'."
+        type: number
+        default: 30
+      terraform-test-lanes-yml:
+        description: |
+          Lanes: which test files run with which credentials, runner, Terraform version and GitHub
+          Environment (docs/Terraform-tests.md §3.2). Without lanes every file runs without
+          credentials. The usual module shape, one credential from the repository's secrets:
 
-# only run one workflow at a time for the same branch or tag. The default
-# queue depth (one pending run) is deliberate here: a pending run is a
-# superseded commit of the same ref and nothing in this workflow applies to
-# shared state, so dropping it when a newer push arrives is the right outcome.
+            terraform-test-lanes-yml: |
+              - name: azure
+                extra-envs-yml:
+                  ARM_USE_OIDC: true
+                  ARM_USE_AZUREAD: true
+                extra-envs-from-secrets-yml:
+                  ARM_TENANT_ID: REPO_AZURE_DSB_TENANT_ID
+                  ARM_SUBSCRIPTION_ID: REPO_AZURE_SUBSCRIPTION_ID
+                  ARM_CLIENT_ID: REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL
+        type: string
+        default: ""
+      terraform-test-exclude-paths-yml:
+        description: "Glob patterns of test files discovery ignores (docs/Terraform-tests.md §4.4)."
+        type: string
+        default: ""
+
+# One run per ref. The default queue depth (one pending run) is deliberate: a pending run is a
+# superseded commit of the same ref and nothing here applies to shared state, so dropping it when
+# a newer push arrives is right. The test jobs queue per file on their own group (queue: max).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 env:
-  ARM_TENANT_ID: ${{ secrets.REPO_AZURE_DSB_TENANT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.REPO_AZURE_SUBSCRIPTION_ID }}
-  ARM_CLIENT_ID: ${{ secrets.REPO_AZURE_TERRAFORM_USER_SERVICE_PRINCIPAL }}
-  ARM_USE_OIDC: true
-  ARM_USE_AZUREAD: true
   TF_IN_AUTOMATION: true
 
 defaults:
@@ -61,83 +103,87 @@ defaults:
     shell: bash
 
 jobs:
-  generate-docs:
-    name: Update documentation
-    runs-on: ubuntu-latest
+  create-matrix:
+    name: "Create test matrix"
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
     outputs:
-      number-of-files-changed: ${{ steps.update-readme.outputs.number-of-files-changed }}
+      tests-matrix-json: ${{ steps.create-matrix.outputs.tests-matrix-json }}
+      tests-count: ${{ steps.create-matrix.outputs.tests-count }}
+      tests-active: ${{ steps.create-matrix.outputs.tests-active }}
+      tests-required-missing: ${{ steps.create-matrix.outputs.tests-required-missing }}
     steps:
-      # need a token that will re-trigger the workflow if changes are pushed to the pr branch
-      - name: "🔑 Obtain GitHub app installation access token for the terraform CI/CD app"
-        id: auth
-        uses: dsb-norge/github-actions/get-github-app-installation-token@v2
+      - name: "⬇ Checkout"
+        uses: actions/checkout@v7
+      - name: "🎰 Create the test matrix"
+        id: create-matrix
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
         with:
-          github-app-id: ${{ vars.ORG_TF_CICD_APP_ID }}
-          github-app-installation-id: ${{ vars.ORG_TF_CICD_APP_INSTALLATION_ID }}
-          github-app-private-key: "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}"
+          inputs-json: ${{ toJSON(inputs) }}
+          mode: module
+      # The not-run rows of the tests summary read it (create-test-summary's not-run-file).
+      - name: "📦 Upload the test decision"
+        uses: actions/upload-artifact@v7
+        with:
+          name: relevance
+          path: ${{ steps.create-matrix.outputs.relevance-file }}
 
-      - name: "📥 Checkout"
-        id: checkout
+  generate-docs:
+    name: "Update documentation"
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read # a docs commit is pushed with the App token, which starts the next run
+    outputs:
+      pushed: ${{ steps.docs.outputs.pushed }}
+      status: ${{ steps.docs.outputs.status }}
+    steps:
+      # Only a pull request from this repository gets a docs commit (docs/Module-ci.md D6): a fork's
+      # run has no secrets, and a push, a dispatch or a schedule must never commit to its branch.
+      - name: "🔑 Create GitHub App token"
+        id: app-token
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
+          private-key: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: "⬇ Checkout"
         uses: actions/checkout@v7
         with:
-          # ref is required as actions checks out in detached HEAD mode, ie. it doesn’t check out the PR branch
-          ref: ${{ github.event.pull_request.head.ref }}
-          # using the token that will re-trigger the workflow if changes are pushed to the pr branch
-          token: ${{ steps.auth.outputs.github-token }}
+          # the pull request's branch, not the merge commit, so a docs commit lands on it
+          ref: ${{ steps.app-token.outcome == 'success' && github.event.pull_request.head.ref || '' }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - name: "📝 Validate and update README.md"
-        id: update-readme
+      - name: "📝 Validate and update the README"
+        id: docs
         uses: dsb-norge/github-actions-terraform/terraform-docs@v1
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
-        continue-on-error: true
+          push: ${{ steps.app-token.outcome == 'success' && 'true' || 'false' }}
 
-      - name: "🧐 Validation outcome: 📝 Update docs"
-        run: |
-          if [ ! "${{ steps.update-readme.outcome }}" == 'success' ]; then
-            echo "::error title=Update README.md failed::Outcome of update README.md step was '${{ steps.update-readme.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
-
-  create-test-matrix:
-    name: Enumerate tests
-    runs-on: ubuntu-latest
-    outputs:
-      all-tests: ${{ steps.create-test-matrix.outputs.all-tests }}
-    steps:
-      - name: "🧹 Clean workspace"
-        uses: dsb-norge/directory-recreate@v1
-
-      - name: "⬇ Checkout working branch"
-        uses: actions/checkout@v7
-
-      - name: "🎰 Create the matrix"
-        id: create-test-matrix
-        uses: dsb-norge/github-actions-terraform/create-tftest-matrix@v1
-
-  # runs all validation steps but also builds up the terraform provider plugin cache
-  validate-project:
-    name: Validate project
-    # this step is time consuming, don't bother running it if the workflow will be re-triggered by an update to the docs anyway
+  validate:
+    name: "Validate module"
     needs: generate-docs
-    if: (needs.generate-docs.result == 'success' && needs.generate-docs.outputs.number-of-files-changed || -1) == 0
-    runs-on: ubuntu-latest
-    outputs:
-      plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
-      plugin-cache-key-monthly-rolling: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
+    # A docs commit starts a run of its own, which validates it; this run's tree is superseded.
+    if: "!cancelled() && needs.generate-docs.outputs.pushed != 'true'"
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      pull-requests: write # the validation head, and the legacy per-file test comments removed
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
 
-      - name: "⬇ Checkout working branch"
+      - name: "⬇ Checkout"
         uses: actions/checkout@v7
 
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ inputs.terraform-version }}
-          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
+          # the wrapper mangles the output and the exit code
           terraform_wrapper: false
 
       - name: "🗄️ Setup Terraform provider plugin cache"
@@ -157,44 +203,81 @@ jobs:
           path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           key: ${{ steps.setup-terraform-cache.outputs.plugin-cache-key-monthly-rolling }}
 
-      - name: ⚙️ Terraform Init
+      - name: "⚙️ Terraform Init"
         id: init
         uses: dsb-norge/github-actions-terraform/terraform-init@v1
         with:
           working-directory: ${{ github.workspace }}
           additional-dirs-json: null
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
-          # Authenticates terraform's remote-module clones, which are otherwise
-          # charged to a per-IP budget shared by every runner behind the same
-          # NAT address — see the action's 'github-token' input.
+          # Authenticates terraform's remote-module clones, which are otherwise charged to a per-IP
+          # budget shared by every runner behind the same NAT address.
           github-token: ${{ github.token }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+        continue-on-error: true # evaluated by the gates below
 
-      - name: 🖌 Terraform Format
+      - name: "🖌 Terraform Format"
         id: fmt
         uses: dsb-norge/github-actions-terraform/terraform-fmt@v1
         with:
           working-directory: ${{ github.workspace }}
           format-check-in-root-dir: true
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+        continue-on-error: true # evaluated by the gates below
 
-      - name: ✔ Terraform Validate
+      - name: "✔ Terraform Validate"
         id: validate
         uses: dsb-norge/github-actions-terraform/terraform-validate@v1
         with:
           working-directory: ${{ github.workspace }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+        continue-on-error: true # evaluated by the gates below
 
-      - name: 🧹 Lint with TFLint
+      - name: "🧹 Lint with TFLint"
         id: lint
         uses: dsb-norge/github-actions-terraform/lint-with-tflint@v1
         with:
           working-directory: ${{ github.workspace }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+        continue-on-error: true # evaluated by the gates below
 
-      - name: 📝 Create validation summary
+      - name: "⚠️ Parse init warnings"
+        id: parse-init-warnings
+        if: always() && steps.init.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        with:
+          console-output-file: ${{ steps.init.outputs.console-output-file }}
+          step-label: init
+          environment-name: module
+        continue-on-error: true # reporting only
+
+      - name: "⚠️ Parse validate warnings"
+        id: parse-validate-warnings
+        if: always() && steps.validate.outputs.console-output-file != ''
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        with:
+          console-output-file: ${{ steps.validate.outputs.console-output-file }}
+          step-label: validate
+          environment-name: module
+        continue-on-error: true # reporting only
+
+      - name: "⚠️ Sum the warnings"
+        id: warnings
+        if: always()
+        env:
+          INIT_COUNT: ${{ steps.parse-init-warnings.outputs.warning-count }}
+          VALIDATE_COUNT: ${{ steps.parse-validate-warnings.outputs.warning-count }}
+        run: |
+          # Add the init and validate warning counts; a count a skipped parse left empty is 0
+          total=0
+          for count in "${INIT_COUNT}" "${VALIDATE_COUNT}"; do
+            if [[ "${count}" =~ ^[0-9]+$ ]]; then
+              total=$((total + count))
+            fi
+          done
+          echo "warning-count=${total}" >>"${GITHUB_OUTPUT}"
+
+      # Rendered on every event: the step summary is the run page's report; the head is posted on a
+      # pull request only.
+      - name: "📝 Create validation summary"
         id: create-validation-summary
-        if: github.event_name == 'pull_request'
+        if: always()
         uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
         with:
           environment-name: "module"
@@ -202,22 +285,30 @@ jobs:
           status-fmt: ${{ steps.fmt.outcome }}
           status-validate: ${{ steps.validate.outcome }}
           status-lint: ${{ steps.lint.outcome }}
-          # Both required, and neither applies to a module: 'N/A' is how this
-          # action is told so. Omitting status-verify-lock rendered the Lock
-          # file row as an empty <kbd></kbd> badge in every module repo's
-          # comment — GitHub does not enforce a composite action's required
-          # inputs, so nothing complained.
+          # a module has no lock file and no plan
           status-verify-lock: "N/A"
           status-plan: "N/A"
-        continue-on-error: true # allow job to continue, step outcome is ignored
+          warning-count: ${{ steps.warnings.outputs.warning-count }}
+        continue-on-error: true # reporting only
 
-      # Marker-based upsert, PATCHed in place across runs — see the test
-      # report comment below for the rationale. Only the head body is posted:
-      # a module has no plan, so the plan body this action also renders is
-      # always 'Plan not available' and was noise in the comment.
-      - name: 🏷️ Upsert validation summary as pull request comment
-        id: validation-summary-on-pr
-        if: steps.create-validation-summary.outcome == 'success'
+      - name: "📋 Add the validation summary to the job summary"
+        if: always() && steps.create-validation-summary.outputs.step-summary-file != ''
+        env:
+          STEP_SUMMARY_FILE: ${{ steps.create-validation-summary.outputs.step-summary-file }}
+        run: |
+          # Append the rendered validation block to the job's step summary
+          cat "${STEP_SUMMARY_FILE}" >>"${GITHUB_STEP_SUMMARY}"
+        continue-on-error: true # reporting only
+
+      - name: "🏷️ Upsert the validation head"
+        if: |
+          always()
+          && steps.create-validation-summary.outcome == 'success'
+          && inputs.add-pr-comment == true
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
         uses: dsb-norge/github-actions-terraform/pr-comment@v1
         with:
           repo: ${{ github.repository }}
@@ -226,158 +317,451 @@ jobs:
           mode: upsert
           marker: "<!-- tf:head:module -->"
           body-file: ${{ steps.create-validation-summary.outputs.head-summary-file }}
-        continue-on-error: true # allow job to continue, step outcome is ignored
+        continue-on-error: true # never fail the workflow over PR comments
+
+      # v0 posted one comment per test file; the tests head replaces them. The marker's colon after
+      # 'test' keeps the tests head, '<!-- tf:head:tests:', out of the match.
+      - name: "🧹 Remove the per-file test comments of v0"
+        if: |
+          always()
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: "<!-- tf:head:test:"
+        continue-on-error: true # never fail the workflow over PR comments
 
       - name: "🧐 Validation outcome: ⚙️ Init"
-        run: |
-          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
-            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
+        if: always() && steps.init.outcome != 'success'
+        run: exit 1
 
       - name: "🧐 Validation outcome: 🖌 Format"
-        run: |
-          if [ ! "${{ steps.fmt.outcome }}" == 'success' ]; then
-            echo "::error title=Format check failed::Outcome of terraform fmt step was '${{ steps.fmt.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
+        if: always() && steps.fmt.outcome != 'success'
+        run: exit 1
 
       - name: "🧐 Validation outcome: ✔ Validate"
-        run: |
-          if [ ! "${{ steps.validate.outcome }}" == 'success' ]; then
-            echo "::error title=Validate failed::Outcome of terraform validate step was '${{ steps.validate.outcome }}' !"
-            exit 1
-          fi
-        continue-on-error: false
+        if: always() && steps.validate.outcome != 'success'
+        run: exit 1
 
       - name: "🧐 Validation outcome: 🧹 TFLint"
-        run: |
-          if [ ! "${{ steps.lint.outcome }}" == 'success' ]; then
-            echo "::error title=Lint failed::Outcome of TFLint step was '${{ steps.lint.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
+        if: always() && steps.lint.outcome != 'success'
+        run: exit 1
 
-  module-tests:
-    name: "Test"
-    # requires the tests to be ran, from create-test-matrix
-    # wait for provider cache to be created by validate-project
-    # only run tests if all dependent jobs are successful
-    #   does not run if ex validation failed or was skipped because of an update to the docs
-    needs: [create-test-matrix, validate-project]
-    runs-on: ubuntu-latest
+  terraform-test:
+    name: ${{ matrix.test.name }}
+    # The run a docs commit starts tests that commit; this one would test a superseded tree.
+    needs: [create-matrix, generate-docs]
+    if: |
+      !cancelled()
+      && needs.create-matrix.result == 'success'
+      && needs.create-matrix.outputs.tests-active == 'true'
+      && needs.generate-docs.outputs.pushed != 'true'
+    runs-on: ${{ matrix.test.runs-on }}
+    timeout-minutes: ${{ matrix.test.timeout-minutes }}
+    permissions:
+      contents: read
+      id-token: write # the azurerm and azuread providers mint their own OIDC tokens
+    environment:
+      name: ${{ matrix.test.github-environment }}
+      deployment: false # keeps the secrets, records no deployment
     strategy:
-      fail-fast: false # Allow jobs to continue even though one more env(s) fail
-      matrix:
-        test-file: ${{ fromJSON(needs.create-test-matrix.outputs.all-tests).files }}
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.create-matrix.outputs.tests-matrix-json) }}
+    # Per file, not per lane: a per-lane group would cancel the rest of this run's own matrix.
+    # GitHub's default queue depth is one: a third run entering the group cancels the pending job
+    # to take its place, and a cancelled test job turns the conclusion red. `queue: max` keeps up
+    # to 100 pending jobs in (best-effort) arrival order instead, as for the stage jobs. It is only
+    # valid together with cancel-in-progress false.
+    concurrency:
+      group: ${{ github.repository }}-terraform-test-${{ matrix.slug }}
+      cancel-in-progress: false
+      queue: max
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
 
+      - name: "🎰 Export lane environment variables"
+        uses: dsb-norge/github-actions-terraform/export-env-vars@v1
+        with:
+          extra-envs: ${{ toJSON(matrix.test.extra-envs) }}
+          extra-envs-from-secrets: ${{ toJSON(matrix.test.extra-envs-from-secrets) }}
+          secrets-json: ${{ toJSON(secrets) }}
+          # An environment lane's ARM_* and TF_VAR_* secrets under their own names; nothing for other lanes.
+          export-secrets-with-prefixes-json: ${{ toJSON(matrix.test.github-environment != '' && fromJSON('["ARM_","TF_VAR_"]') || fromJSON('[]')) }}
+          # GitHub upper-cases secret names; the copy sets the snake_case variable a test declares.
+          lower-case-copies-for-prefixes-json: ${{ toJSON(matrix.test.github-environment != '' && fromJSON('["TF_VAR_"]') || fromJSON('[]')) }}
+
+      - name: "🔐 Verify lane credentials"
+        id: verify-credentials
+        if: matrix.test.github-environment != ''
+        env:
+          LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
+          if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
+            echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
+            exit 0
+          fi
+          echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
+          echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
+          echo "  gh secret set ARM_TENANT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
+          echo "  gh secret set ARM_CLIENT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
+          exit 1
+        continue-on-error: true # reported by the test step and gated below
+
+      - name: "🔑 Login to Azure"
+        uses: azure/login@v3
+        if: |
+          steps.verify-credentials.outcome != 'failure'
+          && env.ARM_TENANT_ID != '' && env.ARM_SUBSCRIPTION_ID != '' && env.ARM_CLIENT_ID != ''
+        with:
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+          client-id: ${{ env.ARM_CLIENT_ID }}
+        continue-on-error: true # the providers log in on their own; a failed login shows in the test
+
       - name: "📥 Setup Terraform"
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ inputs.terraform-version }}
-          # woraround for extra gibberish in output https://github.com/hashicorp/setup-terraform/issues/20
+          terraform_version: ${{ matrix.test.terraform-version }}
+          # the wrapper mangles the -json stream and the exit code
           terraform_wrapper: false
 
+      - name: "📋 Provide provider versions"
+        id: copy-lock
+        env:
+          ROOT: ${{ matrix.test.root }}
+          ROOT_KIND: ${{ matrix.test.root-kind }}
+          SET_LOCK: ${{ matrix.test.provider-set-lock }}
+        run: |
+          # Copy the provider set's environment lock into a non-environment test root; name the runner's platform
+          if [ "${ROOT_KIND}" != 'environment' ] && [ -n "${SET_LOCK}" ]; then
+            cp "${SET_LOCK}" "${ROOT}/.terraform.lock.hcl"
+            echo "Copied '${SET_LOCK}' into '${ROOT}'."
+          fi
+          case "${RUNNER_OS}" in Linux) os=linux ;; macOS) os=darwin ;; Windows) os=windows ;; *) os="${RUNNER_OS,,}" ;; esac
+          case "${RUNNER_ARCH}" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; X86) arch=386 ;; ARM) arch=arm ;; *) arch="${RUNNER_ARCH,,}" ;; esac
+          lock="${ROOT}/.terraform.lock.hcl"
+          # The check reads the lock where it is committed, so its fix command names that directory.
+          lock_directory="${ROOT}"
+          [ "${ROOT_KIND}" != 'environment' ] && [ -n "${SET_LOCK}" ] && lock_directory="$(dirname "${SET_LOCK}")"
+          {
+            echo "platform=${os}_${arch}"
+            echo "lock-present=$([ -f "${lock}" ] && echo true || echo false)"
+            echo "lock-directory=${lock_directory}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: "🗄️ Setup Terraform provider plugin cache"
+        id: setup-terraform-cache
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v1
+
+      # Its own key, falling back to the environment job's: actions/cache saves only the first entry
+      # for a key, so with the environment job's key the test-only providers would never be cached (P41).
       - name: "🚀 Cache Terraform provider plugins"
+        if: steps.copy-lock.outputs.lock-present == 'true'
         uses: actions/cache@v6
         with:
-          path: ${{ needs.validate-project.outputs.plugin-cache-directory }}
-          key: ${{ needs.validate-project.outputs.plugin-cache-key-monthly-rolling }}
+          path: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          key: "terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.test.root)) }}-tftest"
+          restore-keys: |
+            terraform-provider-plugin-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.test.root)) }}
 
-      - name: ⚙️ Terraform Init
+      # Every lock a test job uses must record the runner's platform: without it the plugin cache fails
+      # a warm init, and a read-only init leaves a package terraform test refuses (P39). Lock-only, as
+      # nothing is initialised yet, and after the restore so a warm cache spares the download.
+      - name: "🔏 Verify the lock covers this runner"
+        id: provider-versions
+        if: steps.copy-lock.outputs.lock-present == 'true'
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v1
+        with:
+          working-directory: ${{ steps.copy-lock.outputs.lock-directory }}
+          platforms: ${{ steps.copy-lock.outputs.platform }}
+          lock-only: "true"
+          plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+        continue-on-error: true # reported by the test step and gated below
+
+      - name: "🗄️ Resolve terraform module cache"
+        id: module-cache
+        if: matrix.test.cache-terraform-modules == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: resolve
+          project-dir: ${{ matrix.test.root }}
+          additional-dirs-json: "[]"
+          # one entry per root: init installs the run-block modules of every test file in it
+          environment: tftest-${{ matrix.test.root }}
+          test-directory: tests
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
+
+      - name: "🚀 Restore terraform module cache"
+        id: restore-module-cache
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.module-cache.outputs.cache-paths }}
+          key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # caching is an optimisation, never a reason to fail a run
+
+      - name: "📸 Snapshot restored module manifests"
+        id: snapshot-module-cache
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: snapshot
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+          cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
+        continue-on-error: true # only feeds a warning; must never block init
+
+      - name: "⚙️ Terraform Init"
         id: init
+        if: steps.verify-credentials.outcome != 'failure' && steps.provider-versions.outcome != 'failure'
         uses: dsb-norge/github-actions-terraform/terraform-init@v1
         with:
-          working-directory: ${{ github.workspace }}
-          additional-dirs-json: null
-          plugin-cache-directory: ${{ needs.validate-project.outputs.plugin-cache-directory }}
-          # Authenticates terraform's remote-module clones, which are otherwise
-          # charged to a per-IP budget shared by every runner behind the same
-          # NAT address — see the action's 'github-token' input.
+          working-directory: ${{ matrix.test.root }}
+          environment-name: ${{ matrix.slug }}
+          additional-dirs-json: "[]"
+          # terraform test keeps state in memory; a backend block must not make init reach for storage
+          backend: false
+          lockfile-mode: ${{ matrix.test.root-kind == 'environment' && 'readonly-if-present' || 'default' }}
+          plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
+          plugin-cache-may-break-lock-file: true
           github-token: ${{ github.token }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+        continue-on-error: true # reported by the test step and gated below
 
-      - name: 🧪 Terraform Test
+      - name: "🔍 Check terraform module cache"
+        id: post-init-check
+        if: steps.module-cache.outputs.cache-enabled == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: verify
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+          cache-hit: ${{ steps.restore-module-cache.outputs.cache-hit }}
+          snapshot-dir: ${{ steps.snapshot-module-cache.outputs.snapshot-dir }}
+        continue-on-error: true # if this cannot run, safe-to-save stays unset and nothing is saved
+
+      - name: "🧹 Prune git metadata from the module cache"
+        id: prune-module-cache
+        if: |
+          steps.module-cache.outputs.cache-enabled == 'true'
+          && steps.init.outcome == 'success'
+          && steps.restore-module-cache.outputs.cache-hit != 'true'
+          && steps.post-init-check.outputs.safe-to-save == 'true'
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        with:
+          phase: prune
+          cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
+        continue-on-error: true # a prune that cannot run must not stop the save
+
+      # Right after init, before the test writes into module directories.
+      - name: "💾 Save terraform module cache"
+        if: |
+          steps.module-cache.outputs.cache-enabled == 'true'
+          && steps.init.outcome == 'success'
+          && steps.restore-module-cache.outputs.cache-hit != 'true'
+          && steps.post-init-check.outputs.safe-to-save == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.module-cache.outputs.cache-paths }}
+          key: ${{ steps.module-cache.outputs.cache-key }}
+        continue-on-error: true # a lost cache write must not fail the run
+
+      # Runs whatever happened before: the earlier steps' outcomes are how it reports no credentials,
+      # a lock without the runner's platform or a failed init.
+      - name: "🧪 Terraform test"
         id: test
+        if: "!cancelled()"
         uses: dsb-norge/github-actions-terraform/terraform-test@v1
         with:
-          test-file: ${{ matrix.test-file }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
-
-      - name: 📝 Create test report
-        id: create-test-report
-        if: github.event_name == 'pull_request'
-        uses: dsb-norge/github-actions-terraform/create-test-report@v1
-        with:
-          test-out-file: ${{ steps.test.outputs.json }}
+          working-directory: ${{ matrix.test.root }}
+          test-file: ${{ matrix.test.rel }}
+          slug: ${{ matrix.slug }}
+          status-credentials: ${{ steps.verify-credentials.outcome }}
+          status-lock: ${{ steps.provider-versions.outcome }}
           status-init: ${{ steps.init.outcome }}
-          status-test: ${{ steps.test.outcome }}
-          test-summary: ${{ steps.test.outputs.summary }}
-          test-report: ${{ steps.test.outputs.report }}
-          test-file: ${{ matrix.test-file }}
-        continue-on-error: true # allow job to continue, step outcome is evaluated later
+          environments-lock-file: ${{ matrix.test.root-kind == 'environment' && format('{0}/.terraform.lock.hcl', matrix.test.root) || matrix.test.provider-set-lock }}
+        continue-on-error: true # gated below, after every reporting step
 
-      # Marker-based upsert: the comment for a given test file is PATCHed in
-      # place across runs, so it keeps its position in the conversation and
-      # subscribers are not re-notified on every push. The previous
-      # delete-by-prefix flow re-POSTed it each run. The body travels as a
-      # file path, never as a step output — see
-      # docs/Apply-and-destroy-reporting.md §7.15.
-      #
-      # As before, a comment for a test file that is later deleted from the
-      # repository is not cleaned up — there is no seed/GC pass here.
-      - name: 🏷️ Upsert test report as pull request comment
-        id: test-report-on-pr
-        if: steps.create-test-report.outcome == 'success'
+      - name: "📤 Upload test output"
+        id: upload-test-output
+        if: always() && steps.test.outputs.report-file != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-test-log-${{ matrix.slug }}
+          path: |
+            ${{ steps.test.outputs.json-file }}
+            ${{ steps.test.outputs.report-file }}
+            ${{ steps.test.outputs.junit-file }}
+          if-no-files-found: ignore
+        continue-on-error: true # never fail the job over an upload
+
+      # Uploads the artifact terraform-test-meta-<slug> itself; the summary job reads it.
+      - name: "📦 Capture and upload test job metadata"
+        id: capture-metadata
+        if: always()
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
+        with:
+          entity-name: ${{ matrix.slug }}
+          artifact-name: terraform-test-meta-${{ matrix.slug }}
+          matrix-context-json: ${{ toJSON(matrix) }}
+          github-context-json: ${{ toJSON(github) }}
+          steps-context-json: ${{ toJSON(steps) }}
+        continue-on-error: true # never fail the job due to metadata capture
+
+      # The gates come after every reporting step: a gate exits 1 and would otherwise skip the upload
+      # that explains the failure.
+      - name: "🧐 Validation outcome: 🔐 Credentials"
+        if: steps.verify-credentials.outcome == 'failure'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+      - name: "🧐 Validation outcome: ⚙️ Init"
+        if: steps.init.outcome != 'success'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+      - name: "🧐 Validation outcome: 🧪 Test"
+        if: steps.test.outputs.status != 'pass'
+        run: exit 1
+        continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}
+
+  # One PR comment and one run-summary block for the whole stage (docs/Terraform-tests.md §6). Never in
+  # the conclusion's needs: a reporting job must never redden a run.
+  terraform-test-summary:
+    name: "Terraform tests summary"
+    needs: [create-matrix, terraform-test]
+    if: |
+      always()
+      && needs.create-matrix.result == 'success'
+      && inputs.terraform-test-enabled == true
+      && (needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request')
+    runs-on: ${{ inputs.runs-on }} # global setting
+    permissions:
+      pull-requests: write # the tests head
+      actions: read        # the Jobs API, for the job links
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download test job metadata"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: terraform-test-meta-*
+          merge-multiple: true
+        continue-on-error: true # zero matches is a valid input
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v8
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the summary then has no
+        # not-run rows.
+        continue-on-error: true
+      - name: "🧾 Summarise the tests"
+        id: summary
+        uses: dsb-norge/github-actions-terraform/create-test-summary@v1
+        with:
+          tests-matrix-json: ${{ needs.create-matrix.outputs.tests-matrix-json }}
+          not-run-file: ${{ runner.temp }}/relevance/relevance.json
+          github-token: ${{ github.token }}
+        continue-on-error: true # never fail the workflow over reporting
+      - name: "💬 Post the tests summary"
+        if: |
+          steps.summary.outcome == 'success'
+          && needs.create-matrix.outputs.tests-count != '0'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+          && inputs.add-pr-comment == true
         uses: dsb-norge/github-actions-terraform/pr-comment@v1
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
           github-token: ${{ github.token }}
           mode: upsert
-          marker: "<!-- tf:head:test:${{ matrix.test-file }} -->"
-          body-file: ${{ steps.create-test-report.outputs.body-file }}
-        continue-on-error: true # allow job to continue, step outcome is ignored
+          marker: ${{ steps.summary.outputs.head-marker }}
+          body-file: ${{ steps.summary.outputs.body-file }}
+        continue-on-error: true # never fail the workflow over PR comments
+      # The last test file removed, or the stage switched off, on an open pull request: the head
+      # would otherwise show a stale result.
+      - name: "🧹 Remove the tests summary"
+        if: |
+          steps.summary.outcome == 'success'
+          && needs.create-matrix.outputs.tests-count == '0'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
+          && github.event.action != 'closed'
+          && github.event.action != 'converted_to_draft'
+        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          mode: delete
+          marker: ${{ steps.summary.outputs.head-marker }}
+        continue-on-error: true # never fail the workflow over PR comments
 
-      - name: "🧐 Validation outcome: ⚙️ Init"
-        run: |
-          if [ ! "${{ steps.init.outcome }}" == 'success' ]; then
-            echo "::error title=Init failed::Outcome of terraform init step was '${{ steps.init.outcome }}'!"
-            exit 1
-          fi
-        continue-on-error: false
-
-      - name: "🧐 Validation outcome: 🧪 Test"
-        env:
-          TEST_FILE: ${{ matrix.test-file }}
-        run: |
-          if [ ! "${{ steps.test.outcome }}" == 'success' ]; then
-            echo "::error title=Test failed::Outcome of terraform test step was '${{ steps.test.outcome }}' for file '${TEST_FILE}'!"
-            exit 1
-          fi
-        continue-on-error: false
-
-  # create a global result indicating if workflow steps succeeded or not, handy for branch protection rules
+  # The one check a caller requires (docs/Module-ci.md §8). It judges named results and the engine's
+  # outputs, as the project workflow's conclusion does; reporting jobs stay out of needs.
   conclusion:
     if: always()
     name: "Terraform conclusion"
-    needs: [generate-docs, validate-project, module-tests]
-    runs-on: ubuntu-latest
+    needs: [create-matrix, generate-docs, validate, terraform-test]
+    runs-on: ${{ inputs.runs-on }}
+    permissions: {}
     steps:
-      # fail the workflow if any of the job was failed or cancelled
-      # also fail if module-tests was skipped, ex because of an update to the docs
-      - name: "🛑 Fail if any job failed, was cancelled or skipped"
-        run: exit 1
-        # for explanation of '>-' below see https://stackoverflow.com/a/67532120/4907315
-        # job 'result': possible values are 'success', 'failure', 'cancelled', or 'skipped'
-        if: >-
-          ${{
-               contains(needs.*.result, 'failure')
-            || contains(needs.*.result, 'cancelled')
-            || needs.module-tests.result == 'skipped'
-          }}
+      - name: "🛑 Verify everything that should have run, ran and passed"
+        env:
+          CREATE_MATRIX_RESULT: ${{ needs.create-matrix.result }}
+          DOCS_RESULT: ${{ needs.generate-docs.result }}
+          DOCS_PUSHED: ${{ needs.generate-docs.outputs.pushed }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          TESTS_ACTIVE: ${{ needs.create-matrix.outputs.tests-active }}
+          TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
+          TESTS_REQUIRED_MISSING: ${{ needs.create-matrix.outputs.tests-required-missing }}
+          TESTS_RESULT: ${{ needs.terraform-test.result }}
+        run: |
+          # Judge the run from the named results and the engine's outputs (docs/Module-ci.md §8)
+          set -euo pipefail
+          verdict=red
+          if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
+            why="the test matrix could not be built (${CREATE_MATRIX_RESULT})"
+          elif [ "${DOCS_RESULT}" != "success" ]; then
+            why="the documentation check's result is ${DOCS_RESULT}"
+          elif [ "${DOCS_PUSHED}" = "true" ]; then
+            # The docs commit started a run of its own, which validates and tests it.
+            verdict=green why="documentation regenerated and pushed; the run it started decides"
+          elif [ "${VALIDATE_RESULT}" != "success" ]; then
+            why="validation's result is ${VALIDATE_RESULT}"
+          elif [ "${TESTS_REQUIRED_MISSING}" = "true" ]; then
+            why="a module needs at least one test file, a unit suite (terraform-test-required: false opts out)"
+          else
+            case "${TESTS_RESULT}" in
+              success) verdict=green why="validation succeeded" ;;
+              skipped)
+                if [ "${TESTS_ACTIVE}" = "true" ]; then
+                  why="the tests should have run but were skipped"
+                else
+                  verdict=green why="validation succeeded"
+                fi
+                ;;
+              *) why="the tests' result is ${TESTS_RESULT}" ;;
+            esac
+          fi
+          line="conclusion: ${verdict} — ${why}; tests: ${TESTS_COUNT:-0}"
+          echo "${line}"
+          echo "${line}" >>"${GITHUB_STEP_SUMMARY}"
+          if [ "${verdict}" = green ]; then
+            echo "::notice title=Terraform conclusion::${line}"
+          else
+            echo "::error title=Terraform conclusion::${line}"
+            exit 1
+          fi
