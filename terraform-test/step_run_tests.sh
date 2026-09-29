@@ -13,12 +13,9 @@
 # reports that as its status, so the job's metadata always carries one.
 #
 # Required environment variables:
-#   input_test_file              - test file, relative to input_working_directory;
-#                                  a bare name under tests/ when that is empty
+#   input_test_file              - test file, relative to input_working_directory
 #   input_working_directory      - the test root, relative to the workspace or
-#                                  absolute. Empty: the legacy call shape (the
-#                                  workspace, 'tests/<test-file>', no version
-#                                  floor)
+#                                  absolute; '.' for the workspace
 #   input_junit                  - 'true' passes -junit-xml (Terraform >= 1.11)
 #   input_slug                   - directory name under RUNNER_TEMP; derived
 #                                  from root and file when empty
@@ -73,9 +70,7 @@ function check_terraform_version {
     return
   fi
   log-info "using Terraform ${TT_TERRAFORM_VERSION}"
-  # The floor exists for the test-root layouts of the default workflow; the
-  # legacy call shape runs from a module root, which older versions handle.
-  if [ -n "${input_working_directory}" ] && ! tt-version-ge "${TT_TERRAFORM_VERSION}" "${TT_VERSION_FLOOR}"; then
+  if ! tt-version-ge "${TT_TERRAFORM_VERSION}" "${TT_VERSION_FLOOR}"; then
     TT_VERSION_MESSAGE="Terraform ${TT_TERRAFORM_VERSION} is below the floor ${TT_VERSION_FLOOR} for terraform test (docs/Terraform-tests.md §3.5 in dsb-norge/github-actions-terraform)."
     TT_STATUS="error" TT_REASON="terraform-version"
   fi
@@ -302,9 +297,6 @@ function set_outputs {
   set-output "providers-floating-count" "${TT_PROVIDERS_FLOATING}"
   set-output "failed-runs-json" "${TT_FAILED_RUNS_JSON}"
   set-output "failed-runs-omitted" "${TT_FAILED_RUNS_OMITTED}"
-  # Names the legacy action published; module CI reads them.
-  set-output "json" "${TT_JSON_OUTPUT}"
-  set-output "report" "${TT_REPORT_FILE}"
 }
 
 # ============================================================================
@@ -317,10 +309,17 @@ function main {
   TT_FAILED_RUNS_JSON="[]" TT_FAILED_RUNS_OMITTED=0
   TT_PROVIDERS_SUMMARY="" TT_PROVIDERS_FLOATING=0
 
+  # A caller bug, not a test outcome: no status, the step fails.
+  local missing_inputs=0
   if [ -z "${input_test_file}" ]; then
     log-error "input 'test-file' is required"
-    return 1
+    missing_inputs=1
   fi
+  if [ -z "${input_working_directory}" ]; then
+    log-error "input 'working-directory' is required ('.' for the workspace)"
+    missing_inputs=1
+  fi
+  [ "${missing_inputs}" -eq 0 ] || return 1
 
   # The runner's platform is always published: the summary names it in the
   # lock-platform fix even when this step ran nothing.
@@ -329,17 +328,9 @@ function main {
   # Published so a summary names the floor without keeping a copy of it.
   set-output "terraform-version-floor" "${TT_VERSION_FLOOR}"
 
-  # Root and filter. The legacy call shape (no working directory) is what
-  # terraform-module-ci.yaml passes: a bare file name under tests/, run from
-  # the workspace.
-  if [ -z "${input_working_directory}" ]; then
-    TT_ROOT_ABS="${GITHUB_WORKSPACE}"
-    TT_REL="tests/${input_test_file}"
-  else
-    TT_ROOT_ABS="${input_working_directory}"
-    [[ "${TT_ROOT_ABS}" == /* ]] || TT_ROOT_ABS="${GITHUB_WORKSPACE}/${TT_ROOT_ABS}"
-    TT_REL="${input_test_file#./}"
-  fi
+  TT_ROOT_ABS="${input_working_directory}"
+  [[ "${TT_ROOT_ABS}" == /* ]] || TT_ROOT_ABS="${GITHUB_WORKSPACE}/${TT_ROOT_ABS}"
+  TT_REL="${input_test_file#./}"
   TT_ROOT="$(realpath -m --relative-to="${GITHUB_WORKSPACE}" "${TT_ROOT_ABS}")"
   TT_FILE_PATH="${TT_REL}"
   [ "${TT_ROOT}" != "." ] && TT_FILE_PATH="${TT_ROOT}/${TT_REL}"

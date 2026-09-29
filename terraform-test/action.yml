@@ -6,30 +6,23 @@ description: |
   annotations and a block in the job's step summary. Files are written under
   RUNNER_TEMP/<slug>/; outputs carry paths, counts and short strings only.
 
-  Spec: docs/Terraform-tests.md §5.4-§5.8 and §9.2.
+  The caller logs in and uploads the files; this action does neither.
 
-  The legacy call shape, test-file alone (a file name under tests/, run from
-  the workspace), is what terraform-module-ci.yaml passes. It keeps that
-  workflow's behaviour: the embedded azure/login and artifact upload run by
-  default only for that shape (inputs azure-login and upload-artifact), and
-  the Terraform version floor does not apply to it (§9.7).
+  Spec: docs/Terraform-tests.md §5.4-§5.8 and §9.2.
 author: "Artjoms Laivins, Peder Schmedling"
 
 inputs:
   test-file:
     description: |
       Test file to run, relative to working-directory (e.g.
-      'tests/unit-net.tftest.hcl'); used verbatim as the -filter value. When
-      working-directory is empty: a file name under tests/ of the workspace,
-      as terraform-module-ci.yaml passes it.
+      'tests/unit-net.tftest.hcl'); used verbatim as the -filter value, a
+      leading './' dropped.
     required: true
   working-directory:
     description: |
-      The test root to run from, relative to the workspace or absolute. Empty
-      selects the legacy call shape: the workspace, '-filter=tests/<test-file>',
-      no version floor.
-    required: false
-    default: ""
+      The test root to run from, relative to the workspace or absolute; '.'
+      for the workspace itself.
+    required: true
   junit:
     description: Write a JUnit XML report (takes effect from Terraform 1.11).
     required: false
@@ -69,19 +62,6 @@ inputs:
       comparison, every provider's origin is 'root'.
     required: false
     default: ""
-  azure-login:
-    description: |
-      Run azure/login with the ARM_TENANT_ID, ARM_SUBSCRIPTION_ID and
-      ARM_CLIENT_ID environment variables before the test. 'auto' logs in only
-      for the legacy call shape (no working-directory); 'true' / 'false' force it.
-    required: false
-    default: "auto"
-  upload-artifact:
-    description: |
-      Upload the JSON log as artifact 'test-results-output-<test-file>'.
-      'auto' uploads only for the legacy call shape; 'true' / 'false' force it.
-    required: false
-    default: "auto"
 
 outputs:
   status:
@@ -121,7 +101,7 @@ outputs:
     description: The Terraform version that ran; empty when unknown.
     value: ${{ steps.run-tests.outputs.terraform-version }}
   terraform-version-floor:
-    description: The lowest Terraform version the action runs tests with from a working directory. Always set.
+    description: The lowest Terraform version the action runs tests with. Always set.
     value: ${{ steps.run-tests.outputs.terraform-version-floor }}
   runner-platform:
     description: The runner's platform as Terraform names it (linux_amd64, linux_arm64, …). Always set.
@@ -164,31 +144,16 @@ outputs:
   failed-runs-omitted:
     description: Number of elements dropped from failed-runs-json.
     value: ${{ steps.run-tests.outputs.failed-runs-omitted }}
-  json:
-    description: Same as json-file (the legacy name).
-    value: ${{ steps.run-tests.outputs.json }}
-  report:
-    description: Same as report-file (the legacy name).
-    value: ${{ steps.run-tests.outputs.report }}
 
 runs:
   using: "composite"
   steps:
-    - id: azure-login
-      name: Login to Azure (legacy call shape)
-      if: inputs.azure-login == 'true' || (inputs.azure-login == 'auto' && inputs.working-directory == '')
-      uses: azure/login@v3
-      with:
-        tenant-id: ${{ env.ARM_TENANT_ID }}
-        subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
-        client-id: ${{ env.ARM_CLIENT_ID }}
-
     # Runs whenever the job got this far, also after a failed credential,
     # lock or init step: the step classifies those from its status-* inputs.
     # '!cancelled()' because inside a composite action success() may reflect
     # the job's failed steps, not only this action's.
     - id: run-tests
-      if: "!cancelled() && steps.azure-login.outcome != 'failure'"
+      if: "!cancelled()"
       shell: bash
       continue-on-error: true
       env:
@@ -205,14 +170,6 @@ runs:
         # Run 'terraform test' for one test file and classify the outcome
         set -o allexport
         source "${{ github.action_path }}/step_run_tests.sh"
-
-    - id: upload-test-results
-      name: Upload the JSON log (legacy call shape)
-      if: "!cancelled() && (inputs.upload-artifact == 'true' || (inputs.upload-artifact == 'auto' && inputs.working-directory == '')) && steps.run-tests.outputs.json-file != ''"
-      uses: actions/upload-artifact@v7
-      with:
-        name: test-results-output-${{ inputs.test-file }}
-        path: ${{ steps.run-tests.outputs.json-file }}
 
     - id: test-status
       if: always() && (steps.run-tests.outcome == 'failure' || steps.run-tests.outcome == 'cancelled' || steps.run-tests.outputs.status != 'pass')
