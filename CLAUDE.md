@@ -48,7 +48,7 @@ The three mutating steps have their own gates, placed **after** the phase-2 comm
 
 ### Two flavors of action layout
 
-Modern actions follow `docs/Action-implementation-guide.md` **if there are no overweighing reasons not to**; a departure is explained in the action and its spec. The one departure is `create-tf-vars-matrix`, whose logic is the engine's Python adapter so it sits under the engine's coverage and mutation gates. Reference implementations of the layout — see `verify-terraform-lock/`, `create-validation-summary/`, `capture-matrix-job-meta/`, `parse-terraform-plan/`, `parse-terraform-apply/`, `annotate-terraform-outcome/`, `create-run-summary/` as reference implementations. `create-test-report/` is the worked example of converting a legacy action safely: pin the legacy output as golden fixtures in one commit, convert in the next, goldens untouched. Layout:
+Modern actions follow `docs/Action-implementation-guide.md` **if there are no overweighing reasons not to**; a departure is explained in the action and its spec. The one departure is `create-tf-vars-matrix`, whose logic is the engine's Python adapter so it sits under the engine's coverage and mutation gates. Reference implementations of the layout — see `verify-terraform-lock/`, `create-validation-summary/`, `capture-matrix-job-meta/`, `parse-terraform-plan/`, `parse-terraform-apply/`, `annotate-terraform-outcome/`, `create-run-summary/` as reference implementations. Converting a legacy action safely means pinning its output as golden fixtures in one commit and converting in the next, goldens untouched. Layout:
 
 ```
 my-action/
@@ -83,12 +83,12 @@ The delimiter is `<ACTION>_<INPUT>_JSON`, never `EOF`, unique in the repository.
 
 Under `set -o allexport`, any shell variable holding large data (file contents, `gh api` responses, plan extracts) gets exported to envp; once envp crosses Linux's `ARG_MAX` (~2 MB total) or `MAX_ARG_STRLEN` (128 KB per string), the next `fork+execve` — typically `jq`, `bash -c`, or another helper — fails with exit 126 "Argument list too long". The bug correlates with PR/data size so it stays silent in tests and only surfaces in production on a calling repo with a big-enough plan or comment thread.
 
-**Rule:** never assign large captured data to a shell variable while allexport is in scope. Route through `mktemp` files (or read straight from disk) and pass via stdin / `-f` / `-F body=@file` / `jq --slurpfile`. Four in-tree reference patterns to copy from when authoring or reviewing a step script:
+**Rule:** never assign large captured data to a shell variable while allexport is in scope. Route through `mktemp` files (or read straight from disk) and pass via stdin / `-f` / `-F body=@file` / `jq --slurpfile`. Five in-tree reference patterns to copy from when authoring or reviewing a step script:
 
-- File tails — `tail -c 65000 "<path>"` directly into the capture, never via an intermediate var (`create-validation-summary/step_create_validation_summary.sh`).
+- File tails — `tail -c <budget> "<path>"` directly into the capture, never via an intermediate var (`line_anchored_tail` in `create-validation-summary/step_create_validation_summary.sh`, budgeted under a 65000-byte limit).
 - `gh api` responses — write the response to `mktemp`, then `jq` reads it (`aggregate-validation-summaries/step_aggregate.sh`, both `_resolve_per_env_job_urls` and `list_pr_state`).
 - Large JSON merge — `jq --slurpfile` (not `--argjson`, which puts the JSON on argv) and dereference with `[0]` (`capture-matrix-job-meta/step_capture.sh`).
-- Large gh CLI inputs — write the body to a tempfile and post via `gh api -F body=@<tempfile>` (`pr-comment/step_pr_comment.sh`); callers hand large bodies over as `body-file`, never inline.
+- Large gh CLI inputs — write the body to a tempfile and post via `gh api -F body=@<tempfile>` (`pr-comment/helpers_additional.sh`); callers hand large bodies over as `body-file`, never inline.
 - Comment bodies — never a step output. `create-validation-summary` publishes every body as a **file path** (`head-summary-file`, `plan-extract-file`, …) and `pr-comment` takes `body-file`. A string output enters the steps context, from there the metadata artifact, and from there envp via `toJSON(steps)`. `capture-matrix-job-meta` additionally caps every captured output at 4 KiB so the next unexpectedly large one degrades the artifact instead of killing the job.
 
 Two related traps in step scripts, hit three times in one change: `$(…)` runs in a subshell, so a function that sets a global for its caller loses it, and the substitution strips trailing newlines. Redirect to a file instead when you need both. `docs/Action-implementation-guide.md` → "Command substitution traps".
