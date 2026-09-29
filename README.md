@@ -11,10 +11,8 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 .
 ├── annotate-terraform-outcome    --> per-env job-summary block + ::notice/::error for apply and destroy outcomes
 ├── create-run-summary            --> run-level table of every environment on the run page
-├── create-test-report            --> renders the terraform test report body for the module-ci PR comment (body-file)
-├── create-test-summary           --> one structured summary of the default workflow's terraform test stage (PR comment and run summary)
-├── create-tf-vars-matrix         --> creates the environment matrix and decides which environments a change is relevant to (runs the engine's create-matrix adapter)
-├── create-tftest-matrix          --> creates matrix for running terraform module test
+├── create-test-summary           --> one structured summary of the terraform test stage, for both workflows (PR comment and run summary)
+├── create-tf-vars-matrix         --> creates the environment matrix and decides which environments a change is relevant to; in mode module, a module's test matrix (runs the engine's create-matrix adapter)
 ├── create-validation-summary     --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
 ├── export-env-vars               --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
 ├── lint-with-tflint              --> run linting of terraform code with TFLint
@@ -27,7 +25,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── terraform-fmt                 --> checks if terraform code is formatted
 ├── terraform-plan                --> run terraform plan in directory
 ├── terraform-apply               --> run terraform apply in directory
-└── terraform-test                --> run and classify one terraform test file (default workflow's test stage, module CI)
+└── terraform-test                --> run and classify one terraform test file (the test stage of both workflows)
 ```
 
 The decision engine the matrix is built by lives in [engine](engine), a Python 3.12+ standard-library

@@ -81,7 +81,7 @@ inputs:
       The file is read from disk at post time; its content never enters the
       step's script text, argv or envp. This is the path to use for bodies
       produced by another action (create-validation-summary's `*-file`
-      outputs, create-test-report's `body-file`). It is also what keeps a
+      outputs, create-test-summary's `body-file`). It is also what keeps a
       65k body off the Linux per-string execve limit — see the ARG_MAX
       section of the repository's CLAUDE.md.
 
