@@ -5,9 +5,9 @@
 
 # The Terraform version below which the action refuses to run tests
 # (docs/Terraform-tests.md §3.5): 1.13 accepts the variable blocks a test file
-# needs for lane variables, which 1.12 refuses. -junit-xml exists from 1.11.
+# needs for lane variables, which 1.12 refuses. It also covers -junit-xml,
+# which exists from 1.11.
 TT_VERSION_FLOOR="1.13.0"
-TT_JUNIT_FROM="1.11.0"
 
 # GitHub caps error annotations at ten per step (P17).
 TT_MAX_ANNOTATIONS=10

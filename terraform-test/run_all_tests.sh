@@ -436,7 +436,7 @@ assert "E lock-platform: the annotation names the platform" log_contains "terraf
 teardown
 
 # --------------------------------------------------------------------------
-# V — the version gate (§3.5) and -junit-xml from 1.11 (§5.4)
+# V — the version gate (§3.5) and -junit-xml (§5.4)
 # --------------------------------------------------------------------------
 setup
 fixture pass.json
