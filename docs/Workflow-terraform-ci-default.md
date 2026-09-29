@@ -11,9 +11,9 @@ Default DSB CI/CD workflow for terraform projects that performs various operatio
 6. Perform linting with TFLint
 7. If `terraform init` was successful, run `terraform plan`
 8. If called from `pull_request` event, reconcile PR comments (per-env validation summaries and a per-env plan extract, plus optional per-group rolled-up tables). Heads are pre-allocated at the top of the run in deterministic order and PATCHed in place across runs; plan tags are GC'd between runs. See [Workflow-pr-comments.md](./Workflow-pr-comments.md) for the full spec, including the heads + tags model and the optional `pr-comment-group` field that collapses several envs into one combined-table head
-9. If any of the steps `init`, `format`, `validate`, `lint` or  `plan` failed, stop the  workflow with a failure
+9. If any of the steps `init`, `format`, `validate`, `lint` or `plan`, or the 🔒 lock file check on a pull request, failed, stop the workflow with a failure
 10. If called from either of events `push` or `workflow_dispatch` on the default branch of the calling repo and `plan` step was successful, run `terraform apply`. I.e. the default is to perform terraform apply when merging PRs.
-11. After `apply` (and `destroy-plan` / `destroy` when those goals are set), report the outcome: the PR comments from step 8 are updated with one block per operation and one tag comment per operation that ran, and — on every event, PR or not — each matrix job writes its environment's block to its `$GITHUB_STEP_SUMMARY` with a `::notice` / `::error` for the apply result, and a `run-summary` job writes one table covering every environment to the run page. An environment that neither applies nor destroys renders exactly the comment it always did. If `apply`, `destroy-plan` or `destroy` failed, stop the workflow with a failure (same `allow-failing-terraform-operations` escape hatch as step 9). See [Apply-and-destroy-reporting.md](./Apply-and-destroy-reporting.md).
+11. After `apply` (and `destroy-plan` / `destroy` when those goals are set), report the outcome: the PR comments from step 8 are updated with one block per operation and one tag comment per operation that ran, and — on every event, PR or not — each matrix job writes its environment's block to its `$GITHUB_STEP_SUMMARY` with a `::notice` / `::error` for the apply result, and a `run-summary` job writes one table covering every environment to the run page. An environment that neither applies nor destroys gets no operation blocks and no operation tags. If `apply`, `destroy-plan` or `destroy` failed, stop the workflow with a failure (same `allow-failing-terraform-operations` escape hatch as step 9). See [Apply-and-destroy-reporting.md](./Apply-and-destroy-reporting.md).
 
 Moving a repository from `@v0` to `@v1`: [Migration-v0-to-v1.md](./Migration-v0-to-v1.md); every change between them: [V1-changes.md](./V1-changes.md).
 
@@ -31,7 +31,7 @@ Specification of environments to run this terraform workflow and it's stages for
 
 Type: YAML list (as string) with specifications of environments to execute stages for.
 
-Given that this is a list of environments (potentially with differing configuration), multiple entries in this list will cause parallel GitHub jobs to be spawned.
+Given that this is a list of environments (potentially with differing configuration), each entry in this list gets a GitHub job of its own; the jobs run in parallel unless `depends-on` puts an environment in a later stage ([example 15](#15-ordering-environments-a-test-tenant-before-production)).
 
 Across workflow runs, jobs for the same environment are serialised. Each job sits in a GitHub concurrency group named after the environment's `github-environment` field (defaults to `environment`), so a run that arrives while another is in progress for that environment waits its turn — an in-progress apply is never cancelled, and neither is a run that is already waiting. Pending runs start in the order they began waiting (best-effort, not guaranteed), up to 100 per environment; GitHub cancels anything beyond that. This deliberately opts out of GitHub's default queue depth of one, where a third run cancels the one already waiting and the cancelled run's `Terraform conclusion` check then fails. Three things to know about the group: it is the bare `github-environment` value, case-insensitive and shared by every workflow in the repository that uses it, so a scheduled reconcile and a merge apply for the same environment queue behind each other; ordering is best-effort, so after a burst of merges two runs queued close together may in rare cases start in the other order and leave the environment on the older commit until the next run; and a `cancel-in-progress: true` group on the calling workflow still cancels the whole run, including an in-progress or waiting environment job, so use one only on workflows that never apply.
 
@@ -46,7 +46,7 @@ environments-yml: |
 
 See more examples under [worked examples](#worked-examples) further down.
 
-There are several optional fields for each entry in `environments-yml`, see description of each in the [workflow declaration](../.github/workflows/terraform-ci-cd-default.yml). Any other key is a validation error that names the closest known key, so a misspelt setting never falls back to the global value silently; the full list is [Configuration-validation.md §3.1](./Configuration-validation.md).
+There are several optional fields for each entry in `environments-yml`, see description of each in the [workflow declaration](../.github/workflows/terraform-ci-cd-default.yml). Any other key is a validation error, which names the closest known key when one is within two edits, so a misspelt setting never falls back to the global value silently; the full list is [Configuration-validation.md §3.1](./Configuration-validation.md).
 
 #### Events, dispatch and schedule
 
@@ -191,7 +191,7 @@ The first lane whose `match` covers a file owns it; a lane without `match` takes
 
 **Bringing up an environment lane:**
 
-1. Add the lane with `github-environment: auto` and open a pull request. The first run creates `tftest-<lane>`, and its jobs fail with `no-credentials`, printing the commands below.
+1. Add the lane with `github-environment: auto` and open a pull request. The first run creates `tftest-<lane>`, and its jobs fail with `no-credentials`, printing a `gh secret set` command for each of `ARM_TENANT_ID` and `ARM_CLIENT_ID`.
 2. Someone with write access sets the secrets (the environment must exist first; the settings page needs admin, `gh` does not):
    ```bash
    gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<tenant-id>'
