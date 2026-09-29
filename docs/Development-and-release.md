@@ -24,7 +24,7 @@ Every same-repo pull request gets a **preview ref** — a tag a calling repo can
 
 If the comment says **unavailable (bootstrap)**, the GitHub App that pushes the tags is not configured — [Preview-refs.md §5](Preview-refs.md#5-the-token--why-a-github-app-is-required).
 
-Preview tags fetched into your clone are harmless; drop them with `git tag -l 'preview/*' | xargs -r git tag -d`. Orphans on the remote (a PR whose close event never ran): list with `gh api repos/dsb-norge/github-actions-terraform/git/matching-refs/tags/preview/ --jq '.[].ref'`, delete with `gh api -X DELETE repos/dsb-norge/github-actions-terraform/git/<ref without the refs/ prefix>`.
+Preview tags fetched into your clone are harmless; drop them with `git tag -l 'preview/*' | xargs -r git tag -d`. Orphans on the remote (a PR whose close event never ran): list with `gh api repos/dsb-norge/github-actions-terraform/git/matching-refs/tags/preview/ --jq '.[].ref'`, delete with `gh api -X DELETE repos/dsb-norge/github-actions-terraform/git/<ref as listed, refs/tags/…>`.
 
 ### Fallback: publishing by hand
 
@@ -57,8 +57,8 @@ Two things cost a round trip each if you learn them from CI instead of here:
   `pull_request`). A dispatch from an ad-hoc branch presents a subject nobody
   federated, so `azure/login` fails with `AADSTS7002131` and every `terraform
   test` job fails with it — for reasons that have nothing to do with the change
-  under test. The `init`/`fmt`/`validate`/`lint` jobs still run, so a dispatch is
-  enough when those are all you need to see.
+  under test. The validation job (init, fmt, validate, lint) still runs, so a
+  dispatch is enough when that is all you need to see.
 
 ### Validating on a test-bed repository
 
@@ -209,7 +209,7 @@ moveTag='v0'
 moveToTag='v0.8'
 moveToHash=$(git rev-parse --verify ${moveToTag})
 
-git push origin "refs/tags/${moveTag}"      # delete the old tag remotely
+git push origin ":refs/tags/${moveTag}"     # delete the old tag remotely
 git tag -fa ${moveTag} ${moveToHash}        # move tag locally
 git push -f origin "refs/tags/${moveTag}"   # push the updated tag remotely
 
