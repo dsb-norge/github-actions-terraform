@@ -1173,7 +1173,7 @@ jobs:
           status-lint: ${{ steps.lint.outcome }}
           status-plan: ${{ steps.plan.outcome }}
           # When non-empty, omits the validation table from the per-env comment
-          # body (it appears in the per-group comment instead). See docs/Workflow-pr-comments.md §3.2.
+          # body (it appears in the per-group comment instead). See docs/Workflow-pr-comments.md §5.1.
           pr-comment-group: ${{ matrix.vars.pr-comment-group }}
           # include details when parse step actually returned data
           include-plan-details: ${{ steps.parse-plan.outcome == 'success' }}
@@ -1243,7 +1243,7 @@ jobs:
         # responds by appending a Links row to the head-summary table
         # ([log extract] → plan tag, [job log] → this job's #logs anchor)
         # and dropping the standalone [Job log] footer. See
-        # docs/Workflow-pr-comments.md §6.1.
+        # docs/Workflow-pr-comments.md §5.1.
         #
         # Only ungrouped envs need this — grouped envs have no per-env head
         # so the head-summary output is unused. The plan-extract output of
@@ -1296,7 +1296,7 @@ jobs:
         # Only ungrouped envs get a per-env head; grouped envs are
         # represented in their per-group head and skip this step (every env
         # still gets its plan-extract tag above). See
-        # docs/Workflow-pr-comments.md §6.1 grouped mode.
+        # docs/Workflow-pr-comments.md §5.1, grouped mode.
         #
         # Consumes the head body file from the *second*
         # create-validation-summary call (which carries the Links row).
@@ -1455,7 +1455,8 @@ jobs:
         with:
           apply-console-file: ${{ steps.apply.outputs.console-output-file }}
           # The exit code is the outcome; the parser only reads it to warn
-          # when a successful apply's console was not recognised (§14).
+          # when a successful apply's console was not recognised
+          # (docs/Apply-and-destroy-reporting.md §14).
           apply-exitcode: ${{ steps.apply.outputs.exitcode }}
         continue-on-error: true # allow job to continue, step outcome is ignored
 
@@ -1654,7 +1655,8 @@ jobs:
           output-file-suffix: phase2
         continue-on-error: true # allow job to continue, step outcome is ignored
 
-      # One tag per invocation that ran (§7.6). Gated on the step OUTCOME, not
+      # One tag per invocation that ran (docs/Apply-and-destroy-reporting.md
+      # §7.6). Gated on the step OUTCOME, not
       # on goals: a skipped apply must not post an 'Apply not available' tag.
       - name: 🐙 Post per-env apply tag
         id: post-apply-tag
@@ -1839,7 +1841,8 @@ jobs:
           destroy-time: ${{ steps.destroy.outputs.apply-time }}
         continue-on-error: true # never fail the job over run-page reporting
 
-      # Outcome gates for the mutating steps (§5.2). Without these a failed
+      # Outcome gates for the mutating steps (docs/Apply-and-destroy-reporting.md
+      # §5.2). Without these a failed
       # apply under allow-failing-terraform-operations=true was green
       # everywhere with no annotation. They change no job outcome: with
       # allow-failing=false the apply step itself already failed the job.
@@ -1983,9 +1986,9 @@ jobs:
   # Reconciles per-group PR comments according to the desired set computed from
   # matrix-job-meta-*.json artifacts. Runs unconditionally on PR events (not gated
   # on whether any env declares a pr-comment-group) so that toggling grouping off
-  # for an env reliably cleans up its stale group comment on the very next run.
-  # See docs/Workflow-pr-comments.md §4.6 for the reconcile algorithm and the
-  # cost discussion behind the unconditional gate.
+  # for an env cleans up its stale group comment on the very next run, as long
+  # as the run still declares a group: a run that declares none deletes nothing
+  # (docs/Workflow-pr-comments.md §8.1). See §3.3 of that doc for the desired set.
   #
   # Every stage job is in needs so the aggregator runs after the last of them.
   # always() runs it whatever they concluded, a skipped stage included, which is

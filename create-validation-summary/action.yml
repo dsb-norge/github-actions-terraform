@@ -47,8 +47,8 @@ inputs:
       Name of the comment group this environment belongs to. When non-empty:
         - The validation table is omitted from the per-env comment body (it appears
           in the per-group comment posted by aggregate-validation-summaries instead).
-      The comment prefix is unchanged regardless of this value — see
-      docs/Workflow-pr-comments.md §6.2 (prefix continuity invariant).
+      The comment prefix is unchanged regardless of this value. Grouped mode:
+      docs/Workflow-pr-comments.md §5.1.
     required: false
     default: ""
   include-plan-details:
@@ -145,7 +145,7 @@ inputs:
 
       Callers post the plan-extract tag first to obtain its comment id, then
       re-render the head with the id supplied to get the Links shape.
-      See docs/Workflow-pr-comments.md §6.1 (per-env head, Links row).
+      See docs/Workflow-pr-comments.md §5.1 (per-env head, Links row).
     required: false
     default: ""
   status-apply:
