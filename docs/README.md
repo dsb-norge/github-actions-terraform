@@ -77,8 +77,9 @@ Reporting:
 | [Testing-in-ci.md](Testing-in-ci.md) | The workflow that runs every suite on a pull request, the sharded mutation gate and the results comment. |
 | [Preview-refs.md](Preview-refs.md) | The `preview/pr-<N>` tags that let a calling repository run a pull request's code. |
 
-Outside this folder: [contract-tests/](../contract-tests/README.md) runs real Terraform weekly to
-prove the console parsers' fixtures still match what Terraform prints.
+Outside this folder: [CHANGELOG.md](../CHANGELOG.md) lists every release and what it changed,
+and [contract-tests/](../contract-tests/README.md) runs real Terraform weekly to prove the console
+parsers' fixtures still match what Terraform prints.
 
 ## Tracking
 

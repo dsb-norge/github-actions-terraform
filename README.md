@@ -2,6 +2,7 @@
 
 Collection of DSB custom GitHub actions and reusable workflows for terraform projects.  
 For workflow and development documentation start at the [documentation index](docs/README.md).
+Every release, and what it changed: [CHANGELOG.md](CHANGELOG.md). Pin `@v1` to follow v1's releases, or an exact release such as `@v1.2.0`.
 
 ## Actions
 
