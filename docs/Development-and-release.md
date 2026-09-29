@@ -103,121 +103,104 @@ After a bump, a test-bed run's logs are checked for deprecation warnings
 
 ## Release
 
-After merge to main use tags to release.
+v1 releases are made by [release-please](https://github.com/googleapis/release-please) from the
+conventional commits on `main`; v0 fixes are released by hand. Every release is in
+[CHANGELOG.md](../CHANGELOG.md).
 
 ### Release lines
 
 `main` is the **v1** line: every internal `uses: dsb-norge/github-actions-terraform/…` ref in
-its workflows says `@v1`, and a release moves the `v1` tag. The **v0** line is frozen at its
-last minor and takes fixes only. A v0 fix is made on the `release/v0` branch, cut from the
+its workflows says `@v1`, and every v1 release moves the `v1` tag. The **v0** line is frozen at
+its last minor and takes fixes only. A v0 fix is made on the `release/v0` branch, cut from the
 last v0 minor's commit (`git switch -c release/v0 v0.33`) when the first fix is needed, where
-every internal ref still says `@v0`. It is released as a `v0.<n>` minor that moves `v0`, in
-the same way as below. The branch is not named `v0`: a branch and a tag of the same name make
-every `v0` reference ambiguous to git. v0 takes no features, and its support ends when the last
-caller has moved to v1.
+every internal ref still says `@v0`. It is released as a `v0.<n>` minor that moves `v0` ("v0 fix
+release" below). The branch is not named `v0`: a branch and a tag of the same name make every
+`v0` reference ambiguous to git. v0 takes no features, and its support ends when the last caller
+has moved to v1.
 
-**While v1 has no callers, only `v1` moves.** There are no `v1.<n>` minors or patches: after each
-v1 pull request merges, `v1` is force-moved to the merge's tip on `main`, and one block for that
-pull request is appended to its annotation, the pull request's number and title followed by its
-commit subjects:
+A calling repository pins `@v1`, which follows every v1 release, or an exact release such as
+`@v1.2.0`, which never moves.
+
+### v1 release
+
+`.github/workflows/release.yml` runs release-please on every push to `main`
+(`release-please-config.json`, `.release-please-manifest.json`, release type `simple`):
+
+1. **The release pull request.** release-please opens, and on each later push updates, one pull
+   request, `chore(main): release 1.<minor>.<patch>`, that bumps the version in the manifest and
+   `version.txt` and adds the release's entry to `CHANGELOG.md`. The version follows the commits
+   since the last release: a `fix:` bumps the patch, a `feat:` the minor, and a breaking change
+   (`feat!:`, or a `BREAKING CHANGE:` footer) the major, which is a new release line ("Major
+   release" below). The entry lists the `feat:` and `fix:` commits (and `perf:`, `revert:` and
+   breaking changes); `docs:`, `test:`, `refactor:`, `chore:` and `ci:` commits release nothing
+   on their own and are not listed.
+2. **Releasing.** Merging the release pull request, rebased like every pull request, is the
+   release. release-please tags the merge `v1.<minor>.<patch>` and publishes its GitHub Release,
+   and the workflow moves `v1` to it, annotated `v1 is v1.<minor>.<patch>`.
+
+The release pull request is opened with the releaser App's token (`vars.RELEASER_APP_ID`,
+`secrets.RELEASER_APP_PRIVATE_KEY`), so the Action tests run on it like on any pull request; a
+pull request opened with `GITHUB_TOKEN` would start no workflow and never get its required
+`tests-conclusion` check. The App needs read and write access to the repository's contents,
+issues and pull requests, and is installed on this repository only. Without the variable the
+release job is skipped.
+
+Everything a caller needs to know goes in the commit subjects: they are the release notes.
+
+#### Un-release (move `v1` back)
+
+When a release breaks callers and the fix takes time, move `v1` back to the release before it;
+the broken release's tag and GitHub Release stay, and the next release moves `v1` forward again:
 
 ```bash
 git fetch origin --tags -f
-old=$(git for-each-ref --format='%(contents)' refs/tags/v1)   # empty the first time
-new_block="#<PR>: <PR title>
-  - <commit subject>
-  - <commit subject>"
-combined="${old:+${old}
-}${new_block}"
-# --cleanup=verbatim: the default cleanup drops every line that starts with '#', the block header too
-git tag -f -a --cleanup=verbatim v1 -m "${combined}" origin/main
+git tag -f -a v1 -m "v1 is v1.2.0; v1.3.0 withdrawn" 'v1.2.0^{commit}'
 git push -f origin refs/tags/v1
 ```
 
-Once callers move to v1, v1 releases follow the minor release procedure below, as v0 releases did.
+### Major release
 
-**A major tag's annotation is an append-only changelog.** Every block already in it is kept when
-the tag is force-recreated. `git tag -f -a <tag>` without `-m` opens an empty annotation, and
-saving it replaces the whole changelog, so read the old annotation and append to it:
+A breaking change makes release-please propose `2.0.0`. Before merging that release pull request,
+cut `release/v1` from the last v1 release for v1's fixes, and rewrite `main`'s internal refs to
+the new line in a pull request of its own (`bash .github/scripts/rewrite-internal-refs.sh v2`).
+The release then creates `v2.0.0`, and the workflow creates `v2`. A v1 fix on `release/v1` is
+released by hand, as a v0 fix is.
 
-```bash
-old=$(git for-each-ref --format='%(contents)' refs/tags/v0)
-new_block="v0.<n>:
-  - <commit subject>"
-git tag -a "v0.<n>" -m "${new_block}"
-git tag -f -a v0 -m "${old}
-${new_block}"
-git push origin "refs/tags/v0.<n>"
-git push -f origin refs/tags/v0
-```
+### v0 fix release
 
-A minor's block is `v<major>.<minor>:` followed by the commit subjects since the previous minor,
-lightly rephrased where a literal subject would be confusing as a release note.
-
-### Minor release
-
-Ex. for smaller backwards compatible changes. Add a new minor version tag ex `v1.0` with a description of the changes and amend the description to the major version tag.
-
-Example for release `v0.34`, a v0 fix on the `release/v0` branch (see "Release lines"):
+A v0 fix is released by hand from `release/v0` (see "Release lines"): a new minor tag, and `v0`
+moved to it. **`v0`'s annotation is an append-only changelog**, and every block already in it is
+kept when the tag is force-recreated. `git tag -f -a v0` without `-m` opens an empty annotation,
+and saving it replaces the whole changelog, so read the old annotation and append to it:
 
 ```bash
 git switch release/v0
 git pull origin release/v0
-# review latest release tag to determine which is the next one
-git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
-# output changes since last release
-git log v0..HEAD --pretty=format:"%s"
-git tag -a 'v0.34'
-# you are prompted for the tag annotation (change description)
-git tag -f -a 'v0'
-# you are prompted for the tag annotation: keep every earlier block (see "Release lines")
-git push origin 'refs/tags/v0.34'
-git push -f origin 'refs/tags/v0'
+git fetch origin --tags -f
+git log v0..HEAD --pretty=format:"%s"   # the changes since the last release
+old=$(git for-each-ref --format='%(contents)' refs/tags/v0)
+new_block="v0.34:
+  - <commit subject>"
+git tag -a "v0.34" -m "${new_block}"
+git tag -f -a v0 -m "${old}
+${new_block}"
+git push origin "refs/tags/v0.34"
+git push -f origin refs/tags/v0
 ```
 
-**Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
+A minor's block is `v0.<n>:` followed by the commit subjects since the previous minor, lightly
+rephrased where a literal subject would be confusing as a release note. Add the same block to
+`CHANGELOG.md`'s v0 section on `main`.
 
-### Major release
+#### Un-release a v0 fix
 
-Same as minor release except that the major version tag is a new one. I.e. we do not need to force tag/push.
-
-Example for release `v2`:
+Example: withdraw `v0.34` and move `v0` back to `v0.33`, keeping the changelog:
 
 ```bash
-git checkout origin/main
-git pull origin main
-# review latest release tag to determine which is the next one
-git tag --list 'v*' --sort=-creatordate | head -n 5   # 'v*' keeps preview/* tags out
-# output changes since last release
-git log v1..HEAD --pretty=format:"%s"
-git tag -a 'v2.0'
-# you are prompted for the tag annotation (change description)
-git tag -a 'v2'
-# you are prompted for the tag annotation
-git push origin 'refs/tags/v2.0'
-git push origin 'refs/tags/v2'
+git fetch origin --tags -f
+git tag -f -a v0 -m "$(git for-each-ref --format='%(contents)' refs/tags/v0)" 'v0.33^{commit}'
+git push -f origin refs/tags/v0
 ```
 
-**Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
-
-#### Un-release (move major tag back)
-
-In case of trouble where a fix takes long time to develop, this is how to rollback the major tag to the previous minor release.
-
-Example un-release `v0.9` and revert to `v0.8`:
-
-```bash
-git checkout origin/main
-git pull origin main
-
-moveTag='v0'
-moveToTag='v0.8'
-moveToHash=$(git rev-parse --verify ${moveToTag})
-
-git push origin ":refs/tags/${moveTag}"     # delete the old tag remotely
-git tag -f -a ${moveTag} -m "$(git for-each-ref --format='%(contents)' refs/tags/${moveTag})" ${moveToHash}   # move tag locally, keep the changelog
-git push -f origin "refs/tags/${moveTag}"   # push the updated tag remotely
-
-```
-
-**Note:** If you are having problems pulling main after a release, try to force fetch the tags: `git fetch --tags -f`.
+**Note:** If pulling after a release fails on a moved tag, force-fetch the tags:
+`git fetch --tags -f`.
