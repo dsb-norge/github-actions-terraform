@@ -10,6 +10,13 @@ inputs:
   inputs-json:
     description: "All inputs given to the ci/cd workflow, as toJSON(inputs); anything that is not a JSON object is rejected"
     required: true
+  mode:
+    description: |
+      'project' (the default) for the project workflow; 'module' for the module workflow, which
+      decides its test stage alone and publishes the tests-* outputs and relevance-file only
+      (docs/Module-ci.md §5).
+    required: false
+    default: "project"
 outputs:
   matrix-json:
     description: "All terraform ci/cd variables as json, one row per affected environment, every stage's together; may be empty"
@@ -56,6 +63,9 @@ outputs:
   tests-active:
     description: "'true' when the stage is on, the event runs tests and there is at least one row"
     value: ${{ steps.create-matrix.outputs.tests-active }}
+  tests-required-missing:
+    description: "Module mode: 'true' when a test file is required and there is none (docs/Module-ci.md D9)"
+    value: ${{ steps.create-matrix.outputs.tests-required-missing }}
   relevance-file:
     description: |
       Path of relevance.json on the runner: every environment's verdict and resolved path rules, the
@@ -69,6 +79,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        MODE: ${{ inputs.mode }}
       run: |
         # Resolve the terraform ci/cd variables of every environment into the job matrix
         #
@@ -81,4 +92,5 @@ runs:
         cat >"${inputs_file}" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'
         ${{ inputs.inputs-json }}
         CREATE_TF_VARS_MATRIX_INPUTS_JSON
-        python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}"
+        python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}" \
+          --mode "${MODE}"
