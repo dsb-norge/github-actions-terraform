@@ -3429,6 +3429,51 @@ else
 fi
 
 # ============================================================================
+# F23 — every step script ends with an exit, and never returns at the top level.
+#
+# The shim sources the script in a `bash -eo pipefail` shell, so `exit` ends
+# the step with main's code and nothing after the `source` line runs
+# (docs/Action-implementation-guide.md, "Why only exit"). A top-level
+# `return` behind a "sourced or executed" test is a second path that behaves
+# the same only while every shim stays one line long; six scripts carried it.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F23 - every step script ends with an exit${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f23_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, re, sys
+
+files = sorted(glob.glob('*/step_*.sh'))
+problems = []
+for path in files:
+    with open(path, encoding='utf-8') as fh:
+        lines = fh.read().splitlines()
+    code = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
+    if not code or not re.match(r'exit\b', code[-1]):
+        problems.append(f"{path} does not end with an exit line (ends with: {code[-1] if code else 'nothing'})")
+    for number, line in enumerate(lines, 1):
+        if re.match(r'return\b', line):
+            problems.append(f"{path}:{number} returns at the top level; end with exit instead")
+        if 'BASH_SOURCE[0]}" != "${0}"' in line:
+            problems.append(f"{path}:{number} tests whether it is sourced; the shim always sources it, so end with exit")
+print(f"checked {len(files)} step script(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f23_rc=0 || _f23_rc=$?
+if [[ "${_f23_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f23_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f23_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

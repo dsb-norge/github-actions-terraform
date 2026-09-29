@@ -159,7 +159,7 @@ _main_exit_code=$?
 exit ${_main_exit_code}
 ```
 
-> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell.
+> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell. A "sourced or executed" branch that `return`s when sourced is not needed and not wanted: F23 in `evaluate-automerge-eligibility/run_all_tests.sh` fails on a step script that does not end with an `exit` line or that returns at the top level.
 
 ### Key conventions
 
