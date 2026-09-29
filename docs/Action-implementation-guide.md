@@ -1,8 +1,8 @@
 # GitHub Action Implementation Guide
 
-Guidelines for implementing new composite GitHub Actions and converting existing ones that have inline bash in `action.yml`.
+Guidelines for implementing new composite GitHub Actions and converting one that has inline bash in `action.yml`.
 
-Follow this guide if there are no overweighing reasons not to. When an action departs from it, its `action.yml` and its spec say why. The one departure today is `create-tf-vars-matrix`: its logic is the decision engine's create-matrix adapter, in Python, so that it sits under the engine's 100 percent coverage and mutation gates ([Decision-engine.md](Decision-engine.md) D13); its `action.yml` is a two-command run block and its `run_all_tests.sh` runs that block end to end.
+Follow this guide if there are no overweighing reasons not to. When an action departs from it, its `action.yml` and its spec say why. The one departure is `create-tf-vars-matrix`: its logic is the decision engine's create-matrix adapter, in Python, so that it sits under the engine's 100 percent coverage and mutation gates ([Decision-engine.md](Decision-engine.md) D13); its `action.yml` run block writes the inputs to a file and runs the engine, and its `run_all_tests.sh` runs that block end to end.
 
 ## Goals
 
@@ -134,7 +134,7 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # Shared helpers used by multiple steps belong in helpers_additional.sh.
 
 function some_helper {
-  # ...
+  : # ...
 }
 
 # ============================================================================
@@ -194,7 +194,7 @@ handful of actions collapses into a wall of identical group titles:
 
 ```
 ▾ Terraform Plan
-  ▸ Run dsb-norge/github-actions-terraform/terraform-plan@v0
+  ▸ Run dsb-norge/github-actions-terraform/terraform-plan@v1
   ▸ Run # Make sure terraform is available
   ▸ Run set -o allexport                    ← which step is this?
   ▸ Run actions/upload-artifact@v7
@@ -295,8 +295,8 @@ whatever it holds. Every `${{ inputs.* }}`, `${{ matrix.* }}` and `${{ steps.<id
 step needs therefore goes through `env:`, or, when it is large or free text, through the heredoc
 capture below; `${{ github.action_path }}` and a step's fixed-word outcome are the only
 expressions left in script text. The structural test F16 in
-`evaluate-automerge-eligibility/run_all_tests.sh` fails on any other expression in a `run:` block
-outside a heredoc capture, in every action and workflow.
+`evaluate-automerge-eligibility/run_all_tests.sh` fails on any `inputs.*`, `matrix.*` or step-output
+expression in a `run:` block outside a heredoc capture, in every action and workflow.
 
 **No non-breaking spaces.** U+00A0 looks like a space and is not one: inside `${{ … }}` it is part
 of the expression, which actionlint rejects, and in YAML it is not indentation. GitHub itself
@@ -361,8 +361,9 @@ export -n input_body
 - A raw `${{ inputs.<name> }}` is captured only for a JSON-contract input: its name ends in
   `-json` (or it is one of the few older ones listed in the test), and every caller passes
   `${{ toJSON(...) }}` or a JSON literal. Anything else is captured as `toJSON` of the input.
-- The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` holds all of this
-  for every action and workflow in the repository.
+- The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` holds this for every
+  action and workflow in the repository: a quoted delimiter ending in `_JSON`, never `EOF`, used
+  once, and a raw capture only of a JSON-contract input. The `<ACTION>_<INPUT>` part is convention.
 
 > Note the order: the heredoc capture happens **before** `set -o allexport`. That keeps the captured variable from being auto-exported. Variables set later by the step script (under allexport) still get the export attribute, which is what allexport is there for — and why the step unexports a large decoded value at once.
 
@@ -408,7 +409,7 @@ export input_foo="test-value"
 export input_bar="another-value"
 
 # For JSON inputs, use multi-line exports
-export input_json_data='{
+export input_data_json='{
   "key": "value",
   "nested": { "a": 1 }
 }'
@@ -601,7 +602,7 @@ fi
 
 ## Converting an Existing Inline-Bash Action
 
-Most existing actions embed their logic directly in `action.yml` YAML strings. Here is the process to convert them.
+Every action in the repository follows the layout above. An action written with its logic inline in `action.yml` YAML strings is converted this way.
 
 ### Step-by-step
 
@@ -648,7 +649,7 @@ Most existing actions embed their logic directly in `action.yml` YAML strings. H
 
 Some steps are fine to keep inline:
 
-- **Pre-requisite checks** (e.g., verifying a binary exists) — these are usually 3–5 lines and don't need their own test suite.
+- **Pre-requisite checks** (e.g., verifying a binary exists) — these are usually about ten lines and don't need their own test suite.
 - **Steps that are purely declarative** (e.g., `uses: actions/upload-artifact@v7`).
 - **Pass-through steps** that only set a condition (`if:`) and print a message.
 
@@ -737,7 +738,7 @@ exit ${_main_exit_code}
 
 `$(…)` runs the command in a **subshell**. Two consequences bit this repo three times in one change ([Apply-and-destroy-reporting.md P28](Apply-and-destroy-reporting.md)):
 
-- **Globals set inside are lost.** `result=$(strip_outputs "${file}")` cannot also set `OUTPUTS_STRIPPED=true` for the caller — the assignment happened in the subshell. Return through stdout only, or call the function directly and have it set globals (`strip_outputs "${file}"; result="${STRIP_RESULT_FILE}"`). For a function that must both render a body *and* report counts, redirect instead of substituting: `render >"${tmp}"` runs in the current shell, `body=$(cat "${tmp}")` does not.
+- **Globals set inside are lost.** `result=$(_strip_outputs_section "${file}")` cannot also set `OUTPUTS_STRIPPED=true` for the caller — the assignment happened in the subshell. Return through stdout only, or call the function directly and have it set globals (`_strip_outputs_section "${file}"; result="${STRIP_RESULT_FILE}"`). For a function that must both render a body *and* report counts, redirect instead of substituting: `render >"${tmp}"` runs in the current shell, `body=$(cat "${tmp}")` does not.
 - **Trailing newlines are stripped.** `rows+="$(render_block)"` drops the block's final newline, so the next row lands on the same line as the block's last one. Re-append `$'\n'` after a non-empty substitution, or write rows to a file.
 
 Neither shows up as an error. Both show up as a wrong comment on a PR.
@@ -748,11 +749,11 @@ Neither shows up as an error. Both show up as a wrong comment on a PR.
 
 ```yaml
 run: |
-  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
-  ${{ inputs.json-data }}
-  MY_ACTION_JSON_DATA_JSON
+  input_data_json=$(cat <<'MY_ACTION_DATA_JSON'
+  ${{ inputs.data-json }}
+  MY_ACTION_DATA_JSON
   )
-  export input_json_data           # ← anti-pattern
+  export input_data_json           # ← anti-pattern
   source "${{ github.action_path }}/step_my_step.sh"
 ```
 
@@ -761,16 +762,16 @@ Equally bad — capturing under allexport:
 ```yaml
 run: |
   set -o allexport
-  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'    # ← variables created under allexport are auto-exported
-  ${{ inputs.json-data }}
-  MY_ACTION_JSON_DATA_JSON
+  input_data_json=$(cat <<'MY_ACTION_DATA_JSON'    # ← variables created under allexport are auto-exported
+  ${{ inputs.data-json }}
+  MY_ACTION_DATA_JSON
   )
   source "${{ github.action_path }}/step_my_step.sh"
 ```
 
 ### Why it breaks
 
-Under either form, `input_json_data` is in the shell's exported-variable set. At the next `fork+execve` — any time the step calls `jq`, `gh`, `terraform`, or any other external command — bash builds `envp` from the exported set. Linux enforces two limits on `envp`:
+Under either form, `input_data_json` is in the shell's exported-variable set. At the next `fork+execve` — any time the step calls `jq`, `gh`, `terraform`, or any other external command — bash builds `envp` from the exported set. Linux enforces two limits on `envp`:
 
 - `ARG_MAX` (~2 MB total across argv + envp), and
 - `MAX_ARG_STRLEN` (128 KB per individual string on Ubuntu).
@@ -781,7 +782,7 @@ The 128 KB per-string limit is the closer one in practice — a single big JSON 
 
 The pattern looks reasonable: the script is sourced from the shim, so why wouldn't you "make sure" the variable is visible by exporting it? But sourcing a script means it runs in the **same shell** — the script already sees the caller's variable table without `export`. The `export` only changes what reaches forked subprocesses, which is exactly where the danger lives. Once you internalize "source sees locals" the temptation to `export` evaporates.
 
-This repo has been bitten by this exact bug multiple times: `capture-matrix-job-meta` (steps context with embedded plan extracts), `aggregate-validation-summaries` (paginated `gh api` responses), `pr-comment` (user-supplied comment body), `auto-merge-pr` (`github.event` JSON on PRs with long descriptions). Each fix was a one-line removal of the `export` (plus, in the more sophisticated cases, an internal switch from `--argjson` to `--slurpfile` for jq). Reference implementations are in the corresponding action directories.
+This repo has been bitten by this exact bug multiple times: `capture-matrix-job-meta` (steps context with embedded plan extracts), `pr-comment` (user-supplied comment body), `auto-merge-pr` (`github.event` JSON on PRs with long descriptions). Each fix was a removal of the `export` (plus, in `capture-matrix-job-meta`, a switch from `--argjson` to `--slurpfile` for jq). Its relatives: `create-validation-summary` auto-exported large script variables under allexport, and `aggregate-validation-summaries` held paginated `gh api` responses in variables; those fixes dropped allexport and routed the data through a tempfile. Reference implementations are in the corresponding action directories.
 
 ### The safe pattern (recap)
 
@@ -790,9 +791,9 @@ run: |
   # <What this step does>
   #
   # Heredoc capture, NOT exported.
-  input_json_data=$(cat <<'MY_ACTION_JSON_DATA_JSON'
-  ${{ inputs.json-data }}
-  MY_ACTION_JSON_DATA_JSON
+  input_data_json=$(cat <<'MY_ACTION_DATA_JSON'
+  ${{ inputs.data-json }}
+  MY_ACTION_DATA_JSON
   )
 
   # set -o allexport AFTER the heredoc so this variable isn't auto-exported.
@@ -800,7 +801,7 @@ run: |
   source "${{ github.action_path }}/step_my_step.sh"
 ```
 
-Inside the step script: read `${input_json_data}` directly, or — if it might be very large and needs to be passed to a forked tool — write it to a tempfile and pass the path (`jq --slurpfile`, `gh api -F body=@<file>`, etc). See [CLAUDE.md → "Watch for ARG_MAX in step scripts"](../CLAUDE.md) for the in-tree reference patterns.
+Inside the step script: read `${input_data_json}` directly, or — if it might be very large and needs to be passed to a forked tool — write it to a tempfile and pass the path (`jq --slurpfile`, `gh api -F body=@<file>`, etc). See [CLAUDE.md → "Watch for ARG_MAX in step scripts"](../CLAUDE.md) for the in-tree reference patterns.
 
 ### When to actually export
 
@@ -821,7 +822,7 @@ Use this checklist when creating or converting an action:
 - [ ] Only small scalars go through `env:`; free text and large values are captured as `toJSON(inputs.<name>)`, JSON-contract inputs as they are, through a quoted `<ACTION>_<INPUT>_JSON` heredoc, before `allexport`, never exported
 - [ ] No `${{ inputs.* }}`, `${{ matrix.* }}` or step output is pasted into a `run:` block outside a heredoc capture (F16)
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
-- [ ] Multi-step actions have `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
+- [ ] Multi-step actions keep their tests in `run_all_tests.sh` or in `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
 - [ ] `run_all_tests.sh` covers happy path, edge cases, and error conditions
 - [ ] Tests run in subshells and assert on `$GITHUB_OUTPUT` or exit codes
 - [ ] `run_all_tests.sh` exits with code 1 on any failure
