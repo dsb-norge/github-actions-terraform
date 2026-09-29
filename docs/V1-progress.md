@@ -555,7 +555,14 @@ Kept on the test bed for module work, and cleaned up once v1 is ready: the modul
   advice for test lanes. What stays open: how v1 is cut (a `v1.0`, the changelog), decided at step
   11, and where a caller-facing change is announced once the road documents are gone.
 - The Path-relevance §7.3 and §8 wiring examples are the workflow's, §8's condition word for word.
-- Still to do: the module sections once step 9 is built, and a last as-built pass.
+- The module sections: the migration guide's §9 (must, should, could, what a pull request
+  shows) and the v1 changes' §11.
+- Still to do, as the maintainer asked on 2026-09-29 for this pull request:
+  - modernise `setup-terraform-plugin-cache`, the last action with bash inline in its
+    `action.yml`;
+  - the Action tests PR comment in this repository shows how long the tests took;
+  - make sure the migration guide covers module repositories, or give them a guide of their own;
+  - a last as-built pass.
 
 ## 5. Findings to carry
 
