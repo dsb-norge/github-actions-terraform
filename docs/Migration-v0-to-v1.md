@@ -716,12 +716,13 @@ move to `@v1` together. The design is [Module-ci.md](Module-ci.md), and the user
 1. **The ref.** `@v0` becomes `@v1` in the test workflow and in the release workflow.
 2. **Terraform 1.13 or later** for the tests: `terraform-version: "1.14.x"`, for example. Below
    the floor, every test job fails with `terraform-version`.
-3. **Permissions.** Add `actions: read`, which the tests head needs for its job links:
+3. **Permissions.** Add `actions: read`, which the tests head needs for its job links. v0's
+   `contents: write` can become `read`: the docs commit is pushed with the App token.
 
    ```yaml
        permissions:
          id-token: write
-         contents: write
+         contents: read
          pull-requests: write
          actions: read
    ```
