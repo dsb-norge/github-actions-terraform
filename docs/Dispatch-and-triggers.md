@@ -137,7 +137,7 @@ workflow's gates do today, then applies the `goal` input as a cap:
 | `default` or empty | Push semantics for the ref: apply on the default branch when the goals hold `apply` or `all`, **destroy on the default branch when the goals hold `destroy`** (as today), plan and destroy-plan elsewhere. |
 | `plan` | The expansion intersected with `init, format, validate, lint, plan`. Never adds `plan` to an environment without it; removes `apply`, `destroy-plan` and `destroy`. |
 | `apply` | The expansion intersected with the standard goals and `apply`: never `destroy-plan` or `destroy`, so asking for an apply never brings a destroy with it. An error unless the goals hold `apply` or `all` (`apply-on-pr` alone does not count) and the ref is the default branch (D5, D6). |
-| `destroy-plan` | The expansion intersected with `init` and `destroy-plan`; never `destroy`. An error unless the goals hold `destroy-plan`: `all` is the standard goals only and does not include it, and `destroy` alone never plans a destroy (the destroy step runs only after a successful destroy plan), so a cap that granted `destroy-plan` to it would add, not remove (I3). |
+| `destroy-plan` | The expansion intersected with `init` and `destroy-plan`; never `destroy`. An error unless the goals hold `destroy-plan`: `all` means the standard goals and `apply`, not `destroy-plan`, and `destroy` alone never plans a destroy (the destroy step runs only after a successful destroy plan), so a cap that granted `destroy-plan` to it would add, not remove (I3). |
 
 The `goal` input never grants `destroy`, `destroy-on-pr` or `apply-on-pr`. The engine's invariants
 I1, I3, I15, I16 and I17 assert these rules on every generated case, and the operation gates read
@@ -166,7 +166,7 @@ A validation error stops the run in `create-matrix`, red conclusion, with one me
 
 On `schedule` the engine keeps only environments whose `trigger-events` contain `schedule`. When
 none does, the run does nothing, the conclusion is green, and a notice says so; the run summary
-names the input that would change it. A scheduled run is always on the default branch, so a kept
+names the key that would change it. A scheduled run is always on the default branch, so a kept
 environment gets push-on-default-branch semantics with one existing asymmetry the engine mirrors:
 `apply` is granted on `schedule`, `destroy` is not (the workflow's destroy gate has never accepted
 `schedule`); a scheduled environment holding `destroy` runs its destroy plan and stops there. The
@@ -213,7 +213,7 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 |---|---|---|---|---|
 | dispatch on `main` | `environment: staging`, `goal: apply`, reason given | `staging` | init … plan, apply | the recovery case; prod untouched |
 | dispatch on `main` | `environment: staging`, `goal: default` | `staging` | init … plan, apply | same as a push, one environment |
-| dispatch on `main` | `environment: ""`, `goal: plan` | all four | prod, staging, scratch: init … plan; sandbox: its own four | a fleet-wide plan; the cap removes apply and destroy, never adds plan |
+| dispatch on `main` | `environment: ""`, `goal: plan` | all four | prod, staging: init … plan; scratch: init, plan; sandbox: its own four | a fleet-wide plan; the cap removes apply and destroy, never adds plan |
 | dispatch on `feature/x` | `environment: staging`, `goal: apply` | none | error | D6 |
 | dispatch on `main` | `environment: sandbox`, `goal: apply` | none | error | D5 |
 | dispatch on `main` | `environment: prod`, `goal: destroy-plan` | `prod` | init, destroy-plan | read-only; `prod` holds `destroy-plan` explicitly, `all` alone would be an error |
@@ -239,12 +239,12 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 
 | # | Pitfall | Consequence | Rule |
 |---|---|---|---|
-| P1 | Dispatch inputs arrive as strings; an absent block leaves `github.event.inputs` empty. | `"default"` versus empty, missing keys. | The shim normalises; the engine treats empty and `default` alike and an absent block as "no inputs". |
+| P1 | Dispatch inputs arrive as strings; an absent block leaves `github.event.inputs` empty. | `"default"` versus empty, missing keys. | The adapter normalises; the engine treats empty and `default` alike and an absent block as "no inputs". |
 | P2 | A `choice` for `environment` would carry names per repository. | Drift when environments are added; a stale dropdown. | `string` by default (D3). |
 | P3 | Silent downgrade of an impossible dispatch goal. | The operator believes an apply happened. | Errors, never downgrades (D5, D6). |
 | P4 | `schedule` used to mean every environment. | The two scheduling callers' nightly runs would apply nothing after moving to v1 without the opt-in. | A step of the move to v1; the empty-schedule notice says which key to set. Never shipped on a rolling major tag. |
-| P8 | With no `inputs:` block the payload's `inputs` key is `null`; `github.event.inputs.environment` evaluates to the empty string. | A shim that expects an object fails, or reads `"null"`. | The shim normalises `null` to an empty object; the engine treats absent, empty and `default` alike. |
-| P9 | A string input dispatched empty is **absent** from the payload's `inputs`, not `""` (verified on the test bed: a dispatch leaving `environment` and `reason` empty delivered `{"goal": "default"}` only). | A shim that reads the object's keys sees fewer inputs than the block declares. | The shim passes all three keys, `""` for each that is absent. |
+| P8 | With no `inputs:` block the payload's `inputs` key is `null`; `github.event.inputs.environment` evaluates to the empty string. | A shim that expects an object fails, or reads `"null"`. | The adapter reads a `null` `inputs` as no block, every input empty; the engine treats absent, empty and `default` alike. |
+| P9 | A string input dispatched empty is **absent** from the payload's `inputs`, not `""` (verified on the test bed: a dispatch leaving `environment` and `reason` empty delivered `{"goal": "default"}` only). | A shim that reads the object's keys sees fewer inputs than the block declares. | The adapter passes all three keys, `""` for each that is absent. |
 | P13 | A cap that silently adds. | `goal: plan` on a validate-only environment planning something nobody reviewed. | The cap intersects, never unions (D5); invariant I3. |
 | P10 | A named dispatch that selects nothing. | A green run that did nothing while the operator believes the environment was reconciled. | An error (§4.3); invariant I17. |
 | P5 | A dispatch from the CLI on a non-default `--ref` with `goal: apply`. | Refused. | The error names the branch; run it on `main`. |
@@ -259,8 +259,8 @@ All in the decision engine's suite (Decision-engine.md §8):
 
 - Table cases for every row of §6 and every error of §4.3.
 - Generated cases across events × `trigger-events` × dispatch inputs × branch × goals, with
-  invariants I1, I2, I3 and I5 asserted.
-- The shim: dispatch inputs read from the `github` context and normalised; a run without the
+  invariants I1, I2, I3, I15, I16 and I17 asserted.
+- The adapter: dispatch inputs read from the event payload and normalised; a run without the
   inputs block produces the informational summary line.
 
 **What tests cannot cover**: that `github.event.inputs` is populated inside the reusable workflow
