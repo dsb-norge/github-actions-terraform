@@ -12,9 +12,9 @@ Out of scope: the `plan` stage itself (already covered), `tflint` output, the `t
 
 ## 1. Why
 
-A calling repo enabled `apply-on-pr` for one of its environments. The pull request applies real configuration to real infrastructure. The PR conversation says nothing about it: that environment's `📊` head comment is byte-for-byte the same shape as the head comment of an environment that only planned.
+A calling repo enabled `apply-on-pr` for one of its environments. The pull request applied real configuration to real infrastructure. The PR conversation said nothing about it: that environment's `📊` head comment was byte-for-byte the same shape as the head comment of an environment that only planned.
 
-The step order inside a matrix job is why:
+The step order inside a matrix job was why:
 
 ```
 28  success  📝 Create validation summary
@@ -27,7 +27,7 @@ The step order inside a matrix job is why:
 40  skipped  ☠ Terraform Destroy
 ```
 
-Consequences today:
+Consequences, before this feature:
 
 - A reviewer cannot tell "planned, awaiting merge" from "already applied to the environment".
 - A **failed** apply leaves a head comment that reads `success` on every row. The only signal is the red job. The comment is not merely incomplete, it is actively misleading.
@@ -50,7 +50,9 @@ Explicit non-goal: do **not** delay the first PR feedback. The validation table 
 
 Explicit invariant: **an environment that runs no mutating stage renders exactly the comment it renders today, byte for byte.** Every row, comment and count added here is presence-gated. This is a merge blocker, tested as C1.
 
-## 3. Current state — what data exists
+## 3. Starting state — what data existed
+
+The matrix job as it stood before this feature:
 
 | Operation | step id | console captured | counts parsed | timing | status row in head | own tag comment | `🧐` outcome gate | in `$GITHUB_STEP_SUMMARY` |
 |---|---|---|---|---|---|---|---|---|
@@ -66,11 +68,11 @@ Explicit invariant: **an environment that runs no mutating stage renders exactly
 
 Two independent causes. Fixing either alone yields nothing:
 
-**Cause A — ordering.** Every PR-comment write sits at [terraform-ci-cd-default.yml:948-1110](../.github/workflows/terraform-ci-cd-default.yml); `apply` / `destroy-plan` / `destroy` at lines 1176-1248. The comment is written before the operations exist.
+**Cause A — ordering.** Every PR-comment write in [terraform-ci-cd-default.yml](../.github/workflows/terraform-ci-cd-default.yml) sat above `apply` / `destroy-plan` / `destroy`. The comment was written before the operations existed.
 
-**Cause B — no capture.** [terraform-apply/action.yml](../terraform-apply/action.yml) declares **zero outputs**. [step_apply.sh](../terraform-apply/step_apply.sh) runs terraform and returns the exit code; stdout is not tee'd anywhere, nothing is timed, nothing is parsed. Even perfect ordering would render blank cells.
+**Cause B — no capture.** [terraform-apply/action.yml](../terraform-apply/action.yml) declared **zero outputs**. [step_apply.sh](../terraform-apply/step_apply.sh) ran terraform and returned the exit code; stdout was not tee'd anywhere, nothing was timed, nothing was parsed. Even perfect ordering would have rendered blank cells.
 
-One thing already works in our favour: [capture-matrix-job-meta](../capture-matrix-job-meta/step_capture.sh) serialises the **whole** steps context after apply/destroy, so `steps.apply.outcome`, `steps["destroy-plan"].outcome` and `steps.destroy.outcome` are *already* in the artifact the aggregator job downloads. Outcome data exists today; only console output, counts and timings are genuinely missing.
+One thing already works in our favour: [capture-matrix-job-meta](../capture-matrix-job-meta/step_capture.sh) serialises the **whole** steps context after apply/destroy, so `steps.apply.outcome`, `steps["destroy-plan"].outcome` and `steps.destroy.outcome` were *already* in the artifact the aggregator job downloads. Outcome data existed; only console output, counts and timings were genuinely missing.
 
 ## 4. Approach
 
@@ -97,13 +99,13 @@ These are not cosmetic and are in scope because the same wiring fixes them.
 
 ### 5.1 `destroy-plan` auto-merge limits are silently unenforced
 
-[evaluate-automerge-eligibility/helpers_additional.sh:169-175](../evaluate-automerge-eligibility/helpers_additional.sh) reads:
+[evaluate-automerge-eligibility/helpers_additional.sh:196-201](../evaluate-automerge-eligibility/helpers_additional.sh) reads:
 
 ```bash
 input_destroy_plan_count_add=$(get_step_output "${file}" "parse-destroy-plan" "count-add")
 ```
 
-There is no step with id `parse-destroy-plan` anywhere in the workflow, so those reads always came back empty.
+There was no step with id `parse-destroy-plan` anywhere in the workflow, so those reads always came back empty.
 
 **What that actually did** (corrected after reading `validate_counts` closely, not what this section first claimed): the evaluator treats missing counts as "plan parsing may have failed" and marks the environment **ineligible**. So a repo with a `destroy-plan` goal (and no `destroy-on-pr`) and auto-merge enabled has *never* auto-merged — fail-closed, safe, but silent and with a misleading reason in the log. There is no separate `destroy-plan-max-count-*` limit family either: destroy-plan counts are **added to** the plan counts and checked against the same `plan-max-count-*` limits.
 
@@ -111,11 +113,11 @@ Adding the step with **exactly** the id `parse-destroy-plan` is the whole fix �
 
 ### 5.2 No outcome gate for apply / destroy-plan / destroy
 
-Every validation step has a `🧐 Validation outcome:` step that re-raises a non-success outcome as an `::error` annotation ([lines 1114-1175](../.github/workflows/terraform-ci-cd-default.yml)). The three mutating steps have none: they carry `continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}` and nothing else.
+Every validation step has a `🧐 Validation outcome:` step that re-raises a non-success outcome as an `::error` annotation ([lines 1333-1405](../.github/workflows/terraform-ci-cd-default.yml)). The three mutating steps had none: they carried `continue-on-error: ${{ fromJSON(matrix.vars.allow-failing-terraform-operations) }}` and nothing else.
 
-With `allow-failing-terraform-operations: true` a failed apply yields a green job, a green `conclusion`, a green PR comment and no annotation. Nothing anywhere says the tenant was left half-applied.
+With `allow-failing-terraform-operations: true` a failed apply yielded a green job, a green `conclusion`, a green PR comment and no annotation. Nothing anywhere said the tenant was left half-applied.
 
-Adding the gates changes no job outcomes (§10.4) — it adds the annotation and the log line that the other six steps already produce.
+Adding the gates changes no job outcomes — it adds the annotation and the log line that the other six steps already produce.
 
 ## 6. Target data flow
 
@@ -206,11 +208,11 @@ A new action rather than a mode on [parse-terraform-plan](../parse-terraform-pla
 Recognised summary lines:
 
 ```
-Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.
+Apply complete! Resources: [<I> imported, ]<A> added, <C> changed, <D> destroyed.[ Actions: <N> invoked[, <M> failed].]
 Destroy complete! Resources: <D> destroyed.
 ```
 
-The segment list is **open-ended**, and this is parsed segment by segment, not as one anchored pattern — see P32.
+The segment list is **open-ended**, and this is parsed segment by segment, not as one anchored pattern — see P32. Only the resources group, up to its full stop, is split; a trailing `Actions:` sentence is logged and ignored (P38).
 
 Outputs, deliberately named to match `parse-terraform-plan` so downstream wiring is symmetric:
 
@@ -220,7 +222,7 @@ Outputs, deliberately named to match `parse-terraform-plan` so downstream wiring
 | `count-add` / `count-change` / `count-destroy` | `?` when no summary line was found |
 | `count-total` | sum **including imports**; `?` when no summary line was found |
 | `completed` | `true` when a summary line was found and parsed, `false` otherwise. Says whether the **counts** are available — not whether the apply succeeded; that is the step outcome (§14) |
-| `apply-kind` | `apply` or `destroy`, from which summary line matched. The default workflow's destroy step applies a saved `-destroy` plan, which prints `Apply complete!` — so `apply` there too (P33) |
+| `apply-kind` | `apply` or `destroy`, from which summary line matched; empty when `completed` is `false`. The default workflow's destroy step applies a saved `-destroy` plan, which prints `Apply complete!` — so `apply` there too (P33) |
 | `filtered-console-file` | console file with progress-tick lines removed (§7.2.2) |
 
 `Destroy complete!` sets `count-add=0`, `count-change=0`.
@@ -260,12 +262,12 @@ A 20-minute apply over 50 resources produces thousands of these. Tail-trimming t
 `parse-terraform-apply` therefore also emits `filtered-console-file`: the console file with lines matching
 
 ```
-^\S.*: Still (creating|destroying|modifying|reading)\.\.\. \[[0-9]+[ms][0-9]*s? elapsed\]$
+^[^[:space:]].*: Still (creating|destroying|modifying|reading|opening|renewing|closing)\.\.\. \[(id=[^]]*, )?([0-9]+h)?([0-9]+m)?[0-9]+s elapsed\]$
 ```
 
 removed. The renderer consumes the filtered file; the raw file stays on disk and is what the job log shows.
 
-> **P5 — filtering is lossy and can drift silently.** If terraform changes the wording, filtering stops working and the comment degrades to noise rather than breaking. Pinned by fixture test B6; the fixture must be captured from real output, not hand-written.
+> **P5 — filtering is lossy and can drift silently.** If terraform changes the wording, filtering stops working and the comment degrades to noise rather than breaking. Pinned by fixture test B6, and against the real binary by the contract tests (§16, P35); the fixture must be captured from real output, not hand-written.
 
 ### 7.3 Workflow: the missing parse and warning steps (L2 / L6)
 
@@ -280,9 +282,9 @@ Six new steps in the matrix job:
 | `parse-destroy-apply` | `parse-terraform-apply` | `destroy` | `steps.destroy.outputs.console-output-file` |
 | `parse-destroy-warnings` | `parse-terraform-warnings` | `parse-destroy-apply` | same |
 
-All guarded with `if: always() && steps.<source>.outcome != 'cancelled' && steps.<source>.outcome != 'skipped'` and `continue-on-error: true`. The `always()` is **not** in the existing `parse-plan`, and that is not an inconsistency: plan runs with `continue-on-error: true`, so a failed plan never fails the job. apply and destroy run with `continue-on-error: ${{ fromJSON(allow-failing-terraform-operations) }}` — default false — so a failed apply fails the job on the spot, and a following step whose `if:` lacks `always()` is skipped even when it evaluates true (P31).
+The three parse steps are guarded with `if: always() && steps.<source>.outcome != 'cancelled' && steps.<source>.outcome != 'skipped'`, the three warnings steps with `if: always() && steps.<source>.outputs.console-output-file != ''`, and all six carry `continue-on-error: true`. The `always()` is **not** in the existing `parse-plan`, and that is not an inconsistency: plan runs with `continue-on-error: true`, so a failed plan never fails the job. apply and destroy run with `continue-on-error: ${{ fromJSON(allow-failing-terraform-operations) }}` — default false — so a failed apply fails the job on the spot, and a following step whose `if:` lacks `always()` is skipped even when it evaluates true (P31).
 
-> **P7 — the step id `parse-destroy-plan` is load-bearing.** [evaluate-automerge-eligibility/helpers_additional.sh](../evaluate-automerge-eligibility/helpers_additional.sh) looks it up by literal string in the captured steps context. Renaming the step silently re-breaks §5.1 with no test failure anywhere unless F2 is implemented.
+> **P7 — the step id `parse-destroy-plan` is load-bearing.** [evaluate-automerge-eligibility/helpers_additional.sh](../evaluate-automerge-eligibility/helpers_additional.sh) looks it up by literal string in the captured steps context. Renaming the step silently re-breaks §5.1; F2 is the only test that notices.
 
 ### 7.4 `create-validation-summary` — new inputs, rows and outputs (L3 / L4 / L6 / L8)
 
@@ -299,7 +301,7 @@ New inputs. All optional; all default to the "absent" sentinel so existing calle
 
 | Input | Default | Purpose |
 |---|---|---|
-| `apply-count-add` / `-change` / `-destroy` / `-total` | `N/A` | From `parse-apply` |
+| `apply-count-import` / `-add` / `-change` / `-destroy` / `-total` | `N/A` | From `parse-apply` |
 | `apply-completed` | `""` | `true` / `false` / `""` — drives the `?` rendering of §7.2.1 |
 | `destroy-plan-count-add` / `-change` / `-destroy` / `-import` / `-move` / `-remove` / `-total` | `N/A` | From `parse-destroy-plan` (a plan, so the full badge set) |
 | `destroy-count-destroy` / `-total` | `N/A` | From `parse-destroy-apply` |
@@ -318,7 +320,8 @@ New inputs. All optional; all default to the "absent" sentinel so existing calle
 
 | Input | Default | Purpose |
 |---|---|---|
-| `apply-console-file` / `destroy-plan-console-file` / `destroy-console-file` | `""` | Filtered console files for the three new extracts |
+| `apply-console-file` / `destroy-plan-console-file` / `destroy-console-file` | `""` | Console files for the three new extracts; apply's and destroy's are the tick-filtered copies, or the raw console when the parser did not run |
+| `destroy-plan-txt-output-file` | `""` | The destroy plan's `terraform show` rendering, preferred over its console file as `plan-txt-output-file` is for the plan tag |
 | `apply-tag-comment-id` / `destroy-plan-tag-comment-id` / `destroy-tag-comment-id` | `""` | Mirror `plan-tag-comment-id`; each adds one line to the Links row |
 
 **Mode and rendering control**
@@ -336,10 +339,11 @@ New outputs:
 |---|---|---|
 | `head-summary-file` | path | §7.10. Replaces the `head-summary` string output. |
 | `plan-extract-file` / `apply-extract-file` / `destroy-plan-extract-file` / `destroy-extract-file` | path | §7.10. `plan-extract-file` replaces the `plan-extract` string output; the other three are new. |
+| `step-summary-file` | path | §7.8. The per-env `$GITHUB_STEP_SUMMARY` block. |
 
 Deleted outputs: `summary`, `prefix`, `head-summary`, `plan-extract` (§7.10, §7.15).
 
-**Row-presence rule.** Every new row renders **only** when its gating input names a step that ran — non-empty and not `skipped`. This follows the existing "absent when uninteresting" convention already used by the Warnings and Plan-details rows, and is what makes the §2 invariant hold. Under the §8.1 ordering every new row is **appended below** today's last data row, so a plan-only env's table is a strict prefix of the full one — which is what test C1 asserts.
+**Row-presence rule.** Every new row renders **only** when its gating input names a step that ran — non-empty and not `skipped`. This follows the existing "absent when uninteresting" convention already used by the Warnings and Plan-details rows, and is what makes the §2 invariant hold. Under the §8.1 ordering every new row but the Mode row (row 1, gated on the goals, not on a step) is **appended below** today's last data row, so a plan-only env's table is a strict prefix of the full one — which is what test C1 asserts.
 
 > **P9 — table sync.** [Workflow-pr-comments.md §5.1](Workflow-pr-comments.md) declares the per-env head and the per-group head structurally in sync, with exactly two documented intentional divergences. Every row added here lands in **both** renderers, and the presence rules must correspond (per-env: "this env has data"; per-group: "any env in the group has data"). Enforced by test F1. The run-level rollup (§7.9) is explicitly **outside** this invariant and uses a different shape — stated there so nobody "fixes" it into sync.
 
@@ -349,35 +353,35 @@ New step order at the tail of the matrix job:
 
 ```
 …
-1114-1175  🧐 Validation outcome: init / lock / fmt / validate / lint / plan   (unchanged)
-1176       🐙 Terraform Apply                                                  (unchanged position)
+1333-1405  🧐 Validation outcome: init / lock / fmt / validate / lint / plan   (unchanged)
+1407       🐙 Terraform Apply                                                  (unchanged position)
      NEW   🔍 Parse terraform apply                    id: parse-apply
      NEW   ⚠️ Parse apply warnings                     id: parse-apply-warnings
-1206       ☠📖 Terraform Destroy Plan                                          (unchanged position)
+1476       ☠📖 Terraform Destroy Plan                                          (unchanged position)
      NEW   🔍 Parse terraform destroy plan             id: parse-destroy-plan
      NEW   ⚠️ Parse destroy-plan warnings              id: parse-destroy-plan-warnings
-1220       ☠ Terraform Destroy                                                 (unchanged position)
+1515       ☠ Terraform Destroy                                                 (unchanged position)
      NEW   🔍 Parse terraform destroy                  id: parse-destroy-apply
      NEW   ⚠️ Parse destroy warnings                   id: parse-destroy-warnings
      NEW   📝 Create validation summary (phase 2)      id: cvs-apply
-     NEW   🐙 Post apply tag                           id: post-apply-tag
-     NEW   ☠📖 Post destroy-plan tag                   id: post-destroy-plan-tag
-     NEW   ☠ Post destroy tag                          id: post-destroy-tag
+     NEW   🐙 Post per-env apply tag                   id: post-apply-tag
+     NEW   ☠📖 Post per-env destroy-plan tag           id: post-destroy-plan-tag
+     NEW   ☠ Post per-env destroy tag                  id: post-destroy-tag
      NEW   📝 Re-render phase 2 with Links             id: cvs-apply-final
      NEW   🏷️ Upsert per-env head comment (phase 2)    id: upsert-head-apply
      NEW   📣 Annotate outcome                         id: annotate                    (§7.8)
      NEW   🧐 Validation outcome: 🐙 Apply
      NEW   🧐 Validation outcome: ☠📖 Destroy Plan
      NEW   🧐 Validation outcome: ☠ Destroy
-1250       📊 Capture matrix job metadata                                      (unchanged position)
-1265       🧹 Shred resolved environment files                                 (unchanged position)
+1885       📊 Capture matrix job metadata                                      (unchanged position)
+1900       🧹 Shred resolved environment files                                 (unchanged position)
 ```
 
 > **P1 — the new outcome gates must come after the phase-2 comment steps, not before.** A gate step exits 1. With `allow-failing-terraform-operations: false` that fails the job, and every subsequent step **without `if: always()` is skipped**. Putting the apply gate ahead of the phase-2 render means a failed apply skips the render — i.e. the exact case this whole feature exists to surface would be the one case it does not surface. It is the same reason the existing six gates sit *after* the phase-1 comment steps.
 
 > **P15 — `always()` is required on every phase-2 comment step anyway.** The six *existing* gates run before apply. If `init` fails, gate 32 fails the job and apply/destroy are skipped; the phase-2 render must still run so the head reflects the final state of the run. Copy the `always() && add-pr-comment == 'true' && event_name == 'pull_request' && action != 'closed' && action != 'converted_to_draft'` guard verbatim from the phase-1 steps.
 
-> **P16 — a second PATCH per head per run.** [pr-comment](../pr-comment/action.yml) short-circuits a no-op update by body hash, so an env that ran no mutating step costs one extra API read and no write. An env that did apply gets one extra PATCH. PATCH preserves `created_at`, so the head keeps its position in the conversation; GitHub marks the comment `edited` but does not re-notify subscribers. Acceptable.
+> **P16 — a second PATCH per head per run.** [pr-comment](../pr-comment/action.yml) has no body-hash short-circuit: an upsert that finds its marker always PATCHes. So every env with a per-env head costs one extra list read and one extra PATCH per run — for an env that ran no mutating step, a PATCH with an unchanged body. PATCH preserves `created_at`, so the head keeps its position in the conversation; GitHub marks the comment `edited` but does not re-notify subscribers. Acceptable.
 
 > **P13 — grouped envs.** Grouped envs have no per-env head, so phase 2 for them is: post the tag comments (yes), upsert the head (no — the existing `pr-comment-group == ''` guard). Their apply status reaches a reader only through the per-group table (§7.11). §7.5 and §7.11 are therefore not independently shippable.
 
@@ -430,14 +434,14 @@ Three new purge steps at the top of the matrix job, alongside the existing plan-
 
 Modern layout, per [Action-implementation-guide.md](Action-implementation-guide.md). Pure side effects: writes `::notice` / `::error` workflow commands to stdout and appends markdown to `$GITHUB_STEP_SUMMARY`.
 
-A separate action rather than folding into `create-validation-summary`, which is a pure renderer whose every test asserts on captured `$GITHUB_OUTPUT` strings. Mixing in side effects would make it untestable in the same shape.
+A separate action rather than folding into `create-validation-summary`, which is a pure renderer whose every test asserts on the bodies it writes. Mixing in side effects would make it untestable in the same shape.
 
-The block itself is nonetheless rendered by `create-validation-summary`, as a sixth body file (`step-summary-file`): the head's table in its ungrouped shape with the Links row replaced by a `[Job log]` footer. Two reasons. A grouped env has no table in its PR head but the job page has no per-group table to defer to, and a second copy of the table renderer would drift. The phase-2 render therefore runs on every event (it is pure and cheap); only the POST/PATCH steps carry the `pull_request` guard.
+The block itself is nonetheless rendered by `create-validation-summary`, as a sixth body file (`step-summary-file`): the head's table in its ungrouped shape with the Links row replaced by a `[Job log]` footer. Two reasons. A grouped env has no table in its PR head but the job page has no per-group table to defer to, and a second copy of the table renderer would drift. The phase-2 render therefore runs on every event (it is pure and cheap); only the POST/PATCH steps, and the Links re-render that exists only for them, carry the `pull_request` guard.
 
 | Condition | Emission |
 |---|---|
-| apply / destroy ran and succeeded | `::notice title=Apply succeeded::<env> — N added, N changed, N destroyed in mm:ss` |
-| apply / destroy ran and failed | `::error title=Apply failed::<env> — apply did not complete; infrastructure may be partially applied` |
+| apply / destroy ran and succeeded | `::notice title=Apply succeeded::<env> — N added, N changed, N destroyed[, N imported] in mm:ss` (destroy: `Destroy succeeded`, `N destroyed`) |
+| apply / destroy ran and failed | `::error title=Apply failed::<env> — apply did not complete (outcome '<outcome>'); infrastructure may be partially applied` (destroy: `Destroy failed`, `partially destroyed`) |
 | any run at all | one per-env `$GITHUB_STEP_SUMMARY` block (§8.7) |
 
 > **P11 — this is the only surface that exists on `push` / `schedule` / `workflow_dispatch` runs, on fork PRs, and for envs with `add-pr-comment: false`.** It is not a nice-to-have bolted onto a PR-comment feature; for a large class of runs it is the *entire* feature. Its `if:` must **not** carry the `github.event_name == 'pull_request'` guard the comment steps carry.
@@ -454,12 +458,14 @@ New job:
 run-summary:
   if: always()
   name: "Run summary"
-  needs: [create-matrix, terraform-ci-cd]
+  needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3]
   runs-on: ${{ inputs.runs-on }}
-  # no pull-requests permission — this job never touches the PR
+  # No pull-requests permission — this job never touches the PR.
+  permissions: {}
   steps:
     - download matrix-job-meta-* artifacts (continue-on-error)
-    - uses: dsb-norge/github-actions-terraform/create-run-summary@v0
+    - download the relevance artifact (continue-on-error)
+    - uses: dsb-norge/github-actions-terraform/create-run-summary@v1
       continue-on-error: true
 ```
 
@@ -473,16 +479,16 @@ Chosen over extending the existing `conclusion` job (which repos wire into branc
 
 ### 7.10 Comment bodies as file paths (L8)
 
-Today `create-validation-summary` emits `head-summary`, `plan-extract` and the legacy `summary` as step **outputs**. Three costs:
+Before this change `create-validation-summary` emitted `head-summary`, `plan-extract` and the legacy `summary` as step **outputs**. Three costs:
 
-1. They enter the `steps` context, so `capture-matrix-job-meta`'s `toJSON(steps)` writes ~65k×2 per env into the metadata artifact — which the aggregator, the auto-merge evaluator and now the run-summary job all download and `jq` over, for data none of them reads.
-2. `pr-comment` receives the body through `${{ inputs.body }}`, which interpolates 65k of markdown into the composite step's script text.
-3. It is the last realistic ARG_MAX exposure on this path — the reason `create-validation-summary` cannot use `set -o allexport` and the reason `pr-comment` keeps `input_body` shell-local.
+1. They entered the `steps` context, so `capture-matrix-job-meta`'s `toJSON(steps)` writes ~65k×2 per env into the metadata artifact — which the aggregator, the auto-merge evaluator and now the run-summary job all download and `jq` over, for data none of them reads.
+2. `pr-comment` received the body through `${{ inputs.body }}`, which interpolated 65k of markdown into the composite step's script text.
+3. It was the last realistic ARG_MAX exposure on this path — the reason `create-validation-summary` could not use `set -o allexport` and the reason `pr-comment` keeps `input_body` shell-local.
 
 Changes:
 
-- `create-validation-summary` writes each body to `${RUNNER_TEMP}/tf-comment-<env>-<kind><output-file-suffix>.md` and emits the **paths** as `head-summary-file`, `plan-extract-file`, `apply-extract-file`, `destroy-plan-extract-file`, `destroy-extract-file`.
-- `pr-comment` gains `body-file`. Exactly one of `body` / `body-file` is required for `mode=upsert`. Internally the action already writes the body to a tempfile for `gh api -F body=@`; with `body-file` it skips the heredoc entirely, which removes the `${{ inputs.body }}` interpolation as well.
+- `create-validation-summary` writes each body to `${RUNNER_TEMP}/tf-comment-<env>-<kind>[-<output-file-suffix>].md` and emits the **paths** as `head-summary-file`, `plan-extract-file`, `apply-extract-file`, `destroy-plan-extract-file`, `destroy-extract-file` and `step-summary-file`.
+- `pr-comment` gains `body-file`. Exactly one of `body` / `body-file` is required for `mode=upsert`. The action writes the marker and the body to a tempfile for `gh api -F body=@`; with `body-file` the body goes from that file into the tempfile without passing through a shell variable. An inline `body` is captured as `toJSON(inputs.body)`, one line, and kept shell-local.
 - The deprecated `summary` and `prefix` outputs, and the inline `head-summary` / `plan-extract` strings, are **deleted** — not gated behind a mode flag. See §7.15 for what makes that possible.
 
 > **P12 — file lifetime and collision.** `$RUNNER_TEMP` persists for the job, which is all that is needed. But `create-validation-summary` is invoked **four** times in one job (phase 1, phase 1 final, phase 2, phase 2 final) and the head-upsert falls back from the final invocation's body to the earlier one's. Without a distinguishing suffix the later invocation overwrites the file the fallback points at, and the fallback silently resolves to the *wrong* body. Hence `output-file-suffix`, passed explicitly as `phase1` / `phase1-final` / `phase2` / `phase2-final`. Tested as C16.
@@ -491,7 +497,7 @@ Changes:
 
 ### 7.11 `aggregate-validation-summaries` — grouped rows (L3 / L6)
 
-[GROUPED_TABLE_STEP_ROWS](../aggregate-validation-summaries/helpers_additional.sh) gains `apply`, `destroy-plan` and `destroy`, read from the already-captured step outcomes. The warning rows gain three more (§7.7), and the Plan-details row gains its apply / destroy-plan / destroy siblings.
+A new `GROUPED_TABLE_OP_BLOCKS`, beside [GROUPED_TABLE_STEP_ROWS](../aggregate-validation-summaries/helpers_additional.sh), holds `apply`, `destroy-plan` and `destroy`, read from the already-captured step outcomes. The warning rows gain three more (§7.7), and the Plan-details row gains its apply / destroy-plan / destroy siblings.
 
 Row presence is group-wide: show a row when **any** env in the group has data for it; envs without render `—`.
 
@@ -511,13 +517,15 @@ It already reads `parse-destroy-plan` and `steps.apply.outcome`. §5.1 is fixed 
 
 ### 7.14 `create-tf-vars-matrix` — new workflow inputs
 
-`apply-extract-include-outputs` is a new top-level workflow input. Per [CLAUDE.md](../CLAUDE.md), boolean/string inputs need **no** matrix-builder logic — the generic forwarding loop handles them, and per-env override comes free — but they **must** be added to the `REQ_FIELDS` / `NOT_EMPTY_FIELDS` validators and to the JSON test fixtures, or the matrix job fails validation at runtime.
+`apply-extract-include-outputs` is a new top-level workflow input. Per [CLAUDE.md](../CLAUDE.md), boolean/string inputs need **no** forwarding logic — the engine's generic forwarding (`build_row` in `engine/dsb_tf_engine/environments.py`) carries them into every row, and an environment may override this one — but it **must** be classified in `PER_ENVIRONMENT_INPUTS`, listed in `BOOLEAN_INPUTS`, `REQUIRED_FIELDS` and `NOT_EMPTY_FIELDS`, and present in the port cases' inputs, or the engine's tests fail (P21).
 
 ### 7.15 Migrating `terraform-module-ci.yaml` off `comment-on-pr@v2` (L8)
 
 In scope, because it is what lets §7.10 delete the deprecated outputs outright instead of shipping an `emit-inline-bodies` mode flag and maintaining both code paths forever.
 
-**What is actually there.** `terraform-module-ci.yaml` has two comment call sites, both using `dsb-norge/github-actions/ci-cd/comment-on-pr@v2` with `pr-comment-text` + `delete-comments-starting-with`:
+> **On the v1 line.** This section records the migration as it shipped on v0. On `main`, `create-test-report` is retired: the module workflow runs its tests through the project workflow's test jobs and reports them in one tests head, `<!-- tf:head:tests:<caller> -->`, from `create-test-summary`, and deletes v0's per-file `<!-- tf:head:test:` comments ([Module-ci.md](Module-ci.md) D1). The validation head keeps `<!-- tf:head:module -->`, upserted from `body-file`.
+
+**What was there.** `terraform-module-ci.yaml` had two comment call sites, both using `dsb-norge/github-actions/ci-cd/comment-on-pr@v2` with `pr-comment-text` + `delete-comments-starting-with`:
 
 | Call site | Producer | Body size |
 |---|---|---|
@@ -537,7 +545,7 @@ In scope, because it is what lets §7.10 delete the deprecated outputs outright 
 1. **§7.10 gets simpler, not bigger.** No `emit-inline-bodies` input, no dual rendering path, no test asserting the two forms agree.
 2. **`create-test-report` enters CI for the first time.** [action-tests.yml](../.github/workflows/action-tests.yml) discovers suites by the presence of `run_all_tests.sh`; `create-test-report` has none, so nothing in CI has ever exercised it.
 3. **Comments stop jumping.** `comment-on-pr@v2` deletes by prefix and POSTs a new comment every run, so the module-ci comment loses its place in the conversation and re-notifies subscribers each time. Marker upsert PATCHes in place and preserves `created_at` — the behaviour the default workflow already has.
-4. **One less cross-repo dependency.** `ci-cd/comment-on-pr@v2` is the only cross-repo *commenting* action left in these workflows; after this, PR commenting in this repo runs on one primitive it owns. (`get-github-app-installation-token@v2` is unrelated and stays.)
+4. **One less cross-repo dependency.** `ci-cd/comment-on-pr@v2` is the only cross-repo *commenting* action left in these workflows; after this, PR commenting in this repo runs on one primitive it owns. (`get-github-app-installation-token@v2` was unrelated and stayed; the workflows now mint App tokens with `actions/create-github-app-token`.)
 
 > **P22 — this changes a second workflow's user-visible behaviour.** `terraform-module-ci.yaml` consumers see their comment stop being recreated and start being edited, and the comment body gains a marker line. It is an improvement, but it is not this feature, and it ships on the same force-moved `@v0`. It gets its own commit so it can be reverted alone, and its own line in the release note.
 
@@ -579,11 +587,13 @@ Rows in this fixed order. `cond` rows render only when their gating input is non
 | 22 | ⏱ | Destroy time | cond — `status-destroy` |
 | 23 | 🔗 | Links | **always last**; rendered when any tag comment id was supplied |
 
+`status-verify-lock: absent` drops the Lock file row, and `status-plan: absent` the Plan and Plan time rows; the module workflow passes both, as a module has no lock file and no plan.
+
 **Ordering rule: operations in the order they are performed, each as a block.** Rows 2-10 are today's table unchanged. Every operation that follows `plan` contributes the same four-row block the plan block already has — **status · warnings · details · time** — and the blocks appear in the order the workflow runs them: plan, apply, destroy-plan, destroy. A row is omitted from its block when it has no data; the block's own rows keep this relative order.
 
 Two consequences worth stating, because both are load-bearing for review:
 
-- **New rows are append-only below row 10.** A plan-only environment's table is not merely equivalent to today's, it is a strict prefix of the new one. That is a stronger and more easily verified form of the §2 invariant than "the same rows in the same places" would have been.
+- **New rows are append-only below row 10**, the Mode row aside (it is row 1, and a plan-only environment has none). A plan-only environment's table is not merely equivalent to today's, it is a strict prefix of the new one. That is a stronger and more easily verified form of the §2 invariant than "the same rows in the same places" would have been.
 - **Reading the table top to bottom replays the job.** A reviewer scanning down sees init → … → plan → apply → destroy, which is the order the job log shows and the order the annotations fire in. Grouping by kind instead — all statuses, then all warnings — would have read as a data dictionary rather than a timeline.
 
 **Every operation block is exactly four rows** — status · warnings · details · time — including the destroy block, which is why §7.7 keeps four independent warning counts rather than three. Col-1 icons therefore repeat across blocks (four `⚠️`, four `📊`, four `⏱`); the `title` tooltip on each carries the full label, as today, and the Label column disambiguates.
@@ -593,7 +603,7 @@ Status cells keep the existing text form: `` `success` `` / `<kbd>failure</kbd>`
 **Rendered — an env with `apply-on-pr`:**
 
 ```markdown
-### Terraform validation summary for environment: `example`
+### Terraform summary for environment: `example`
 |  | Step | Result |
 |:---:|---|---|
 | <span title="Mode">🐙</span> | Mode | <span title="This environment mutates infrastructure on pull request">applies on PR</span> |
@@ -611,7 +621,7 @@ Status cells keep the existing text form: `` `success` `` / `<kbd>failure</kbd>`
 | <span title="Links">🔗</span> | Links | [log extract](#issuecomment-1)<br>[apply log](#issuecomment-2)<br>[job log](…) |
 ```
 
-**Rendered — a plan-only env:** unchanged from today. Rows 2-10 and 22 only — a strict prefix of the above.
+**Rendered — a plan-only env:** unchanged from today, titled `Terraform validation summary`: rows 2-10, identical to the above's, then row 23.
 
 ### 8.2 The Mode row
 
@@ -623,9 +633,9 @@ Rendered from `goals-json`, **independently of any outcome**, so it appears the 
 | `destroy-on-pr` | ☠ | `destroys on PR` |
 | both | 🐙☠ | `applies on PR`<br>`destroys on PR` |
 
-The seed job's placeholder body (`⏳ Awaiting results…`) gains the same line when the env qualifies, so the warning is on the PR before `init` has finished.
+The seed job's placeholder body (`⏳ Awaiting results (run #<id> attempt #<n>)…`) gains the same line when the env qualifies, so the warning is on the PR before `init` has finished.
 
-**An on-PR goal counts only when this pull request grants it.** It applies or destroys only on an open pull request against the default branch ([Decision-engine.md](Decision-engine.md) §6, I1), so against another base the goals hold `apply-on-pr` while nothing applies, and "applies on PR" would be false. All three renderers therefore narrow the goals by what was granted: `create-validation-summary` counts `apply-on-pr` only when `goals-granted-json` holds `apply`, and `destroy-on-pr` only when it holds `destroy`; the aggregator's group head (§8.8) reads the same from the metadata's `goals-granted`; and the engine's `mutates-on-pr`, which the seed's placeholders and the aggregator's unaffected and held-back members read, lists only the on-PR goals the event grants, none off a pull request against the default branch ([Decision-engine.md](Decision-engine.md) §5). The title (§8.1) follows the Mode row. Where the granted goals are missing, as in an older artifact, or malformed, the goals decide as before: a missing value never hides a warning that may be true.
+**An on-PR goal counts only when this pull request grants it.** It applies or destroys only on an open pull request against the default branch ([Decision-engine.md](Decision-engine.md) §6, I1), so against another base the goals hold `apply-on-pr` while nothing applies, and "applies on PR" would be false. All three renderers therefore narrow the goals by what was granted: `create-validation-summary` counts `apply-on-pr` only when `goals-granted-json` holds `apply`, and `destroy-on-pr` only when it holds `destroy`; the aggregator's group head (§8.8) reads the same from the metadata's `goals-granted`; and the engine's `mutates-on-pr`, which the seed's placeholders and the aggregator's unaffected and held-back members read, lists only the on-PR goals the event grants, none off a pull request against the default branch ([Decision-engine.md](Decision-engine.md) §5). The title (§8.6) follows the Mode row. Where the granted goals are missing, as in an older artifact, or malformed, the goals decide as before: a missing value never hides a warning that may be true.
 
 > **Concern — semantic wrinkle.** "Mode" is not a step, but it sits in a column headed `Step`. Accepted: the alternative — a banner line above the table — does not survive the grouped table's shape (§8.8), and having the marker in exactly one place in both tables is worth more than the column-header purity. Do not rename the column; that is a breaking change to every existing consumer's rendering.
 
@@ -639,7 +649,7 @@ Apply and destroy report **applied / planned**:
 
 Numerator from `parse-apply` / `parse-destroy-apply`; denominator from `parse-plan` / `parse-destroy-plan`. A partial apply reads `💫 3/9 added` at a glance. A failed apply reads `💫 ?/9 added` — never `0/9` (P2).
 
-Apply rows carry only the three badges terraform's apply summary has. `move` / `import` / `remove` appear on the Plan details and Destroy plan details rows only; do not fabricate an applied-count for them.
+Apply rows carry the badges terraform's apply summary has: the three above, and `📥 I/P imported` when the apply imported anything (P32). `move` / `remove` appear on the Plan details and Destroy plan details rows only; do not fabricate an applied-count for them.
 
 Destroy plan details is a **plan**, so it uses the plan badge set and the plan's present-tense verbs (`add` / `change` / `destroy`). Destroy details uses `💥 N/N destroyed` alone.
 
@@ -703,7 +713,7 @@ other way. An absent status is not a failure: shape 3b needs a status that is pr
 >
 > **Amended 2026-09-17**, after the first real `apply-on-pr` run: shape 2 said `Apply: N changes ✅`, a bare total the head already shows. The collapsed line is all most readers see, and the question they have is "did everything planned get applied?", so it now carries applied/planned per kind. Three shapes were offered (replace the total; keep it and append; put the ratios inside the details); replacing won. Shapes 1, 3 and 4 are unchanged — a failed apply has `?` numerators, so ratios add nothing there.
 
-**Shape 3 is `<details open>`.** Every other collapser stays closed. A failed apply is the one case nobody should have to click, and it is the case where the console tail carries the whole story (§7.2.1).
+**Shape 3b is `<details open>`.** Every other collapser stays closed. A failed apply is the one case nobody should have to click, and it is the case where the console tail carries the whole story (§7.2.1).
 
 Warning collapsers are appended as siblings after the block, exactly as the plan tag does today, with the same warnings-over-console budget priority (§7.6 P17).
 
@@ -716,19 +726,19 @@ Warning collapsers are appended as siblings after the block, exactly as the plan
 ```markdown
 ## Terraform run summary
 
-**2 environments · 1 applied · 1 destroyed · 0 failed**
+**2 environments · 1 applied · 1 failed**
 
 > The `· N destroyed` segment appears only when something was destroyed — most runs never destroy, and a permanent `· 0 destroyed` would be noise on all of them. An environment that both applies and destroys in one run (the throwaway-environment pattern) counts in both.
 
 | Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |
 |---|:---:|---|---|---|---|---|
-| `example` | ✅ | `💫 1` `🛠️ 0` `💥 0` | `💫 1/1` `🛠️ 0/0` `💥 0/0` | — | `1:11` | [log](…) |
-| `other` | ❌ | `💫 0` `🛠️ 0` `💥 0` | — | — | `9:49` | [log](…) |
+| `example` | ✅ | `💫 1` `🛠️ 0` `💥 0` | `💫 1/1` `🛠️ 0/0` `💥 0/0` | — | `1:11` | [run](…) |
+| `other` | ❌ | `💫 0` `🛠️ 0` `💥 0` | — | — | `9:49` | [run](…) |
 ```
 
 The headline line is the part that survives being read on a phone. `Time` is the sum of the env's invocation times. Rows are alphabetical when the job has no relevance file.
 
-With path relevance the job also downloads the `relevance` artifact, and the rollup lists every environment of `environments-yml` in that order, the unaffected ones as rows of dashes, under the headline `N environments · A affected · U not affected · X applied · Y failed` and a line stating the relevance mode. An affected environment whose job left no metadata gets a `❔` row and counts as not reported. The exact shapes: [Path-relevance.md §6.5](Path-relevance.md).
+With path relevance the job also downloads the `relevance` artifact, and the rollup lists every environment of `environments-yml` in that order, the unaffected ones as rows of dashes, under the headline `N environments · A affected · U not affected · X applied · Y failed` (with `· D destroyed`, `· H held back` and `· M not reported` when non-zero) and a line stating the relevance mode. An affected environment whose job left no metadata gets a `❔` row and counts as not reported. The exact shapes: [Path-relevance.md §6.5](Path-relevance.md).
 
 ### 8.8 Per-group head
 
@@ -757,7 +767,7 @@ Collected from §7-§8 for review convenience. Each is expanded at its source.
 | P13 | §7.5 | Grouped envs depend on §7.11 — the two are not independently shippable |
 | P14 | §7.10 | Bodies leave the step-output log; `log-multiline` must be kept |
 | P15 | §7.5 | Every phase-2 step needs `always()`, because the phase-1 gates may have failed the job |
-| P16 | §7.5 | A second head PATCH per run; hash short-circuit keeps it free for plan-only envs |
+| P16 | §7.5 | A second head PATCH per run, a no-op body for plan-only envs; `pr-comment` has no hash short-circuit |
 | P17 | §7.6 | Each extract has its own 65k budget — do not share `HARD_LIMIT` |
 | P18 | §7.7 | One warning count per operation block is load-bearing for §8.1's uniform blocks — collapsing any two counts re-opens the unattributable-number problem |
 | P19 | §7.8 | The 1 MiB `$GITHUB_STEP_SUMMARY` cap — never append an extract |
@@ -820,7 +830,7 @@ Fixtures under `parse-terraform-apply/test-data/`, mirroring `parse-terraform-pl
 | B9 | should | `apply_large_counts.log` — 3-digit counts | no off-by-one in the number regex |
 | B10 | should | `apply_non_ascii.log` | UTF-8 resource names survive the filter |
 | B11 | should | fixture with the literal text `Apply complete!` inside a resource **value** | the real summary line is the one matched (anchoring regression) |
-| B12 | could | ANSI-coloured fixture | documents the `-no-color` dependency: parse fails loudly rather than mis-counting |
+| B12 | could | ANSI-coloured fixture | still parses (the colour codes precede a newline), but escape bytes reach the filtered file — the `-no-color` dependency (P26) |
 
 ### 10.3 `create-validation-summary`
 
@@ -828,7 +838,7 @@ Fixtures under `parse-terraform-apply/test-data/`, mirroring `parse-terraform-pl
 |---|---|---|---|
 | C1 | must | all new inputs at their defaults | rendered head and plan-extract are **byte-identical** to today's output for the same inputs. The §2 invariant; the regression guard for every existing consumer |
 | C1b | must | any combination of new inputs | the plan-only rendering is a **strict prefix** of the result — no new row is ever inserted above `Plan time` (§8.1) |
-| C2 | must | `status-apply=success` | Apply row present, at position 8 of §8.1 |
+| C2 | must | `status-apply=success` | Apply row present, at row 11 of §8.1, right after Plan time |
 | C3 | must | `status-apply=failure` | Apply row present with `<kbd>failure</kbd>` |
 | C4 | must | `apply-completed=false` | Apply details renders `?/N`, never `0/N` (P2) |
 | C5 | must | `status-destroy-plan` / `status-destroy` set independently | each row group appears independently |
@@ -842,12 +852,12 @@ Fixtures under `parse-terraform-apply/test-data/`, mirroring `parse-terraform-pl
 | C13 | must | budgets are independent | a 64k plan extract does not shrink the apply extract (P17) |
 | C14 | must | four warning counts | each row gated by its own count, each in its own operation block; `warning-count` semantics unchanged (P18) |
 | C15 | must | destroy block | renders all four rows (status, warnings, details, time) when destroy ran with warnings |
-| C16 | must | `output-file-suffix` | four invocations in one job write four distinct files; none overwrites another (P12) |
-| C17 | must | every invocation | `$GITHUB_OUTPUT` contains no body strings at all; only paths, counts and flags |
+| C16 | must | `output-file-suffix` | four invocations in one job write 24 distinct files, six bodies each; none overwrites another (P12) |
+| C17 | must | every invocation | `$GITHUB_OUTPUT` contains no body strings at all; only the six file paths |
 | C18 | must | deleted outputs | `summary`, `prefix`, `head-summary`, `plan-extract` are absent from `$GITHUB_OUTPUT` |
 | C19 | must | all tag comment ids supplied | Links row carries plan, apply, destroy-plan, destroy and job log lines |
 | C20 | should | `apply-console-file` empty or missing | extract renders the "not available" shape, no crash |
-| C21 | should | failed apply | block shape 3 rendered, and it is `<details open>` (§8.6) |
+| C21 | should | failed apply | block shape 3b rendered, and it is `<details open>` (§8.6) |
 | C23 | should | grouped mode | head still omits the table; all extracts still produced |
 | C24 | could | destroy-plan extract | uses the plan's five shapes, not apply's |
 | C25 | must | pull request, `goals-json` holds `apply-on-pr`, `goals-granted-json` lacks `apply` | no Mode row, no banner, the "validation summary" title (§8.2) |
@@ -890,7 +900,7 @@ Assert on captured stdout and on a temp file bound to `GITHUB_STEP_SUMMARY`.
 | H3 | must | neither supplied, `mode=upsert` | fails with a clear error |
 | H4 | must | `body-file` path does not exist | fails with a clear error, no partial POST |
 | H5 | must | `body-file` with a 64k body | no ARG_MAX failure; content intact |
-| H6 | should | `body` (existing path) | unchanged behaviour, including the hash short-circuit |
+| H6 | should | `body` (existing path) | unchanged behaviour |
 | H7 | should | `mode=delete` | `body-file` ignored, as `body` is today |
 
 ### 10.7 `aggregate-validation-summaries`
@@ -917,7 +927,7 @@ Assert on captured stdout and on a temp file bound to `GITHUB_STEP_SUMMARY`.
 
 ### 10.8b `create-test-report` (converted in §7.15)
 
-Pinned against the legacy action's output **before** conversion (P23).
+Pinned against the legacy action's output **before** conversion (P23). The action and its suite are retired on the v1 line (§7.15); the table records what pinned the conversion on v0.
 
 | # | Level | Case | Assertion |
 |---|---|---|---|
@@ -934,13 +944,12 @@ Pinned against the legacy action's output **before** conversion (P23).
 
 | # | Level | Case | Assertion |
 |---|---|---|---|
-| F1 | must | row-set sync | the per-env renderer's row set equals the per-group renderer's row set (P9). New test; enforces the documented-but-unenforced §5.1 invariant of [Workflow-pr-comments.md](Workflow-pr-comments.md) |
+| F1 | must | row-set sync | the per-env renderer's row set equals the per-group renderer's row set (P9), in `aggregate-validation-summaries/run_all_tests.sh`; enforces the §5.1 invariant of [Workflow-pr-comments.md](Workflow-pr-comments.md) |
 | F2 | must | `parse-destroy-plan` step id | assert in `evaluate-automerge-eligibility/run_all_tests.sh` that the reusable workflow contains a step with that exact id (P7). It is the only thing standing between §5.1 and a silent re-break |
 | F3 | must | workflow YAML parses | `python3 -c "import yaml; yaml.safe_load(...)"` on the reusable workflow |
-| F4 | must | matrix fixtures | `create-tf-vars-matrix` fixtures updated for the new input; existing fixtures still pass (P21) |
+| F4 | must | matrix fixtures | the engine's port cases carry the new input; existing cases still pass (P21) |
 | F5 | must | gate ordering | assert the three new `🧐` steps appear **after** `upsert-head-apply` in the workflow's step list (P1). A structural grep, not a behavioural test — but P1 is the defect most likely to be reintroduced by a later refactor |
 | F6 | must | no inline bodies anywhere | assert no workflow in `.github/workflows/` passes a comment body through `${{ steps.*.outputs.* }}`; every `pr-comment` upsert uses `body-file:` |
-| F7 | could | golden file | full head + four tag bodies for one representative env |
 | F7 | must | every `with:` key a workflow passes is declared by the action or reusable workflow it calls, and every required input without a default is passed | GitHub enforces neither: an unknown key is a run-time warning nobody reads, and a missing required input arrives as an empty string. Both had already happened — an undeclared `apply-count-import`, and a `status-verify-lock` omission that rendered `<kbd></kbd>` in every module repo's comment |
 
 ### 10.10 What cannot be covered by tests
@@ -950,7 +959,7 @@ Stated so review does not assume more coverage than exists.
 - **Ordering inside the real workflow.** F5/F5c grep the YAML; they do not prove the runtime behaviour. `action-tests.yml` runs action suites, not the reusable workflow. Verification is manual, via the PR's preview ref ([Preview-refs.md](Preview-refs.md)) against a calling repo with `apply-on-pr`, checking that a **deliberately failed** apply still updates the head comment.
 
   Verified on 2026-09-16 against a calling repo's throwaway environment: `null` provider only, local backend, two resources where the second fails in a `local-exec` provisioner — a genuine partial apply with no cloud access needed, repeatable on every run because the state dies with the job. Three runs: the first never reached apply (lint) but proved phase 2 runs after a failed job; the second reached apply and found P31; the third showed the full expected result — job fails on the apply step, head reads `Apply | failure` with `💫 ?/2 added`, the apply tag is `<details open>❌ Apply failed …` with the console tail, both `Apply failed` annotations are on the check run, and the run summary reads `0 applied · 1 failed`. The successful-apply shapes, grouped environments and `push`-event surfaces were verified on a test-bed calling repository: a seven-environment configuration with apply on pull request, a destroy plan and a destroy; pushes to the default branch that applied; and grouped environments' heads.
-- **Real terraform output drift** — *covered since §16.* Every fixture is a snapshot; a future terraform version changing the `Apply complete!` wording used to break parsing in production with green unit tests, mitigated only by B4/B5 failing loudly (`?`) rather than silently (`0`). The contract tests (§16) now run the real binary weekly across the newest `newest-minors` minors (six today) and diff the wording against the fixtures, and the outcome invariant (§14) means such a change can no longer render a successful apply as failed — only its counts as `?`, with a run-page warning asking for the console.
+- **Real terraform output drift** — *covered by §16.* Every fixture is a snapshot; a future terraform version changing the `Apply complete!` wording used to break parsing in production with green unit tests, mitigated only by B4/B5 failing loudly (`?`) rather than silently (`0`). The contract tests (§16) now run the real binary weekly across the newest `newest-minors` minors (six today) and diff the wording against the fixtures, and the outcome invariant (§14) means such a change can no longer render a successful apply as failed — only its counts as `?`, with a run-page warning asking for the console.
 - **The secret-exposure surface of error messages** (P3 residual risk).
 - **The run-level rollup's rendering on the real run page.** Tested as a string; the GitHub markdown renderer is not in the loop.
 
@@ -1071,7 +1080,7 @@ All scenarios use the built-in `terraform_data` resource — it supports `import
 2. every `count-*`, `has-output-only-changes`, `completed` and `apply-kind` against `expected.json`;
 3. that a console the scenario expects to be recognised produced no *Terraform output not recognised* warning;
 4. for the tick scenario, that a real tick line was printed and the filtered console has none;
-5. that the **summary-bearing lines** of the captured console — `Plan:`, `Apply complete!`, `No changes.`, the "without changing any real infrastructure" sentence, `Changes to Outputs:`, `Warning:`, `Error:`, the resource-action lines (including both move forms), the tick shape with its elapsed time normalised — match the pinned fixture. A mismatch fails the job with one `::error` per console that lists the lines `Terraform <v> emits` which the fixture lacks and the lines `the fixture <path> has` which that version does not emit, then `update the fixture (contract-tests/run.sh --capture <scenario>) if intended`; the last forty lines of each console follow in the job log, and the whole scratch directory is uploaded as the `contract-tests-<version>` artifact.
+5. that the **summary-bearing lines** of the captured console — `Plan:`, `Apply complete!`, `No changes.`, the "without changing any real infrastructure" sentence, `Changes to Outputs:`, `Warning:`, `Error:`, the resource-action lines (including both move forms), the tick shape with its elapsed time normalised — match the pinned fixture. A mismatch fails the job with one `::error title=Terraform output drift (<scenario>, <plan|apply>)` per console that lists the lines `Terraform <v> emits, and the fixture <path> does not have` and the lines `The fixture <path> has, and Terraform <v> does not emit`, then `Update the fixture (contract-tests/run.sh --capture <scenario>) if intended.`; the last forty lines of each console follow in the job log, and the whole scratch directory is uploaded as the `contract-tests-<version>` artifact.
 
 Each scenario with a plan is also counted from its **JSON plan**: before the apply, `run.sh` renders
 the saved plan with `terraform show -json` as `terraform-plan`'s JSON step does (stdout into the
