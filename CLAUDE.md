@@ -64,7 +64,7 @@ my-action/
 
 Every action follows the modern layout now (`create-tf-vars-matrix` is the engine departure above), and every one has a suite: the Action tests comment's "Not tested yet" list is empty. **A new action follows the guide from its first commit.** Cherry-pick `helpers.sh` from a reference action without modifying it.
 
-For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` — never `return`. GitHub Actions sources the script in a `bash -eo pipefail` shell, so `exit` terminates the sourced process cleanly and the runner fails the step on non-zero. Tests run the script in a `( subshell )`, so `exit` terminates only the subshell.
+For step scripts: end with `main; _main_exit_code=$?; exit ${_main_exit_code}` — never `return`. GitHub Actions sources the script in a `bash -eo pipefail` shell, so `exit` terminates the sourced process cleanly and the runner fails the step on non-zero. Tests run the script in a `( subshell )`, so `exit` terminates only the subshell. F23 in `evaluate-automerge-eligibility/run_all_tests.sh` enforces the ending.
 
 Every `run:` block in an `action.yml` **opens with a one-line `#` comment describing what the step does**. GitHub ignores a composite step's `name:` and titles the log group `Run <first line of the run block>` — without the comment every shim renders as an indistinguishable `Run set -o allexport`. Rationale and wording rules: `docs/Action-implementation-guide.md` → "Every `run:` block opens with a description comment".
 
