@@ -45,7 +45,7 @@ inputs:
       One of:
         - `upsert` — POST a new comment if no marker match exists, else PATCH
           the oldest matching comment in place. Duplicates are deleted in the
-          same pass. Hash short-circuits no-op updates.
+          same pass. A match is always PATCHed, even with an unchanged body.
         - `delete` — DELETE every comment whose body contains the marker.
     required: true
   marker:

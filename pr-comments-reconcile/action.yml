@@ -5,8 +5,8 @@ description: |
 
     1. Heads pass — for each `{marker, body}` in `heads-yml` (declared order),
        PATCH the existing match (oldest, with duplicates self-healed) or POST
-       fresh. Hash short-circuits no-op PATCHes (no subscriber re-ping for
-       unchanged content). When seeding a fresh PR, POSTs happen sequentially
+       fresh. A match is always PATCHed, even with an unchanged body. When
+       seeding a fresh PR, POSTs happen sequentially
        in declared order so the comments' `created_at` ordering follows the
        declared order — useful for keeping a deterministic set of "summary"
        comments at the top of the conversation.

@@ -7,9 +7,8 @@
 #
 #   upsert  - find by marker; PATCH if exists, POST if not. Self-heals
 #             duplicate markers by keeping the oldest and deleting the
-#             rest. Skips the PATCH entirely when the existing body's
-#             embedded hash matches the new body (so subscribers aren't
-#             re-pinged for no-op runs).
+#             rest. A match is always PATCHed, even when its body is
+#             unchanged.
 #   delete  - DELETE every comment whose body contains the marker.
 #
 # Required environment variables:
