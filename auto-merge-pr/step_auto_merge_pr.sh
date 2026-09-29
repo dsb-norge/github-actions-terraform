@@ -421,10 +421,4 @@ function main() {
 # Run main function
 main
 _main_exit_code=$?
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-  # Script is being sourced - return to allow caller to capture exit code
-  return ${_main_exit_code}
-else
-  # Script is being executed directly - exit with the code
-  exit ${_main_exit_code}
-fi
+exit ${_main_exit_code}

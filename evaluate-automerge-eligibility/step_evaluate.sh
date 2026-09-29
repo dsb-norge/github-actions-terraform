@@ -1087,14 +1087,7 @@ function main {
   return 0
 }
 
-# Run main function and propagate exit code
-# Use return when sourced (GitHub Actions), exit when executed directly (testing)
+# Run main function
 main
 _main_exit_code=$?
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-  # Script is being sourced - return to allow caller to capture exit code
-  return ${_main_exit_code}
-else
-  # Script is being executed directly - exit with the code
-  exit ${_main_exit_code}
-fi
+exit ${_main_exit_code}

@@ -118,5 +118,3 @@ runs:
         )
 
         source "${GITHUB_ACTION_PATH}/step_auto_merge_pr.sh"
-        exit_code=$?
-        exit ${exit_code}

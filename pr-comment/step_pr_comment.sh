@@ -334,10 +334,7 @@ function main {
   return 0
 }
 
+# Run main function
 main
 _main_exit_code=$?
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-  return ${_main_exit_code}
-else
-  exit ${_main_exit_code}
-fi
+exit ${_main_exit_code}
