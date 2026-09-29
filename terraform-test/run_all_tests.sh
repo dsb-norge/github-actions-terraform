@@ -29,7 +29,7 @@ DATA_DIR="${_this_script_dir}/test-data"
 FIXTURES="${DATA_DIR}/terraform-1.16.2"
 GOLDEN_DIR="${DATA_DIR}/golden"
 UPDATE_GOLDENS="${UPDATE_GOLDENS:-}"
-MODULE_CI="${_this_script_dir}/../.github/workflows/terraform-module-ci.yaml"
+PROJECT_WORKFLOW="${_this_script_dir}/../.github/workflows/terraform-ci-cd-default.yml"
 
 # --------------------------------------------------------------------------
 # Harness
@@ -58,7 +58,7 @@ setup() {
   STEP_LOG="${TEST_TMP}/step-output.txt"
   TEST_PATH="${TEST_TMP}/bin:${PATH}"
 
-  # Inputs, as the action.yml shim hands them over (the new call shape).
+  # Inputs, as the action.yml shim hands them over.
   export input_test_file="tests/unit-pass.tftest.hcl"
   export input_working_directory="modules/net"
   export input_junit="true"
@@ -262,15 +262,16 @@ outputs_are_small() {
   return 1
 }
 
-# Structural assertions on action.yml (and the module CI workflow).
+# Structural assertions on action.yml (and its caller, the project workflow).
 yaml_check() {
-  python3 - "${_this_script_dir}/action.yml" "${MODULE_CI}" "${1}" <<'PY'
+  python3 - "${_this_script_dir}/action.yml" "${PROJECT_WORKFLOW}" "${1}" <<'PY'
+import json
 import re
 import sys
 import yaml
 
 action = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-module_ci = yaml.safe_load(open(sys.argv[2], encoding="utf-8"))
+workflow = yaml.safe_load(open(sys.argv[2], encoding="utf-8"))
 check = sys.argv[3]
 inputs = action.get("inputs", {})
 outputs = action.get("outputs", {})
@@ -278,60 +279,41 @@ steps = action["runs"]["steps"]
 by_id = {step.get("id"): step for step in steps}
 test = by_id["run-tests"]
 
-module_test_step = next(
-    step
-    for step in module_ci["jobs"]["module-tests"]["steps"]
-    if "terraform-test@" in str(step.get("uses", ""))
-)
-module_ci_text = open(sys.argv[2], encoding="utf-8").read()
-read_outputs = set(re.findall(r"steps\.test\.outputs\.([a-z-]+)", module_ci_text))
+test_job = workflow["jobs"]["terraform-test"]
+workflow_test_step = next(
+    step for step in test_job["steps"] if "terraform-test@" in str(step.get("uses", "")))
+read_outputs = set(re.findall(r"steps\.test\.outputs\.([a-z-]+)", json.dumps(test_job)))
+required = {name for name, spec in inputs.items() if spec.get("required") is True}
 
 expected_outputs = {
     "status", "reason", "passed", "failed", "errored", "skipped", "total", "elapsed-ms",
     "summary", "exit-code", "terraform-version", "terraform-version-floor", "runner-platform", "test-file-path",
     "json-file", "report-file", "junit-file", "runs-json-file", "diagnostics-json-file",
     "providers-json-file", "providers-summary", "providers-floating-count",
-    "failed-runs-json", "failed-runs-omitted", "json", "report",
+    "failed-runs-json", "failed-runs-omitted",
 }
-legacy_if = "inputs.working-directory == ''"
 
 checks = {
-    # Module CI passes only these keys; every one must be an input.
-    "module-ci-inputs": set(module_test_step.get("with", {})) <= set(inputs),
-    # Module CI reads these outputs; every one must exist.
-    "module-ci-outputs": bool(read_outputs) and read_outputs <= set(outputs),
+    # The test job passes these keys; every one must be an input, and every required input passed.
+    "workflow-inputs": set(workflow_test_step.get("with", {})) <= set(inputs)
+    and required <= set(workflow_test_step.get("with", {})),
+    # The test job reads these outputs; every one must exist.
+    "workflow-outputs": bool(read_outputs) and read_outputs <= set(outputs),
     "inputs": set(inputs) == {
         "test-file", "working-directory", "junit", "slug", "status-credentials",
-        "status-lock", "status-init", "environments-lock-file", "azure-login", "upload-artifact",
-    } and inputs["test-file"].get("required") is True
+        "status-lock", "status-init", "environments-lock-file",
+    } and required == {"test-file", "working-directory"}
+    and all("default" not in inputs[name] for name in required)
     and all(inputs[name].get("default") == "" for name in (
-        "working-directory", "slug", "status-credentials", "status-lock", "status-init",
-        "environments-lock-file"))
-    and inputs["junit"].get("default") == "true"
-    and inputs["azure-login"].get("default") == "auto"
-    and inputs["upload-artifact"].get("default") == "auto",
+        "slug", "status-credentials", "status-lock", "status-init", "environments-lock-file"))
+    and inputs["junit"].get("default") == "true",
     "outputs": set(outputs) == expected_outputs and all(
         outputs[name]["value"] == "${{ steps.run-tests.outputs.%s }}" % name for name in outputs),
-    "login-gated": by_id["azure-login"]["uses"] == "azure/login@v3"
-    and by_id["azure-login"]["if"]
-    == "inputs.azure-login == 'true' || (inputs.azure-login == 'auto' && " + legacy_if + ")"
-    and by_id["azure-login"]["with"] == {
-        "tenant-id": "${{ env.ARM_TENANT_ID }}",
-        "subscription-id": "${{ env.ARM_SUBSCRIPTION_ID }}",
-        "client-id": "${{ env.ARM_CLIENT_ID }}",
-    }
-    and steps.index(by_id["azure-login"]) < steps.index(test),
-    "upload-gated": by_id["upload-test-results"]["uses"] == "actions/upload-artifact@v7"
-    and "(inputs.upload-artifact == 'true' || (inputs.upload-artifact == 'auto' && " + legacy_if + "))"
-    in by_id["upload-test-results"]["if"]
-    and "steps.run-tests.outputs.json-file != ''" in by_id["upload-test-results"]["if"]
-    and by_id["upload-test-results"]["with"] == {
-        "name": "test-results-output-${{ inputs.test-file }}",
-        "path": "${{ steps.run-tests.outputs.json-file }}",
-    },
+    # The caller logs in and uploads; the action only runs and classifies.
+    "steps": [step.get("id") for step in steps] == ["run-tests", "test-status"]
+    and not any("uses" in step for step in steps),
     "test-step": test.get("continue-on-error") is True
-    and "!cancelled()" in str(test.get("if"))
-    and "steps.azure-login.outcome != 'failure'" in str(test.get("if"))
+    and test.get("if") == "!cancelled()"
     and str(test["env"].get("TF_IN_AUTOMATION")).lower() == "true"
     and "working-directory" not in test,
     "gate-last": steps[-1]["id"] == "test-status"
@@ -349,8 +331,8 @@ checks = {
 ok = checks[check]
 if not ok:
     print(f"  structural check '{check}' failed")
-    if check == "module-ci-outputs":
-        print(f"  module CI reads {sorted(read_outputs)}")
+    if check == "workflow-outputs":
+        print(f"  the test job reads {sorted(read_outputs)}")
 sys.exit(0 if ok else 1)
 PY
 }
@@ -443,7 +425,7 @@ setup
 fixture pass.json
 export input_status_init=""
 run_step
-assert "E no outcomes supplied (legacy callers): the test runs" outputs_are "status=pass" "reason="
+assert "E no outcomes supplied: the test runs" outputs_are "status=pass" "reason="
 teardown
 
 setup
@@ -460,7 +442,7 @@ setup
 fixture pass.json
 fake_version "1.11.4"
 run_step
-assert "V 1.11.4 with a working directory: error (terraform-version)" outputs_are "status=error" "reason=terraform-version" "terraform-version=1.11.4"
+assert "V 1.11.4: error (terraform-version)" outputs_are "status=error" "reason=terraform-version" "terraform-version=1.11.4"
 assert "V 1.11.4: terraform test not run" terraform_test_not_run
 assert "V 1.11.4: the message names the floor" log_contains "below the floor 1.13.0"
 assert "V 1.11.4: the floor is published" output_is terraform-version-floor "1.13.0"
@@ -522,21 +504,21 @@ run_step
 assert "V 2.0.0: runs" output_is status pass
 teardown
 
+# The floor holds for every root, the workspace root included.
 setup
 fixture pass.json
 fake_version "1.9.8"
-export input_working_directory="" input_test_file="unit-pass.tftest.hcl" input_slug=""
+export input_working_directory="." input_slug=""
 run_step
-assert "V legacy call shape on 1.9.8: no floor, runs" output_is status pass
-assert "V 1.9.8: no -junit-xml below 1.11" test_call_is "cwd=<WORKSPACE> TF_IN_AUTOMATION=true args=test -json -no-color -filter=tests/unit-pass.tftest.hcl"
+assert "V 1.9.8 from the workspace root: error (terraform-version)" outputs_are "status=error" "reason=terraform-version" "terraform-version=1.9.8"
+assert "V 1.9.8 from the workspace root: terraform test not run" terraform_test_not_run
 teardown
 
 setup
 fixture pass.json
-fake_version "1.11.0"
-export input_working_directory="" input_test_file="unit-pass.tftest.hcl" input_slug=""
+fake_version "1.13.0"
 run_step
-assert "V 1.11.0: -junit-xml passed" test_call_is "cwd=<WORKSPACE> TF_IN_AUTOMATION=true args=test -json -no-color -filter=tests/unit-pass.tftest.hcl -junit-xml=<RUNNER_TEMP>/root--unit-pass/junit.xml"
+assert "V 1.13.0: -junit-xml passed" test_call_is "cwd=<WORKSPACE>/modules/net TF_IN_AUTOMATION=true args=test -json -no-color -filter=tests/unit-pass.tftest.hcl -junit-xml=<RUNNER_TEMP>/modules-net--unit-pass/junit.xml"
 teardown
 
 setup
@@ -650,8 +632,7 @@ assert "O diagnostics-json-file: file prefixed with the root" file_json_is diagn
 assert "O failed-runs-json: errored run with its diagnostic, then the skipped one" output_is failed-runs-json \
   '[{"run":"postcondition_errors","status":"error","file":"modules/net/main.tf","line":20,"summary":"Resource postcondition failed","detail":"prefix must not be boom"},{"run":"after_error","status":"skip","file":"","line":null,"summary":"","detail":""}]'
 assert "O failed-runs-omitted 0" output_is failed-runs-omitted "0"
-assert "O legacy names alias the new ones" outputs_are \
-  "json=${RUNNER_TEMP}/modules-net--unit-pass/test.json" "report=${RUNNER_TEMP}/modules-net--unit-pass/report.txt"
+assert "O no 'json' or 'report' output (only the -file names)" test -z "$(grep -E '^(json|report)(=|<<)' "${GITHUB_OUTPUT}")"
 assert "O report golden (run error)" report_matches report_runerror.txt
 teardown
 
@@ -882,33 +863,37 @@ assert "P init failed: providers not read" outputs_are "providers-summary=" "pro
 teardown
 
 # --------------------------------------------------------------------------
-# M — module CI compatibility (§9.7): the legacy call shape
+# R — required inputs: a caller bug fails the step before anything runs
+# --------------------------------------------------------------------------
+# test-file | working-directory | the errors logged (';'-separated)
+required_cases=(
+  "|modules/net|input 'test-file' is required"
+  "tests/unit-pass.tftest.hcl||input 'working-directory' is required ('.' for the workspace)"
+  "||input 'test-file' is required;input 'working-directory' is required ('.' for the workspace)"
+)
+for entry in "${required_cases[@]}"; do
+  IFS='|' read -r test_file working_directory errors <<<"${entry}"
+  setup
+  fixture pass.json
+  export input_test_file="${test_file}" input_working_directory="${working_directory}"
+  run_step
+  label="R test-file '${test_file}' working-directory '${working_directory}'"
+  assert "${label}: step exits 1" exit_is 1
+  IFS=';' read -r -a expected_errors <<<"${errors}"
+  for error in "${expected_errors[@]}"; do
+    assert "${label}: logs \"${error}\"" log_contains "ERROR: terraform-test: ${error}"
+  done
+  assert "${label}: terraform test not run" terraform_test_not_run
+  assert "${label}: no outputs, no files" test ! -s "${GITHUB_OUTPUT}" -a -z "$(ls -A "${RUNNER_TEMP}")"
+  teardown
+done
+
+# --------------------------------------------------------------------------
+# W — the project workflow's test job, the action's caller
 # --------------------------------------------------------------------------
 setup
-fixture pass.json
-export input_working_directory="" input_test_file="unit-pass.tftest.hcl" input_slug="" input_status_init=""
-run_step
-assert "M legacy shape: from the workspace, -filter=tests/<test-file>" test_call_is \
-  "cwd=<WORKSPACE> TF_IN_AUTOMATION=true args=test -json -no-color -filter=tests/unit-pass.tftest.hcl -junit-xml=<RUNNER_TEMP>/root--unit-pass/junit.xml"
-assert "M legacy shape: json, report, summary, exit-code as module CI reads them" outputs_are \
-  "json=${RUNNER_TEMP}/root--unit-pass/test.json" "report=${RUNNER_TEMP}/root--unit-pass/report.txt" \
-  "summary=Success! 2 passed, 0 failed." "exit-code=0" "status=pass"
-assert "M legacy shape: step exits 0" exit_is 0
-teardown
-
-setup
-fixture fail.json 1
-export input_working_directory="" input_test_file="unit-fail.tftest.hcl" input_slug="" input_status_init=""
-run_step
-assert "M legacy shape, failing test: step exits 1 (the action fails)" exit_is 1
-assert "M legacy shape, failing test: report file exists" test -f "$(output_value report)"
-teardown
-
-setup
-assert "M module CI's with: keys are all inputs" yaml_check module-ci-inputs
-assert "M module CI's outputs (steps.test.outputs.*) all exist" yaml_check module-ci-outputs
-assert "M azure/login runs for the legacy shape by default, gated by azure-login" yaml_check login-gated
-assert "M upload runs for the legacy shape by default, gated by upload-artifact" yaml_check upload-gated
+assert "W the test job's with: keys are all inputs, the required ones among them" yaml_check workflow-inputs
+assert "W the test job's outputs (steps.test.outputs.*) all exist" yaml_check workflow-outputs
 teardown
 
 # --------------------------------------------------------------------------
@@ -917,7 +902,8 @@ teardown
 setup
 assert "Y inputs and their defaults" yaml_check inputs
 assert "Y every output maps to the step output of the same name" yaml_check outputs
-assert "Y test step: continue-on-error, runs unless cancelled or login failed, TF_IN_AUTOMATION" yaml_check test-step
+assert "Y the steps: run-tests then the gate, no login, no upload" yaml_check steps
+assert "Y test step: continue-on-error, runs unless cancelled, TF_IN_AUTOMATION" yaml_check test-step
 assert "Y the gate fails the action unless the status is pass, last" yaml_check gate-last
 assert "Y only plain inputs reach the step's env" yaml_check env-scalars
 assert "Y every run block opens with a label comment" yaml_check run-block-labels
