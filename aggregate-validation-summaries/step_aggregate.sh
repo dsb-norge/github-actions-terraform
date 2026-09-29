@@ -4,7 +4,7 @@
 #
 # Reconciles per-group PR comments according to the desired set computed
 # from matrix-job-meta-*.json artifacts. See docs/Workflow-pr-comments.md
-# §4.6 for the full algorithm.
+# §3.3 for the desired set and §8.1 for when it deletes nothing.
 #
 # Required environment variables:
 #   input_metadata_files_pattern  - Glob for downloaded artifacts
@@ -1148,7 +1148,7 @@ function upsert_pass {
   for group in "${sorted_groups[@]}"; do
     start-group "Step 5: Upsert group '${group}'"
 
-    # Sort envs alphabetically within the group (docs/Workflow-pr-comments.md §4.2),
+    # Sort envs alphabetically within the group (docs/Workflow-pr-comments.md §5.3),
     # or in environments-yml order when the relevance file gave one (Step 1b).
     if [ -n "${GROUP_COLUMNS[${group}]:-}" ]; then
       envs_sorted="${GROUP_COLUMNS[${group}]}"

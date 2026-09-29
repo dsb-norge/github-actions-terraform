@@ -40,7 +40,7 @@ function _group_marker {
 # in the grouped table's status cells.
 # Outcomes: success | failure | cancelled | skipped | '' (missing)
 # Output written to stdout: "<emoji>|<title>" — split on '|' by caller.
-# See docs/Workflow-pr-comments.md §4.3.
+# See docs/Workflow-pr-comments.md §5.3.
 function _status_emoji_and_title {
   local outcome="${1}"
   case "${outcome}" in
@@ -101,7 +101,7 @@ declare -gar GROUPED_TABLE_OP_BLOCKS=(
 # Render the Plan Details cell for a single env in the grouped table.
 # Cell content is wrapped in <div align="left">...</div> so the badge stack
 # anchors to the left edge of the otherwise center-aligned column (see
-# docs/Workflow-pr-comments.md §4.4).
+# docs/Workflow-pr-comments.md §5.3).
 # Echos "N/A" when no parse-plan data is available for the env.
 function _render_plan_details_cell {
   local count_add="${1}"
@@ -213,7 +213,7 @@ function _render_plan_time_cell {
 # the order the operations run: plan tag, apply tag, destroy-plan tag,
 # destroy tag, job log. Each argument may be empty — that line is omitted.
 # All empty yields an empty cell rather than a row of stray pipes.
-# See docs/Workflow-pr-comments.md §4.5.
+# See docs/Workflow-pr-comments.md §5.3.
 function _render_links_cell {
   local log_extract_anchor="${1}"
   local job_log_url="${2}"

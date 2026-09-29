@@ -404,7 +404,7 @@ def build_document(inputs, facts, tools, isdir, module=False):
     entries = yaml_inputs.get("environments-yml", {}).get("value")
     event = {"name": facts["event_name"], "ref_name": facts["ref_name"], "ref_type": facts["ref_type"],
              **event_facts(facts["event_name"], facts["payload"])}
-    # The operation gates compare github.base_ref, the runner's, not the payload's (docs/Decision-engine.md §6).
+    # The operation gates compare github.base_ref, the runner's, not the payload's (docs/Decision-engine.md §4).
     for key in ("actor", "triggering_actor", "base_ref"):
         if facts.get(key):
             event[key] = facts[key]

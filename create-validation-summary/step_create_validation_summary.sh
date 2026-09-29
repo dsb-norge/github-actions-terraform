@@ -318,7 +318,7 @@ function render_head_summary {
     # Links row — rendered when the caller supplied any tag comment id
     # (captured from pr-comment's POST outputs). One line per tag in the
     # order the operations run, then the job log. Mirrors the per-group
-    # head's Links column (docs/Workflow-pr-comments.md §6.3) so reviewers
+    # head's Links column (docs/Workflow-pr-comments.md §5.3) so reviewers
     # learn one navigation pattern.
     # When the Links row is rendered, the standalone '[Job log]' footer
     # below the table is dropped — the same link sits inside the cell.

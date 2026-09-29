@@ -3,8 +3,8 @@ description: |
   Reconciles the set of per-group "validation summary" PR comments on a pull request
   according to the desired set computed from matrix-job-meta-*.json artifacts.
 
-  See docs/Workflow-pr-comments.md for the full spec — this action implements §4
-  (the per-group comment shape and the reconcile algorithm).
+  See docs/Workflow-pr-comments.md for the full spec — this action implements §3.3
+  (the aggregator phase) and §5.3 (the per-group comment shape).
 
   Behavior:
     - Reads every matrix-job-meta-*.json in the current directory.

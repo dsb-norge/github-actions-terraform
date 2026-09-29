@@ -982,11 +982,11 @@ rm -f "${_console_file}"
 # --------------------------------------------------
 # Grouped-mode tests (pr-comment-group is non-empty).
 # Verify the new branch: validation table omitted, "Part of group ..."
-# note prepended, prefix unchanged. See docs/Workflow-pr-comments.md §3.2.
+# note prepended, prefix unchanged. See docs/Workflow-pr-comments.md §5.1.
 # --------------------------------------------------
 
 # Test 28: Grouped mode — prefix is byte-identical to ungrouped mode
-# This is the §6.2 prefix-continuity invariant.
+# The prefix must not depend on the mode.
 assert_grouped_prefix_unchanged() {
   local prefix="${1}"
   local summary="${2}"
@@ -1194,7 +1194,7 @@ export input_pr_comment_group="dev-group"
 run_test "Grouped mode: full body byte-exact golden" assert_grouped_full_body_golden
 
 # Test 37: Empty pr-comment-group falls back to ungrouped behavior
-# This is the §6 backwards-compat invariant — the default value must not change behavior.
+# The empty default of docs/Workflow-pr-comments.md §6 — the default value must not change behavior.
 assert_empty_group_acts_ungrouped() {
   local prefix="${1}"
   local summary="${2}"
@@ -1558,7 +1558,7 @@ export input_include_plan_details="false"
 run_test "Plan time row renders even when Plan Details row is omitted" assert_plan_time_without_plan_details
 
 # Plan time row: omitted in grouped mode (whole validation table is
-# omitted from per-env body in grouped mode — see docs/Workflow-pr-comments.md §3).
+# omitted from per-env body in grouped mode — see docs/Workflow-pr-comments.md §5.1).
 assert_plan_time_omitted_in_grouped_mode() {
   local prefix="${1}"
   local summary="${2}"
@@ -1896,7 +1896,7 @@ assert_warnings_collapser_rendered_in_grouped_mode() {
   local summary="${2}"
   local head="${3}"
   local plan="${4}"
-  # Per docs/Workflow-pr-comments.md §5.2 the plan-extract is still posted
+  # Per docs/Workflow-pr-comments.md §5.1 the plan-extract is still posted
   # for grouped envs — only the per-env head's validation table is dropped.
   # Warnings collapser must still appear inside plan-extract.
   if [[ "${plan}" != *'⚠️ 2 warnings</summary>'* ]]; then
