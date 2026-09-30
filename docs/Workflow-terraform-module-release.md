@@ -60,9 +60,14 @@ The workflow takes no inputs.
 
 ## Troubleshooting
 
-### `🔑 Create GitHub App token` fails
+### The release job cannot create the App token
 
-The repository has no access to `ORG_TF_CICD_APP_ID` or `ORG_TF_CICD_APP_PRIVATE_KEY`, the calling job lacks `secrets: inherit`, or the App is not installed on the repository. See [requirements](#requirements).
+The step that fails names the cause:
+
+- `🔐 Check the App's variable and secret` fails with `This repository cannot read the organisation variable ORG_TF_CICD_APP_ID` or `… the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY`, one error for each that is missing. Add the repository to that variable's or secret's repository access (the organisation's settings, Secrets and variables, Actions); for the secret, the calling job also needs `secrets: inherit`.
+- `🔐 Explain the failed App token` fails with `The App whose ID is ORG_TF_CICD_APP_ID gave no token for this repository` when both reach the repository but the token step failed: the App is not installed on the repository, or the key is not a key of that App. The token step's log above it has GitHub's answer.
+
+See [requirements](#requirements).
 
 ### release-please fails with a permission error
 

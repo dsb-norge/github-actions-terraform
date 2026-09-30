@@ -73,6 +73,12 @@ the same rules and messages ([Configuration-validation.md](Configuration-validat
 No job asks for `contents: write`: the docs commit is pushed with the App token, which carries its
 own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
 `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`. `vars.ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
+Both are the organisation's, and reach a repository only when it is on each one's repository
+access list. The docs job and the release job check them before the token step and fail naming
+each one missing; the token step may then fail, and the step after it names the two causes left,
+the App not installed on the repository or a key that is not the App's (P9). Only the App can ask
+GitHub about its installation, and the token step is that question, so the installation is judged
+from its outcome rather than checked a second time with the key.
 
 ## 4. Jobs
 
@@ -201,6 +207,7 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | P6 | A README out of date on a fork's pull request, a push, a dispatch or a schedule | The docs check fails: only a pull request from the repository gets a docs commit. | Regenerate with terraform-docs 0.20 (the pinned action's), or let a pull request regenerate it. |
 | P7 | `.tflint.hcl` matched by the template's `.gitignore` (`**/.tflint.hcl`) | A copy that is not force-added is never committed, and lint fails: "could not find a TFLint config file". | The template keeps it force-added; a repository keeps it that way. |
 | P8 | The default terraform-docs config injected in check mode | Upstream stages the whole directory and counts every staged file, so the injected file would read as drift. | The injected config is listed in `.git/info/exclude`; with push it is committed as before. |
+| P9 | A repository without access to the App's organisation variable or secret | The expression reads empty and the token action fails with "The 'client-id' (or deprecated 'app-id') input must be set to a non-empty string", which names neither the variable nor where to grant it. | A check before the token step names each one missing; a failed token is explained after it as the installation or the key (§3.2, F24). |
 
 ## 11. Tests
 
@@ -212,6 +219,9 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
   skip after a docs push, and the module summary runs on every event with test files.
 - F21: the module conclusion's needs, named results and lines; F9, F16 and F19 already cover the
   module workflows.
+- F24: in both module workflows the App check runs under the token step's condition, the token
+  step continues on error and the explaining step follows it; the check's own run block is run for
+  every combination of a missing variable and secret.
 - `terraform-docs`: a suite for the converted steps (a push with `push: true` only, fail on a diff
   otherwise, the counts); the workflow passes `push: true` on a pull request from the repository
   alone.
@@ -254,6 +264,9 @@ schedule only from the default branch, which the test bed's module branch is not
   - that run posted the validation head and the tests head, and deleted a planted v0 per-file
     comment;
   - an unused variable failed TFLint, which the head, an annotation and the conclusion named.
+- **A missing App variable named nothing.** The first run of a repository made from the module
+  template, whose access to the organisation's variable was not yet granted, failed the docs job
+  with the token action's "client-id must be set"; hence the check before the token step (P9).
 - **The tests summary must not run after a docs push.** On the first pull-request round it did:
   it reported every skipped file as leaving no metadata, in a head created before the validation
   head. The module summary job now waits for validation and skips after a docs push; the second
