@@ -114,7 +114,9 @@ version of the pinned action, or let a pull request do it.
 ### 2.8 The App
 
 Both workflows read `vars.ORG_TF_CICD_APP_ID` and `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`, which the
-repository must have access to, and the App must be installed on it.
+repository must have access to, and the App must be installed on it. A step before the token
+names a variable or secret the repository cannot read, and a step after it explains a failed
+token: the App not installed, or a key that is not the App's.
 `ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
 
 ## 3. Should do / check
@@ -301,6 +303,6 @@ them back.
 | A unit test that configures the real provider and mocks only an alias (`mock_provider "azurerm" { alias = "mock" }`) | In a lane without credentials the file fails before its runs: `unable to build authorizer for Resource Manager API`, every run skipped | Make the mock the file's only provider (`mock_provider "azurerm" {}`) and drop the runs' `providers` maps; a run that only plans needs nothing else (§3.1) |
 | `.tflint.hcl` not committed | Lint fails: "could not find a TFLint config file" | The template's `.gitignore` matches `**/.tflint.hcl`; keep it force-added (`git add -f .tflint.hcl`) |
 | A stale README on a push, dispatch, schedule, fork or Dependabot pull request | The docs check fails | Regenerate with terraform-docs 0.20, or through a pull request (§2.7) |
-| The App variable or secret missing | The docs job fails on a pull request at `🔑 Create GitHub App token`: "The 'client-id' (or deprecated 'app-id') input must be set to a non-empty string" | Give the repository access to both (§2.8) |
+| The App variable or secret missing | The docs job fails on a pull request at `🔐 Check the App's variable and secret`, naming each one the repository cannot read | Give the repository access to both (§2.8) |
 | A test file outside `tests/` or not committed | It is misplaced or not seen | Move it, commit it (§2.6) |
 | `actions: read` missing | The run fails at startup, with no job and no check | Grant it (§2.3) |
