@@ -3474,6 +3474,93 @@ else
 fi
 
 # ============================================================================
+# F24 — the module workflows name the App access a repository lacks.
+#
+# The App's variable and secret are the organisation's; a repository without access to them saw
+# only the token action's "client-id must be set". Before each ORG_TF_CICD token step a check,
+# under the same condition, names the variable or secret missing; the token step may fail, and the
+# step after it explains that failure (installation or key) and fails the job. The check's run
+# block is executed here for every combination, from the workflow text itself.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F24 - the module workflows name the App access a repository lacks${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f24_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, re, subprocess, sys, yaml
+
+WORKFLOWS = [".github/workflows/terraform-module-ci.yaml", ".github/workflows/terraform-module-release.yaml"]
+CHECK, TOKEN, EXPLAIN = "🔐 Check the App's variable and secret", "🔑 Create GitHub App token", "🔐 Explain the failed App token"
+problems, checked = [], 0
+
+def run(script, env):
+    done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], env={"PATH": os.environ["PATH"], **env},
+                          capture_output=True, text=True)
+    return done.returncode, done.stdout
+
+for path in WORKFLOWS:
+    with open(path, encoding="utf-8") as fh:
+        jobs = yaml.safe_load(fh)["jobs"]
+    for job_name, job in jobs.items():
+        steps = job.get("steps", [])
+        names = [step.get("name") for step in steps]
+        for index, step in enumerate(steps):
+            with_ = step.get("with") or {}
+            if not str(step.get("uses", "")).startswith("actions/create-github-app-token@") \
+                    or "ORG_TF_CICD_APP_ID" not in str(with_.get("client-id", "")):
+                continue
+            checked += 1
+            where = f"{path} job {job_name}"
+            before = steps[index - 1] if index > 0 else {}
+            after = steps[index + 1] if index + 1 < len(steps) else {}
+            if before.get("name") != CHECK:
+                problems.append(f"{where}: the step before '{TOKEN}' is not '{CHECK}'")
+                continue
+            if str(before.get("if", "")).split() != str(step.get("if", "")).split():
+                problems.append(f"{where}: '{CHECK}' does not run under the token step's condition")
+            if step.get("continue-on-error") is not True:
+                problems.append(f"{where}: '{TOKEN}' does not continue on error, so '{EXPLAIN}' never runs")
+            if after.get("name") != EXPLAIN or after.get("if") != "steps.app-token.outcome == 'failure'":
+                problems.append(f"{where}: the step after '{TOKEN}' is not '{EXPLAIN}' on its failure")
+            env = before.get("env") or {}
+            if env.get("APP_ID") != "${{ vars.ORG_TF_CICD_APP_ID }}" \
+                    or env.get("PRIVATE_KEY_SET") != "${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}":
+                problems.append(f"{where}: '{CHECK}' does not read the variable and the secret's presence")
+            cases = [("", "false", 1, ["ORG_TF_CICD_APP_ID", "ORG_TF_CICD_APP_PRIVATE_KEY"]),
+                     ("123", "false", 1, ["ORG_TF_CICD_APP_PRIVATE_KEY"]),
+                     ("", "true", 1, ["ORG_TF_CICD_APP_ID"]),
+                     ("123", "true", 0, [])]
+            for app_id, key_set, want_rc, want_named in cases:
+                rc, out = run(before["run"], {"APP_ID": app_id, "PRIVATE_KEY_SET": key_set})
+                errors = [line for line in out.splitlines() if line.startswith("::error")]
+                named = sorted({m.group(1) for line in errors
+                                for m in [re.search(r"cannot read the organisation (?:variable|secret) (\S+?)\.", line)] if m})
+                if rc != want_rc or len(errors) != len(want_named) or named != sorted(want_named):
+                    problems.append(f"{where}: with APP_ID='{app_id}' and the key {'set' if key_set == 'true' else 'unset'}, "
+                                    f"the check exited {rc} with {len(errors)} error(s) naming {named}; expected {want_rc}, {sorted(want_named)}")
+            if after.get("name") == EXPLAIN:
+                rc, out = run(after["run"], {})
+                if rc != 1 or "ORG_TF_CICD_APP_ID" not in out or not out.startswith("::error"):
+                    problems.append(f"{where}: '{EXPLAIN}' does not fail with an error naming the App")
+if checked != 2:
+    problems.append(f"expected 2 ORG_TF_CICD token steps (docs job, release job), found {checked}")
+print(f"checked {checked} token step(s), 4 cases each")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f24_rc=0 || _f24_rc=$?
+if [[ "${_f24_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f24_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f24_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
