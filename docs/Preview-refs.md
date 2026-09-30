@@ -244,6 +244,7 @@ Publishing a preview tag pushes rewritten workflow files, which needs a GitHub A
 | P21 | Draft PRs. | No draft gate: drafts are precisely when you want to test. |
 | P22 | Preview tags are public (public repo). | So is the PR branch; nothing in a generated commit is not already in the PR. |
 | P23 | The publish job runs the offline self-test before publishing; a failing self-test blocks *every* preview until fixed. | Intended: a broken rewriter must not publish. The test is offline and sub-second. |
+| P24 | The tag push is refused with a 403 (`Permission to … denied to <app>[bot]`) about a second after the App token is minted, on some runs only; a re-run of the job then passes. Seen on three pull requests in two days, each on its first attempt. | The push is retried up to four times, waiting 5, 10 and 15 s between attempts, and fails the job only after the fourth; the wait is spent only when a push is refused. |
 
 ## 9. Tests
 
