@@ -118,8 +118,21 @@ jobs:
 
           # --force is right here: the moving tag is meant to move, and the pinned one is a
           # deterministic function of the head SHA (a re-run only refreshes its timestamp).
-          git push --force "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git" \
-            "refs/tags/${preview_ref}" "refs/tags/${pinned_ref}"
+          # A just-minted App token is sometimes refused with a 403 for a few seconds, and a re-run
+          # of the job then passed every time (Preview-refs.md P24), so a refused push is retried
+          # with a growing wait before the job fails.
+          for attempt in 1 2 3 4; do
+            if git push --force "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git" \
+              "refs/tags/${preview_ref}" "refs/tags/${pinned_ref}"; then
+              break
+            fi
+            if [[ "${attempt}" -eq 4 ]]; then
+              echo "::error::the preview tags could not be pushed after ${attempt} attempts"
+              exit 1
+            fi
+            echo "::warning::tag push attempt ${attempt} was refused; retrying in $((attempt * 5)) s"
+            sleep $((attempt * 5))
+          done
 
           {
             echo "preview-ref=${preview_ref}"
