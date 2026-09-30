@@ -18,6 +18,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {} # release-please works with the App token below
     steps:
+      # The App's variable and secret belong to the organisation and reach a repository only when it
+      # is on each one's repository access list. Without them the token step fails with "client-id
+      # must be set", which names neither, so they are checked first and the job says what to grant.
+      - name: "🔐 Check the App's variable and secret"
+        id: app-access
+        env:
+          APP_ID: ${{ vars.ORG_TF_CICD_APP_ID }}
+          PRIVATE_KEY_SET: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}
+        run: |
+          # Fail naming each organisation variable or secret this repository cannot read
+          missing=0
+          if [ -z "${APP_ID}" ]; then
+            echo "::error title=GitHub App::This repository cannot read the organisation variable ORG_TF_CICD_APP_ID. Add the repository to the variable's repository access: organisation settings, Secrets and variables, Actions, Variables, ORG_TF_CICD_APP_ID."
+            missing=1
+          fi
+          if [ "${PRIVATE_KEY_SET}" != "true" ]; then
+            echo "::error title=GitHub App::This repository cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. Add the repository to the secret's repository access (organisation settings, Secrets and variables, Actions, Secrets, ORG_TF_CICD_APP_PRIVATE_KEY), and pass 'secrets: inherit' in the calling job."
+            missing=1
+          fi
+          exit "${missing}"
       # The installation's permissions, as the App grants them: contents and pull requests for the
       # release pull request, and labels on it.
       - name: "🔑 Create GitHub App token"
@@ -26,6 +46,16 @@ jobs:
         with:
           client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
           private-key: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}
+        continue-on-error: true # explained by the next step, which fails the job
+      # Only the App can ask GitHub whether it is installed on this repository, and the token step
+      # is that question: with the variable and the secret present, its failure is the installation
+      # or the key.
+      - name: "🔐 Explain the failed App token"
+        if: steps.app-token.outcome == 'failure'
+        run: |
+          # The variable and the secret reach this repository, so the App or its key is what failed
+          echo "::error title=GitHub App::The App whose ID is ORG_TF_CICD_APP_ID gave no token for this repository. The variable and the secret reach the repository, so either the App is not installed on it (organisation settings, GitHub Apps, the App, Configure, Repository access), or ORG_TF_CICD_APP_PRIVATE_KEY is not a key of that App. The token step's log above has GitHub's answer."
+          exit 1
       - name: "🚀 Create or update the release pull request"
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release-please
