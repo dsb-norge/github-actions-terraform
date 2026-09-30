@@ -241,6 +241,8 @@ if [[ -f "${WORKFLOW}" ]]; then
   # P33: the sweep addressed git/tags/<name> (the tag-object endpoint) instead of
   # git/refs/tags/<name>, 404'd on every call, and swallowed it — so it deleted
   # nothing for as long as it existed. Pin both halves of the fix.
+  # P24: a just-minted App token is sometimes refused for a few seconds; the push retries.
+  assert_contains "the tag push is retried before the job fails (P24)" "${wf}" 'for attempt in 1 2 3 4; do'
   assert_contains "cleanup deletes through git/<full ref>, not the tag-object endpoint" "${wf}" 'gh api -X DELETE "repos/${REPO}/git/${ref}"'
   # Comment lines are stripped before these negative greps: the workflow explains
   # both wrong forms in prose, and a test that matches its own warning fails for
