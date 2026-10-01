@@ -1184,7 +1184,10 @@ providers the lock records, at their locked versions, become a throwaway configu
 temporary directory, and `terraform providers lock -platform=…` runs there against a copy of the
 lock. The committed file is never touched, the directory needs no `.terraform/`, and its own
 configuration plays no part, which is what a copied lock needs (P42). `providers lock` rewrites the
-copy's `constraints` to the exact version, so the comparison ignores constraints lines.
+copy's `constraints` to the exact version, or adds the line where the lock had none and re-pads the
+`=` of the `version` line above it, so the comparison ignores constraints lines and the padding
+before each `=` (P46); a failure's diff shows the two locks in that form, so it holds only what
+really differs.
 `plugin-cache-directory` lets lock-only mode hash the packages in a Terraform plugin cache
 (`-fs-mirror`, whose unpacked layout the cache already has) when it holds every locked provider for
 every required platform, and otherwise the packages are downloaded; a warm cache makes the check
@@ -1241,6 +1244,7 @@ Indexed so implementation commits and future specs can cite them.
 | P43 | The summary finds each job by its display name, and the engine suffixes a name with its provider set only for a file that runs in more than one set. | Rebuilding the name with a suffix whenever the run has several sets missed every job of a narrowed lane or an environment root: no job links, and an environment root's empty set counted as a set. | The summary matches on the row's own `name` and counts only non-empty sets. |
 | P44 | GitHub stores secret names upper-cased; Terraform variable names are case-sensitive. | An environment secret `TF_VAR_x` arrives as `TF_VAR_X` and sets only `X`; a test declaring `x` fails with "Required variable not set". | The export adds a lower-cased copy of every `TF_VAR_*` secret (`export-env-vars`' `lower-case-copies-for-prefixes-json`); a mixed-case name needs an explicit mapping (§3.6). |
 | P45 | Terraform 1.12 refuses a `variable` block in a test file, which 1.13 requires for `var.x` in the file. | Init fails for every test file of the root under 1.12, which read as `init` and hid the version. | The floor is 1.13 (§3.5), and a failed init defers to it (§5.5 row 1). |
+| P46 | A lock entry without `constraints`, typically a provider only a module requires, in lock-only mode. `providers lock` adds the line on the copy and re-pads the `=` of `version` to align the two (`version     = "3.9.1"`); with only the line ignored, every such lock read as missing hashes and its test jobs ended `lock-platform`, though the log said every checksum was already tracked. | Lock-only mode compares both locks without constraints lines and with the padding before each `=` collapsed, and shows the diff in that form. The suite's stub re-pads as Terraform does; the real case was reproduced with Terraform 1.16. |
 
 ## 11. Test coverage
 
