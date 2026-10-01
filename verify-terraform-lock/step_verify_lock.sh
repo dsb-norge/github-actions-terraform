@@ -34,8 +34,10 @@
 # become a throwaway configuration in a temporary directory, and step 2 runs
 # there against a copy of the lock. The committed file is never touched, and
 # the directory's own configuration and '.terraform/' play no part. Lock
-# rewrites the copy's 'constraints' to the exact version, so the comparison
-# ignores that line. When input_plugin_cache_directory holds the package of
+# rewrites the copy's 'constraints' to the exact version, or adds the line
+# where the lock had none and re-pads the '=' of the 'version' line above it
+# to align the two, so the comparison ignores constraints lines and the
+# padding before each '='. When input_plugin_cache_directory holds the package of
 # every locked provider for every required platform, the hashes are computed
 # from those packages (-fs-mirror) instead of downloading them.
 #
@@ -117,9 +119,14 @@ function plugin_cache_covers {
   return 0
 }
 
-# The lock file $1 without its 'constraints' lines, for a lock-only comparison.
-function without_constraints {
-  grep -v '^[[:space:]]*constraints[[:space:]]*=' "${1}" || true
+# The lock file $1 as lock-only mode compares it: without its 'constraints'
+# lines, and with the padding before each attribute's '=' collapsed. Ignoring
+# the line alone was not enough: where the committed lock had no constraint,
+# the re-lock adds one and re-pads 'version', so every such lock read as
+# missing hashes.
+function comparable_lock {
+  { grep -v '^[[:space:]]*constraints[[:space:]]*=' "${1}" || true; } |
+    sed -E 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*)[[:space:]]+=/\1 =/'
 }
 
 # Write the success block to $GITHUB_STEP_SUMMARY (if set).
@@ -266,13 +273,16 @@ function main {
     return "${lock_exit}"
   fi
 
-  local complete="false" expected=".terraform.lock.hcl"
+  # In lock-only mode both sides are compared, and shown on failure, in their
+  # comparable form, so the diff holds only what really differs.
+  local complete="false" committed="${committed_snapshot}" expected=".terraform.lock.hcl"
   if [ "${lock_only}" == "true" ]; then
-    expected="${run_dir}/.terraform.lock.hcl"
-    cmp -s <(without_constraints "${committed_snapshot}") <(without_constraints "${expected}") && complete="true"
-  else
-    cmp -s "${committed_snapshot}" .terraform.lock.hcl && complete="true"
+    committed="${lock_only_dir}/committed.comparable"
+    expected="${lock_only_dir}/expected.comparable"
+    comparable_lock "${committed_snapshot}" >"${committed}"
+    comparable_lock "${run_dir}/.terraform.lock.hcl" >"${expected}"
   fi
+  cmp -s "${committed}" "${expected}" && complete="true"
 
   if [ "${complete}" == "true" ]; then
     echo "::notice title=Lock file OK::All required platform hashes are present"
@@ -285,8 +295,8 @@ function main {
 
   echo "::error title=Lock file incomplete::.terraform.lock.hcl in '${input_working_directory}' is missing hashes for one or more required platforms"
   log-error "lock file is missing hashes for one or more required platforms"
-  log-multiline "Diff (committed vs expected)" "$(diff -u "${committed_snapshot}" "${expected}" || true)"
-  write_failure_summary "${committed_snapshot}" "${expected}"
+  log-multiline "Diff (committed vs expected)" "$(diff -u "${committed}" "${expected}" || true)"
+  write_failure_summary "${committed}" "${expected}"
   set-output "is-complete" "false"
   rm -rf "${committed_snapshot}" "${lock_only_dir}"
   return 1

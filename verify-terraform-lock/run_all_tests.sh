@@ -310,12 +310,29 @@ assert "Lock-only failure summary shows the missing hash" \
 assert "Lock-only failure summary names the working directory" \
   grep -q "cd ${WORK_DIR}" "${GITHUB_STEP_SUMMARY}"
 
-# Test 12: the rewritten constraints line alone is not a difference
+# Test 12: the rewritten constraints line alone is not a difference. Where the
+# lock had no constraint, Terraform adds the line and re-pads the 'version'
+# line above it to align the two '=': the stub does the same, since ignoring
+# the line but not the padding failed every such lock.
 setup_lock_only
-install_stub_records 'sed -i "s/constraints = \"~> 3.6\"/constraints = \"3.9.1\"/; /version = \"1.2.3\"/a\  constraints = \"1.2.3\"" .terraform.lock.hcl'
+install_stub_records 'sed -i "s/constraints = \"~> 3.6\"/constraints = \"3.9.1\"/; s/^  version = \"1.2.3\"$/  version     = \"1.2.3\"\n  constraints = \"1.2.3\"/" .terraform.lock.hcl'
 run_step
-assert "Lock-only ignores rewritten and added constraints lines" \
+assert "Lock-only ignores rewritten and added constraints lines, and the re-padded version line" \
   test "${LAST_EXIT}" -eq 0
+assert "Lock-only with only constraints and padding changed sets is-complete=true" \
+  test "$(get_output is-complete)" = "true"
+
+# Test 12b: with the same re-padding, a missing hash still fails, and the diff
+# shows the hash alone, not the padding
+setup_lock_only
+install_stub_records 'sed -i "s/^  version = \"1.2.3\"$/  version     = \"1.2.3\"\n  constraints = \"1.2.3\"/; s/\"h1:bbb=\",/\"h1:bbb=\",\n    \"h1:new=\",/" .terraform.lock.hcl'
+run_step
+assert "Lock-only with re-padding and a missing hash fails with exit 1" \
+  test "${LAST_EXIT}" -eq 1
+assert "Lock-only failure summary shows the missing hash" \
+  grep -q '+    "h1:new=",' "${GITHUB_STEP_SUMMARY}"
+assert "Lock-only failure summary does not show the re-padded version line" \
+  bash -c '! grep -q -E "^[-+] +version" "${1}"' _ "${GITHUB_STEP_SUMMARY}"
 
 # Test 13: a plugin cache holding every package is used as the mirror
 setup_lock_only
