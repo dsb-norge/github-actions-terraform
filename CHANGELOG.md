@@ -6,6 +6,14 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.0.1](https://github.com/dsb-norge/github-actions-terraform/compare/v1.0.0...v1.0.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **module-ci:** name the App access a repository lacks ([f46c845](https://github.com/dsb-norge/github-actions-terraform/commit/f46c845cfced4b3d80f7cf2b3d97b2952890ed58))
+* **verify-terraform-lock:** lock-only ignores re-padded version lines ([b0917c9](https://github.com/dsb-norge/github-actions-terraform/commit/b0917c992d9655547bf214f82b59ebd0d699ca0f))
+
 ## [1.0.0](https://github.com/dsb-norge/github-actions-terraform/tree/v1.0.0) (2026-09-29)
 
 The first release of the v1 line: the decision engine, path relevance and the conclusion check,
