@@ -62,7 +62,7 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 |---|---|---|
 | D1 | An automated admission decides; a dependency that passes needs no person. | Decided by the maintainer. |
 | D2 | The admission applies only to runs whose `github.actor` is `dependabot[bot]`; every other run is decided exactly as without it. | GitHub keys its own Dependabot restrictions on the actor. A person's push or dispatch is that person's run. A re-run keeps the actor (§3). |
-| D3 | **Admitted**: the run is decided as a person's run would be. Environment rows run in their GitHub Environment with their identity; test rows follow [Terraform-tests.md](Terraform-tests.md) §4.7. | Plan what will be applied: the plan is a person's plan, with the same lock and the same concurrency group. |
+| D3 | **Admitted**: the run is decided as a person's run would be. Environment rows run in their GitHub Environment with their identity, and every test row runs, credentialed lanes included (D20). | Plan what will be applied: the plan is a person's plan, with the same lock and the same concurrency group. |
 | D4 | **Not admitted**: no environment row and no test row runs, so no job of the run executes Terraform; the conclusion is red with the reason. | A job holds every secret the run can see (P2); running nothing is what keeps them from code that failed. Red is the maintainer's decision: green would let a merge apply, on the default branch, a version nobody saw planned. |
 | D5 | The rule judges content only: the change from the merge commit's first parent to the merge commit (`github.sha`), the commit the run checks out. Commit authorship is not consulted. | The actor already says who pushed, and a content rule covers every commit whoever wrote it (P3). |
 | D6 | One allow list of namespaces, for providers and modules alike. An entry is a namespace (`elastic`) or a namespace and name (`cyrilgdn/postgresql`), compared without case. Built in: `dsb-norge`, `hashicorp`, `microsoft`, `Azure`. A caller's entries are added to the built-in ones. | Decided by the maintainer: the publishers the organisation trusts. Adding rather than replacing, so nobody drops `hashicorp` by mistake. |
@@ -79,6 +79,7 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 | D17 | A Dependabot `push` run (from a caller that triggers on every branch) runs nothing and is green, with a notice. | Its checks land on the pull request's head commit, and a required check needs every check run of that name on the commit to pass, whatever order they finish in (P5): a red push run would block an admitted pull request, and a green one cannot unblock a refused one. The pull request's own run judges the change. |
 | D18 | Azure IDs are plain values in the caller (`extra-envs-yml`, per environment), not secrets. | Decided by the maintainer. A Dependabot run cannot read Actions or environment secrets, and Dependabot secrets have no environment level, so a repository with several environments could not give each its own ID. The IDs protect nothing (§1). |
 | D19 | `allow-failing-terraform-operations` never softens a not-admitted run. | Nothing ran; the setting is about operations that did. |
+| D20 | On an admitted Dependabot run, the test stage drops no lane for `secrets unavailable`: a credentialed lane runs as on a person's run. Its credentials reach a Dependabot run only as plain values in the lane's `extra-envs-yml` (the IDs, with OIDC through the lane's GitHub Environment) or as Dependabot secrets; a lane that keeps them as environment secrets fails there. No setting selects the lanes, and nothing detects which lanes would succeed. Fork runs and runs with the admission off keep today's rule. | Decided by the maintainer: callers move the lane IDs to plain values, as D18 does for environments, and a lane that has not moved fails visibly rather than being skipped. A behaviour change for callers on v1 with credentialed lanes, accepted while few callers are on v1 (§13). |
 
 ## 3. Who meets the admission
 
@@ -186,9 +187,10 @@ admitting runs unjudged code, refusing sends a person to look at nothing.
 ### 5.1 Admitted
 
 The decision is the one the same document would produce without the admission (D3), and the
-environment root's `init` runs with `-lockfile=readonly` (D10). Test rows follow Terraform-tests.md
-§4.7 as today: rows whose lane is credentialed are dropped with `secrets unavailable`, the others
-run. Auto-merge evaluates the run as any other
+environment root's `init` runs with `-lockfile=readonly` (D10). Every test row runs, credentialed
+lanes included (D20); a lane whose credentials are environment secrets fails its credential check,
+which on a Dependabot run says that environment secrets do not reach it and names the plain-value
+alternative (P19). Auto-merge evaluates the run as any other
 ([user guide, example 13](Workflow-terraform-ci-default.md#13-auto-merge-for-dependabot)).
 
 ### 5.2 Not admitted
@@ -346,7 +348,8 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   `admission-refused`, in both modes.
 - **Vocabulary**: the reasons `admission: not admitted` and `admission: Dependabot push run`; the
   head state `not-admitted`; the admission head.
-- **Invariants**: I6 and I13 read "passed rules 2, 3, 3a and 5"; I11 gains the two reasons; I14
+- **Invariants**: I4 reads "When secrets are unavailable (a fork, or Dependabot with the admission
+  not applying)"; I6 and I13 read "passed rules 2, 3, 3a and 5"; I11 gains the two reasons; I14
   gains the `not-admitted` head and the admission head. New:
   - **I26**: the admission block's `applies` is true only when the actor is `dependabot[bot]`, the
     switch is on and the event is `pull_request` or `push`.
@@ -357,6 +360,8 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
     document without the `admission` key.
 - **Module mode**: `_module` applies the admission before the test stage; a refusal lists every test
   file as not run and publishes `admission-refused`.
+- **The test stage**: `tests.py`'s secrets-unavailable rule drops credentialed rows for a fork, and for
+  a Dependabot run only when the admission does not apply (D20).
 
 ## 10. The workflows
 
@@ -381,12 +386,15 @@ Structural tests in `evaluate-automerge-eligibility/run_all_tests.sh` change wit
 
 ## 11. The module workflow, and why it is opt-in
 
-A module repository's Dependabot run reaches no cloud identity: credentialed test lanes are dropped
-on Dependabot runs (Terraform-tests.md §4.7), `validate` holds no credentials, and tests that create
-resources do so through lanes whose identities live in a sandbox the lane names. What remains is the
-token and whatever Dependabot secrets the repository holds, which in the usual module repository are
-none. A module repository that wants its Dependabot pull requests judged all the same, for example
-because it does hold a Dependabot secret, switches the admission on.
+Without the admission, a module repository's Dependabot run reaches no cloud identity: credentialed
+test lanes are dropped on Dependabot runs (Terraform-tests.md §4.7), `validate` holds no
+credentials, and what remains is the token and whatever Dependabot secrets the repository holds,
+which in the usual module repository are none. Its tests that need credentials simply do not run on
+Dependabot pull requests.
+
+Switching the admission on is how a module repository gets every test run on them: an admitted run
+runs its credentialed lanes too (D20), against the sandbox identities the lanes name, once their IDs
+are plain values. A refused run runs nothing, `validate` included (D16).
 
 Module repositories usually commit no lock file, so their providers are judged at the newest
 version their constraints allow (§4.3), and D10 does not apply.
@@ -414,6 +422,10 @@ This ships as a minor release (`feat:`). What a caller on `@v1` sees:
   for a caller with secret IDs. **A Dependabot pull request that was green can turn red**, which the
   commit and the release notes say in so many words.
 - Dependabot auto-merge stops for a version younger than `min-age-days` until the run is re-run.
+- **An admitted Dependabot run runs credentialed test lanes**, which were listed as not run; a lane whose
+  credentials are still environment secrets fails there (D20). This is a behaviour change for callers
+  on v1 with credentialed lanes, shipped in a minor release by the maintainer's decision while few
+  callers are on v1, and said in so many words in the commit and the release notes.
 - `relevance.json` gains `admission`; `create-matrix` gains `admission-refused`; the comments gain the
   admission head and the `not-admitted` head body. Check names are unchanged.
 - Nothing changes for any other run, and nothing at all with `dependabot-admission-enabled: false`
@@ -439,6 +451,9 @@ user guide gain:
    Migration-v0-to-v1.md §2.7 rule 1 is sharpened to match: credentials stay environment secrets;
    identifiers are plain values.
 2. **The documented permissions instead of `write-all`**, so a Dependabot run's token cannot write.
+3. **Test lane IDs as plain values** in each credentialed lane's `extra-envs-yml`, the lane keeping its
+   GitHub Environment for its OIDC subject; a secret a test needs beyond the IDs becomes a
+   Dependabot secret (D20).
 
 A caller that keeps secret IDs is still protected: an admitted run fails on the missing secret, as
 it does today, and a refused run runs nothing.
@@ -452,6 +467,7 @@ it does today, and a refused run runs nothing.
 | R3 | Versions resolved transitively, nested modules and directories without a lock beyond the constraint the pull request changes, are not checked for age or key. | The allow list applies to what the pull request changes; Terraform resolves the rest at `init`. |
 | R4 | Module content is not inspected (D9). | §12. |
 | R5 | The registry's version detail endpoints are undocumented. | A change in their shape fails `create-matrix` (D11) rather than admitting. |
+| R6 | An admitted Dependabot run's credentialed test lanes run the pull request's dependencies with the lanes' identities. | The same decision as for the environments (D3); a lane identity reaches a sandbox only, by the isolation preconditions of Terraform-tests.md §3.6. |
 
 ## 15. Examples
 
@@ -470,6 +486,8 @@ it does today, and a refused run runs nothing.
 | a Dependabot pull request a person has pushed a commit to | not judged on that push | the person's run |
 | the same pull request after `@dependabot recreate` | judged | the actor is Dependabot again |
 | a pull request that also changes `.github/workflows/ci.yml` | not admitted | the shape |
+| an admitted pull request in a repository whose lane `oidc` has its IDs as plain values | admitted; the lane runs | D20 |
+| the same with the lane's IDs still environment secrets | admitted; the lane fails its credential check | D20, P19 |
 | a refused run with `dependabot-admission-enabled: false` in the caller | not judged | D14 |
 | the registry answers 503 for one version | `create-matrix` fails naming the fact | D11 |
 
@@ -495,14 +513,17 @@ it does today, and a refused run runs nothing.
 | P16 | Dependabot picks the version it reports by its cooldown and ignore rules, then regenerates the lock with `terraform providers lock`, which takes the newest version the constraints allow. | Seen: a pull request titled "4.4.0 to 4.81.0" locked 5.8.0, a major version published nine hours before, past the caller's five-day cooldown and its ignore of major versions. | The admission judges the lock, what runs, never the title: `age` refuses it. |
 | P17 | Python's `urllib` tries the addresses in resolver order and does not race IPv4 against IPv6. | On a host that resolves the registry's AAAA records without working IPv6, each call waited about 25 seconds before falling back. | Registry calls through `curl` (§8). |
 | P18 | A partner key's trust signature covers the key's de-armoured bytes, not its armour text, as Terraform's `package_authentication.go` decodes both before checking. | Verifying over the text fails for every partner key. | Verify over the decoded key (§8). Verified with `gpg` against HashiCorp's partner key: two partners' keys good; another partner's signature over the same key and a key with one bit flipped bad. A trust signature that does not verify makes Terraform refuse the package outright, not fall back to "self-signed"; the admission refuses it as `key`. |
+| P19 | The lane credential check's message says the lane's environment "has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet". | On a Dependabot run the secret may well exist and still not arrive; the message sends a maintainer to set a secret that is already set. | On a Dependabot run the message says that environment secrets do not reach Dependabot runs and names the plain-value `extra-envs-yml` in the lane (D20). |
 
 ## 17. Tests
 
 **Must:**
 
-- Engine, table cases: each row of §15; each check failing alone; a grouped pull request (three
-  dependencies across four directories, one failing); a lock-only change; a constraint rewritten with
-  `!=` dropped; `.tf.json`, a Terragrunt `.hcl`, an added file, a rename and a mode change refused;
+- Engine, table cases: each row of §15; each check failing alone; credentialed test rows kept on an
+  admitted Dependabot run, dropped on a fork and on a Dependabot run with the admission off; a
+  grouped pull request (three dependencies across four directories, one failing); a lock-only change;
+  a constraint rewritten with `!=` dropped; `.tf.json`, a Terragrunt `.hcl`, an added file, a rename
+  and a mode change refused;
   case-insensitive allow and exempt matching; the key check with the same key, HashiCorp's own key, a
   partner trust signature that verifies, one that does not (a tampered signature, another key's), and
   none; the built-in lists extended, not replaced; constraint
