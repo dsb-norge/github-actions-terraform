@@ -378,3 +378,13 @@ AI-assistant configuration files are never in these commits.
   environment alone and skipped the others with `trigger-events: schedule not enabled`, and a
   dispatch of a calling workflow without an inputs block ran every environment with its goals,
   staged, its line naming the standard block.
+- **`schedule-goal` on the test bed**, through the workflow at the pull request's preview ref, on a
+  five-minute schedule of the default branch, with every environment's goals `[all]`. The
+  five-minute schedule above ran before D12, when a scheduled environment applied by default. Here
+  the environment that opted in without a `schedule-goal` planned and did not apply (its apply step
+  skipped); the one with `schedule-goal: default` planned and applied; the one not opted in was
+  skipped with `trigger-events: schedule not enabled`. The record named each cap before the goals,
+  and the notice and the run summary carried `schedule: goal default for …; goal plan for … (…)`. A
+  push of the same configuration applied both opted-in environments: the key changes nothing
+  outside a schedule. The test bed's environments plan only with a backend initialised, so the
+  probe gave its two local-backend environments their own init arguments.
