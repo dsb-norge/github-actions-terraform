@@ -189,7 +189,7 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(0, code)
         outputs = runner.outputs()
         self.assertEqual(["relevance-file", "tests-matrix-json", "tests-count", "tests-active",
-                          "tests-required-missing"], list(outputs))
+                          "tests-required-missing", "admission-refused", "admission-reason"], list(outputs))
         self.assertEqual(("1", "true", "false"),
                          (outputs["tests-count"], outputs["tests-active"], outputs["tests-required-missing"]))
         self.assertEqual("tests/unit-tests.tftest.hcl",
