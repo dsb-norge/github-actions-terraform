@@ -29,7 +29,9 @@
     "pr-auto-merge-app-id": "",
     "pr-auto-merge-app-private-key-secret": "",
     "runs-on": "ubuntu-latest",
-    "trigger-events-yml": "[pull_request, push, workflow_dispatch]"
+    "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": ""
   },
   "ref_name": "feature/x",
   "default_branch": "main",

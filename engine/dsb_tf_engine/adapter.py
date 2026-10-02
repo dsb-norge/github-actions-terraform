@@ -54,9 +54,9 @@ NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
-             "record", "trigger", "ordering")
+             "record", "trigger", "ordering", "admission")
 # A module's decision has its test stage alone (docs/Module-ci.md §5).
-MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger")
+MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.

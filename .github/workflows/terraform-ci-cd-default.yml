@@ -374,6 +374,32 @@ on:
           environment on every change, set its 'paths' to ['**'].
         required: false
         default: true
+      dependabot-admission-enabled:
+        type: boolean
+        description: |
+          Whether a run started by Dependabot executes Terraform only after the admission admits its pull request: every
+          dependency it changes comes from an allowed namespace, is old enough and, for a provider, is signed as the version
+          before it. A pull request that is not admitted runs no Terraform job and fails the 'Terraform conclusion' check,
+          with a comment saying why and what to do. See docs/Dependabot-admission.md.
+
+          Set this to 'false' to run Dependabot's pull requests as before the admission existed.
+        required: false
+        default: true
+      dependabot-admission-yml:
+        type: string
+        description: |
+          The admission's policy, added to its built-in one. Keys:
+            allow           namespaces (or namespace/name) whose providers and modules are admitted, besides the built-in
+                            dsb-norge, hashicorp, microsoft and Azure; compared without case
+            min-age-days    how long a new version must have been published, 0 to 90 (default 3)
+            min-age-exempt  namespaces exempt from the minimum age, besides the built-in dsb-norge
+          Example:
+            dependabot-admission-yml: |
+              allow:
+                - elastic
+                - cyrilgdn/postgresql
+        required: false
+        default: ""
       trigger-events-yml:
         type: string
         description: |

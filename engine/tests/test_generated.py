@@ -295,12 +295,20 @@ class GeneratedTestsTest(unittest.TestCase):
         outcomes = set()
         for _ in range(1500):
             lanes = rng.sample(lane_shapes, rng.randint(0, 3))
+            admission = rng.choice(["off", "admitted", "refused"])
             doc = test_tests.document(rng.sample(pool, rng.randint(0, len(pool))), lanes=lanes,
                                       event=rng.choice(["pull_request", "push", "schedule"]),
                                       actor=rng.choice(["octocat", "dependabot[bot]"]), is_fork=rng.random() < 0.2,
                                       exclude=rng.choice([None, ["**/unit-c.tftest.hcl"], "x"]),
                                       locks={"envs/prod": rng.choice(locks), "envs/staging": rng.choice(locks)},
-                                      inputs={"terraform-test-enabled": rng.choice([True, True, False])})
+                                      inputs={"terraform-test-enabled": rng.choice([True, True, False]),
+                                              "dependabot-admission-enabled": admission != "off"})
+            # The admission's facts, which the adapter gathers for every Dependabot pull request it applies to.
+            if doc["event"]["name"] == "pull_request" and doc["event"].get("actor") == "dependabot[bot]":
+                published = support.NOW - (support.DAY if admission == "refused" else 10 * support.DAY)
+                doc["admission"] = support.admission_facts(
+                    [support.provider_dependency(published=published)],
+                    locks={"envs/prod": True, "envs/staging": True})
             with self.subTest(document=doc):
                 original = copy.deepcopy(doc)
                 output = decide.decide(doc)

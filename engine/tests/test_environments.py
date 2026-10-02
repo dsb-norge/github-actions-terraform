@@ -56,9 +56,11 @@ class EnvironmentsTest(unittest.TestCase):
                           "Missing property 'runs-on' in environment specification!"], decide.decide(document)["errors"])
 
     def test_the_output_document_has_exactly_its_keys(self):
-        keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record"}
+        keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record",
+                "admission"}
         output = decide.decide(support.document())
         self.assertEqual(keys | {"relevance", "tests", "comments", "trigger", "ordering"}, set(output))
+        self.assertEqual({"applies": False}, output["admission"])
         self.assertEqual(1, output["schema_version"])
         self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])
         output = decide.decide(support.document(environments=[]))

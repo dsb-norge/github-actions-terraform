@@ -35,6 +35,8 @@
     "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": "false",
     "cache-terraform-modules": "true",
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": "",
     "environments-yml": "- environment: \"my-first-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  format-check-in-root-dir: false\n  pr-comment-group: \"dev\"\n  terraform-init-additional-dirs-yml:\n    - \"./main\"\n    - \"./modules\"\n  goals-yml: [all, destroy-plan, destroy, apply-on-pr, destroy-on-pr]\n- environment: \"my-second-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  pr-comment-group: \"dev\"\n  extra-envs-per-goal-yml:\n    plan:\n      GOMEMLIMIT: 24GiB\n  extra-envs-from-secrets-per-goal-yml:\n    apply:\n      TF_VAR_my_custom: more\n  pr-auto-merge-from-actors-yml:\n    - \"env-actor\"\n  pr-auto-merge-limits-yml:\n    plan-max-count-add: 5\n- environment: \"also-an-env\"\n  project-dir: \".\"\n  url: \"https://github.com\"\n  goals-yml: [init, format, validate, lint]\n",
     "extra-envs-from-secrets-per-goal-yml": "apply:\n  ARM_CLIENT_ID: ARM_CLIENT_ID_secret\n",
     "extra-envs-from-secrets-yml": "ARM_CLIENT_ID: ARM_CLIENT_ID_secret\nARM_SUBSCRIPTION_ID: ARM_SUBSCRIPTION_ID_secret\nARM_TENANT_ID: ARM_TENANT_ID_secret\nTF_VAR_my_custom: TF_VAR_my_custom_secret\n",
@@ -123,6 +125,10 @@
       }
     ],
     "inputs": {
+      "dependabot-admission-yml": {
+        "ok": true,
+        "value": null
+      },
       "environments-yml": {
         "ok": true,
         "value": [
