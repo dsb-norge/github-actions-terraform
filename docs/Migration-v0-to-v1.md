@@ -31,7 +31,8 @@ Answer these from the repository before changing anything; each answer points at
 - [ ] Does any environment read files outside `<project-dir>/**`, `main/**`, `modules/**`, its
   additional init directories and the root's `.tflint.hcl`: a `-var-file` or `-backend-config`
   passed through `TF_CLI_ARGS_*`, a local module elsewhere, Markdown through `file()`? (§2.3)
-- [ ] Does a calling workflow have `on.schedule`, and which environments is it meant for? (§2.4)
+- [ ] Does a calling workflow have `on.schedule`, which environments is it meant for, and should a
+  scheduled run apply them or only plan? (§2.4)
 - [ ] Does a calling workflow declare `workflow_dispatch.inputs` named `environment`, `goal` or
   `reason`? (§2.5)
 - [ ] Is any test file committed? `git ls-files '*.tftest.hcl' '*.tftest.json'` (§2.6)
@@ -100,25 +101,28 @@ and every API failure run every environment.
 A repository that used a second calling workflow with complementary `on.paths` filters folds it
 into one after the move (§3.3).
 
-### 2.4 Schedules: opt the scheduled environment in
+### 2.4 Schedules: opt the scheduled environment in, and say whether it applies
 
 On v0 a `schedule` planned and applied every environment on the default branch. On v1 an
 environment takes part in a scheduled run only when its own `trigger-events` holds `schedule`; a
 schedule nobody opted into runs nothing and is green, with a notice naming the key. `schedule` is
-refused in the global `trigger-events-yml`.
+refused in the global `trigger-events-yml`. And a scheduled environment plans without applying
+unless its `schedule-goal` says otherwise: a v0 nightly reconcile keeps applying with
+`schedule-goal: default`.
 
 ```yaml
       environments-yml: |
         - environment: prod
         - environment: staging
-          trigger-events: [pull_request, push, workflow_dispatch, schedule]   # the nightly reconcile
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]
+          schedule-goal: default   # the nightly reconcile; without it the schedule only plans
 ```
 
 `trigger-events` replaces the default `[pull_request, push, workflow_dispatch]` for that
-environment, so list the other events it keeps. A scheduled run never destroys; an environment
-holding `destroy` runs its destroy plan and stops there. With `goals-yml: [all]` a scheduled
-environment is applied unattended every night; for drift detection only, give it a plan-only goals
-list ([user guide, example 6](Workflow-terraform-ci-default.md#6-scheduled-drift-detection)).
+environment, so list the other events it keeps. A scheduled run never destroys; with
+`schedule-goal: default`, an environment holding `destroy` runs its destroy plan and stops there.
+For drift detection only, leave `schedule-goal` out: the environment plans every night and applies
+only on a push ([user guide, example 6](Workflow-terraform-ci-default.md#6-scheduled-drift-detection)).
 
 ### 2.5 Dispatch inputs are read by name
 
@@ -373,8 +377,8 @@ gh workflow run <calling-workflow>.yml --ref main -f environment=prod -f goal=pl
 ### 4.4 Trigger events and schedules
 
 - **Benefit:** one calling workflow triggered on every event, with each environment saying which it
-  takes part in: a nightly drift plan for one environment, an environment kept out of pull
-  requests.
+  takes part in: a nightly drift plan of an environment that applies on push, a nightly reconcile
+  with `schedule-goal: default`, an environment kept out of pull requests.
 - **Cost:** an environment out of pull requests is never planned on them, so a pull request that
   touches it is never auto-merged.
 - **When:** when a schedule exists (a must, §2.4), or an environment should not plan on pull
@@ -383,12 +387,10 @@ gh workflow run <calling-workflow>.yml --ref main -f environment=prod -f goal=pl
 ```yaml
       environments-yml: |
         - environment: dev
-        - environment: nightly
-          goals-yml: [init, format, validate, lint, plan]
-          trigger-events: [push, schedule]
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]   # plans every night
 ```
 
-with `schedule: [{ cron: "0 3 * * *" }]` in the calling workflow's `on:`. Leave
+with `schedule: [{ cron: "23 3 * * *" }]` in the calling workflow's `on:`. Leave
 `trigger-events-yml` at its default. [Dispatch-and-triggers.md §3.2, §4.4](Dispatch-and-triggers.md).
 
 ### 4.5 Environment ordering: `depends-on`

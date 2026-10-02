@@ -478,7 +478,7 @@ not evaluated:
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
-| 5 | Goals: expand the environment's `goals`, a list of known names by rule 1, to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal` as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3. | Dispatch-and-triggers.md | `goals: …` |
+| 5 | Goals: expand the environment's `goals`, a list of known names by rule 1, to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal`, or on a schedule the environment's `schedule-goal` (`plan` where it sets none), as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3, a `schedule-goal`'s on every event. | Dispatch-and-triggers.md | `schedule-goal: …` on a schedule, then `goals: …` |
 | 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
 | 7 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
 
@@ -494,8 +494,8 @@ event.
 Checked by `invariants.py` on every case of every kind (§8). A violated invariant fails the suite
 even when the case's expected output matches. An invariant is checked from the commit that builds
 the rule it constrains; the port checks I7, I8, I11 and I12, relevance I6, I13 and I14, the test
-stage I4 and I9, trigger events, the dispatch filter and the granted goals I1, I2, I3, I15, I16
-and I17 (derived apart from `triggers.py`, from the raw goals and the event), the ordering I18 to
+stage I4 and I9, trigger events, the dispatch filter and the granted goals I1, I2, I3, I15, I16,
+I17 and I25 (derived apart from `triggers.py`, from the raw goals and the event), the ordering I18 to
 I24, and properties of their own: an output with errors carries no environments, no
 matrices and no relevance block, the record has one line per environment, the affected and
 unaffected counts sum to the environments decided, and the test count, the active flag and the
@@ -526,6 +526,7 @@ test rows agree, with every slug unique.
 | I22 | On `workflow_dispatch` with a non-empty `environment` input, every `run` environment has stage 1 whatever its `depends-on`, and `ordering.bypass` is `single-environment-dispatch`. The bypass appears in `record` and in `notices[]` only when the named environment declares at least one dependency. |
 | I23 | The longest path of the **declared** graph never exceeds the cap; a deeper graph is a validation error naming the chain. The check is against the declared graph, not the graph restricted to this run, so a configuration's validity does not depend on which files changed. |
 | I24 | `stage` is a pure function of the resolved `depends-on` graph restricted to the `run` set and of the last-stage rule for free-standing environments. With I12 this makes stage assignment byte-stable across runs of the same input document. |
+| I25 | On `schedule`, a running environment's granted goals are exactly the goals the workflow's gates let through on the default branch for its raw goals, less `destroy`, intersected with its `schedule-goal`'s cap (`plan`: `init` to `plan`; `apply`: those and `apply`; `destroy-plan`: `init` and `destroy-plan`; `default`: no cap), `plan` where it sets none. Derived apart from `triggers.py`, from the declared `schedule-goal` and the raw goals. |
 
 I5 of the first draft restated rule 2 and is folded into it.
 
