@@ -503,14 +503,16 @@ is the normal case, neither changes (P43).
 ### 4.7 Fork and Dependabot pull requests
 
 Secrets are not available to a pull request from a fork, and the token is read-only, so no OIDC
-token can be minted either; Dependabot runs are treated like fork runs and see only Dependabot's own
-secrets. Rows whose lane is credentialed, by environment or by mapping, are dropped by the builder
+token can be minted either. A Dependabot run sees only Dependabot's own secrets, but its token
+follows the caller's `permissions`: with `id-token: write` it mints OIDC tokens like any other run
+(P47). The builder treats Dependabot runs like fork runs all the same. Rows whose lane is
+credentialed, by environment or by mapping, are dropped by the builder
 when `github.event.pull_request.head.repo.fork == true` or `github.actor == 'dependabot[bot]'`
 (the actor GitHub's own guidance keys on), and listed with reason `secrets unavailable` (§6.4).
 `github.actor`, not `github.triggering_actor`: a human who re-runs a Dependabot run is the
-triggering actor, but the re-run keeps the original actor's privileges and still has no secrets.
-Dropping them also keeps a fork run from referencing, and thereby creating, a `tftest-*`
-environment in the base repository. Fork-safe rows run. On a fork the PR comment is not posted at
+triggering actor, but the re-run keeps the original actor's privileges and still sees only
+Dependabot's secrets. Dropping them also keeps a fork run from referencing, and thereby creating, a
+`tftest-*` environment in the base repository. Fork-safe rows run. On a fork the PR comment is not posted at
 all (the seed job already skips forks); the step summary is.
 
 ### 4.8 Limits
@@ -1245,6 +1247,7 @@ Indexed so implementation commits and future specs can cite them.
 | P44 | GitHub stores secret names upper-cased; Terraform variable names are case-sensitive. | An environment secret `TF_VAR_x` arrives as `TF_VAR_X` and sets only `X`; a test declaring `x` fails with "Required variable not set". | The export adds a lower-cased copy of every `TF_VAR_*` secret (`export-env-vars`' `lower-case-copies-for-prefixes-json`); a mixed-case name needs an explicit mapping (§3.6). |
 | P45 | Terraform 1.12 refuses a `variable` block in a test file, which 1.13 requires for `var.x` in the file. | Init fails for every test file of the root under 1.12, which read as `init` and hid the version. | The floor is 1.13 (§3.5), and a failed init defers to it (§5.5 row 1). |
 | P46 | A lock entry without `constraints`, typically a provider only a module requires, in lock-only mode. `providers lock` adds the line on the copy and re-pads the `=` of `version` to align the two (`version     = "3.9.1"`); with only the line ignored, every such lock read as missing hashes and its test jobs ended `lock-platform`, though the log said every checksum was already tracked. | Lock-only mode compares both locks without constraints lines and with the padding before each `=` collapsed, and shows the diff in that form. The suite's stub re-pads as Terraform does; the real case was reproduced with Terraform 1.16. |
+| P47 | A Dependabot run's token follows the caller's `permissions`, `id-token: write` included, and a job receives every secret its YAML references, whether or not the referencing step runs; `toJSON(secrets)` references all of them. | A fork-safe row on a Dependabot run executes the pull request's provider versions while holding every Dependabot secret and able to mint a token with the pull request's subject. | Credentialed rows are dropped on Dependabot runs (§4.7) and no plan or apply identity trusts a `pull_request` subject (P32). Observed: a calling repository's Dependabot pull request logged in to Azure through OIDC, with `github.actor` `dependabot[bot]`; the delivery verified on the test bed, where a job referencing `toJSON(secrets)` only in a step with `if: false` had every secret masked. |
 
 ## 11. Test coverage
 
@@ -1312,12 +1315,7 @@ environment lane included.
 What probes on the test bed, in Entra and a sandbox subscription, with a local Terraform 1.16 and in
 the documentation could answer is answered in the text above. What remains:
 
-1. **Dependabot runs and OIDC**: whether `id-token: write` is honoured on a Dependabot-triggered pull
-   request run, and what `github.actor` and `github.triggering_actor` read on it and on a human
-   re-run. The docs contradict each other on raising a Dependabot run's token permissions. The
-   design drops credentialed rows on Dependabot runs either way (§4.7), so this is for the pitfalls
-   table; it needs a real Dependabot pull request.
-2. **Fork runs and environment creation**: whether a fork pull request's run that references a
+1. **Fork runs and environment creation**: whether a fork pull request's run that references a
    missing environment creates it. The docs are silent on forks; the design never references one
    from a fork (§4.7). The test bed cannot answer it: the organisation's policy refuses a fork of
    its private repositories into a personal account. Needs a public repository to fork.
