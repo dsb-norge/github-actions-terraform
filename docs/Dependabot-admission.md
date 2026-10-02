@@ -6,10 +6,12 @@ opts in, [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.y
 Dependabot runs may execute Terraform, decided by the engine from what the pull request changes,
 with no person in the loop for a dependency that passes.
 
-Status: **built, and validated on a test bed for the project workflow**: admitted and refused pull requests
-for providers and modules, Dependabot push runs, and a module bump needing a new provider, which `init`
-refuses as P8 says. Not yet on a test bed: a re-run after the minimum age, and the module workflow opted
-in. §20 records what implementation and the test bed taught the spec.
+Status: **built, and validated on a test bed**: in the project workflow, admitted and refused pull
+requests for providers and modules, Dependabot push runs, a module bump needing a new provider, which
+`init` refuses as P8 says, and an admitted pull request auto-merged; in the module workflow, admitted
+and refused pull requests, the admission head, and the README committed to an admitted pull request,
+which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the minimum age. §20
+records what implementation and the test bed taught the spec.
 
 ## 1. Why
 
@@ -500,7 +502,7 @@ it does today, and a refused run runs nothing.
 | R4 | Module content is not inspected (D9). | §12. |
 | R5 | The registry's version detail endpoints are undocumented. | A change in their shape fails `create-matrix` (D11) rather than admitting. |
 | R6 | An admitted Dependabot run's credentialed test lanes run the pull request's dependencies with the lanes' identities. | The same decision as for the environments (D3); a lane identity reaches a sandbox only, by the isolation preconditions of Terraform-tests.md §3.6. |
-| R7 | The run a docs commit starts on an admitted Dependabot pull request is the App's, not Dependabot's: it reads the repository's Actions secrets, and the admission does not judge it (D22). | It carries the admitted change and the generated README only (P23), whose dependencies the admission judged minutes before, and the admitted run already held the App's key as a Dependabot secret; a module repository's other Actions secrets are what an admitted release reaches beyond R1. |
+| R7 | The run a docs commit starts on an admitted Dependabot pull request is the App's, not Dependabot's: it reads the repository's Actions secrets, and the admission does not judge it (D22). | It carries the admitted change and the generated README only (P23), whose dependencies the admission judged minutes before, and the admitted run already held the App's key as a Dependabot secret; a module repository's other Actions secrets are what an admitted release reaches beyond R1. The key itself reaches what the App can write, so the App is installed on the module repositories alone. |
 
 ## 15. Examples
 
