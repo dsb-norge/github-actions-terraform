@@ -3551,6 +3551,19 @@ for path in WORKFLOWS:
                 if rc != want_rc or len(errors) != len(want_named) or named != sorted(want_named):
                     problems.append(f"{where}: with APP_ID='{app_id}' and the key {'set' if key_set == 'true' else 'unset'}, "
                                     f"the check exited {rc} with {len(errors)} error(s) naming {named}; expected {want_rc}, {sorted(want_named)}")
+            # The docs job also runs on an admitted Dependabot pull request, which reads Dependabot secrets
+            # only, so its check names the Dependabot secret there (docs/Dependabot-admission.md D22).
+            if job_name == "generate-docs":
+                if env.get("ACTOR") != "${{ github.actor }}":
+                    problems.append(f"{where}: '{CHECK}' does not read the actor")
+                for key_set, want_rc in (("false", 1), ("true", 0)):
+                    rc, out = run(before["run"], {"APP_ID": "123", "PRIVATE_KEY_SET": key_set, "ACTOR": "dependabot[bot]"})
+                    errors = [line for line in out.splitlines() if line.startswith("::error")]
+                    if rc != want_rc or len(errors) != want_rc or (errors and (
+                            "cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY." not in errors[0]
+                            or "Dependabot secret" not in errors[0])):
+                        problems.append(f"{where}: on a Dependabot run with the key {'set' if key_set == 'true' else 'unset'}, "
+                                        f"the check exited {rc} with {errors}; expected {want_rc} and the Dependabot secret named")
             if after.get("name") == EXPLAIN:
                 rc, out = run(after["run"], {})
                 if rc != 1 or "ORG_TF_CICD_APP_ID" not in out or not out.startswith("::error"):
@@ -3657,6 +3670,93 @@ if [[ "${_f25_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f25_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F26 — the module docs job updates Dependabot's pull request only when the admission admitted it.
+#
+# docs/Dependabot-admission.md D22: the App's docs commit starts a run that is the App's, which
+# nobody judges, so on a Dependabot run the docs job pushes only when create-matrix judged and
+# admitted the run, and only on top of the commit the run evaluated (P23). The commit message keeps
+# Dependabot rebasing ('[dependabot skip]'), and the terraform-docs action passes it on. The pin
+# step's run block is executed here against real repositories.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F26 - the module docs job pushes to Dependabot's pull request only when admitted${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f26_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, subprocess, sys, tempfile, yaml
+
+problems = []
+with open(".github/workflows/terraform-module-ci.yaml", encoding="utf-8") as fh:
+    jobs = yaml.safe_load(fh)["jobs"]
+create, docs = jobs["create-matrix"], jobs["generate-docs"]
+if create.get("outputs", {}).get("admission-admitted") != "${{ steps.create-matrix.outputs.admission-admitted }}":
+    problems.append("create-matrix does not output admission-admitted")
+if docs.get("needs") != "create-matrix" or docs.get("if") != "${{ !cancelled() }}":
+    problems.append(f"the docs job does not wait for create-matrix whatever its result: needs {docs.get('needs')}, if {docs.get('if')}")
+steps = {step.get("id"): step for step in docs["steps"]}
+gate = ("(github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')")
+for step_id in ("app-access", "app-token"):
+    condition = " ".join(str(steps.get(step_id, {}).get("if", "")).split())
+    if gate not in condition:
+        problems.append(f"the docs job's {step_id} step does not require an admitted run on Dependabot's: {condition!r}")
+order = [step.get("id") or step.get("name") for step in docs["steps"]]
+pin = steps.get("pin", {})
+if "pin" not in order or order.index("pin") != order.index("docs") - 1 or "⬇ Checkout" not in order[:order.index("pin")]:
+    problems.append(f"the pin step does not sit between the checkout and the docs step: {order}")
+if pin.get("if") != "steps.app-token.outcome == 'success'" \
+        or (pin.get("env") or {}).get("HEAD_SHA") != "${{ github.event.pull_request.head.sha }}":
+    problems.append("the pin step does not compare against the pull request's head on every pushing run")
+with_ = steps.get("docs", {}).get("with") or {}
+if with_.get("push") != "${{ steps.app-token.outcome == 'success' && steps.pin.outputs.at-head == 'true' && 'true' || 'false' }}":
+    problems.append(f"the docs step pushes without the pin: {with_.get('push')}")
+if with_.get("commit-message") != ("${{ github.actor == 'dependabot[bot]' && 'terraform-docs: automated action "
+                                   "[dependabot skip]' || 'terraform-docs: automated action' }}"):
+    problems.append(f"the docs commit message does not keep Dependabot rebasing: {with_.get('commit-message')}")
+
+def git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+
+with tempfile.TemporaryDirectory() as work:
+    git(work, "init", "-q")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "evaluated")
+    evaluated = git(work, "rev-parse", "HEAD")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "newer")
+    newer = git(work, "rev-parse", "HEAD")
+    for head, want in ((newer, "true"), (evaluated, "false")):
+        output = os.path.join(work, "output")
+        open(output, "w").close()
+        done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", pin.get("run", "")], cwd=work, capture_output=True,
+                              text=True, env={"PATH": os.environ["PATH"], "HEAD_SHA": head, "GITHUB_OUTPUT": output})
+        got = open(output).read().strip()
+        if done.returncode != 0 or got != f"at-head={want}":
+            problems.append(f"the pin step with the tip {'at' if want == 'true' else 'past'} the evaluated head wrote "
+                            f"{got!r} (exit {done.returncode}); expected at-head={want}")
+
+with open("terraform-docs/action.yaml", encoding="utf-8") as fh:
+    action = yaml.safe_load(fh)
+if action["inputs"].get("commit-message", {}).get("default") != "terraform-docs: automated action":
+    problems.append("the terraform-docs action has no commit-message input defaulting to upstream's message")
+passed = [step.get("with", {}).get("git-commit-message") for step in action["runs"]["steps"]
+          if str(step.get("uses", "")).startswith("terraform-docs/gh-actions@")]
+if passed != ["${{ inputs.commit-message }}"] * 2:
+    problems.append(f"the terraform-docs steps do not both take the commit message: {passed}")
+print("checked the docs job's gate, pin, push and commit message, and the action's input")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f26_rc=0 || _f26_rc=$?
+if [[ "${_f26_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f26_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f26_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

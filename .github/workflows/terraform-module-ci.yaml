@@ -92,8 +92,10 @@ on:
       dependabot-admission-enabled:
         description: |
           Whether a run started by Dependabot runs validate and the tests only after the admission admits its pull request;
-          an admitted run also runs the credentialed test lanes, whose IDs must then be plain values in the lane
-          (docs/Dependabot-admission.md §11). Off by default: without it a Dependabot run's credentialed lanes do not run.
+          an admitted run also runs the credentialed test lanes, whose IDs must then be plain values in the lane, and
+          gets its regenerated README committed, for which the App's key must also be an organisation Dependabot secret
+          (docs/Dependabot-admission.md §11). Off by default: without it a Dependabot run's credentialed lanes do not run,
+          and its README is checked, not committed.
         type: boolean
         default: false
       dependabot-admission-yml:
@@ -128,6 +130,7 @@ jobs:
       # The Dependabot admission's verdict, when a caller opts in (docs/Dependabot-admission.md §11).
       admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
       admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
+      admission-admitted: ${{ steps.create-matrix.outputs.admission-admitted }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
@@ -221,6 +224,10 @@ jobs:
 
   generate-docs:
     name: "Update documentation"
+    # The admission's verdict decides whether a Dependabot run may push (docs/Dependabot-admission.md D22);
+    # every other run waits for create-matrix for nothing worse than its few seconds, and runs whatever its result.
+    needs: create-matrix
+    if: ${{ !cancelled() }}
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read # a docs commit is pushed with the App token, which starts the next run
@@ -229,8 +236,11 @@ jobs:
       status: ${{ steps.docs.outputs.status }}
     steps:
       # Only a pull request from this repository gets a docs commit (docs/Module-ci.md D6): a fork's
-      # run has no secrets, a Dependabot run only Dependabot's, and a push, a dispatch or a schedule
-      # must never commit to its branch. Everywhere else the docs job checks, and needs no App.
+      # run has no secrets, and a push, a dispatch or a schedule must never commit to its branch.
+      # Dependabot's pull request gets one only when the admission judged and admitted this run: the
+      # App's commit starts a run that is the App's, not Dependabot's, so nobody judges it, and it
+      # must carry nothing the admission has not admitted (docs/Dependabot-admission.md D22).
+      # Everywhere else the docs job checks, and needs no App.
       #
       # The App's variable and secret belong to the organisation and reach a repository only when it
       # is on each one's repository access list. Without them the token step fails with "client-id
@@ -240,10 +250,11 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && github.actor != 'dependabot[bot]'
+          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
         env:
           APP_ID: ${{ vars.ORG_TF_CICD_APP_ID }}
           PRIVATE_KEY_SET: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}
+          ACTOR: ${{ github.actor }}
         run: |
           # Fail naming each organisation variable or secret this repository cannot read
           missing=0
@@ -251,7 +262,11 @@ jobs:
             echo "::error title=GitHub App::This repository cannot read the organisation variable ORG_TF_CICD_APP_ID. Add the repository to the variable's repository access: organisation settings, Secrets and variables, Actions, Variables, ORG_TF_CICD_APP_ID."
             missing=1
           fi
-          if [ "${PRIVATE_KEY_SET}" != "true" ]; then
+          if [ "${PRIVATE_KEY_SET}" != "true" ] && [ "${ACTOR}" = "dependabot[bot]" ]; then
+            # A Dependabot run reads Dependabot secrets only (docs/Dependabot-admission.md D22).
+            echo "::error title=GitHub App::This Dependabot run cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. A Dependabot run reads Dependabot secrets only: add the App's key as an organisation Dependabot secret of that name (organisation settings, Secrets and variables, Dependabot) with this repository in its repository access, and pass 'secrets: inherit' in the calling job."
+            missing=1
+          elif [ "${PRIVATE_KEY_SET}" != "true" ]; then
             echo "::error title=GitHub App::This repository cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. Add the repository to the secret's repository access (organisation settings, Secrets and variables, Actions, Secrets, ORG_TF_CICD_APP_PRIVATE_KEY), and pass 'secrets: inherit' in the calling job."
             missing=1
           fi
@@ -261,7 +276,7 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && github.actor != 'dependabot[bot]'
+          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
@@ -285,12 +300,31 @@ jobs:
           ref: ${{ steps.app-token.outcome == 'success' && github.event.pull_request.head.ref || '' }}
           token: ${{ steps.app-token.outputs.token || github.token }}
 
+      # The branch's tip may have moved past the commit this run evaluated, by a push or by Dependabot
+      # rebasing; a commit on top of it would carry what nobody judged (docs/Dependabot-admission.md P23).
+      # The push itself is a plain git push, which GitHub refuses when the branch moves after this check.
+      - name: "📌 Pin the docs commit to the evaluated head"
+        id: pin
+        if: steps.app-token.outcome == 'success'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Push only on top of the commit this run evaluated; a newer commit's own run regenerates the README
+          if [ "$(git rev-parse HEAD)" = "${HEAD_SHA}" ]; then
+            echo "at-head=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "::notice title=Update documentation::The branch has moved past ${HEAD_SHA}, the commit this run evaluated; its newer commit's run regenerates the README."
+            echo "at-head=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       - name: "📝 Validate and update the README"
         id: docs
         uses: dsb-norge/github-actions-terraform/terraform-docs@v1
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
-          push: ${{ steps.app-token.outcome == 'success' && 'true' || 'false' }}
+          push: ${{ steps.app-token.outcome == 'success' && steps.pin.outputs.at-head == 'true' && 'true' || 'false' }}
+          # '[dependabot skip]' keeps Dependabot rebasing and updating its pull request despite the commit
+          commit-message: "${{ github.actor == 'dependabot[bot]' && 'terraform-docs: automated action [dependabot skip]' || 'terraform-docs: automated action' }}"
 
   validate:
     name: "Validate module"
