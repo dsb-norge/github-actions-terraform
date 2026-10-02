@@ -49,7 +49,10 @@ class BooleanInputsTest(unittest.TestCase):
         # The test stage's booleans are read by tests.py and never reach an environment's row.
         test_stage = {"allow-failing-terraform-tests", "terraform-test-enabled"}
         self.assertEqual(test_stage, test_stage & set(environments.TEST_INPUTS))
-        self.assertEqual(set(BOOLEAN_INPUTS), declared - test_stage)
+        # The admission's switch is read by admission.py and never reaches an environment's row either.
+        admission = {"dependabot-admission-enabled"}
+        self.assertEqual(admission, admission & set(environments.ADMISSION_INPUTS))
+        self.assertEqual(set(BOOLEAN_INPUTS), declared - test_stage - admission)
         self.assertEqual(set(BOOLEAN_INPUTS), set(environments.BOOLEAN_INPUTS))
 
     def test_a_per_environment_boolean_takes_the_forwarded_type(self):

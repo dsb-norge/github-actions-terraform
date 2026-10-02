@@ -88,6 +88,17 @@ on:
         description: "Glob patterns of test files discovery ignores (docs/Terraform-tests.md §4.4)."
         type: string
         default: ""
+      dependabot-admission-enabled:
+        description: |
+          Whether a run started by Dependabot runs validate and the tests only after the admission admits its pull request;
+          an admitted run also runs the credentialed test lanes, whose IDs must then be plain values in the lane
+          (docs/Dependabot-admission.md §11). Off by default: without it a Dependabot run's credentialed lanes do not run.
+        type: boolean
+        default: false
+      dependabot-admission-yml:
+        description: "The admission's policy, added to its built-in one (docs/Dependabot-admission.md §6)."
+        type: string
+        default: ""
 
 # One run per ref. The default queue depth (one pending run) is deliberate: a pending run is a
 # superseded commit of the same ref and nothing here applies to shared state, so dropping it when

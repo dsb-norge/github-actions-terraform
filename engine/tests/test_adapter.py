@@ -761,7 +761,7 @@ class RunTest(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
         self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
-                          "warnings", "record", "trigger", "ordering"}, set(published))
+                          "warnings", "record", "trigger", "ordering", "admission"}, set(published))
         self.assertEqual((["env-a", "b"], ["run", "skip"],
                           {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}),
                          ([e["environment"] for e in published["environments"]],

@@ -35,6 +35,8 @@
     "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": "",
     "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  url: \"https://example.com/a\"\n  extra-envs-yml: |\n    ARM_SUBSCRIPTION_ID: \"00000000-0000-0000-0000-000000000002\" # comment\n    ARM_CLIENT_ID: \"00000000-0000-0000-0000-000000000003\" # comment\n",
     "extra-envs-from-secrets-per-goal-yml": "{}",
     "extra-envs-from-secrets-yml": "{}",
@@ -74,6 +76,10 @@
       }
     ],
     "inputs": {
+      "dependabot-admission-yml": {
+        "ok": true,
+        "value": null
+      },
       "environments-yml": {
         "ok": true,
         "value": [
