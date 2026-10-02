@@ -38,6 +38,13 @@ inputs:
       request's head branch.
     required: false
     default: "false"
+  commit-message:
+    description: |
+      The docs commit's message, with push 'true'. A Dependabot pull request's
+      needs '[dependabot skip]' in it, or Dependabot stops rebasing and updating
+      the pull request once the commit is on its branch.
+    required: false
+    default: "terraform-docs: automated action"
 
 outputs:
   number-of-files-changed:
@@ -96,6 +103,7 @@ runs:
       with:
         working-dir: ${{ steps.inject-config-files.outputs.examples-subfolders }}
         git-push: ${{ inputs.push == 'true' && 'true' || 'false' }}
+        git-commit-message: ${{ inputs.commit-message }}
         fail-on-diff: ${{ inputs.push == 'true' && 'false' || 'true' }}
         config-file: ${{ github.workspace }}/examples/.terraform-docs.yml
       continue-on-error: true
@@ -107,6 +115,7 @@ runs:
       with:
         working-dir: ${{ inputs.readme-file-path }}
         git-push: ${{ inputs.push == 'true' && 'true' || 'false' }}
+        git-commit-message: ${{ inputs.commit-message }}
         fail-on-diff: ${{ inputs.push == 'true' && 'false' || 'true' }}
         config-file: .terraform-docs.yml
       continue-on-error: true
