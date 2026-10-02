@@ -17,7 +17,8 @@ description: |
       place, deleting any duplicates, or POSTs a fresh one when there is none.
     - With relevance-file: also renders the groups relevance.json declares and
       the environments path relevance left out of the run, as columns of dashes
-      (docs/Path-relevance.md §6.2, §6.4).
+      (docs/Path-relevance.md §6.2, §6.4), and those the Dependabot admission
+      refused, as columns of "🚫" (docs/Dependabot-admission.md §7).
     - With relevance-file and stage-results-json: renders the environments a
       failed stage held back, and finalises the heads of ungrouped ones, which
       no job of the run writes (docs/Environment-ordering.md §7.4).
@@ -50,9 +51,13 @@ inputs:
       With it, the desired set of groups is the union of the groups declared in
       the file for environments with add-pr-comment "true" and the groups seen in
       metadata; an environment the file marks unaffected keeps its column in its
-      group's table, every cell a dash, and is named in a footer line. Columns
-      then follow environments-yml order. A run whose only commenting
-      environments are unaffected still reconciles.
+      group's table, every cell a dash, and is named in a footer line. One the
+      Dependabot admission refused (first reason "admission: not admitted")
+      keeps its column the same way, every cell a "🚫", and is named on a
+      "🚫 Not admitted:" line above the not-affected one
+      (docs/Dependabot-admission.md §7). Columns then follow environments-yml
+      order. A run whose only commenting environments are unaffected or not
+      admitted still reconciles.
 
       Empty, or a path that does not exist (the artifact download may fail), and
       the action behaves exactly as without relevance.
