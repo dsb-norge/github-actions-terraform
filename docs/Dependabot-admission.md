@@ -58,7 +58,7 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 | D5 | The rule judges content only: the change from the merge commit's first parent to the merge commit (`github.sha`), the commit the run checks out. Commit authorship is not consulted. | The actor already says who pushed, and a content rule covers every commit whoever wrote it (P3). |
 | D6 | One allow list of namespaces, for providers and modules alike. An entry is a namespace (`elastic`) or a namespace and name (`cyrilgdn/postgresql`), compared without case. Built in: `dsb-norge`, `hashicorp`, `microsoft`, `Azure`. A caller's entries are added to the built-in ones. | Decided by the maintainer: the publishers the organisation trusts. Adding rather than replacing, so nobody drops `hashicorp` by mistake. |
 | D7 | A changed provider or module version must have been published at least `min-age-days` before the run (default 3). Namespaces in `min-age-exempt` (built in: `dsb-norge`) are exempt. | Decided by the maintainer. 3 matches Dependabot's default cooldown, so a repository on the default or a longer cooldown never trips it; the check catches a cooldown lowered or removed. The organisation's own modules gain nothing from waiting. |
-| D8 | A changed provider's new version must be signed with a key that signed the base version, and every `zh:` hash its lock entry records must be in the publisher's checksum file for that version. | A publisher's key changing between two versions is what a takeover looks like; the hashes tie the lock to what the registry signed. It fires on real releases: a partner provider's version that Terraform installs as "signed by a HashiCorp partner" was followed by one it installs as "self-signed" (P10). |
+| D8 | A changed provider's new version must be signed with a key that signed the base version, or with a key HashiCorp vouches for: HashiCorp's own, or one whose partner trust signature verifies against HashiCorp's partner key, as Terraform checks it. Every `zh:` hash its lock entry records must be in the publisher's checksum file for that version. | A publisher's key changing to one nobody vouches for is what a takeover looks like, and it happens: a partner provider's version that Terraform installs as "signed by a HashiCorp partner" was followed by one it installs as "self-signed" (P10). A rotation HashiCorp has vetted passes, decided by the maintainer. The hashes tie the lock to what the registry signed. |
 | D9 | Module content is not inspected. | No scan of HCL text is sound (unquoted block labels, JSON syntax, escapes), plan-time code takes many forms (data sources of every provider, provider functions, child `provider` and `import` blocks, `file()`), and legitimate upgrades add providers and examples. The boundary is the identity, the allow list and the provenance checks; a scan would slow an attacker, not stop one (§12). |
 | D10 | On a Dependabot run, the environment root's `init` uses `-lockfile=readonly`, and every environment the change is relevant to must have a committed lock file. | Terraform then refuses a provider the lock does not record before anything executes it: `init` downloads and verifies it but fails with "Provider dependency changes detected", and `validate` and `plan` then refuse without starting a provider (P8). A constraint change the locked version still satisfies passes. |
 | D11 | A fact the admission needs that cannot be gathered (a registry or GitHub API error, an answer of an unexpected shape) fails the `create-matrix` job, naming the fact. | Decided by the maintainer. "Re-run failed jobs" then decides again; a red conclusion alone would keep the decided verdict on that kind of re-run. Only Dependabot runs gather these facts. |
@@ -138,7 +138,7 @@ in.
 | `host` | the address is on `registry.terraform.io` | the address |
 | `allow` | its namespace, or namespace and type, is on the allow list | the address |
 | `age` | the new version was published at least `min-age-days` before the run, or the namespace is exempt | the version's publication time |
-| `key` | the new version's signing key IDs share one with the base version's | each version's signing keys |
+| `key` | the new version's signing key IDs share one with the base version's, or a new key is HashiCorp's own or carries a partner trust signature that verifies against HashiCorp's partner key | each version's signing keys and their trust signatures |
 | `hashes` | every `zh:` hash in the new lock block is in the publisher's checksum file for the version | the checksum file |
 
 For a `required_providers` change in a directory without a lock file, "the new version" is the
@@ -280,7 +280,7 @@ What each failed check tells the reader:
 |---|---|
 | `allow` | add the namespace, or namespace and name, to `allow` on the default branch, then `@dependabot rebase` |
 | `age` | the date and time it becomes old enough; then "Re-run all jobs", since the verdict is decided in `create-matrix` |
-| `key` | the old and new key IDs; check the publisher's announcement; a genuine rotation is run once by a person's commit |
+| `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); check the publisher's announcement before running it once by a person's commit |
 | `hashes` | the lock records a hash the publisher did not publish: do not merge; comment `@dependabot recreate` |
 | `host`, `source` | the admission judges registry and GitHub sources only; a person's commit runs it |
 | the shape | the file and line that is not a dependency version; review it; a person's commit runs it |
@@ -304,7 +304,8 @@ out `changed_files`.
 | the change | `git diff --name-status` and `git show <rev>:<path>` between `github.sha`'s first parent and `github.sha`, in the `create-matrix` checkout (fetch depth 2) | `create-matrix` fails |
 | the time of the run | the adapter's clock, in UTC, once per run (the core reads no clock) | — |
 | a provider version's publication time | `GET https://registry.terraform.io/v1/providers/<ns>/<type>/<version>` → `published_at` | `create-matrix` fails |
-| a provider version's signing keys and checksum file | `GET …/v1/providers/<ns>/<type>/<version>/download/linux/amd64` → `signing_keys.gpg_public_keys[].key_id`, `shasums_url`; then the file at `shasums_url` | `create-matrix` fails |
+| a provider version's signing keys and checksum file | `GET …/v1/providers/<ns>/<type>/<version>/download/linux/amd64` → `signing_keys.gpg_public_keys[]` (`key_id`, `ascii_armor`, `trust_signature`), `shasums_url`; then the file at `shasums_url` | `create-matrix` fails |
+| whether HashiCorp vouches for a new key | the key ID against HashiCorp's own; otherwise the `trust_signature`, a detached signature over the key's de-armoured bytes, verified with `gpg` in a temporary keyring holding HashiCorp's partner key (a constant in the adapter, taken from Terraform's source) (P18) | `gpg` missing or erroring: `create-matrix` fails; a signature that does not verify is the fact "not vouched" |
 | a provider's versions (constraints without a lock) | `GET …/v1/providers/<ns>/<type>/versions` | `create-matrix` fails |
 | a registry module version's publication time | `GET https://registry.terraform.io/v1/modules/<ns>/<name>/<provider>/<version>` → `published_at` | `create-matrix` fails |
 | a GitHub module tag's release | `gh api repos/<owner>/<repo>/releases/tags/<tag>` → `published_at`; a 404 is the fact "no release" | other errors: `create-matrix` fails |
@@ -454,7 +455,8 @@ it does today, and a refused run runs nothing.
 | `Azure/naming/azurerm` 0.4.3 → 0.4.4, published 1 day ago | not admitted | `age`; admitted on a re-run after day 3 |
 | `dsb-norge/mgmt-resource-lock/azurerm`, published an hour ago | admitted | `dsb-norge` is exempt from `min-age-days` |
 | a GitHub module `github.com/<org>/<repo>?ref=v1.3.0`, owner allowed, tag without a release | not admitted | `age`, unless the owner is exempt |
-| a provider whose new version is signed by a different key | not admitted | `key` |
+| a partner provider whose new version is signed by a new key carrying HashiCorp's partner trust signature | admitted | `key`: HashiCorp vouches (D8) |
+| a partner provider whose new version is signed by a new key without a trust signature (Terraform: "self-signed") | not admitted | `key` |
 | a pull request titled "4.4.0 to 4.81.0" whose lock records 5.8.0, published nine hours before | not admitted | `age`, judged on the lock (P16) |
 | a Dependabot pull request a person has pushed a commit to | not judged on that push | the person's run |
 | the same pull request after `@dependabot recreate` | judged | the actor is Dependabot again |
@@ -475,7 +477,7 @@ it does today, and a refused run runs nothing.
 | P7 | The registry reports `Azure`, lock files `azure`. | A case-sensitive allow list refuses Microsoft's providers. | Without case (D6). |
 | P8 | A module upgrade can require a provider the lock lacks, implicitly through a data source's type. | In `init`'s default mode Terraform installs the newest matching version, records it and runs it, unjudged. | `-lockfile=readonly` on Dependabot runs (D10). Verified with Terraform 1.16: the new provider is downloaded and its signature checked, `init` fails with "Provider dependency changes detected", and `validate` ("Missing required provider") and `plan` ("Inconsistent dependency lock file") refuse with no provider plugin started. A module needing a newer version of a locked provider fails `init` in either mode, downloading nothing. |
 | P9 | Commit and tag dates are set by the client; the registry's module tags are often lightweight. | A backdated commit passes an age check. | The release's `published_at` (§4.4). |
-| P10 | A publisher's key changes for new versions only. | `key` refuses the release. Seen on a partner provider: its earlier versions are "signed by a HashiCorp partner", the next is "self-signed" with a new key that carries no partner trust signature. | A person looks before it runs; the help names both keys and Terraform's verdict on each. A rotation that re-signs every release, as HashiCorp's in 2021, does not trip it. |
+| P10 | A publisher's key changes for new versions only. | `key` refuses the release. Seen on a partner provider: its earlier versions are "signed by a HashiCorp partner", the next is "self-signed" with a new key that carries no partner trust signature. | A person looks before it runs; the help names both keys and Terraform's verdict on each. A rotation to a key HashiCorp vouches for passes (D8), and one that re-signs every release, as HashiCorp's in 2021, does not change the key at all. |
 | P11 | The registry's `verified` flag is false for some modules of a trusted publisher. | A rule on the flag refuses them. | The allow list, not the flag (D6). |
 | P12 | Admission facts gathered on every run would spend the token's hourly budget and the registry's patience. | Rate limits on busy repositories. | Gathered only when the admission applies (§8); the change read through git, not the API. |
 | P13 | A configuration error raised as an engine error exits before `relevance.json` is written. | No report, no artifact for the readers. | A refusal is a participation drop, not an error (§9). |
@@ -483,6 +485,7 @@ it does today, and a refused run runs nothing.
 | P15 | A caller keeps secret IDs. | An admitted run fails on "secret not available". | The migration items (§13); the message names the secret, as today. |
 | P16 | Dependabot picks the version it reports by its cooldown and ignore rules, then regenerates the lock with `terraform providers lock`, which takes the newest version the constraints allow. | Seen: a pull request titled "4.4.0 to 4.81.0" locked 5.8.0, a major version published nine hours before, past the caller's five-day cooldown and its ignore of major versions. | The admission judges the lock, what runs, never the title: `age` refuses it. |
 | P17 | Python's `urllib` tries the addresses in resolver order and does not race IPv4 against IPv6. | On a host that resolves the registry's AAAA records without working IPv6, each call waited about 25 seconds before falling back. | Registry calls through `curl` (§8). |
+| P18 | A partner key's trust signature covers the key's de-armoured bytes, not its armour text, as Terraform's `package_authentication.go` decodes both before checking. | Verifying over the text fails for every partner key. | Verify over the decoded key (§8). Verified with `gpg` against HashiCorp's partner key: two partners' keys good; another partner's signature over the same key and a key with one bit flipped bad. A trust signature that does not verify makes Terraform refuse the package outright, not fall back to "self-signed"; the admission refuses it as `key`. |
 
 ## 17. Tests
 
@@ -491,12 +494,15 @@ it does today, and a refused run runs nothing.
 - Engine, table cases: each row of §15; each check failing alone; a grouped pull request (three
   dependencies across four directories, one failing); a lock-only change; a constraint rewritten with
   `!=` dropped; `.tf.json`, a Terragrunt `.hcl`, an added file, a rename and a mode change refused;
-  case-insensitive allow and exempt matching; the built-in lists extended, not replaced; constraint
+  case-insensitive allow and exempt matching; the key check with the same key, HashiCorp's own key, a
+  partner trust signature that verifies, one that does not (a tampered signature, another key's), and
+  none; the built-in lists extended, not replaced; constraint
   resolution over a version list (each operator, pre-releases, a constraint nothing satisfies).
 - Engine, invariants I26 to I29, each with a broken output it catches (`test_invariants.py`), and the
   mutation gate over `admission.py`.
 - Engine, validation: every message of §6, and the inputs refused per environment.
-- Adapter: each fact of §8 answered, missing, mistyped and erroring; a 404 for a release read as "no
+- Adapter: each fact of §8 answered, missing, mistyped and erroring; the trust signature verified
+  with `gpg` against recorded registry answers, valid and tampered; a 404 for a release read as "no
   release"; the diff read from a two-commit checkout; the input-document log free of inventories.
 - Workflows: the structural tests of §10; the conclusion's run block on `admission-refused` with
   `allow-failing-terraform-operations: true`.
