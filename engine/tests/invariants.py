@@ -11,7 +11,8 @@ from dsb_tf_engine import values
 VERDICTS = ("run", "skip")
 GRANTED_VOCABULARY = {"init", "format", "validate", "lint", "plan", "apply", "destroy-plan", "destroy"}
 # Reasons of the rules before relevance (docs/Decision-engine.md §6, rules 2 and 3).
-EARLIER_RULES = ("trigger-events:", "dispatch:")
+# Rules 2, 3 and 3a: an environment they drop is skipped for their reason, whatever relevance says.
+EARLIER_RULES = ("trigger-events:", "dispatch:", "admission:")
 
 
 def _contains(goals, goal):
@@ -41,6 +42,40 @@ def _gate_allows(document, goals, goal):
 def declared_environments(document):
     result = document["yaml"]["inputs"].get("environments-yml")
     return result["value"] if result and result["ok"] and isinstance(result["value"], list) else None
+
+
+def _refused(output):
+    admission = output.get("admission", {"applies": False})
+    return admission["applies"] and not admission["push_run"] and not admission["admitted"]
+
+
+def _admission_invariants(document, output):
+    """I26-I29 (docs/Dependabot-admission.md §9)."""
+    from dsb_tf_engine import decide
+    violations = []
+    admission = output.get("admission")
+    if admission is None or output["errors"]:
+        return violations
+    event = document["event"]
+    switch = document["workflow_inputs"].get("dependabot-admission-enabled", output.get("mode") != "module")
+    if admission["applies"] and not (event.get("actor") == "dependabot[bot]" and switch in (True, "true")
+                                     and event["name"] in ("pull_request", "push")):
+        violations.append("I26: the admission applies to a run that does not meet it")
+    held_back = admission["applies"] and (admission["push_run"] or not admission["admitted"])
+    if held_back and (any(entry["verdict"] == "run" for entry in output.get("environments", []))
+                      or output["tests"]["matrix"]["include"]):
+        violations.append("I27: a refused or Dependabot push run runs an environment or a test")
+    if not admission["applies"] and "admission" in document:
+        without = {key: value for key, value in document.items() if key != "admission"}
+        if decide.decide(without) != output:
+            violations.append("I28: the admission's facts change a run it does not apply to")
+    if admission["applies"] and admission["admitted"] and not admission["push_run"] and output.get("mode") != "module":
+        off = {**document, "workflow_inputs": {**document["workflow_inputs"], "dependabot-admission-enabled": False}}
+        other = decide.decide(off)
+        if [(e["environment"], e["verdict"]) for e in other["environments"]] != \
+                [(e["environment"], e["verdict"]) for e in output["environments"]] or other["matrices"] != output["matrices"]:
+            violations.append("I29: an admitted run is decided otherwise than with the admission off")
+    return violations
 
 
 def check(document, output):
@@ -134,13 +169,22 @@ def check(document, output):
             if head["state"] == "not-taking-part" and (entry is None or entry["verdict"] != "skip"
                                                        or not entry["reasons"][0].startswith("trigger-events:")):
                 violations.append(f"I14: a 'not taking part' head for '{head['key']}', which takes part")
+            if head["state"] == "not-admitted" and (entry is None or entry["reasons"] != ["admission: not admitted"]):
+                violations.append(f"I14: a 'not admitted' head for '{head['key']}', which was not refused")
+            if head["kind"] == "admission" and not _refused(output):
+                violations.append("I14: an admission head on a run that was not refused")
         for name in manifest["purge_tags_for"]:
             entry = by_key.get(name)
             if entry is None or entry["verdict"] != "skip" or entry["add-pr-comment"] != "true":
                 violations.append(f"I14: a tag purge for '{name}', which is not an unaffected commenting environment")
-        if len(manifest["gc"]) != 4 * len(manifest["purge_tags_for"]):
+        admission_purges = [rule for rule in manifest["gc"] if rule["marker-prefix"].startswith("<!-- tf:head:admission:")]
+        if len(manifest["gc"]) - len(admission_purges) != 4 * len(manifest["purge_tags_for"]):
             violations.append("I14: not four purge rules per purged environment")
+        if admission_purges and (_refused(output) or len(admission_purges) != 1
+                                 or event.get("pull_request", {}).get("author") != "dependabot[bot]"):
+            violations.append("I14: an admission head purged where none can be stale")
 
+    violations += _admission_invariants(document, output)
     violations += _goal_invariants(document, output)
     violations += _ordering_invariants(document, output)
 
@@ -152,8 +196,11 @@ def check(document, output):
         if len({row["slug"] for row in rows}) != len(rows):
             violations.append("tests: a slug appears twice")
         event = document["event"]
-        # I4: where secrets are unavailable, no row asks for them.
-        if event.get("pull_request", {}).get("is_fork", False) or event.get("actor") == "dependabot[bot]":
+        # I4: where secrets are unavailable, no row asks for them: a fork, or Dependabot with the admission not
+        # applying (an admitted Dependabot run runs credentialed lanes, docs/Dependabot-admission.md D20).
+        applying = output.get("admission", {"applies": False})["applies"]
+        if event.get("pull_request", {}).get("is_fork", False) or (event.get("actor") == "dependabot[bot]"
+                                                                    and not applying):
             if any(row["test"]["github-environment"] or row["test"]["extra-envs-from-secrets"] for row in rows):
                 violations.append("I4: a credentialed test row where secrets are unavailable")
         # I9: a test row's environment is a tftest- name and no Terraform environment's.

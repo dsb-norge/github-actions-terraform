@@ -8,6 +8,7 @@ sets and rows, and validates the lanes.
 import copy
 import unittest
 
+import invariants
 import support
 from dsb_tf_engine import decide
 
@@ -374,8 +375,10 @@ class SecretsUnavailableTest(unittest.TestCase):
              {"name": "mapped", "match": ["**/map-*.tftest.hcl"], "extra-envs-from-secrets-yml": {"X": "S"}}]
     FILES = ["tests/env-a.tftest.hcl", "tests/map-a.tftest.hcl", "tests/unit-a.tftest.hcl"]
 
-    def test_credentialed_rows_are_dropped_on_a_fork_and_on_dependabot(self):
-        for kwargs in (dict(is_fork=True), dict(actor="dependabot[bot]"), dict(actor="dependabot[bot]", event="push")):
+    def test_credentialed_rows_are_dropped_on_a_fork_and_on_dependabot_with_the_admission_off(self):
+        off = {"dependabot-admission-enabled": False}
+        for kwargs in (dict(is_fork=True), dict(actor="dependabot[bot]", inputs=off),
+                       dict(actor="dependabot[bot]", event="push", inputs=off)):
             with self.subTest(kwargs=kwargs):
                 tests = decided(self.FILES, lanes=self.LANES, **kwargs)["tests"]
                 self.assertEqual(["tests/unit-a.tftest.hcl"], [r["test"]["file"] for r in tests["matrix"]["include"]])
@@ -386,6 +389,36 @@ class SecretsUnavailableTest(unittest.TestCase):
     def test_they_run_otherwise(self):
         self.assertEqual(3, decided(self.FILES, lanes=self.LANES)["tests"]["count"])
         self.assertEqual(3, decided(self.FILES, lanes=self.LANES, event="push")["tests"]["count"])
+
+    def admission(self, published):
+        doc = document(self.FILES, lanes=self.LANES, actor="dependabot[bot]")
+        doc["event"]["pull_request"]["author"] = "dependabot[bot]"
+        doc["admission"] = support.admission_facts([support.provider_dependency(published=published)],
+                                                   locks={"envs/prod": True, "envs/staging": True})
+        output = decide.decide(doc)
+        self.assertEqual([], invariants.check(doc, output))
+        return output["tests"]
+
+    def test_an_admitted_dependabot_run_runs_its_credentialed_lanes(self):
+        # docs/Dependabot-admission.md D20: their credentials reach the run as plain values, or the lane fails.
+        tests = self.admission(support.NOW - 10 * support.DAY)
+        self.assertEqual(["tests/env-a.tftest.hcl", "tests/map-a.tftest.hcl", "tests/unit-a.tftest.hcl"],
+                         [row["test"]["file"] for row in tests["matrix"]["include"]])
+        self.assertEqual([], tests["not_run"])
+
+    def test_a_refused_dependabot_run_runs_no_test(self):
+        tests = self.admission(support.NOW - support.DAY)
+        self.assertEqual((0, False), (tests["count"], tests["active"]))
+        self.assertEqual([{"file": "tests/env-a.tftest.hcl", "lane": "env", "reason": "admission: not admitted"},
+                          {"file": "tests/map-a.tftest.hcl", "lane": "mapped", "reason": "admission: not admitted"},
+                          {"file": "tests/unit-a.tftest.hcl", "lane": "default", "reason": "admission: not admitted"}],
+                         tests["not_run"])
+
+    def test_a_dependabot_push_run_runs_no_test(self):
+        tests = decided(self.FILES, lanes=self.LANES, actor="dependabot[bot]", event="push")["tests"]
+        self.assertEqual(0, tests["count"])
+        self.assertEqual({"admission: Dependabot push run"}, {entry["reason"] for entry in tests["not_run"]})
+        self.assertEqual(3, len(tests["not_run"]))
 
 
 class ProviderSetTest(unittest.TestCase):

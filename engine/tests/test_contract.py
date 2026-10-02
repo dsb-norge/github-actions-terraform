@@ -38,7 +38,7 @@ class ContractTest(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 published = written(scenario)
                 self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments",
-                                  "notices", "warnings", "record", "trigger", "ordering"}, set(published))
+                                  "notices", "warnings", "record", "trigger", "ordering", "admission"}, set(published))
                 self.assertEqual({"declared", "stages_used", "cap", "bypass"}, set(published["ordering"]))
                 self.assertEqual({"affected", "unaffected", "by_stage"}, set(published["counts"]))
                 self.assertEqual({"event", "lines"}, set(published["trigger"]))

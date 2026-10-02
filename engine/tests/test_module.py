@@ -137,8 +137,8 @@ class LanesTest(unittest.TestCase):
 class OutputTest(unittest.TestCase):
     def test_the_output_is_the_test_stage_alone(self):
         output = decided([UNIT, "nowhere/x.tftest.hcl"], dirs=["."], event="workflow_dispatch")
-        self.assertEqual(["errors", "mode", "notices", "record", "schema_version", "tests", "trigger", "warnings"],
-                         sorted(output))
+        self.assertEqual(["admission", "errors", "mode", "notices", "record", "schema_version", "tests", "trigger",
+                          "warnings"], sorted(output))
         self.assertEqual(("module", {"event": "workflow_dispatch", "lines": []}),
                          (output["mode"], output["trigger"]))
         self.assertEqual(["tests/unit-tests.tftest.hcl: run, lane default", "nowhere/x.tftest.hcl: not run, misplaced"],
@@ -196,8 +196,8 @@ class AdapterTest(unittest.TestCase):
                          json.loads(outputs["tests-matrix-json"])["include"][0]["test"]["file"])
         with open(outputs["relevance-file"], encoding="utf-8") as handle:
             published = json.load(handle)
-        self.assertEqual(["mode", "notices", "record", "schema_version", "tests", "trigger", "warnings"],
-                         sorted(published))
+        self.assertEqual(["admission", "mode", "notices", "record", "schema_version", "tests", "trigger",
+                          "warnings"], sorted(published))
         self.assertTrue(os.path.dirname(outputs["relevance-file"]).startswith(runner.environ["RUNNER_TEMP"]))
 
     def test_a_repository_without_tests_publishes_the_finding(self):

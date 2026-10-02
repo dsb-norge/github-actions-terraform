@@ -47,6 +47,8 @@
     "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": "",
     "environments-yml": "- environment: \"env-a\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/a\n- environment: \"env-b\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/b\n- environment: \"env-c\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/c\n- environment: \"env-d\"\n  pr-comment-group: \"group-a\"\n  url: https://example.com/d\n- environment: \"env-e\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/e\n- environment: \"env-f\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/f\n- environment: \"env-g\"\n  pr-comment-group: \"group-b\"\n  url: https://example.com/g\n",
     "extra-envs-from-secrets-per-goal-yml": "{}",
     "extra-envs-from-secrets-yml": "{}",
@@ -84,6 +86,10 @@
       {}
     ],
     "inputs": {
+      "dependabot-admission-yml": {
+        "ok": true,
+        "value": null
+      },
       "environments-yml": {
         "ok": true,
         "value": [

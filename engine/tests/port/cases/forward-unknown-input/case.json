@@ -33,7 +33,9 @@
     "some-number": 5,
     "some-float": 1.5,
     "some-null": null,
-    "trigger-events-yml": "[pull_request, push, workflow_dispatch]"
+    "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": ""
   },
   "ref_name": "main",
   "default_branch": "main",

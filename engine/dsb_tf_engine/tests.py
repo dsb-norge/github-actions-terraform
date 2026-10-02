@@ -11,6 +11,7 @@ import hashlib
 import re
 
 from . import globs, values
+from .admission import DEPENDABOT, NOT_APPLYING, PUSH_RUN, REFUSED
 from .environments import ConfigError, shown
 
 LANE_KEYS = ("name", "match", "extra-envs-yml", "extra-envs-from-secrets-yml", "runs-on", "terraform-version",
@@ -31,7 +32,6 @@ TEST_EVENTS = ("pull_request", "push")
 # (docs/Module-ci.md D3).
 MODULE_TEST_EVENTS = ("pull_request", "push", "workflow_dispatch", "schedule")
 UNTESTED_ACTIONS = ("closed", "converted_to_draft")
-DEPENDABOT = "dependabot[bot]"
 
 
 def normalise_dir(path):
@@ -278,8 +278,19 @@ def _provider_sets(document, rows, notices):
     return list(sets.values())
 
 
-def _secrets_unavailable(event):
-    return event.get("pull_request", {}).get("is_fork", False) or event.get("actor") == DEPENDABOT
+def _secrets_unavailable(event, admission):
+    """A fork's run, and a Dependabot run the admission does not admit (docs/Dependabot-admission.md D20)."""
+    return event.get("pull_request", {}).get("is_fork", False) or (event.get("actor") == DEPENDABOT
+                                                                   and not admission["applies"])
+
+
+def _held_back(admission):
+    """The reason every test file is held back by the admission, or None (docs/Dependabot-admission.md §5)."""
+    if not admission["applies"]:
+        return None
+    if admission["push_run"]:
+        return PUSH_RUN
+    return None if admission["admitted"] else REFUSED
 
 
 def _row(slug, path, root, rel, kind, lane, provider_set, name):
@@ -296,7 +307,7 @@ def _row(slug, path, root, rel, kind, lane, provider_set, name):
         "extra-envs": lane["variables"], "extra-envs-from-secrets": lane["secrets"]}}
 
 
-def decide_tests(document, rows, events=TEST_EVENTS):
+def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING):
     """The tests block and its warnings and notices, or a ConfigError with every error.
 
     Lanes and inputs are validated whether or not the stage runs, so a configuration never becomes
@@ -320,12 +331,16 @@ def decide_tests(document, rows, events=TEST_EVENTS):
     sets = _provider_sets(document, rows, lockless)
     environment_roots = {normalise_dir(values.render(row["project-dir"])) for row in rows}
     directories = {normalise_dir(path) for path in document["tests"]["directories_with_tf"]}
-    unavailable = _secrets_unavailable(event)
+    unavailable = _secrets_unavailable(event, admission)
+    held_back = _held_back(admission)
     matrix, not_run, used = [], [], set()
     for path in sorted(document["tests"]["files"]):
         if any(segment.startswith(".") for segment in path.split("/")) or globs.first_match(excludes, path):
             continue
         lane = _lane_for(lanes, path)
+        if held_back:
+            not_run.append({"file": path, "lane": lane["name"], "reason": held_back})
+            continue
         located = _root(path, directories)
         if located is None:
             not_run.append({"file": path, "lane": lane["name"], "reason": "misplaced"})

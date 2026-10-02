@@ -210,5 +210,97 @@ class DispatchShapeTest(unittest.TestCase):
         model.check(document)
 
 
+ADMISSION_MESSAGE = ("input document: 'admission' needs exactly 'now', 'files', 'dependencies' and 'locks', shaped as "
+                     "docs/Dependabot-admission.md §8 describes")
+TF_FILE = {"path": "a.tf", "status": "modified", "kind": "tf", "lines": [{"old": "a", "new": None}], "unmapped": []}
+LOCK = {"registry.terraform.io/hashicorp/azurerm": {"version": "4.42.0", "constraints": None, "hashes": ["zh:aa"]}}
+LOCK_FILE = {"path": "l", "status": "modified", "kind": "lock", "before": LOCK, "after": None}
+OTHER_FILE = {"path": "x", "status": "added", "kind": "other"}
+
+
+class AdmissionFactsTest(unittest.TestCase):
+    """docs/Dependabot-admission.md §8: absent is fine, present must be whole."""
+
+    assertDocumentError = ModelTest.assertDocumentError
+
+    def facts(self, **overrides):
+        document = support.dependabot_pull_request(support.document())
+        document["admission"].update(overrides)
+        return document
+
+    def test_whole_facts_pass(self):
+        model.check(self.facts(files=[TF_FILE, LOCK_FILE, OTHER_FILE],
+                               dependencies=[support.provider_dependency(), support.module_dependency(),
+                                             support.provider_dependency(published=None)]))
+
+    def test_the_sections(self):
+        for bad in ([], {"now": 1, "files": [], "dependencies": []},
+                    {"now": 1, "files": [], "dependencies": [], "locks": {}, "x": 1}):
+            with self.subTest(bad=bad):
+                document = support.dependabot_pull_request(support.document())
+                document["admission"] = bad
+                self.assertDocumentError(document, ADMISSION_MESSAGE)
+        for key, bad in (("now", -1), ("now", True), ("now", "1"), ("files", {}), ("dependencies", {}),
+                         ("locks", []), ("locks", {"a": "yes"})):
+            with self.subTest(key=key, bad=bad):
+                self.assertDocumentError(self.facts(**{key: bad}), ADMISSION_MESSAGE)
+
+    def test_the_files(self):
+        bad_files = [
+            "x", {**OTHER_FILE, "path": 5}, {**OTHER_FILE, "status": "moved"}, {**OTHER_FILE, "kind": 5},
+            {**OTHER_FILE, "lines": []},
+            {**TF_FILE, "lines": "a"}, {**TF_FILE, "lines": ["a"]}, {**TF_FILE, "lines": [{"old": "a"}]},
+            {**TF_FILE, "lines": [{"old": 5, "new": "b"}]}, {**TF_FILE, "lines": [{"old": "a", "new": 5}]},
+            {"path": "a.tf", "status": "modified", "kind": "tf"}, {**TF_FILE, "before": None},
+            {**TF_FILE, "unmapped": "x"}, {**TF_FILE, "unmapped": [1]},
+            {key: value for key, value in TF_FILE.items() if key != "unmapped"},
+            {**LOCK_FILE, "before": []}, {**LOCK_FILE, "after": {"a": "x"}},
+            {**LOCK_FILE, "after": {"a": {"version": "1", "constraints": None}}},
+            {**LOCK_FILE, "after": {"a": {"version": 1, "constraints": None, "hashes": []}}},
+            {**LOCK_FILE, "after": {"a": {"version": "1", "constraints": 1, "hashes": []}}},
+            {**LOCK_FILE, "after": {"a": {"version": "1", "constraints": None, "hashes": [1]}}},
+            {"path": "l", "status": "modified", "kind": "lock", "before": None},
+        ]
+        for bad in bad_files:
+            with self.subTest(bad=bad):
+                self.assertDocumentError(self.facts(files=[bad]), ADMISSION_MESSAGE)
+        model.check(self.facts(files=[{**LOCK_FILE, "after": {"a": {"version": "1", "constraints": "1", "hashes": []}}},
+                                      {**TF_FILE, "lines": [], "unmapped": ["x"]}]
+                               + [{**OTHER_FILE, "status": status} for status in ("modified", "added", "removed",
+                                                                                   "renamed", "changed")]))
+
+    def test_the_dependencies(self):
+        provider, module = support.provider_dependency(), support.module_dependency()
+        bad_dependencies = [
+            "x", {**provider, "kind": "thing"}, {**provider, "address": 5}, {**provider, "from": None},
+            {**provider, "to": 1}, {**provider, "files": "a"}, {**provider, "files": [1]}, {**provider, "facts": []},
+            {**provider, "locked": "yes"}, {**provider, "extra": 1},
+            {**provider, "facts": {**provider["facts"], "published": -1}},
+            {**provider, "facts": {**provider["facts"], "published": "x"}},
+            {**provider, "facts": {**provider["facts"], "vouched": "yes"}},
+            {**provider, "facts": {**provider["facts"], "keys_to": "A"}},
+            {**provider, "facts": {**provider["facts"], "zh": [1]}},
+            {**provider, "facts": {**provider["facts"], "shasums": None}},
+            {**provider, "facts": {**provider["facts"], "keys_from": [None]}},
+            {**provider, "facts": {**provider["facts"], "class_to": None}},
+            {**provider, "facts": {**provider["facts"], "class_from": 1}},
+            {**provider, "facts": {key: value for key, value in provider["facts"].items() if key != "zh"}},
+            {key: value for key, value in provider.items() if key != "locked"},
+            {**module, "locked": True}, {**module, "source_kind": 5}, {**module, "namespace": None},
+            {**module, "name": 1}, {**module, "facts": {"published": "x"}}, {**module, "facts": {}},
+            {**module, "facts": {"published": 1, "x": 2}},
+        ]
+        for bad in bad_dependencies:
+            with self.subTest(bad=bad):
+                self.assertDocumentError(self.facts(dependencies=[bad]), ADMISSION_MESSAGE)
+        model.check(self.facts(dependencies=[{**module, "facts": {"published": None}}]))
+
+    def test_the_pull_request_s_author_is_a_string(self):
+        document = support.dependabot_pull_request(support.document())
+        model.check(document)
+        document["event"]["pull_request"]["author"] = None
+        self.assertDocumentError(document, "input document: 'event.pull_request.author' is not a string")
+
+
 if __name__ == "__main__":
     unittest.main()

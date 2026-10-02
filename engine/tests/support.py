@@ -57,3 +57,41 @@ def document(environments=None, inputs=None, env_yaml=None, directories=None, re
             f"./envs/{e['environment']}": True for e in environments if isinstance(e, dict) and "environment" in e
         },
     }
+
+
+# The Dependabot admission's facts (docs/Dependabot-admission.md §8), valid and admitted unless a test changes them.
+NOW = 1790000000
+DAY = 86400
+
+
+def provider_dependency(address="registry.terraform.io/hashicorp/azurerm", old="4.41.0", new="4.42.0", files=None,
+                        published=NOW - 10 * DAY, keys_from=("34365D9472D7468F",), keys_to=("34365D9472D7468F",),
+                        vouched=True, class_from="signed by HashiCorp", class_to="signed by HashiCorp",
+                        zh=("aa",), shasums=("aa", "bb"), locked=True):
+    return {"kind": "provider", "address": address, "from": old, "to": new,
+            "files": list(files or ["envs/env-a/.terraform.lock.hcl"]), "locked": locked,
+            "facts": {"published": published, "keys_from": list(keys_from), "keys_to": list(keys_to),
+                      "vouched": vouched, "class_from": class_from, "class_to": class_to, "zh": list(zh),
+                      "shasums": list(shasums)}}
+
+
+def module_dependency(address="Azure/naming/azurerm", old="0.4.3", new="0.4.4", source_kind="registry",
+                      namespace="Azure", name="naming", published=NOW - 10 * DAY, files=None):
+    return {"kind": "module", "address": address, "from": old, "to": new, "files": list(files or ["main/naming.tf"]),
+            "source_kind": source_kind, "namespace": namespace, "name": name, "facts": {"published": published}}
+
+
+def admission_facts(dependencies=None, files=None, locks=None, now=NOW):
+    """Admission facts: by default one provider bump in env-a's lock, every listed directory locked."""
+    return {"now": now, "files": [] if files is None else files,
+            "dependencies": [provider_dependency()] if dependencies is None else dependencies,
+            "locks": {"envs/env-a": True} if locks is None else locks}
+
+
+def dependabot_pull_request(doc, facts=None, author="dependabot[bot]"):
+    """Make a document Dependabot's pull request run, with admission facts (admitted by default)."""
+    doc["event"].update({"name": "pull_request", "actor": "dependabot[bot]", "base_ref": doc["caller"]["default_branch"]})
+    doc["event"]["pull_request"] = {"number": 87, "head_sha": "abc", "is_fork": False, "author": author}
+    doc["event"].pop("push", None)
+    doc["admission"] = admission_facts() if facts is None else facts
+    return doc
