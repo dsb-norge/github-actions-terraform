@@ -756,9 +756,11 @@ class RunTest(unittest.TestCase):
         self.assertEqual(["matrix-json", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
                           "stage-1-count", "stage-2-count", "stage-3-count", "affected-count", "unaffected-count",
                           "relevance-mode", "relevance-reason", "changed-count", "relevance-file", "tests-matrix-json",
-                          "tests-count", "tests-active", "admission-refused", "admission-reason"],
+                          "tests-count", "tests-active", "admission-refused", "admission-reason",
+                          "admission-admitted"],
                          list(outputs))
-        self.assertEqual(("false", ""), (outputs["admission-refused"], outputs["admission-reason"]))
+        self.assertEqual(("false", "", "false"), (outputs["admission-refused"], outputs["admission-reason"],
+                                                  outputs["admission-admitted"]))
         self.assertEqual(("1", "0", "0", '{"environment":[],"include":[]}'),
                          (outputs["stage-1-count"], outputs["stage-2-count"], outputs["stage-3-count"],
                           outputs["matrix-stage-2-json"]))
@@ -1102,7 +1104,8 @@ class AdmissionTest(unittest.TestCase):
         code, runner, calls = self.run_with(facts)
         self.assertEqual((0, 1), (code, len(calls)))
         outputs = runner.outputs()
-        self.assertEqual(("true", "1 of 1 dependencies failed"), (outputs["admission-refused"], outputs["admission-reason"]))
+        self.assertEqual(("true", "1 of 1 dependencies failed", "false"),
+                         (outputs["admission-refused"], outputs["admission-reason"], outputs["admission-admitted"]))
         log = runner.log.getvalue()
         self.assertIn("provider registry.terraform.io/hashicorp/azurerm 4.41.0 -> 4.42.0: {", log)
         self.assertIn('"admission": "0 files and 1 dependencies, listed in the group \'admission facts\'"', log)
@@ -1119,7 +1122,8 @@ class AdmissionTest(unittest.TestCase):
     def test_an_admitted_pull_request(self):
         code, runner, _ = self.run_with(support.admission_facts())
         self.assertEqual(0, code)
-        self.assertEqual(("false", ""), (runner.outputs()["admission-refused"], runner.outputs()["admission-reason"]))
+        self.assertEqual(("false", "", "true"), (runner.outputs()["admission-refused"], runner.outputs()["admission-reason"],
+                                                 runner.outputs()["admission-admitted"]))
 
     def test_a_fact_that_cannot_be_gathered_fails_the_step(self):
         code, runner, _ = self.run_with(error="the versions of provider azure/azapi: HTTP 503")
@@ -1167,3 +1171,4 @@ class AdmissionTest(unittest.TestCase):
                     code = adapter.run(runner.inputs_file, runner.environ, runner.log, FakeTools(), lambda p: True, True)
                 self.assertEqual((0, gathered), (code, len(calls)))
                 self.assertEqual("false", runner.outputs()["admission-refused"])
+                self.assertEqual("false" if switch is None else "true", runner.outputs()["admission-admitted"])

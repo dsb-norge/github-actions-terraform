@@ -692,6 +692,37 @@ class ModuleModeTest(unittest.TestCase):
         del doc["workflow_inputs"]["dependabot-admission-enabled"]
         self.assertEqual({"applies": False}, self.decided(doc)["admission"])
 
+    MARKER = "<!-- tf:head:admission:TerraformmoduleCI -->"
+
+    def test_a_refused_module_pull_request_gets_the_admission_head(self):
+        facts = support.admission_facts([support.provider_dependency(published=NOW)], locks={})
+        comments = self.decided(self.document(facts))["comments"]
+        self.assertEqual([], comments["gc"])
+        self.assertEqual([("admission", "TerraformmoduleCI", "final", self.MARKER)],
+                         [(head["kind"], head["key"], head["state"], head["marker"]) for head in comments["heads"]])
+        self.assertTrue(comments["heads"][0]["body"].startswith("### 🚫 Dependabot pull request not admitted\n\n"))
+        self.assertIn("| provider `hashicorp/azurerm` | 4.41.0 → 4.42.0 | ❌ published 0 hours ago",
+                      comments["heads"][0]["body"])
+
+    def test_a_later_module_run_purges_a_stale_head(self):
+        purge = {"heads": [], "gc": [{"marker-prefix": self.MARKER, "keep-marker-substring": ""}]}
+        self.assertEqual(purge, self.decided(self.document())["comments"])
+        doc = self.document(switch=False)
+        del doc["admission"]
+        self.assertEqual(purge, self.decided(doc)["comments"])
+        doc["event"]["pull_request"]["author"] = "octocat"
+        self.assertEqual({"heads": [], "gc": []}, self.decided(doc)["comments"])
+
+    def test_no_module_head_where_the_seed_does_not_run(self):
+        facts = support.admission_facts([support.provider_dependency(published=NOW)], locks={})
+        self.assertEqual({"heads": [], "gc": []}, self.decided(self.document(event="push"))["comments"])
+        fork = self.document(facts)
+        fork["event"]["pull_request"]["is_fork"] = True
+        self.assertEqual({"heads": [], "gc": []}, decide.decide(fork)["comments"])
+        quiet = self.document(facts)
+        quiet["workflow_inputs"]["add-pr-comment"] = False
+        self.assertEqual({"heads": [], "gc": []}, self.decided(quiet)["comments"])
+
     def test_facts_are_needed_when_it_applies(self):
         doc = self.document()
         del doc["admission"]

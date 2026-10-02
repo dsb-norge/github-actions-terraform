@@ -55,8 +55,9 @@ NOTICE_TITLE = "Terraform CI"
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
              "record", "trigger", "ordering", "admission")
-# A module's decision has its test stage alone (docs/Module-ci.md §5).
-MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission")
+# A module's decision has its test stage and its admission head alone (docs/Module-ci.md §5).
+MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission",
+                    "comments")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -452,11 +453,14 @@ def _admission_applies(document, module):
 
 
 def admission_outputs(output):
-    """The step outputs the conclusion reads: whether the admission refused the run, and why in one line."""
+    """The step outputs the jobs read: whether the admission refused the run, and why in one line, and whether
+    it judged and admitted it, which the module workflow's docs push needs (docs/Dependabot-admission.md D22)."""
     admitted = output["admission"]
-    refused = admitted["applies"] and not admitted["push_run"] and not admitted["admitted"]
+    judged = admitted["applies"] and not admitted["push_run"]
+    refused = judged and not admitted["admitted"]
     return {"admission-refused": "true" if refused else "false",
-            "admission-reason": decide.refusal(admitted) if refused else ""}
+            "admission-reason": decide.refusal(admitted) if refused else "",
+            "admission-admitted": "true" if judged and admitted["admitted"] else "false"}
 
 
 def compact(value):
