@@ -2547,7 +2547,7 @@ problems = []
 create = jobs["create-matrix"]
 names = ["matrix-json", "affected-count", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
          "stage-1-count", "stage-2-count", "stage-3-count", "unaffected-count", "relevance-mode", "relevance-reason",
-         "changed-count", "tests-matrix-json", "tests-count", "tests-active"]
+         "changed-count", "tests-matrix-json", "tests-count", "tests-active", "admission-refused", "admission-reason"]
 if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
@@ -3557,6 +3557,94 @@ if [[ "${_f24_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f24_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F25 — the Dependabot admission is wired as the spec says (docs/Dependabot-admission.md §10).
+#
+# Both workflows declare its two inputs with their defaults, check out the merge commit's parent for the
+# change the engine judges, and fail the conclusion on a refused run before anything else is judged, so
+# allow-failing never softens it (D19); the conclusion's run block is executed here on a refused run. The
+# project workflow's environment init reads the lock only on a Dependabot run the admission judges (D10),
+# and the module workflow validates a Dependabot pull request only once create-matrix admitted it (D16).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F25 - the Dependabot admission's inputs, checkout, init lock and conclusions are wired${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f25_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, subprocess, sys, yaml
+
+PROJECT, MODULE = ".github/workflows/terraform-ci-cd-default.yml", ".github/workflows/terraform-module-ci.yaml"
+LOCK = "${{ github.actor == 'dependabot[bot]' && inputs.dependabot-admission-enabled && 'readonly' || 'default' }}"
+problems = []
+
+def load(path):
+    return yaml.safe_load(open(path, encoding="utf-8"))
+
+def run(script, env):
+    done = subprocess.run(["bash", "-c", script], env={"PATH": os.environ["PATH"], **env}, capture_output=True,
+                          text=True)
+    return done.returncode, done.stdout
+
+for path, default in ((PROJECT, True), (MODULE, False)):
+    workflow = load(path)
+    inputs = workflow[True]["workflow_call"]["inputs"]
+    switch, policy = inputs.get("dependabot-admission-enabled", {}), inputs.get("dependabot-admission-yml", {})
+    if (switch.get("type"), switch.get("default")) != ("boolean", default):
+        problems.append(f"{path}: dependabot-admission-enabled is not a boolean defaulting to {default}")
+    if (policy.get("type"), policy.get("default")) != ("string", ""):
+        problems.append(f"{path}: dependabot-admission-yml is not a string defaulting to ''")
+    create = workflow["jobs"]["create-matrix"]
+    checkouts = [step for step in create["steps"] if str(step.get("uses", "")).startswith("actions/checkout")]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("fetch-depth") != 2:
+        problems.append(f"{path}: create-matrix does not check out with fetch-depth 2")
+    for name in ("admission-refused", "admission-reason"):
+        if create.get("outputs", {}).get(name) != f"${{{{ steps.create-matrix.outputs.{name} }}}}":
+            problems.append(f"{path}: create-matrix does not output {name}")
+    step = workflow["jobs"]["conclusion"]["steps"][0]
+    env = step.get("env", {})
+    if env.get("ADMISSION_REFUSED") != "${{ needs.create-matrix.outputs.admission-refused }}" \
+            or env.get("ADMISSION_REASON") != "${{ needs.create-matrix.outputs.admission-reason }}":
+        problems.append(f"{path}: the conclusion does not read the admission's outputs")
+    green = {name: "success" for name in env if name.endswith("_RESULT")}
+    case = {**green, "CREATE_MATRIX_RESULT": "success", "ADMISSION_REFUSED": "true",
+            "ADMISSION_REASON": "1 of 2 dependencies failed", "STAGE_1_COUNT": "0", "STAGE_2_COUNT": "0",
+            "STAGE_3_COUNT": "0", "AFFECTED_COUNT": "0", "DOCS_PUSHED": "false", "TESTS_ACTIVE": "false",
+            "TESTS_REQUIRED_MISSING": "false", "GITHUB_STEP_SUMMARY": os.devnull}
+    rc, out = run(step["run"], case)
+    if rc != 1 or "Dependabot pull request not admitted: 1 of 2 dependencies failed; see the admission comment" \
+            not in out:
+        problems.append(f"{path}: the conclusion does not fail a refused run with its reason (exit {rc}): {out!r}")
+    rc, out = run(step["run"], {**case, "ADMISSION_REFUSED": "false", "ADMISSION_REASON": ""})
+    if "not admitted" in out:
+        problems.append(f"{path}: the conclusion speaks of the admission on a run it did not refuse")
+
+jobs = load(PROJECT)["jobs"]
+inits = [step for name in ("terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3") for step in jobs[name]["steps"]
+         if str(step.get("uses", "")).startswith("dsb-norge/github-actions-terraform/terraform-init@")]
+if len(inits) != 3 or any(step.get("with", {}).get("lockfile-mode") != LOCK for step in inits):
+    problems.append(f"the environment init's lockfile-mode is not {LOCK}")
+validate = load(MODULE)["jobs"]["validate"]
+condition = " ".join(str(validate.get("if", "")).split())
+if "create-matrix" not in validate.get("needs", []) or (
+        "github.actor != 'dependabot[bot]' || (needs.create-matrix.result == 'success' && "
+        "needs.create-matrix.outputs.admission-refused != 'true')") not in condition:
+    problems.append("the module's validate does not wait for the admission on a Dependabot run")
+print(f"checked both workflows' inputs, checkout, outputs and conclusion, and {len(inits)} environment init(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f25_rc=0 || _f25_rc=$?
+if [[ "${_f25_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f25_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f25_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
