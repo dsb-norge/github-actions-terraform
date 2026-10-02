@@ -558,6 +558,17 @@ unset input_relevance_file
 teardown
 
 setup
+engine_relevance schedule-capped
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "R9: exits 0 on a schedule with capped environments" test "${LAST_EXIT}" -eq 0
+assert "R9: the schedule line says what each running environment was capped to" \
+  grep -qxF "> schedule: goal default for staging; goal plan for prod (schedule-goal, plan where an environment sets none)" \
+  "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+setup
 engine_relevance docs-only
 export input_relevance_file="${RUNNER_TEMP}/relevance.json"
 run_step

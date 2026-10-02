@@ -11,7 +11,8 @@ Every scenario has three environments, auto-merge enabled for all: `prod` ungrou
 (github-environment `prod-gh`, auto-merge only for `renovate[bot]`), `staging` and `sandbox` in the
 group `platform`, for `renovate[bot]` and `dependabot[bot]` (`sandbox` applies on pull request). Pull request #87, run #4711
 attempt #1. The event scenarios are not pull requests: a dispatch of `staging` with a plan by
-`octocat`, and a schedule no environment takes part in. The staged scenario is a push to `main`
+`octocat`, a schedule no environment takes part in, and a capped schedule: `prod` plans
+(no schedule-goal), `staging` applies (`schedule-goal: default`), `sandbox` takes no part. The staged scenario is a push to `main`
 changing `main/` for three environments of its own: `shared`, `prod` depending on it, and the
 free-standing `sandbox`, so `shared` is stage 1 and the other two stage 2.
 """
@@ -34,6 +35,12 @@ ENVIRONMENTS = [
 ACTORS = ["renovate[bot]", "dependabot[bot]"]
 LIMITS = {"plan-max-count-add": 0, "plan-max-count-change": 0, "plan-max-count-destroy": 0,
           "plan-max-count-import": -1, "plan-max-count-move": -1, "plan-max-count-remove": 0}
+SCHEDULED = ["pull_request", "push", "workflow_dispatch", "schedule"]
+SCHEDULE_ENVIRONMENTS = [
+    {**ENVIRONMENTS[0], "trigger-events": SCHEDULED},
+    {**ENVIRONMENTS[1], "trigger-events": SCHEDULED, "schedule-goal": "default"},
+    ENVIRONMENTS[2],
+]
 STAGED_ENVIRONMENTS = [
     {"environment": "shared"},
     {"environment": "prod", "depends-on": ["shared"]},
@@ -45,6 +52,7 @@ SCENARIOS = {
     "workflow-changed": [".github/workflows/ci.yml"],
     "dispatch-staging": None,
     "schedule-nothing": None,
+    "schedule-capped": None,
     "push-staged": ["main/providers.tf"],
 }
 EVENTS = {
@@ -53,6 +61,7 @@ EVENTS = {
                                       "reason": "reconcile after incident 42",
                                       "inputs": ["environment", "goal", "reason"]}},
     "schedule-nothing": {"name": "schedule", "ref_name": "main", "ref_type": "branch", "actor": "octocat"},
+    "schedule-capped": {"name": "schedule", "ref_name": "main", "ref_type": "branch", "actor": "octocat"},
 }
 
 
@@ -97,7 +106,7 @@ def scenario_document(scenario):
         return doc
     if scenario not in EVENTS:
         return document(SCENARIOS[scenario])
-    doc = document([])
+    doc = document([], SCHEDULE_ENVIRONMENTS if scenario == "schedule-capped" else None)
     del doc["changed_files"]
     doc["event"] = EVENTS[scenario]
     return doc

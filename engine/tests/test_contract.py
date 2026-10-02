@@ -95,7 +95,7 @@ class ContractTest(unittest.TestCase):
                                           cwd=temp)
                     self.assertNotEqual(0, done.returncode)
                     self.assertIn("usage: relevance_fixture.py <docs-only|one-environment|workflow-changed|dispatch-staging|schedule-nothing|"
-                                  "push-staged>",
+                                  "schedule-capped|push-staged>",
                                   done.stderr)
 
     def test_the_staged_scenario_publishes_its_stages(self):
