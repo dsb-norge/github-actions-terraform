@@ -159,30 +159,63 @@ class GeneratedTriggersTest(unittest.TestCase):
               ["workflow_dispatch"])
     DISPATCH = (None, {"block": False}, {"environment": ""}, {"environment": "a"}, {"environment": "b", "goal": "plan"},
                 {"goal": "apply"}, {"environment": "a", "goal": "destroy-plan"}, {"environment": "z"}, {"goal": "x"})
+    # Cycled through the combinations rather than multiplied in: every value meets every event and goal set.
+    SCHEDULE_GOALS = (None, "default", "plan", "apply", "destroy-plan", None, "x")
 
     def test_every_combination_is_sound(self):
         kinds = set()
-        for event, goals, events, dispatch, ref, action in itertools.product(
+        for index, (event, goals, events, dispatch, ref, action) in enumerate(itertools.product(
                 ("pull_request", "push", "workflow_dispatch", "schedule"), self.GOALS, self.EVENTS, self.DISPATCH,
-                ("main", "feature/x"), ("opened", "closed")):
+                ("main", "feature/x"), ("opened", "closed"))):
             if event != "workflow_dispatch" and dispatch is not None or event != "pull_request" and action == "closed":
                 continue
             environment = {"environment": "a", "goals-yml": goals}
             if events is not None:
                 environment["trigger-events"] = events
+            schedule_goal = self.SCHEDULE_GOALS[index % len(self.SCHEDULE_GOALS)]
+            if schedule_goal is not None:
+                environment["schedule-goal"] = schedule_goal
             document = support.document(environments=[environment, {"environment": "b", "goals-yml": ["all"]}],
                                         env_yaml=[{"goals-yml": support.parsed(goals)},
                                                   {"goals-yml": support.parsed(["all"])}], ref_name=ref)
             document["event"].update({"name": event, "action": action, "base_ref": "main"})
             if dispatch is not None:
                 document["event"]["dispatch"] = {"block": True, "environment": "", "goal": "", "reason": "", "inputs": [], **dispatch}
-            with self.subTest(event=event, goals=goals, events=events, dispatch=dispatch, ref=ref, action=action):
+            with self.subTest(event=event, goals=goals, events=events, dispatch=dispatch, ref=ref, action=action,
+                              schedule_goal=schedule_goal):
                 original = copy.deepcopy(document)
                 output = decide.decide(document)
                 self.assertEqual(original, document)
                 self.assertEqual([], invariants.check(document, output))
                 kinds.add("error" if output["errors"] else f"{output['counts']['affected']} run")
         self.assertEqual({"error", "0 run", "1 run", "2 run"}, kinds)
+
+
+class GeneratedScheduleGoalTest(unittest.TestCase):
+    """Every goal set under every schedule-goal on a schedule, on and off the default branch (docs/Dispatch-and-
+    triggers.md §4.4, I25): each decides soundly, and capped, uncapped and refused cases all occur."""
+
+    def test_every_schedule_goal_on_every_goal_set_is_sound(self):
+        kinds = set()
+        for goals, schedule_goal, ref in itertools.product(GeneratedTriggersTest.GOALS,
+                                                           GeneratedTriggersTest.SCHEDULE_GOALS, ("main", "feature/x")):
+            environment = {"environment": "a", "goals-yml": goals, "trigger-events": ["schedule"]}
+            if schedule_goal is not None:
+                environment["schedule-goal"] = schedule_goal
+            document = support.document(environments=[environment, {"environment": "b", "goals-yml": ["all"],
+                                                                     "trigger-events": ["push", "schedule"]}],
+                                        env_yaml=[{"goals-yml": support.parsed(goals)},
+                                                  {"goals-yml": support.parsed(["all"])}], ref_name=ref)
+            document["event"]["name"] = "schedule"
+            with self.subTest(goals=goals, schedule_goal=schedule_goal, ref=ref):
+                output = decide.decide(document)
+                self.assertEqual([], invariants.check(document, output))
+                if output["errors"]:
+                    kinds.add("refused")
+                    continue
+                granted = output["environments"][0]["goals"]
+                kinds.add("applies" if "apply" in granted else "plans" if "plan" in granted else "neither")
+        self.assertEqual({"refused", "applies", "plans", "neither"}, kinds)
 
 
 class GeneratedOrderingTest(unittest.TestCase):
@@ -209,6 +242,8 @@ class GeneratedOrderingTest(unittest.TestCase):
                                                                                               "destroy"]])
                 if rng.random() < 0.15:
                     entry["trigger-events"] = rng.choice([["push"], ["pull_request"], ["schedule"]])
+                if rng.random() < 0.3:
+                    entry["schedule-goal"] = rng.choice(["default", "plan", "default"])
                 environments.append(entry)
             document = support.document(environments=environments, env_yaml=[
                 {key: support.parsed(value) for key, value in entry.items() if key.endswith("-yml")}

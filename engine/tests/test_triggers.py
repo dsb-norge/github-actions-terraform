@@ -120,15 +120,17 @@ class SpecTableTest(unittest.TestCase):
         self.assertEqual({"event": "workflow_dispatch", "lines": [line]}, output["trigger"])
         self.assertEqual(line, output["notices"][0])
 
-    def test_a_schedule_runs_only_the_environments_that_opted_in(self):
+    def test_a_schedule_runs_only_the_environments_that_opted_in_and_plans_them(self):
         output = decided(document(event="schedule"))
-        self.assertEqual({"staging": WITH_APPLY}, granted(output))
+        self.assertEqual({"staging": STANDARD}, granted(output))
         self.assertEqual({name: ["trigger-events: schedule not enabled"] for name in ("prod", "sandbox", "scratch")},
                          skipped(output))
-        self.assertEqual([], output["trigger"]["lines"])
+        self.assertEqual(["schedule: goal plan for staging (schedule-goal, plan where an environment sets none)"],
+                         output["trigger"]["lines"])
 
-    def test_destroy_is_never_granted_on_a_schedule(self):
-        environments = SPEC[:3] + [{**SPEC[3], "trigger-events": ["schedule"]}]
+    def test_a_reconcile_applies_and_destroy_is_never_granted_on_a_schedule(self):
+        environments = [SPEC[0], {**SPEC[1], "schedule-goal": "default"}, SPEC[2],
+                        {**SPEC[3], "trigger-events": ["schedule"], "schedule-goal": "default"}]
         output = decided(document(environments, event="schedule"))
         self.assertEqual({"staging": WITH_APPLY, "scratch": ["init", "plan", "apply", "destroy-plan"]},
                          granted(output))
@@ -339,7 +341,9 @@ class ExpansionTest(unittest.TestCase):
                                 ("schedule", always + ["apply", "destroy-plan"]),
                                 ("pull_request", always + ["destroy-plan"])):
             with self.subTest(event=event):
-                environments = [{"environment": "a", "goals-yml": goals, "trigger-events": [event]}]
+                # The expansion is the gates'; a schedule is uncapped only with schedule-goal: default.
+                environments = [{"environment": "a", "goals-yml": goals, "trigger-events": [event],
+                                 "schedule-goal": "default"}]
                 output = decided(document(environments, event=event, base_ref="main"))
                 self.assertEqual(expected, output["environments"][0]["goals"])
         self.assertEqual(always + ["destroy-plan"], self.goals(goals, ref="feature/x"))
@@ -361,7 +365,8 @@ class ExpansionTest(unittest.TestCase):
     def test_destroy_plan_is_granted_on_every_event(self):
         for event in ("pull_request", "push", "workflow_dispatch", "schedule"):
             with self.subTest(event=event):
-                environments = [{"environment": "a", "goals-yml": ["init", "destroy-plan"], "trigger-events": [event]}]
+                environments = [{"environment": "a", "goals-yml": ["init", "destroy-plan"], "trigger-events": [event],
+                                 "schedule-goal": "destroy-plan"}]
                 output = decided(document(environments, event=event, ref="feature/x"))
                 self.assertEqual(["init", "destroy-plan"], output["environments"][0]["goals"])
 
@@ -381,6 +386,140 @@ class ExpansionTest(unittest.TestCase):
         output = decided(document(event="schedule"))
         entry = output["environments"][0]
         self.assertEqual(("skip", False), (entry["verdict"], "goals" in entry))
+
+
+class ScheduleGoalTest(unittest.TestCase):
+    """On a schedule each environment's schedule-goal caps its goals as a dispatch's goal input does, plan where
+    it sets none (docs/Dispatch-and-triggers.md §4.4, D12)."""
+
+    ALL = ["all", "destroy-plan"]
+
+    def scheduled(self, schedule_goal=None, goals=None, event="schedule", **kwargs):
+        environment = {"environment": "a", "goals-yml": self.ALL if goals is None else goals,
+                       "trigger-events": ["pull_request", "push", "workflow_dispatch", "schedule"]}
+        if schedule_goal is not None:
+            environment["schedule-goal"] = schedule_goal
+        return decided(document([environment], event=event, base_ref="main", **kwargs))
+
+    def test_each_value_caps_what_a_push_to_the_default_branch_would_grant(self):
+        for schedule_goal, expected in ((None, STANDARD), ("plan", STANDARD), ("default", WITH_APPLY + ["destroy-plan"]),
+                                        ("apply", WITH_APPLY), ("destroy-plan", ["init", "destroy-plan"])):
+            with self.subTest(schedule_goal=schedule_goal):
+                self.assertEqual({"a": expected}, granted(self.scheduled(schedule_goal)))
+
+    def test_the_plan_cap_only_removes(self):
+        self.assertEqual({"a": ["init", "format", "validate", "lint"]},
+                         granted(self.scheduled(goals=["init", "format", "validate", "lint"])))
+        self.assertEqual({"a": ["init", "plan"]},
+                         granted(self.scheduled(goals=["init", "plan", "apply", "destroy-plan", "destroy"])))
+
+    def test_destroy_is_never_granted_whatever_the_schedule_goal(self):
+        for schedule_goal in ("default", "plan", "apply", "destroy-plan"):
+            with self.subTest(schedule_goal=schedule_goal):
+                goals = ["init", "plan", "apply", "destroy-plan", "destroy"]
+                self.assertNotIn("destroy", granted(self.scheduled(schedule_goal, goals=goals))["a"])
+
+    def test_the_record_names_the_cap_before_the_goals(self):
+        output = self.scheduled()
+        self.assertEqual(["a: run — relevance: all:event; schedule-goal: plan; goals: init, format, validate, lint, plan"],
+                         output["record"])
+        self.assertEqual(["a: run — relevance: all:event; schedule-goal: default; goals: init, format, validate, lint, "
+                          "plan, apply, destroy-plan"], self.scheduled("default")["record"])
+
+    def test_the_trigger_line_groups_the_running_environments_by_their_cap(self):
+        environments = [
+            {"environment": "prod", "goals-yml": ["all"], "trigger-events": ["push", "schedule"]},
+            {"environment": "nightly", "goals-yml": ["all"], "trigger-events": ["schedule"], "schedule-goal": "default"},
+            {"environment": "scratch", "goals-yml": ["all"], "trigger-events": ["schedule"], "schedule-goal": "plan"},
+            {"environment": "check", "goals-yml": ["init", "destroy-plan"], "trigger-events": ["schedule"],
+             "schedule-goal": "destroy-plan"},
+            {"environment": "quiet", "goals-yml": ["all"], "schedule-goal": "apply"},
+        ]
+        output = decided(document(environments, event="schedule"))
+        line = ("schedule: goal default for nightly; goal plan for prod, scratch; goal destroy-plan for check "
+                "(schedule-goal, plan where an environment sets none)")
+        self.assertEqual({"event": "schedule", "lines": [line]}, output["trigger"])
+        self.assertEqual(line, output["notices"][0])
+        self.assertEqual({"quiet": ["trigger-events: schedule not enabled"]}, skipped(output))
+
+    def test_other_events_ignore_it(self):
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                output = self.scheduled("plan", event=event)
+                self.assertEqual({"a": WITH_APPLY + ["destroy-plan"]}, granted(output))
+                self.assertNotIn("schedule-goal: plan", output["environments"][0]["reasons"])
+        self.assertEqual({"a": STANDARD + ["destroy-plan"]}, granted(self.scheduled("plan", event="pull_request")))
+
+    def test_a_dispatch_is_capped_by_its_goal_input_not_by_schedule_goal(self):
+        output = self.scheduled("plan", event="workflow_dispatch", dispatch={"goal": "apply"})
+        self.assertEqual({"a": WITH_APPLY}, granted(output))
+
+    def test_a_planned_schedule_needs_no_ordering(self):
+        environments = [{"environment": "a", "goals-yml": ["all"], "trigger-events": ["schedule"]},
+                        {"environment": "b", "goals-yml": ["all"], "trigger-events": ["schedule"], "depends-on": ["a"]}]
+        output = decided(document(environments, event="schedule"))
+        self.assertEqual(({"a": STANDARD, "b": STANDARD}, 1), (granted(output), output["ordering"]["stages_used"]))
+        environments[0]["schedule-goal"] = environments[1]["schedule-goal"] = "default"
+        output = decided(document(environments, event="schedule"))
+        self.assertEqual(({"a": WITH_APPLY, "b": WITH_APPLY}, 2), (granted(output), output["ordering"]["stages_used"]))
+
+    def test_mistakes_are_errors_on_every_event(self):
+        where = "environments-yml: environment 'a'"
+        cases = (
+            ("aply", ["all"], f"{where}: 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'aply'"),
+            (None, ["all"], None),
+            (["plan"], ["all"], f"{where}: 'schedule-goal' is one of default, plan, apply, destroy-plan, not [\"plan\"]"),
+            ("destroy", ["all"], f"{where}: 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'destroy'"),
+            ("apply", ["init", "plan"], f"{where}: 'schedule-goal: apply' needs the goal 'apply' or 'all' "
+                                        "(goals: init, plan)"),
+            ("apply", ["init", "plan", "apply-on-pr"], f"{where}: 'schedule-goal: apply' needs the goal 'apply' or "
+                                                       "'all' (goals: init, plan, apply-on-pr)"),
+            ("destroy-plan", ["all"], f"{where}: 'schedule-goal: destroy-plan' needs the goal 'destroy-plan' "
+                                      "(goals: all)"),
+            ("destroy-plan", ["init", "plan", "apply"], f"{where}: 'schedule-goal: destroy-plan' needs the goal "
+                                                        "'destroy-plan' (goals: init, plan, apply)"),
+            ("destroy-plan", ["init", "destroy-plan", "destroy"], None),
+            ("apply", ["init", "plan", "apply"], None),
+        )
+        for value, goals, message in cases:
+            for event in ("pull_request", "push", "workflow_dispatch", "schedule"):
+                with self.subTest(value=value, goals=goals, event=event):
+                    environment = {"environment": "a", "goals-yml": goals, "trigger-events": ["push", "schedule"],
+                                   "schedule-goal": value}
+                    if message is None and value is None:
+                        del environment["schedule-goal"]
+                    output = decided(document([environment], event=event, base_ref="main"))
+                    self.assertEqual([] if message is None else [message], output["errors"])
+
+    def test_an_explicit_null_is_an_error(self):
+        environment = {"environment": "a", "goals-yml": ["all"], "trigger-events": ["schedule"], "schedule-goal": None}
+        self.assertEqual(["environments-yml: environment 'a': 'schedule-goal' is one of default, plan, apply, "
+                          "destroy-plan, not null"], decided(document([environment]))["errors"])
+
+    def test_every_mistaken_environment_is_reported_at_once(self):
+        environments = [{"environment": "a", "goals-yml": ["all"], "schedule-goal": "x"},
+                        {"environment": "b", "goals-yml": ["init", "plan"], "schedule-goal": "apply"}]
+        self.assertEqual(["environments-yml: environment 'a': 'schedule-goal' is one of default, plan, apply, "
+                          "destroy-plan, not 'x'",
+                          "environments-yml: environment 'b': 'schedule-goal: apply' needs the goal 'apply' or 'all' "
+                          "(goals: init, plan)"], decided(document(environments))["errors"])
+
+    def test_a_schedule_goal_without_schedule_is_a_warning(self):
+        environments = [{"environment": "a", "schedule-goal": "plan"},
+                        {"environment": "b", "trigger-events": ["push"], "schedule-goal": "default"},
+                        {"environment": "c", "trigger-events": ["push", "schedule"], "schedule-goal": "default"},
+                        {"environment": "d", "trigger-events": ["schedule"]}]
+        for event in ("push", "schedule"):
+            with self.subTest(event=event):
+                output = decided(document(environments, event=event))
+                self.assertEqual(["The environment 'a' sets schedule-goal: plan, but its trigger-events do not hold "
+                                  "schedule, so it has no effect.",
+                                  "The environment 'b' sets schedule-goal: default, but its trigger-events do not hold "
+                                  "schedule, so it has no effect."], output["warnings"])
+
+    def test_it_is_a_rule_field_never_a_row_variable(self):
+        output = self.scheduled("default")
+        self.assertNotIn("schedule-goal", output["matrices"]["1"]["include"][0]["vars"])
 
 
 class GoalsRuleTest(unittest.TestCase):

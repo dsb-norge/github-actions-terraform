@@ -165,8 +165,23 @@ def check(document, output):
     return violations
 
 
+# What each schedule-goal leaves of a scheduled environment's goals, written apart from the engine's caps;
+# default leaves everything.
+SCHEDULE_CAPS = {"plan": {"init", "format", "validate", "lint", "plan"},
+                 "apply": {"init", "format", "validate", "lint", "plan", "apply"},
+                 "destroy-plan": {"init", "destroy-plan"}}
+
+
+def _schedule_goal(document, name):
+    """The environment's schedule-goal as declared, plan where it sets none."""
+    for entry in declared_environments(document) or []:
+        if entry.get("environment") == name:
+            return entry.get("schedule-goal", "plan")
+    return "plan"
+
+
 def _goal_invariants(document, output):
-    """I1, I2, I3, I15, I16 and I17: what the granted goals and a dispatch may be."""
+    """I1, I2, I3, I15, I16, I17 and I25: what the granted goals, a dispatch and a schedule may be."""
     violations = []
     if output["errors"]:
         return violations
@@ -190,6 +205,14 @@ def _goal_invariants(document, output):
         # I15: never destroy on a schedule.
         if event["name"] == "schedule" and "destroy" in granted:
             violations.append(f"I15: '{name}' is granted destroy on a schedule")
+        # I25: on a schedule, exactly what the gates let through on the default branch, less destroy, within the
+        # environment's schedule-goal; a cap only removes.
+        if event["name"] == "schedule":
+            allowed = {goal for goal in GRANTED_VOCABULARY if goal != "destroy" and _gate_allows(document, raw, goal)}
+            cap = SCHEDULE_CAPS.get(_schedule_goal(document, name))
+            expected = allowed if cap is None else allowed & cap
+            if set(granted) != expected:
+                violations.append(f"I25: '{name}' is granted {sorted(granted)} on a schedule, expected {sorted(expected)}")
         # I3: a dispatch only removes from what a push to the same ref would grant.
         if event["name"] == "workflow_dispatch":
             as_push = {**document, "event": {**event, "name": "push"}}
