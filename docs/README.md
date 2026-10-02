@@ -58,6 +58,7 @@ Stages and features:
 | [Terraform-module-cache.md](Terraform-module-cache.md) | Caching downloaded Terraform modules across runs. |
 | [Per-goal-environment-variables.md](Per-goal-environment-variables.md) | Environment variables and secrets that apply to one goal only. |
 | [Auto-merge.md](Auto-merge.md) | Merging a pull request automatically when its plan stays within limits. |
+| [Dependabot-admission.md](Dependabot-admission.md) | Which Dependabot pull requests may run Terraform: the checks, the policy and the report. |
 
 Reporting:
 
