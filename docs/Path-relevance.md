@@ -404,6 +404,14 @@ behaves exactly as today.
 - With nothing affected on a pull request or a push, `_Nothing needed verifying: no environment is
   affected by this change._`
 - A footer line explains the dashes, since a tooltip does not show on a phone.
+- On a Dependabot pull request the admission refused ([Dependabot-admission.md](Dependabot-admission.md)
+  §7), an environment skipped with `admission: not admitted` is a row of
+  `<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>` cells,
+  counted as `· N not admitted` after `not affected` in the headline, never as not affected. The
+  "nothing needed verifying" line becomes `_Nothing ran: the Dependabot admission refused this pull
+  request._`, the admission section follows it (the table of every dependency with its result), and a
+  first footer line explains the 🚫 rows: `_Rows of 🚫: the Dependabot admission refused this pull
+  request, so nothing ran._`
 
 Without the file, or with one that is missing on disk or is not a relevance document, today's
 rendering stays byte for byte, the "No environments" line included.

@@ -505,10 +505,14 @@ is the normal case, neither changes (P43).
 Secrets are not available to a pull request from a fork, and the token is read-only, so no OIDC
 token can be minted either. A Dependabot run sees only Dependabot's own secrets, but its token
 follows the caller's `permissions`: with `id-token: write` it mints OIDC tokens like any other run
-(P47). The builder treats Dependabot runs like fork runs all the same. Rows whose lane is
-credentialed, by environment or by mapping, are dropped by the builder
-when `github.event.pull_request.head.repo.fork == true` or `github.actor == 'dependabot[bot]'`
-(the actor GitHub's own guidance keys on), and listed with reason `secrets unavailable` (§6.4).
+(P47). Rows whose lane is credentialed, by environment or by mapping, are dropped by the builder
+when `github.event.pull_request.head.repo.fork == true`, or when `github.actor == 'dependabot[bot]'`
+(the actor GitHub's own guidance keys on) and the Dependabot admission does not apply, and listed
+with reason `secrets unavailable` (§6.4). On a Dependabot run the admission judges, it decides
+instead ([Dependabot-admission.md](Dependabot-admission.md) D20): an admitted run runs every row,
+credentialed lanes included, whose IDs must then reach it as plain values in the lane's
+`extra-envs-yml`, since environment secrets never do; a refused run, and a Dependabot push run, run
+no test row, each file listed with reason `admission: not admitted` or `admission: Dependabot push run`.
 `github.actor`, not `github.triggering_actor`: a human who re-runs a Dependabot run is the
 triggering actor, but the re-run keeps the original actor's privileges and still sees only
 Dependabot's secrets. Dropping them also keeps a fork run from referencing, and thereby creating, a
