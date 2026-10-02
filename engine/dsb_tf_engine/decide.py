@@ -78,19 +78,22 @@ def decide(document):
         ordering.check(declared)
         events, dropped = triggers.participation(document, declared, rows)
         block, entries = relevance.decide_relevance(document, declared, rows, dropped)
-        granted = triggers.grant(document, rows, entries)
+        granted = triggers.grant(document, declared, rows, entries)
         # Rule 6: before the goals reason, so an entry's reasons read in the rules' order.
         staged = ordering.assign(document, declared, rows, entries, granted)
         tests_block, warnings, notices = tests.decide_tests(document, rows)
-        warnings = environments.setting_warnings(document, rows) + warnings
+        warnings = environments.setting_warnings(document, rows) + triggers.setting_warnings(declared, events) + warnings
     except environments.ConfigError as error:
         return _failed(error.messages)
+    scheduled = triggers.schedule_goals(document, declared)
     for index, entry in enumerate(entries):
         entry["trigger-events"] = events[index]
         if index in granted:
+            if scheduled is not None:
+                entry["reasons"].append(f"{triggers.SCHEDULE_GOAL}: {scheduled[index]}")
             # Rule 7: the operation gates read the granted goals (D10); the entry says the same (I16).
             rows[index]["goals-granted"] = granted[index]
             entry["goals"] = granted[index]
             entry["reasons"].append(f"goals: {', '.join(granted[index]) or 'none'}")
     return _decided(document, block, rows, entries, staged, tests_block, warnings, notices,
-                    triggers.lines(document, entries))
+                    triggers.lines(document, declared, entries))

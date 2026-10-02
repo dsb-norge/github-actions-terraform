@@ -78,6 +78,17 @@ class EntryKeysTest(unittest.TestCase):
                                   f"it is '{key}', a list written directly in the entry."],
                                  errors({"environment": "prod", f"{key}-yml": ["x"]}))
 
+    def test_a_suffixed_single_value_setting_names_its_spelling(self):
+        self.assertEqual(["The environment 'prod' sets 'schedule-goal-yml', which is not a setting: per environment "
+                          "it is 'schedule-goal', a value written directly in the entry."],
+                         errors({"environment": "prod", "schedule-goal-yml": "plan"}))
+
+    def test_a_schedule_goal_is_a_known_key(self):
+        self.assertEqual([], errors({"environment": "prod", "trigger-events": ["schedule"], "schedule-goal": "plan"}))
+        self.assertEqual(["The environment 'prod' sets 'schedule-goals', which is not a setting; did you mean "
+                          "'schedule-goal'? The settings an environment may hold are listed in "
+                          "docs/Configuration-validation.md §3.1."], errors({"environment": "prod", "schedule-goals": "plan"}))
+
     def test_a_workflow_only_input_is_refused(self):
         # path-relevance-enabled keeps its own advice; trigger-events-yml gets the suffixed-setting message.
         for key in sorted(WORKFLOW_ONLY - {"path-relevance-enabled", "trigger-events-yml"}):

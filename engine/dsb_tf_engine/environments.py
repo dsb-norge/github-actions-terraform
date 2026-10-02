@@ -68,9 +68,9 @@ BOOLEAN_INPUTS = (
     "format-check-in-root-dir", "path-relevance-enabled", "pr-auto-merge-enabled", "verify-lock-file",
 )
 
-# Relevance rules, trigger events and ordering: resolved by relevance.py, triggers.py and ordering.py,
-# never row variables.
-RULE_FIELDS = ("paths", "paths-ignore", "trigger-events", "depends-on")
+# Relevance rules, trigger events, the schedule's cap and ordering: resolved by relevance.py, triggers.py
+# and ordering.py, never row variables.
+RULE_FIELDS = ("paths", "paths-ignore", "trigger-events", "schedule-goal", "depends-on")
 
 # An environment name, and a github-environment, reach comment markers (':'-separated, ended by
 # '-->'), artifact names, concurrency groups and shell; this is what is safe in all of them.
@@ -83,7 +83,7 @@ PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 # The keys an environments-yml entry may hold (docs/Configuration-validation.md §3.1), besides the
 # per-environment inputs and the per-environment YAML settings below.
 ENTRY_KEYS = ("environment", "project-dir", "github-environment", "url", "paths", "paths-ignore", "trigger-events",
-              "depends-on", "allow-failing-terraform-operations")
+              "schedule-goal", "depends-on", "allow-failing-terraform-operations")
 # Workflow inputs an environment may override. A new input is in exactly one of this list, the YAML
 # settings (REPLACE_FIELDS, MERGE_FIELDS) or WORKFLOW_ONLY_INPUTS; a test holds the workflow to it.
 PER_ENVIRONMENT_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
@@ -95,8 +95,9 @@ WORKFLOW_ONLY_INPUTS = ("environments-yml", "trigger-events-yml", "path-relevanc
 # What the engine writes into a row itself.
 ENGINE_SET_FIELDS = ("goals-granted", "caller-repo-default-branch", "caller-repo-calling-branch",
                      "caller-repo-is-on-default-branch")
-# Plain settings whose -yml spelling is a mistake per environment.
+# Plain settings whose -yml spelling is a mistake per environment: lists, and one single value.
 PLAIN_WITH_YML = ("paths", "paths-ignore", "trigger-events", "depends-on")
+SCALAR_WITH_YML = ("schedule-goal",)
 KEYS_DOC = "docs/Configuration-validation.md §3.1"
 
 # Every goal a caller may name: the eight the operation gates read, 'all' for the five standard goals
@@ -177,9 +178,10 @@ def _key_problem(name, key):
         return (f"The environment '{name}' sets '{key}', which is not a setting: per environment it is '{key}-yml'. "
                 "Written like this it would have been ignored, and the environment would have run with the global "
                 "value.")
-    if isinstance(key, str) and key.endswith("-yml") and key[:-4] in PLAIN_WITH_YML:
+    if isinstance(key, str) and key.endswith("-yml") and key[:-4] in PLAIN_WITH_YML + SCALAR_WITH_YML:
+        written = "a list" if key[:-4] in PLAIN_WITH_YML else "a value"
         return (f"The environment '{name}' sets '{key}', which is not a setting: per environment it is "
-                f"'{key[:-4]}', a list written directly in the entry.")
+                f"'{key[:-4]}', {written} written directly in the entry.")
     if key in WORKFLOW_ONLY_INPUTS:
         return (f"The environment '{name}' sets '{key}', which is a workflow input only: it applies to every "
                 "environment at once. Set it in the calling workflow's 'with:'.")

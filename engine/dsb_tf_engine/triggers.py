@@ -3,7 +3,8 @@
 docs/Dispatch-and-triggers.md §4. An environment takes part in a run when the event is in its
 trigger-events and, on a dispatch naming one environment, it is that one. It is granted the goals
 the workflow's operation gates would let through for the goals it names, a list of known names by
-now (environments.py); a dispatch's goal input then caps them, and a cap only ever removes.
+now (environments.py); a dispatch's goal input, or on a schedule the environment's schedule-goal,
+then caps them, and a cap only ever removes.
 """
 
 from .environments import ConfigError, on_default_branch, shown
@@ -16,6 +17,10 @@ FIELD = "trigger-events"
 INPUT = "trigger-events-yml"
 DISPATCH = "workflow_dispatch"
 SCHEDULE = "schedule"
+# The goal a scheduled run is capped to, per environment, in the dispatch goal input's vocabulary; a
+# run nobody watches plans unless the environment says otherwise (D12).
+SCHEDULE_GOAL = "schedule-goal"
+SCHEDULE_GOAL_DEFAULT = "plan"
 
 # The granted vocabulary, in the workflow's order; 'all' grants the standard goals and apply.
 STANDARD = ("init", "format", "validate", "lint", "plan")
@@ -68,6 +73,35 @@ def resolve(document, declared):
     return [entry[FIELD] if FIELD in entry else default for entry in declared]
 
 
+def _schedule_goal_problem(entry, goals):
+    """What is wrong with an environment's schedule-goal, or None: a value outside the goal input's
+    vocabulary, or a cap that would add a goal the environment does not hold (D5)."""
+    if SCHEDULE_GOAL not in entry:
+        return None
+    goal, where = entry[SCHEDULE_GOAL], f"environments-yml: environment '{entry['environment']}'"
+    if goal not in GOAL_INPUTS:
+        return f"{where}: '{SCHEDULE_GOAL}' is one of {', '.join(GOAL_INPUTS)}, not {shown(goal)}"
+    if goal == "apply" and not ("all" in goals or "apply" in goals):
+        return f"{where}: '{SCHEDULE_GOAL}: apply' needs the goal 'apply' or 'all' (goals: {', '.join(goals)})"
+    if goal == "destroy-plan" and "destroy-plan" not in goals:
+        return f"{where}: '{SCHEDULE_GOAL}: destroy-plan' needs the goal 'destroy-plan' (goals: {', '.join(goals)})"
+    return None
+
+
+def schedule_goals(document, declared):
+    """On a schedule, each environment's schedule-goal, plan where it sets none; on any other event None."""
+    if document["event"]["name"] != SCHEDULE:
+        return None
+    return [entry.get(SCHEDULE_GOAL, SCHEDULE_GOAL_DEFAULT) for entry in declared]
+
+
+def setting_warnings(declared, resolved):
+    """The schedule-goals that are valid but change nothing: their environment takes no part in schedules."""
+    return [f"The environment '{entry['environment']}' sets {SCHEDULE_GOAL}: {entry[SCHEDULE_GOAL]}, but its "
+            f"{FIELD} do not hold {SCHEDULE}, so it has no effect."
+            for entry, events in zip(declared, resolved) if SCHEDULE_GOAL in entry and SCHEDULE not in events]
+
+
 def check_event(document):
     """A ConfigError unless the event is one of the four the workflows support."""
     event = document["event"]["name"]
@@ -79,6 +113,10 @@ def participation(document, declared, rows):
     """Per row, the reason rules 2 and 3 drop it or None, beside the resolved events; a ConfigError
     for the whole run when the event, the configuration or the dispatch cannot be honoured."""
     resolved = resolve(document, declared)
+    # Checked on every event, so a mistaken schedule-goal surfaces on a pull request, not at night.
+    problems = [problem for entry, row in zip(declared, rows) if (problem := _schedule_goal_problem(entry, row["goals"]))]
+    if problems:
+        raise ConfigError(problems)
     check_event(document)
     event = document["event"]["name"]
     dropped = [None if event in events else f"{FIELD}: {event} not enabled" for events in resolved]
@@ -122,9 +160,10 @@ def expand(document, goals):
     return granted
 
 
-def grant(document, rows, entries):
+def grant(document, declared, rows, entries):
     """The granted goals of every running environment, by row index, or a ConfigError."""
     event = document["event"]
+    scheduled = schedule_goals(document, declared)
     goal = (dispatch_inputs(document)["goal"] or "default") if event["name"] == DISPATCH else "default"
     if goal not in GOAL_INPUTS:
         raise ConfigError([f"dispatch: unknown goal {shown(goal)}; the goal input is one of {', '.join(GOAL_INPUTS)}"])
@@ -144,14 +183,17 @@ def grant(document, rows, entries):
         if goal == "destroy-plan" and "destroy-plan" not in expanded:
             errors.append(f"dispatch: environment '{row['environment']}' does not hold the goal 'destroy-plan' "
                           f"(goals: {', '.join(goals)})")
-        granted[index] = [each for each in expanded if goal not in CAPS or each in CAPS[goal]]
+        # A schedule-goal was checked against the goals already; a dispatch's goal is checked above.
+        cap = goal if scheduled is None else scheduled[index]
+        granted[index] = [each for each in expanded if cap not in CAPS or each in CAPS[cap]]
     if errors:
         raise ConfigError(errors)
     return granted
 
 
-def lines(document, entries):
-    """What the run summary and a notice say about who dispatched what, or an empty schedule."""
+def lines(document, declared, entries):
+    """What the run summary and a notice say about who dispatched what, or a schedule: what each running
+    environment was capped to, or that none takes part."""
     event = document["event"]
     if event["name"] == DISPATCH:
         actor, again = event.get("actor", ""), event.get("triggering_actor", "")
@@ -174,4 +216,11 @@ def lines(document, entries):
     if event["name"] == SCHEDULE and not any(entry["verdict"] == "run" for entry in entries):
         return [f"{SCHEDULE}: no environment takes part in scheduled runs; add '{SCHEDULE}' to the {FIELD} of the "
                 "environment the schedule is for"]
+    if event["name"] == SCHEDULE:
+        scheduled = schedule_goals(document, declared)
+        by_goal = {goal: [entry["environment"] for index, entry in enumerate(entries)
+                          if entry["verdict"] == "run" and scheduled[index] == goal] for goal in GOAL_INPUTS}
+        return [f"{SCHEDULE}: " + "; ".join(f"goal {goal} for {', '.join(names)}" for goal, names in by_goal.items()
+                                            if names)
+                + f" ({SCHEDULE_GOAL}, {SCHEDULE_GOAL_DEFAULT} where an environment sets none)"]
     return []

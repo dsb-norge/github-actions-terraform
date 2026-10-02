@@ -233,12 +233,14 @@ class RelevantInvariantTest(unittest.TestCase):
 
 
 class GoalInvariantTest(unittest.TestCase):
-    """I1, I2, I3, I15, I16 and rules 2-3, each against an output broken in one way."""
+    """I1, I2, I3, I15, I16, I25 and rules 2-3, each against an output broken in one way."""
 
-    def decide(self, event="push", goals=("all",), dispatch=None, trigger_events=None, ref="main"):
+    def decide(self, event="push", goals=("all",), dispatch=None, trigger_events=None, ref="main", schedule_goal=None):
         environment = {"environment": "a", "goals-yml": list(goals)}
         if trigger_events is not None:
             environment["trigger-events"] = trigger_events
+        if schedule_goal is not None:
+            environment["schedule-goal"] = schedule_goal
         document = support.document(environments=[environment, {"environment": "b"}],
                                     env_yaml=[{"goals-yml": support.parsed(list(goals))}, {}], ref_name=ref)
         document["event"]["name"] = event
@@ -304,6 +306,21 @@ class GoalInvariantTest(unittest.TestCase):
                                        trigger_events=["schedule"])
         self.grant(output, ["destroy-plan", "destroy"])
         self.assertViolation(document, output, "I15")
+
+    def test_a_schedule_that_grants_beyond_its_schedule_goal(self):
+        for schedule_goal, broken in ((None, ["init", "format", "validate", "lint", "plan", "apply"]),
+                                      ("plan", ["init", "plan", "apply"]),
+                                      ("destroy-plan", ["init", "plan", "destroy-plan"])):
+            with self.subTest(schedule_goal=schedule_goal):
+                document, output = self.decide(event="schedule", goals=("all", "destroy-plan"),
+                                               trigger_events=["schedule"], schedule_goal=schedule_goal)
+                self.grant(output, broken)
+                self.assertViolation(document, output, "I25: 'a' is granted")
+
+    def test_a_schedule_that_grants_less_than_the_gates_and_its_cap_allow(self):
+        document, output = self.decide(event="schedule", trigger_events=["schedule"], schedule_goal="default")
+        self.grant(output, ["init", "format", "validate", "lint", "plan"])
+        self.assertViolation(document, output, "I25: 'a' is granted")
 
     def test_a_dispatch_that_grants_more_than_a_push(self):
         document, output = self.decide(event="workflow_dispatch", goals=("init", "plan"), dispatch={"goal": "plan"})
