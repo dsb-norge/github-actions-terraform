@@ -18,23 +18,32 @@ provider it uses, provider-defined functions, and `provider` and `import` blocks
 Dependabot opens the pull request automatically, days after an upstream release. Whoever controls
 that release controls what runs.
 
-What that code reaches on a Dependabot run without the admission:
+A Dependabot run is often taken for a sandbox, and in part it is. GitHub keeps the repository's,
+the organisation's and the environments' Actions secrets from it, and gives it only Dependabot
+secrets; its `GITHUB_TOKEN` is read-only unless the workflow's `permissions` say otherwise. (The jobs
+in which Dependabot itself computes an update run on GitHub's infrastructure; they are not these
+runs.) What GitHub does not restrict is what the caller grants, and what the run's jobs reference.
+Observed on a calling repository's Dependabot runs, each log reading `Secret source: Dependabot`,
+that code reaches without the admission:
 
 - **The environment's identity.** The environment job runs in its GitHub Environment, so its OIDC
   subject is `repo:<owner>/<repo>:environment:<github-environment>`, the subject an apply on the
-  default branch gets; plan and apply usually share one identity per environment. A Dependabot run
-  sees only Dependabot secrets, but GitHub honours the caller's `permissions`, `id-token: write`
-  included: a calling repository whose Dependabot pull request passed its client ID as a plain value
-  logged in to Azure and refreshed real state. Client IDs are not secret
+  default branch gets; plan and apply usually share one identity per environment. This workflow
+  requires its callers to grant `id-token: write`, and GitHub honours it on a Dependabot run: the
+  login step printed a token from `https://token.actions.githubusercontent.com` with subject
+  `repo:<owner>/<repo>:environment:prod`, logged in to Azure with it, and the plan refreshed real
+  state. The caller passed its client ID as a plain value. Client IDs are not secret
   ([Migration-v0-to-v1.md](Migration-v0-to-v1.md) §2.7); the subject is the boundary, and here it is
   the apply identity's.
-- **Every secret the run can see.** A job receives every secret its YAML references, whether or not
-  the referencing step runs, and `toJSON(secrets)` references all of them (P2). The environment
-  job's export steps and the test job's pass `secrets-json: ${{ toJSON(secrets) }}`, so on a
-  Dependabot run each of those jobs holds every Dependabot secret, the auto-merge App's private key
-  among them where Dependabot auto-merge is set up ([Auto-merge.md](Auto-merge.md)).
-- **The repository through `GITHUB_TOKEN`**, with what the caller grants. `permissions: write-all`
-  raises a Dependabot run's token from read-only to write.
+- **Every Dependabot secret.** A job receives every secret its YAML references, whether or not the
+  referencing step runs, and `toJSON(secrets)` references all of them (P2). The environment job's
+  export steps and the test job's pass `secrets-json: ${{ toJSON(secrets) }}`: on a Dependabot run
+  the environment job's export step received `{"github_token": "***", "<auto-merge key>": "***"}`,
+  the auto-merge App's private key, a Dependabot secret because [Auto-merge.md](Auto-merge.md)
+  requires it to be. The job then ran `init` and `plan` with the pull request's dependencies.
+- **The repository through `GITHUB_TOKEN`**, with what the caller grants. With
+  `permissions: write-all` in the caller, the same job's token read `Actions: write`,
+  `Contents: write`, `PullRequests: write`.
 
 Two other answers were rejected. Gating the run on a person defeats the point of Dependabot. A
 read-only plan identity does not survive contact with the azurerm provider: reading a storage
@@ -280,7 +289,7 @@ What each failed check tells the reader:
 |---|---|
 | `allow` | add the namespace, or namespace and name, to `allow` on the default branch, then `@dependabot rebase` |
 | `age` | the date and time it becomes old enough; then "Re-run all jobs", since the verdict is decided in `create-matrix` |
-| `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); check the publisher's announcement before running it once by a person's commit |
+| `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); a drop to self-signed is lock-file maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a commit of their own |
 | `hashes` | the lock records a hash the publisher did not publish: do not merge; comment `@dependabot recreate` |
 | `host`, `source` | the admission judges registry and GitHub sources only; a person's commit runs it |
 | the shape | the file and line that is not a dependency version; review it; a person's commit runs it |
@@ -477,7 +486,7 @@ it does today, and a refused run runs nothing.
 | P7 | The registry reports `Azure`, lock files `azure`. | A case-sensitive allow list refuses Microsoft's providers. | Without case (D6). |
 | P8 | A module upgrade can require a provider the lock lacks, implicitly through a data source's type. | In `init`'s default mode Terraform installs the newest matching version, records it and runs it, unjudged. | `-lockfile=readonly` on Dependabot runs (D10). Verified with Terraform 1.16: the new provider is downloaded and its signature checked, `init` fails with "Provider dependency changes detected", and `validate` ("Missing required provider") and `plan` ("Inconsistent dependency lock file") refuse with no provider plugin started. A module needing a newer version of a locked provider fails `init` in either mode, downloading nothing. |
 | P9 | Commit and tag dates are set by the client; the registry's module tags are often lightweight. | A backdated commit passes an age check. | The release's `published_at` (§4.4). |
-| P10 | A publisher's key changes for new versions only. | `key` refuses the release. Seen on a partner provider: its earlier versions are "signed by a HashiCorp partner", the next is "self-signed" with a new key that carries no partner trust signature. | A person looks before it runs; the help names both keys and Terraform's verdict on each. A rotation to a key HashiCorp vouches for passes (D8), and one that re-signs every release, as HashiCorp's in 2021, does not change the key at all. |
+| P10 | A publisher's key changes for new versions only. | `key` refuses the release. Seen on a partner provider: its earlier versions are "signed by a HashiCorp partner", the next is "self-signed" with a new key that carries no partner trust signature. | A maintainer looks before it runs and updates the lock by hand; the help names both keys and Terraform's verdict on each. A rotation to a key HashiCorp vouches for passes (D8), and one that re-signs every release, as HashiCorp's in 2021, does not change the key at all. |
 | P11 | The registry's `verified` flag is false for some modules of a trusted publisher. | A rule on the flag refuses them. | The allow list, not the flag (D6). |
 | P12 | Admission facts gathered on every run would spend the token's hourly budget and the registry's patience. | Rate limits on busy repositories. | Gathered only when the admission applies (§8); the change read through git, not the API. |
 | P13 | A configuration error raised as an engine error exits before `relevance.json` is written. | No report, no artifact for the readers. | A refusal is a participation drop, not an error (§9). |
