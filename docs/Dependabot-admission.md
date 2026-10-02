@@ -58,16 +58,16 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 | D5 | The rule judges content only: the change from the merge commit's first parent to the merge commit (`github.sha`), the commit the run checks out. Commit authorship is not consulted. | The actor already says who pushed, and a content rule covers every commit whoever wrote it (P3). |
 | D6 | One allow list of namespaces, for providers and modules alike. An entry is a namespace (`elastic`) or a namespace and name (`cyrilgdn/postgresql`), compared without case. Built in: `dsb-norge`, `hashicorp`, `microsoft`, `Azure`. A caller's entries are added to the built-in ones. | Decided by the maintainer: the publishers the organisation trusts. Adding rather than replacing, so nobody drops `hashicorp` by mistake. |
 | D7 | A changed provider or module version must have been published at least `min-age-days` before the run (default 3). Namespaces in `min-age-exempt` (built in: `dsb-norge`) are exempt. | Decided by the maintainer. 3 matches Dependabot's default cooldown, so a repository on the default or a longer cooldown never trips it; the check catches a cooldown lowered or removed. The organisation's own modules gain nothing from waiting. |
-| D8 | A changed provider's new version must be signed with a key that signed the base version, and every `zh:` hash its lock entry records must be in the publisher's checksum file for that version. | A publisher's key changing between two versions is what a takeover looks like; the hashes tie the lock to what the registry signed. |
+| D8 | A changed provider's new version must be signed with a key that signed the base version, and every `zh:` hash its lock entry records must be in the publisher's checksum file for that version. | A publisher's key changing between two versions is what a takeover looks like; the hashes tie the lock to what the registry signed. It fires on real releases: a partner provider's version that Terraform installs as "signed by a HashiCorp partner" was followed by one it installs as "self-signed" (P10). |
 | D9 | Module content is not inspected. | No scan of HCL text is sound (unquoted block labels, JSON syntax, escapes), plan-time code takes many forms (data sources of every provider, provider functions, child `provider` and `import` blocks, `file()`), and legitimate upgrades add providers and examples. The boundary is the identity, the allow list and the provenance checks; a scan would slow an attacker, not stop one (§12). |
-| D10 | On a Dependabot run, the environment root's `init` uses `-lockfile=readonly`, and every environment the change is relevant to must have a committed lock file. | Terraform then refuses a provider the lock does not record, before anything executes: a module upgrade that pulls in a new provider, an implicit one included, cannot install it. |
+| D10 | On a Dependabot run, the environment root's `init` uses `-lockfile=readonly`, and every environment the change is relevant to must have a committed lock file. | Terraform then refuses a provider the lock does not record before anything executes it: `init` downloads and verifies it but fails with "Provider dependency changes detected", and `validate` and `plan` then refuse without starting a provider (P8). A constraint change the locked version still satisfies passes. |
 | D11 | A fact the admission needs that cannot be gathered (a registry or GitHub API error, an answer of an unexpected shape) fails the `create-matrix` job, naming the fact. | Decided by the maintainer. "Re-run failed jobs" then decides again; a red conclusion alone would keep the decided verdict on that kind of re-run. Only Dependabot runs gather these facts. |
 | D12 | Content the admission cannot interpret (a file it cannot parse, a source kind it does not know) fails a check; it is not a failed fact. | It would not parse on a re-run either. |
 | D13 | Two inputs: `dependabot-admission-enabled` (boolean) and `dependabot-admission-yml` (the policy). The switch defaults to `true` in the project workflow and to `false` in the module workflow. | Decided by the maintainer: the repository's convention for switches. On by default for projects, so a repository that forgets it is still caught by the default policy; opt-in for modules, whose Dependabot runs reach no cloud identity (§11). |
 | D14 | With `dependabot-admission-enabled: false` every run is decided exactly as before the admission existed. | The opt-out that keeps this a minor release (§13). |
 | D15 | The report lists every changed dependency with its result, once, in an admission head (one per calling workflow) and in the run summary. Each environment and group head says "not admitted" and points to it. Each failed check carries what to do when the change is trusted and intended. | Decided by the maintainer. |
 | D16 | In the module workflow, when enabled, the admission gates `validate` and the tests. | Decided by the maintainer: both execute the new provider. |
-| D17 | A Dependabot `push` run (from a caller that triggers on every branch) runs nothing and is green, with a notice. | Its checks land on the pull request's head commit. A second red `Terraform conclusion` there would make the required check ambiguous, and the pull request's own run judges the change. |
+| D17 | A Dependabot `push` run (from a caller that triggers on every branch) runs nothing and is green, with a notice. | Its checks land on the pull request's head commit, and a required check needs every check run of that name on the commit to pass, whatever order they finish in (P5): a red push run would block an admitted pull request, and a green one cannot unblock a refused one. The pull request's own run judges the change. |
 | D18 | Azure IDs are plain values in the caller (`extra-envs-yml`, per environment), not secrets. | Decided by the maintainer. A Dependabot run cannot read Actions or environment secrets, and Dependabot secrets have no environment level, so a repository with several environments could not give each its own ID. The IDs protect nothing (§1). |
 | D19 | `allow-failing-terraform-operations` never softens a not-admitted run. | Nothing ran; the setting is about operations that did. |
 
@@ -110,6 +110,11 @@ Every changed file is one Dependabot's Terraform updater writes, and every chang
 
 A pull request whose only change is a lock file (a version the existing constraint already allows)
 passes this check.
+
+The rule was run over 119 real Terraform Dependabot pull requests of a calling organisation: 41
+lock-only, 52 `.tf`-only, 26 both, 30 of them across several directories. Every change Dependabot
+made itself passed. The two refusals were pull requests that something else had pushed to: a person's
+commit changing a lock's `constraints` line, and a documentation bot's README commit.
 
 ### 4.2 The dependencies
 
@@ -305,7 +310,10 @@ out `changed_files`.
 | a GitHub module tag's release | `gh api repos/<owner>/<repo>/releases/tags/<tag>` → `published_at`; a 404 is the fact "no release" | other errors: `create-matrix` fails |
 | the environments' committed locks | the merge commit, as the test stage already reads them | — |
 
-The registry calls use the standard library with a timeout and one retry. Only the registry's
+The registry calls must not depend on IPv6 (P17): the adapter calls the registry through `curl`, which
+tries IPv4 and IPv6 side by side, with a timeout and one retry. Measured: the calls for a grouped pull
+request of a dozen providers take about five seconds in sequence, and 108 calls twenty at a time
+met no rate limit and carried no rate-limit headers. Only the registry's
 download and versions endpoints are documented; the version detail endpoints are not, so every answer
 is checked for the fields read, and a missing or mistyped field is a failed fact (D11).
 
@@ -447,6 +455,7 @@ it does today, and a refused run runs nothing.
 | `dsb-norge/mgmt-resource-lock/azurerm`, published an hour ago | admitted | `dsb-norge` is exempt from `min-age-days` |
 | a GitHub module `github.com/<org>/<repo>?ref=v1.3.0`, owner allowed, tag without a release | not admitted | `age`, unless the owner is exempt |
 | a provider whose new version is signed by a different key | not admitted | `key` |
+| a pull request titled "4.4.0 to 4.81.0" whose lock records 5.8.0, published nine hours before | not admitted | `age`, judged on the lock (P16) |
 | a Dependabot pull request a person has pushed a commit to | not judged on that push | the person's run |
 | the same pull request after `@dependabot recreate` | judged | the actor is Dependabot again |
 | a pull request that also changes `.github/workflows/ci.yml` | not admitted | the shape |
@@ -461,17 +470,19 @@ it does today, and a refused run runs nothing.
 | P2 | A job receives every secret its YAML references, whether or not the step runs, and `toJSON(secrets)` references all (verified on the test bed: a job referencing `toJSON(secrets)` in a step with `if: false` had both test secrets masked; one referencing a single secret had only that one; one referencing none had none). | Every environment and test job of a Dependabot run holds every Dependabot secret. | D4; R2. |
 | P3 | A commit created through the API with any author is shown as that author; GitHub signs bot commits only without custom author information, so a forged Dependabot commit is unsigned, but nothing documents a signed one as proof. | An authorship rule adds nothing a content rule does not cover. | D5. |
 | P4 | A re-run keeps the actor and the event, but "Re-run failed jobs" does not re-run a `create-matrix` that succeeded. | A version that has aged is still refused on that kind of re-run. | The help says "Re-run all jobs" (§7); D11 fails `create-matrix` itself for a missing fact. |
-| P5 | Dependabot's own pushes to its branch start `push` runs on callers that trigger on every branch, on the pull request's head commit. | Two `Terraform conclusion` checks on one commit. | D17. |
+| P5 | Dependabot's own pushes to its branch start `push` runs on callers that trigger on every branch, on the pull request's head commit. | Two `Terraform conclusion` checks on one commit. A required check then needs both to pass, in whichever order they finish (verified on the test bed: red then green, and green then red, both block; green and green merges). | D17: the push run is green. |
 | P6 | The updater regenerates a lock block and re-pads its `version` line. | A text comparison of the lock sees changes that are not. | Parsed comparison (§4.1). |
 | P7 | The registry reports `Azure`, lock files `azure`. | A case-sensitive allow list refuses Microsoft's providers. | Without case (D6). |
-| P8 | A module upgrade can require a provider the lock lacks, implicitly through a data source's type. | In `init`'s default mode Terraform installs the newest matching version, unjudged. | `-lockfile=readonly` on Dependabot runs (D10). |
+| P8 | A module upgrade can require a provider the lock lacks, implicitly through a data source's type. | In `init`'s default mode Terraform installs the newest matching version, records it and runs it, unjudged. | `-lockfile=readonly` on Dependabot runs (D10). Verified with Terraform 1.16: the new provider is downloaded and its signature checked, `init` fails with "Provider dependency changes detected", and `validate` ("Missing required provider") and `plan` ("Inconsistent dependency lock file") refuse with no provider plugin started. A module needing a newer version of a locked provider fails `init` in either mode, downloading nothing. |
 | P9 | Commit and tag dates are set by the client; the registry's module tags are often lightweight. | A backdated commit passes an age check. | The release's `published_at` (§4.4). |
-| P10 | A legitimate publisher rotates its key for new versions only. | `key` refuses a genuine release. | A person's commit runs it once; the help names both keys. A rotation that re-signs every release, as HashiCorp's in 2021, does not trip it. |
+| P10 | A publisher's key changes for new versions only. | `key` refuses the release. Seen on a partner provider: its earlier versions are "signed by a HashiCorp partner", the next is "self-signed" with a new key that carries no partner trust signature. | A person looks before it runs; the help names both keys and Terraform's verdict on each. A rotation that re-signs every release, as HashiCorp's in 2021, does not trip it. |
 | P11 | The registry's `verified` flag is false for some modules of a trusted publisher. | A rule on the flag refuses them. | The allow list, not the flag (D6). |
 | P12 | Admission facts gathered on every run would spend the token's hourly budget and the registry's patience. | Rate limits on busy repositories. | Gathered only when the admission applies (§8); the change read through git, not the API. |
 | P13 | A configuration error raised as an engine error exits before `relevance.json` is written. | No report, no artifact for the readers. | A refusal is a participation drop, not an error (§9). |
 | P14 | The seed's "not affected" body is chosen for any skip that is not a trigger-events one. | A refused environment would read "no changed file matches". | The `not-admitted` head state (§7, §9). |
 | P15 | A caller keeps secret IDs. | An admitted run fails on "secret not available". | The migration items (§13); the message names the secret, as today. |
+| P16 | Dependabot picks the version it reports by its cooldown and ignore rules, then regenerates the lock with `terraform providers lock`, which takes the newest version the constraints allow. | Seen: a pull request titled "4.4.0 to 4.81.0" locked 5.8.0, a major version published nine hours before, past the caller's five-day cooldown and its ignore of major versions. | The admission judges the lock, what runs, never the title: `age` refuses it. |
+| P17 | Python's `urllib` tries the addresses in resolver order and does not race IPv4 against IPv6. | On a host that resolves the registry's AAAA records without working IPv6, each call waited about 25 seconds before falling back. | Registry calls through `curl` (§8). |
 
 ## 17. Tests
 
@@ -502,25 +513,18 @@ it does today, and a refused run runs nothing.
 - A contract test of the registry answers, run on a schedule, so an endpoint's drift is seen before a
   Dependabot run meets it.
 
-**On the test bed** (§18): admitted and refused Dependabot pull requests, a push run, a re-run after
-the minimum age, a module bump needing a new provider under `-lockfile=readonly`, and the module
-workflow opted in.
+**On the test bed**, when built: admitted and refused Dependabot pull requests, a push run, a
+re-run after the minimum age, a module bump needing a new provider under `-lockfile=readonly`, and
+the module workflow opted in.
 
 **What tests cannot cover**: whether an admitted release is benign (R1).
 
 ## 18. Open questions
 
-Each needs a run:
-
-1. **`-lockfile=readonly` and a new provider**: on a Dependabot module bump that requires a provider
-   the lock lacks, `init` refuses before any provider executes, and with which message. Test bed.
-2. **Real Dependabot shapes**: a grouped pull request across directories with lock and `.tf`
-   changes passes §4.1 line for line, including the regenerated lock's platform set. Test bed with
-   Dependabot enabled.
-3. **Two checks on one commit**: with D17, the required `Terraform conclusion` reads the pull
-   request run's result and not the push run's.
-4. **Registry load**: a grouped pull request of a dozen providers stays within the registry's limits
-   with one retry.
+What a local Terraform, the live registry, 119 real Dependabot pull requests and a probe on the test
+bed could answer is answered in the text above: `-lockfile=readonly` and a new provider (P8), the
+shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and the registry's load
+(§8). None remain.
 
 ## 19. Implementation order
 
@@ -534,7 +538,7 @@ Each needs a run:
 6. Documentation: the user guides (the default workflow's example 13 among them),
    Migration-v0-to-v1.md §2.7 and its checklist, Decision-engine.md §6 and §7,
    Workflow-pr-comments.md, Terraform-tests.md §4.7.
-7. Test bed (§18).
+7. Test bed: the cases of §17.
 
 ### Where each piece lives
 
