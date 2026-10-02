@@ -21,6 +21,7 @@ All commenting goes through two generic, terraform-agnostic primitives — [`pr-
 |---|---|---|---|
 | `<!-- tf:head:group:<group> -->` | Head | One per distinct non-empty `pr-comment-group` | Seed job (initial), [`aggregate-validation-summaries`](../aggregate-validation-summaries/) (final) |
 | `<!-- tf:head:env:<env> -->` | Head | One per ungrouped env with `add-pr-comment: true` | Seed job (initial), matrix job for that env (final); for an env a failed earlier stage held back, the aggregator (final, [Environment-ordering.md §7.4](Environment-ordering.md)) |
+| `<!-- tf:head:admission:<caller> -->` | Head | One per calling workflow, only on a Dependabot pull request the admission refused | Seed job, final at once ([Dependabot-admission.md](Dependabot-admission.md) §7); the seed deletes it on any later run of a Dependabot-authored pull request that is not refused |
 | `<!-- tf:head:tests:<caller> -->` | Head | One per calling workflow, when it has test files | Seed job (initial), `terraform-test-summary` job via [`create-test-summary`](../create-test-summary/) (final, or deleted when the last test file is gone); [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.yaml) has its own copy of that job and no seed |
 | `<!-- tf:tag:plan:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt | Matrix job for that env |
 | `<!-- tf:tag:apply:<env>:run-id-<run-id>:attempt-<run-attempt> -->` | Tag | One per env per run-attempt **that ran apply** | Matrix job for that env (phase 2) |
@@ -59,7 +60,7 @@ The `seed-pr-comments` job in [`terraform-ci-cd-default.yml`](../.github/workflo
 1. One `tf:head:group:<group>` head per distinct non-empty `pr-comment-group` value among commenting envs, affected or not, sorted by name; always the `⏳ Awaiting results…` placeholder.
 2. One `tf:head:env:<env>` head per env with `add-pr-comment: true` **and no `pr-comment-group`**, in `environments-yml` order. Grouped envs do not get a standalone per-env head — they are represented in their per-group head's table. An affected env gets the placeholder; an env the change does not touch gets its final "not affected" body (§5.1), and an env whose `trigger-events` lack `pull_request` its final "does not take part" body (§5.1), since no matrix job will run to finalise either.
 
-Heads are processed in declared order — group heads first, env heads after, and the tests head last, when the run has test files. Reviewers read plans first. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
+Heads are processed in declared order — the admission head first, on a refused Dependabot run, then group heads, env heads after, and the tests head last, when the run has test files. Reviewers read plans first. On a fresh PR, this means group heads get earlier `created_at` than env heads, so the conversation order is group summaries above per-env. On re-runs the existing heads are PATCHed in place to a `⏳ Awaiting results…` placeholder body, or to the "not affected" body.
 
 The seed job GCs only the tags of **unaffected** envs with `add-pr-comment: true`: four rules each, one per tag kind, so an earlier run's plan does not stay visible under a head that says "not affected". Affected envs' tags are purged per env in the matrix (§3.2). This is what makes "Re-run failed jobs" behave correctly: when a previous attempt's seed already succeeded, GitHub skips it on the re-run, so any cleanup of affected envs hooked into the seed phase wouldn't fire, while an unaffected env is unaffected on every attempt and its purge is already done. Each matrix job purges its own env's plan tags as its first commenting step, which works whether the seed re-ran or not. The seed is `terraform-ci-cd`'s `needs:` dependency so matrix jobs still can't race ahead of head seeding; its result is not tested, so a broken seed never skips the matrix.
 
@@ -158,6 +159,10 @@ An ungrouped env the change does not touch gets its head written once, at seed t
 
 An ungrouped env whose `trigger-events` lack `pull_request` gets its head written once at seed time the same way, with a `➖ Does not take part in pull requests: this environment's trigger-events are <events> (run #N attempt #M).` line and no "Path rules" section.
 
+#### Not admitted
+
+On a Dependabot pull request the admission refused, no matrix job runs. Every ungrouped env with `add-pr-comment: true` that takes part in pull requests gets its head written once at seed time with a `🚫 Not admitted: this Dependabot pull request failed the admission, so nothing ran (run #N attempt #M). See the admission comment.` line; a grouped member gets a `🚫` cell in its group's table and is named in a `🚫 Not admitted:` footer line. The admission comment itself, `<!-- tf:head:admission:<caller> -->`, lists every changed dependency with its result and what to do; its exact shape is [Dependabot-admission.md](Dependabot-admission.md) §7.
+
 #### Grouped mode
 
 When `pr-comment-group` is non-empty, the env has **no per-env head at all** — its row in the per-group head's table is the env's summary surface, and its plan output still gets its own per-env plan tag (§5.2). The seed manifest excludes grouped envs from per-env head seeding, and the matrix-job step that PATCHes the per-env head is skipped via an `if:` guard on `matrix.vars.pr-comment-group`. Reviewers reach the grouped env's plan output via the per-group head's Links column.
@@ -221,6 +226,8 @@ Plan time cells: backtick-wrapped `mm:ss` when present, em-dash `—` when missi
 Links cells contain up to two `<br>`-separated lines in the plan-only shape, up to five with the operation tags' lines between them: `[log extract](#issuecomment-<id>)` (anchors to the env's plan tag, located by the `<!-- tf:tag:plan:<env>:run-id-<run-id>:` marker-prefix substring — matches any attempt of the current run; stale tags from prior runs are ignored) and `[job log](<url>#logs)` (resolved via the Jobs API). When neither resolves, the cell is empty rather than emitting stray pipes.
 
 An env the change does not touch keeps its column: every cell `<span title="not affected by this pull request">—</span>`, an empty Links cell, excluded from the group-wide row gates, and a `➖ Not affected by this pull request: \`<env>\`` line above the footer names it. A group whose members are all unaffected is rendered all dashes, never deleted. [Path-relevance.md §6.2](Path-relevance.md).
+
+An env of a Dependabot pull request the admission refused keeps its column the same way, every cell but the empty Links cell `<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>`, and a ``🚫 Not admitted: `<env>` `` line, above the not-affected line, names it. [Dependabot-admission.md §7](Dependabot-admission.md).
 
 An env a failed or cancelled earlier stage held back keeps its column the same way, every cell but the empty Links cell `<span title="held back: stage 2; stage 1 failed">⏭️</span>`, and a ``⏭️ Held back: `<env>` `` line, below the not-affected line, names it. [Environment-ordering.md §7.4](Environment-ordering.md).
 

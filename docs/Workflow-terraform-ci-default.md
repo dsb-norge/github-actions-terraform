@@ -315,6 +315,74 @@ Two things worth knowing:
 
 Note that the module cache normally hides this problem: on a cache hit nothing is cloned at all, so the failure surfaces only when the cache misses — after a module pin changes, for instance. See [Terraform-module-cache.md](./Terraform-module-cache.md).
 
+#### Dependabot pull requests: the admission
+
+A pull request Dependabot opens runs code nobody has looked at: a new provider release or module version. A run Dependabot starts therefore executes Terraform only once the **admission** admits its pull request, with no person in the loop for a dependency that passes ([Dependabot-admission.md](Dependabot-admission.md)). The pull request is admitted when:
+
+- it changes only what Dependabot writes: `version` arguments and git `ref` values in `.tf` files, and lock entries;
+- every provider and module it changes comes from an allowed namespace, built in `dsb-norge`, `hashicorp`, `microsoft` and `Azure`, compared without case;
+- each new version was published at least three days before the run (`dsb-norge` is exempt), and a provider's new version is signed with the key of the version before it, or with one HashiCorp vouches for, and its lock hashes are the publisher's;
+- every environment it concerns has a committed `.terraform.lock.hcl`, which `init` then reads only, so a provider the lock does not record never runs.
+
+An admitted run is decided as a person's run would be: the environments plan with their identity, and the test lanes run, credentialed ones included. A Dependabot run cannot read Actions or environment secrets, so the identities' IDs must be plain values, which they may be, since an identity is protected by the OIDC subject it trusts, not by its client ID:
+
+```yaml
+      environments-yml: |
+        - environment: prod
+          extra-envs-yml:
+            ARM_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+            ARM_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000000"
+            ARM_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
+```
+
+A test lane that needs credentials gets its IDs in its own `extra-envs-yml` the same way; one whose IDs are still environment secrets fails on an admitted Dependabot run, with a message saying so.
+
+**Other publishers, and the minimum age.** The policy is added to the built-in one:
+
+```yaml
+      dependabot-admission-yml: |
+        allow:
+          - elastic
+          - cyrilgdn/postgresql
+        min-age-days: 3        # the default, from 0 to 90
+        min-age-exempt:        # besides dsb-norge
+          - my-other-org
+```
+
+`dependabot-admission-enabled: false` runs Dependabot's pull requests as before the admission existed.
+
+**A pull request that is not admitted** runs no Terraform job. `Terraform conclusion` fails with `conclusion: red — Dependabot pull request not admitted: 2 of 3 dependencies failed; see the admission comment`, each environment's comment says it was not admitted, and the admission comment lists every dependency with its result and what to do:
+
+```markdown
+### 🚫 Dependabot pull request not admitted
+
+No Terraform ran. Every dependency a Dependabot pull request changes must pass the admission before any job runs it ([what the admission checks](https://github.com/dsb-norge/github-actions-terraform/blob/main/docs/Dependabot-admission.md)).
+
+| Dependency | Change | Result |
+|---|---|---|
+| provider `hashicorp/azurerm` | 4.41.0 → 4.42.0 | ✅ admitted |
+| provider `cyrilgdn/postgresql` | 1.25.0 → 1.26.0 | ❌ `cyrilgdn` is not on the allow list |
+| module `Azure/naming/azurerm` | 0.4.3 → 0.4.4 | ❌ published 1 day ago; the minimum is 3 days, reached at 2026-09-23 14:13 UTC |
+
+<details><summary>Files</summary>
+
+- `envs/dev/.terraform.lock.hcl`, `envs/prod/.terraform.lock.hcl`: provider `hashicorp/azurerm`
+- `envs/prod/.terraform.lock.hcl`: provider `cyrilgdn/postgresql`
+- `main/naming.tf`: module `Azure/naming/azurerm`
+
+</details>
+
+**If you trust provider `cyrilgdn/postgresql` and the update is intended:** add `cyrilgdn/postgresql` (or `cyrilgdn`) to `allow` in `dependabot-admission-yml` in the calling workflow on the default branch, then comment `@dependabot rebase` on this pull request.
+
+**module `Azure/naming/azurerm` 0.4.4 is too new:** published 1 day ago; the minimum is 3 days, reached at 2026-09-23 14:13 UTC. Then re-run all jobs of this run.
+
+**To run this pull request once without changing the policy:** push a commit to its branch. That run is yours and is not judged; Dependabot stops rebasing the pull request.
+```
+
+A Dependabot push to its branch, on a caller that triggers on every branch, runs nothing and is green; the pull request's own run judges the change. Grant the calling job the permissions the workflow's header lists and nothing more: `permissions: write-all` raises a Dependabot run's token to write.
+
+Dependabot updates a provider only where `required_providers` gives it the block form, `source` and `version` on lines of their own. Written on one line, `random = { source = "hashicorp/random", version = "3.5.1" }`, the update fails in Dependabot's job with "Content didn't change!" and no pull request is opened.
+
 #### Worked examples
 
 Each example is the part of the calling workflow's `with:` that matters, what runs on each event, and why. Find the one closest to your configuration. The tables and messages come from running the workflow's own code on the configuration shown: its decision engine, which is the `Create job matrix` job, and, where an example says what a later step decides (the auto-merge evaluator, the conclusion, the export of variables), that step. Every message is quoted as the workflow prints it.
@@ -863,7 +931,7 @@ Auto-merge merges a pull request past the required reviews, with a GitHub App's 
             plan-max-count-change: 0
 ```
 
-The App needs write access to the repository's contents and pull requests. It merges with `gh pr merge --admin`, so where a ruleset on the default branch requires an approval, put the App on that ruleset's bypass list; that is what lets it merge past the approval. A run that Dependabot triggered sees Dependabot secrets, not Actions secrets, so the key must be a Dependabot secret as well, and so must any repository secret the environments read. Each limit applies to an environment's plan and destroy plan counted together, from Terraform's JSON plan, and `-1` means no limit.
+The App needs write access to the repository's contents and pull requests. It merges with `gh pr merge --admin`, so where a ruleset on the default branch requires an approval, put the App on that ruleset's bypass list; that is what lets it merge past the approval. A run that Dependabot triggered sees Dependabot secrets, not Actions secrets, so the key must be a Dependabot secret as well; the environments' IDs are plain values ([Dependabot pull requests](#dependabot-pull-requests-the-admission)). A Dependabot pull request is planned, and so considered for auto-merge, only once the admission admits it: one that is not admitted fails `Terraform conclusion` and never merges. Each limit applies to an environment's plan and destroy plan counted together, from Terraform's JSON plan, and `-1` means no limit.
 
 A pull request that changes `modules/net/versions.tf` plans all three environments. What the evaluator decides:
 

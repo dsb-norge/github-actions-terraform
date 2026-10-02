@@ -42,6 +42,9 @@ Answer these from the repository before changing anything; each answer points at
 - [ ] Does `runs-on`, globally or per environment, name a self-hosted pool? (§2.11)
 - [ ] Does a calling workflow trigger on anything but `pull_request`, `push`, `workflow_dispatch`
   and `schedule`? (§2.12)
+- [ ] Does Dependabot open pull requests in the repository, and do the Azure IDs reach the calling
+  workflow as secrets? Which providers and modules come from outside `hashicorp`, `microsoft`, `Azure`
+  and `dsb-norge`? (§2.13)
 - [ ] Does a calling workflow set `concurrency` with `cancel-in-progress: true`? (§3.2)
 - [ ] Is the workflow called from more than one workflow file for the same pull requests? (§3.4)
 
@@ -67,6 +70,10 @@ The test job declares `id-token: write` whether or not the repository has test f
 with OIDC. GitHub does not let a called workflow's job hold a permission the calling job did not
 grant, so without it the run fails at startup, with no job and no check: the conclusion stays
 pending. Keep `secrets: inherit`.
+
+Grant these four and nothing more: `permissions: write-all` also raises the token of a run Dependabot
+starts from read-only to write, and every job of that run executes the pull request's dependencies
+([Dependabot-admission.md](Dependabot-admission.md) §1).
 
 ### 2.3 Path relevance: remove `on.paths`, review what each environment reads
 
@@ -162,7 +169,9 @@ the pull request's (`repo:<owner>/<repo>:pull_request`), or the branch's on a pu
 from a pull request can use any identity that trusts such a subject. Before the move:
 
 1. Plan and apply credentials are **environment secrets** of the Terraform environments, never
-   repository or organisation secrets.
+   repository or organisation secrets. The identifiers an OIDC login needs (tenant, subscription and
+   client IDs) are not credentials: they are plain values in each environment's `extra-envs-yml`,
+   which a Dependabot run can read and secrets of no kind can give it (§2.13).
 2. No plan or apply identity trusts a `pull_request` or branch subject; remove or narrow every
    federated credential that does. The environment job always runs in its GitHub Environment, so it
    needs only `repo:<owner>/<repo>:environment:<github-environment>`.
@@ -230,6 +239,32 @@ Only if `runs-on` or `terraform-test-runs-on` names a self-hosted pool:
 The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`. A calling workflow
 triggered by anything else (`merge_group`, `pull_request_target`, `release`, …) fails in
 `create-matrix`; remove that trigger or call the workflow from another file.
+
+### 2.13 Dependabot pull requests are admitted first
+
+A run Dependabot starts executes Terraform only when the admission admits its pull request: every
+provider and module it changes comes from an allowed namespace (built in: `dsb-norge`, `hashicorp`,
+`microsoft`, `Azure`), was published at least three days before, and a provider is signed as the
+version before it was. A pull request that is not admitted runs no Terraform job and fails
+`Terraform conclusion`, with a comment saying why and what to do. The whole design is
+[Dependabot-admission.md](Dependabot-admission.md).
+
+An admitted run plans as a person's run would, which needs the environment's IDs: a Dependabot run
+cannot read Actions or environment secrets. Move them to plain values, per environment:
+
+```yaml
+      environments-yml: |
+        - environment: prod
+          extra-envs-yml:
+            ARM_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+            ARM_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000000"
+            ARM_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
+```
+
+Do the same for every test lane that needs credentials: an admitted run runs those lanes too, and a
+lane whose IDs are still environment secrets fails there. A secret a test needs beyond the IDs becomes
+a Dependabot secret. Allow other publishers with `dependabot-admission-yml` (`allow: [elastic]`);
+`dependabot-admission-enabled: false` runs Dependabot's pull requests as before.
 
 ## 3. Should do / check
 
