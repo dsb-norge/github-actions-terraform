@@ -150,13 +150,28 @@ def _tests_head(document, tests_block, waiting):
              "marker": f"<!-- tf:head:tests:{caller} -->", "body": f"### {TESTS_TITLE}\n\n{waiting}"}]
 
 
-def manifest(document, block, entries, tests_block, admitted=admission_rule.NOT_APPLYING):
-    """The heads and tag purges for this run, empty where the seed job does not run."""
+def _seeded(document):
+    """Whether the seed job runs: a pull request from the repository, neither closed nor turned into a draft."""
     event = document["event"]
     pull_request = event.get("pull_request")
-    if (event["name"] != "pull_request" or pull_request is None or pull_request["is_fork"]
-            or event.get("action", "") in UNSEEDED_ACTIONS or "run" not in document):
+    return not (event["name"] != "pull_request" or pull_request is None or pull_request["is_fork"]
+                or event.get("action", "") in UNSEEDED_ACTIONS or "run" not in document)
+
+
+def module_manifest(document, admitted):
+    """A module run's heads: the admission head alone, posted by the module workflow as the seed job posts it
+    (docs/Dependabot-admission.md §7)."""
+    if not _seeded(document):
+        return {"heads": [], "gc": []}
+    heads, gc = _admission_head(document, admitted)
+    return {"heads": heads, "gc": gc}
+
+
+def manifest(document, block, entries, tests_block, admitted=admission_rule.NOT_APPLYING):
+    """The heads and tag purges for this run, empty where the seed job does not run."""
+    if not _seeded(document):
         return {"heads": [], "purge_tags_for": [], "gc": []}
+    pull_request = document["event"]["pull_request"]
     run = document["run"]
     waiting = f"⏳ Awaiting results (run #{run['id']} attempt #{run['attempt']})…"
 

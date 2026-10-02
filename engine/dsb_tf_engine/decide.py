@@ -114,6 +114,7 @@ def _module(document):
         "tests": tests_block,
         "admission": admitted,
         "trigger": {"event": document["event"]["name"], "lines": []},
+        "comments": comments.module_manifest(document, admitted),
         "record": tests.record(tests_block),
     }
 

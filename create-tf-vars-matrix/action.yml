@@ -69,6 +69,9 @@ outputs:
   admission-reason:
     description: "Why the admission refused the run, in one line; empty when it did not."
     value: ${{ steps.create-matrix.outputs.admission-reason }}
+  admission-admitted:
+    description: "'true' when the Dependabot admission judged the run and admitted it, else 'false' (docs/Dependabot-admission.md D22)."
+    value: ${{ steps.create-matrix.outputs.admission-admitted }}
   tests-required-missing:
     description: "Module mode: 'true' when a test file is required and there is none (docs/Module-ci.md D9)"
     value: ${{ steps.create-matrix.outputs.tests-required-missing }}
