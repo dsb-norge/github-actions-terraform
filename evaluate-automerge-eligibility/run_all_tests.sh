@@ -3248,18 +3248,20 @@ else
 fi
 
 # ============================================================================
-# F20 — the module workflow's test jobs are the project workflow's, step for step.
+# F20 — the module workflow's test jobs and seed job are the project workflow's, step for step.
 #
 # docs/Module-ci.md D2: one test stage for both kinds of repository, written out in each workflow
 # and held together here. Everything but `needs` and `if` must be equal: the name, the runner, the
 # timeout, the permissions, the environment, the strategy, the concurrency and every step. The
 # module test job waits for the docs job and skips when it pushed; the module summary job runs on
-# every event with test files, since a module tests on dispatches and schedules too.
+# every event with test files, since a module tests on dispatches and schedules too. The seed job
+# posts a refused Dependabot pull request's admission head in both (docs/Dependabot-admission.md
+# D21); the module's runs on Dependabot's pull requests alone.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}TEST ${TESTS_RUN}: F20 - the module workflow's test jobs are the project workflow's${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F20 - the module workflow's test and seed jobs are the project workflow's${NC}"
 echo -e "${BLUE}========================================${NC}"
 _f20_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
 import sys, yaml
@@ -3271,7 +3273,7 @@ def jobs(path):
 project = jobs('.github/workflows/terraform-ci-cd-default.yml')
 module = jobs('.github/workflows/terraform-module-ci.yaml')
 problems = []
-for name in ('terraform-test', 'terraform-test-summary'):
+for name in ('terraform-test', 'terraform-test-summary', 'seed-pr-comments'):
     if name not in module:
         problems.append(f"the module workflow has no job '{name}'")
         continue
@@ -3283,6 +3285,16 @@ for name in ('terraform-test', 'terraform-test-summary'):
     if len(module[name].get('steps', [])) != len(project[name].get('steps', [])):
         problems.append(f"job '{name}': {len(module[name].get('steps', []))} steps, the project workflow has "
                         f"{len(project[name].get('steps', []))}")
+
+# The module's seed posts the admission head alone, which only a pull request Dependabot opened can hold
+# (docs/Dependabot-admission.md D21): the project's condition and that one clause more.
+seed = module.get('seed-pr-comments', {})
+if seed.get('needs') != 'create-matrix':
+    problems.append(f"the module seed job must need create-matrix, not {seed.get('needs')}")
+seed_if = ' '.join(str(seed.get('if', '')).split())
+project_if = ' '.join(str(project['seed-pr-comments'].get('if', '')).split())
+if seed_if != f"{project_if} && github.event.pull_request.user.login == 'dependabot[bot]'":
+    problems.append(f"the module seed job's if is not the project's for Dependabot's pull requests: {seed_if!r}")
 
 test = module.get('terraform-test', {})
 if sorted(test.get('needs', [])) != ['create-matrix', 'generate-docs']:
