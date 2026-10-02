@@ -66,7 +66,8 @@ default branch from the same repository. It:
    (§6).
 
 On a Dependabot-triggered run only Dependabot's own secrets exist, so the App key must also be a
-Dependabot secret, as it is today.
+Dependabot secret, as it is today. A Dependabot pull request reaches the evaluator only once the admission has admitted it; a refused
+one fails the conclusion, which keeps auto-merge from running ([Dependabot-admission.md](Dependabot-admission.md) §5).
 
 ```mermaid
 flowchart TD

@@ -94,6 +94,8 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `terraform-test-timeout-minutes` | number | `30` | Timeout of each test job. A lane may set its own `timeout-minutes`. |
 | `terraform-test-lanes-yml` | string (YAML list) | `""` | Which test files run with which credentials, runner, Terraform version and GitHub Environment, see [credentials](#credentials-lanes). Empty: every file runs without credentials. |
 | `terraform-test-exclude-paths-yml` | string (YAML list) | `""` | Glob patterns of test files that do not run ([Terraform-tests.md §4.4](Terraform-tests.md)). |
+| `dependabot-admission-enabled` | boolean | `false` | Judge a Dependabot pull request before validation and the tests run it; an admitted one runs every lane, credentialed ones included. See [Dependabot pull requests](#dependabot-pull-requests). |
+| `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy, added to the built-in one ([Dependabot-admission.md §6](Dependabot-admission.md)). |
 
 A setting the workflow cannot use, such as an unknown lane key or a boolean that is not `true` or `false`, is refused by the `Create test matrix` job with an error annotation per problem, before any test runs.
 
@@ -142,6 +144,7 @@ The conclusion judges the jobs in this order and prints one line, `conclusion: <
 | Line | When |
 |---|---|
 | `conclusion: red — the test matrix could not be built (failure); tests: 0` | the `Create test matrix` job failed, usually on a refused configuration; its annotations say why |
+| `conclusion: red — Dependabot pull request not admitted: 1 of 1 dependencies failed; see the admission comment; tests: 0` | with the admission switched on, it refused a Dependabot pull request: nothing ran |
 | `conclusion: red — the documentation check's result is failure; tests: 1` | a README needs regenerating, terraform-docs failed, or the App token could not be created |
 | `conclusion: green — documentation regenerated and pushed; the run it started decides; tests: 1` | the docs job pushed a commit; validation and tests were skipped on purpose, and the run on the new commit decides |
 | `conclusion: red — validation's result is failure; tests: 1` | init, fmt, validate or lint failed |
@@ -160,7 +163,13 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`,
 | Pull request from a fork | checked; a stale README fails | yes | files in lanes without credentials; a credentialed lane's files are listed as "secrets unavailable" | no |
 | Push, dispatch, schedule | checked; a stale README fails | yes | every file | no |
 
-A fork's run has no secrets, so a credentialed lane cannot run there; a Dependabot pull request is treated the same way by the tests and by the docs job, which checks its README instead of committing. A file held back like this still counts as a test file for `terraform-test-required`.
+A fork's run has no secrets, so a credentialed lane cannot run there; a Dependabot pull request is treated the same way by the tests, unless the admission is on (below), and by the docs job, which checks its README instead of committing. A file held back like this still counts as a test file for `terraform-test-required`.
+
+### Dependabot pull requests
+
+Without the admission, a Dependabot pull request validates and runs the tests that need no credentials; its credentialed lanes are listed as "secrets unavailable". It reaches no cloud identity, which is why the admission is off by default here and on in the project workflow.
+
+With `dependabot-admission-enabled: true`, a run Dependabot starts first meets the admission ([Dependabot-admission.md](Dependabot-admission.md)): every provider and module the pull request changes must come from an allowed namespace (built in `dsb-norge`, `hashicorp`, `microsoft`, `Azure`), be old enough and, for a provider, be signed as the version before it. An admitted pull request validates and runs **every** lane, credentialed ones included, so all its tests run; a lane's IDs must then be plain values in its `extra-envs-yml`, since a Dependabot run reads no environment secret. A refused pull request runs neither validation nor tests, and the conclusion is red with the reason.
 
 There is one run per ref at a time: a newer push to the same pull request waits for the running one and replaces a waiting one. A test job also queues on its file, across the repository, so two pull requests never run the same integration test at the same time.
 
