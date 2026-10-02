@@ -21,7 +21,9 @@
 # Optional environment variables:
 #   input_relevance_file          - Path of the matrix builder's relevance.json;
 #                                   empty, or a path that does not exist, renders
-#                                   from metadata alone (docs/Path-relevance.md §6.4)
+#                                   from metadata alone (docs/Path-relevance.md §6.4);
+#                                   a member the Dependabot admission refused gets the
+#                                   not-admitted cell (docs/Dependabot-admission.md §7)
 #   input_stage_results_json      - {"1": <result>, "2": ..., "3": ...}, the stage
 #                                   jobs' results; a shell-local, never exported.
 #                                   With the relevance file it names the environments
@@ -83,11 +85,17 @@ declare -gA DECLARED_GROUPS=()
 # unaffected["<group>/<env>"]=1 for a member relevance left out of the run.
 # It is listed in DESIRED_GROUPS like any member but has no DESIRED_META.
 declare -gA UNAFFECTED=()
+# not_admitted["<group>/<env>"]=1 for a member the Dependabot admission
+# refused: a skip whose first reason is the admission's, kept apart from the
+# unaffected ones so its column and footer line do not say "not affected"
+# (docs/Dependabot-admission.md §7). Listed in DESIRED_GROUPS without
+# DESIRED_META, like an unaffected member.
+declare -gA NOT_ADMITTED=()
 # held_back["<group>/<env>"]=1 for a member in a stage that did not run
 # because an earlier stage failed (docs/Environment-ordering.md §7.4). Listed
 # in DESIRED_GROUPS without DESIRED_META, like an unaffected member.
 declare -gA HELD_BACK=()
-# A member without a job, unaffected or held back, renders every cell as
+# A member without a job, unaffected, not admitted or held back, renders every cell as
 # jobless_cell["<group>/<env>"] and is left out of every group-wide gate.
 declare -gA JOBLESS_CELL=()
 # jobless_goals["<group>/<env>"]="apply-on-pr destroy-on-pr" — such a member's
@@ -192,7 +200,9 @@ function build_desired_set {
 #   - the desired set gains every group the file names for an environment
 #     with add-pr-comment "true", affected or not;
 #   - each unaffected environment (verdict "skip") of a desired group becomes
-#     a member, rendered as a column of dashes (§6.2);
+#     a member, rendered as a column of dashes (§6.2), or of "🚫" when its
+#     first reason is the Dependabot admission's refusal, which says nothing
+#     about whether the change touches it (docs/Dependabot-admission.md §7);
 #   - columns follow environments-yml order, the file's order, for affected
 #     and unaffected members alike, so a column never moves when an
 #     environment flips between the two, and the footer's names read in the
@@ -226,6 +236,10 @@ function merge_relevance_file {
 
   # One line per environment, fields separated by the ASCII unit separator:
   # a tab is IFS whitespace to 'read', which would collapse an empty group.
+  # The last field is the first reason, the rule that decided the verdict: it
+  # tells a member the Dependabot admission refused from one the change does
+  # not touch (docs/Dependabot-admission.md §7). Every 'read' of a row names
+  # all six fields, or the last one named takes the rest of the line.
   local -a rel_rows=()
   local line
   while IFS= read -r line; do
@@ -236,30 +250,40 @@ function merge_relevance_file {
           (.["pr-comment-group"] // ""),
           (.verdict // ""),
           (.["add-pr-comment"] | tostring),
-          (if (.["mutates-on-pr"] | type) == "array" then .["mutates-on-pr"] | map(tostring) | join(" ") else "" end)
+          (if (.["mutates-on-pr"] | type) == "array" then .["mutates-on-pr"] | map(tostring) | join(" ") else "" end),
+          (if (.reasons | type) == "array" then .reasons[0] // "" else "" end)
         ]
       | map(tostring) | join("\u001f")
     ' "${RELEVANCE_FILE}")
 
-  local env group verdict comment mutates
+  local env group verdict comment mutates reason
   for line in "${rel_rows[@]}"; do
-    IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+    IFS=$'\x1f' read -r env group verdict comment mutates reason <<<"${line}"
     if [ -n "${group}" ] && [ "${comment}" = 'true' ]; then
       DECLARED_GROUPS[${group}]=1
     fi
   done
 
   for line in "${rel_rows[@]}"; do
-    IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+    IFS=$'\x1f' read -r env group verdict comment mutates reason <<<"${line}"
     [ -z "${env}" ] || [ -z "${group}" ] || [ "${verdict}" != 'skip' ] && continue
     # Only desired groups get columns: an unaffected member does not by
     # itself make a group appear when nothing declares it.
     [ -z "${DECLARED_GROUPS[${group}]:-}" ] && [ -z "${DESIRED_GROUPS[${group}]:-}" ] && continue
     [ -n "${DESIRED_META[${group}/${env}]:-}" ] && continue
     [ -n "${UNAFFECTED[${group}/${env}]:-}" ] && continue
-    log-info "Env '${env}' in group '${group}' is not affected by this pull request"
-    UNAFFECTED["${group}/${env}"]=1
-    JOBLESS_CELL["${group}/${env}"]="${NOT_AFFECTED_CELL}"
+    [ -n "${NOT_ADMITTED[${group}/${env}]:-}" ] && continue
+    # A Dependabot push run's reason never reaches this action, which runs on
+    # pull requests only; were it to, it is a skip like any other.
+    if [ "${reason}" = "${NOT_ADMITTED_REASON}" ]; then
+      log-info "Env '${env}' in group '${group}' was not admitted: the Dependabot admission refused this pull request"
+      NOT_ADMITTED["${group}/${env}"]=1
+      JOBLESS_CELL["${group}/${env}"]="${NOT_ADMITTED_CELL}"
+    else
+      log-info "Env '${env}' in group '${group}' is not affected by this pull request"
+      UNAFFECTED["${group}/${env}"]=1
+      JOBLESS_CELL["${group}/${env}"]="${NOT_AFFECTED_CELL}"
+    fi
     JOBLESS_GOALS["${group}/${env}"]="${mutates}"
     if [ -n "${DESIRED_GROUPS[${group}]:-}" ]; then
       DESIRED_GROUPS[${group}]+=$'\n'"${env}"
@@ -276,7 +300,7 @@ function merge_relevance_file {
     placed=()
     order=""
     for line in "${rel_rows[@]}"; do
-      IFS=$'\x1f' read -r env group verdict comment mutates <<<"${line}"
+      IFS=$'\x1f' read -r env group verdict comment mutates reason <<<"${line}"
       [ "${group}" = "${g}" ] || continue
       [ -n "${placed[${env}]:-}" ] && continue
       grep -qxF -- "${env}" <<<"${DESIRED_GROUPS[${g}]}" || continue
@@ -299,6 +323,7 @@ function merge_relevance_file {
   done
 
   log-info "Desired set with relevance: ${#DESIRED_GROUPS[@]} group(s) to render, ${#UNAFFECTED[@]} unaffected member(s)"
+  [ ${#NOT_ADMITTED[@]} -gt 0 ] && log-info "Not admitted: ${#NOT_ADMITTED[@]} group member(s)"
   [ ${#HELD_BACK[@]} -gt 0 ] && log-info "Held back: ${#HELD_BACK[@]} group member(s)"
   [ ${#HELD_BACK_HEADS[@]} -gt 0 ] && log-info "Held back: ${#HELD_BACK_HEADS[@]} environment head(s) to finalise"
   end-group
@@ -347,12 +372,17 @@ function _is_unaffected {
   [ -n "${UNAFFECTED[${1}/${2}]:-}" ]
 }
 
+# True when the member is a not-admitted environment of the group.
+function _is_not_admitted {
+  [ -n "${NOT_ADMITTED[${1}/${2}]:-}" ]
+}
+
 # True when the member is a held-back environment of the group.
 function _is_held_back {
   [ -n "${HELD_BACK[${1}/${2}]:-}" ]
 }
 
-# True when no job ran for the member: unaffected or held back.
+# True when no job ran for the member: unaffected, not admitted or held back.
 function _is_jobless {
   [ -n "${JOBLESS_CELL[${1}/${2}]:-}" ]
 }
@@ -794,6 +824,15 @@ function render_group_body {
   fi
   if [ ${#unaffected_envs[@]} -gt 0 ]; then
     footer="$(_render_not_affected_line "${unaffected_envs[@]}")"$'\n\n'"${footer}"
+  fi
+  # The not-admitted members' names first: on a refused run they are why the
+  # table is empty (docs/Dependabot-admission.md §7).
+  local -a not_admitted_envs=()
+  for env in "${envs[@]}"; do
+    _is_not_admitted "${group_name}" "${env}" && not_admitted_envs+=("${env}")
+  done
+  if [ ${#not_admitted_envs[@]} -gt 0 ]; then
+    footer="$(_render_not_admitted_line "${not_admitted_envs[@]}")"$'\n\n'"${footer}"
   fi
 
   # ---- Assembly ----

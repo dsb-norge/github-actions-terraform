@@ -981,6 +981,199 @@ teardown
 rm -rf "${O11_DIR}"
 
 # ----------------------------------------------------------------------
+# A — Dependabot admission (docs/Dependabot-admission.md §7): a refused pull request's admission
+# section and nothing-ran line; every other run as before
+# ----------------------------------------------------------------------
+# with_admission <block-json> [<reason>]: set relevance.json's admission block and, with a reason,
+# make it the only reason of every skipped environment, as rule 3a writes it.
+with_admission() {
+  jq --argjson a "${1}" --arg r "${2:-}" \
+    '.admission = $a | if $r == "" then . else .environments |= map(if .verdict == "skip" then .reasons = [$r] else . end) end' \
+    "${RUNNER_TEMP}/relevance.json" >"${RUNNER_TEMP}/x.json" && mv "${RUNNER_TEMP}/x.json" "${RUNNER_TEMP}/relevance.json"
+}
+# A refused grouped pull request: a provider that passes, one failing two checks, a module failing
+# one, and a change that is not a dependency version.
+A_REFUSED='{"applies": true, "admitted": false, "push_run": false, "refused_count": 2, "total": 3,
+  "dependencies": [
+    {"kind": "provider", "address": "registry.terraform.io/hashicorp/azurerm", "from": "4.41.0", "to": "4.42.0",
+     "files": ["envs/dev/.terraform.lock.hcl", "envs/prod/.terraform.lock.hcl"], "admitted": true,
+     "checks": [{"check": "host", "ok": true, "detail": "registry.terraform.io"},
+                {"check": "allow", "ok": true, "detail": "`hashicorp` is on the allow list"},
+                {"check": "age", "ok": true, "detail": "published 9 days ago"},
+                {"check": "key", "ok": true, "detail": "signed with `34365D9472D7468F`, as the base version"},
+                {"check": "hashes", "ok": true, "detail": "every `zh:` hash is in the publisher'"'"'s checksums"}]},
+    {"kind": "provider", "address": "registry.terraform.io/cyrilgdn/postgresql", "from": "1.25.0", "to": "1.26.0",
+     "files": ["envs/prod/.terraform.lock.hcl"], "admitted": false,
+     "checks": [{"check": "host", "ok": true, "detail": "registry.terraform.io"},
+                {"check": "allow", "ok": false, "detail": "`cyrilgdn` is not on the allow list"},
+                {"check": "age", "ok": false, "detail": "published 1 day ago; the minimum is 3 days, reached at 2026-10-04 12:00 UTC"},
+                {"check": "key", "ok": true, "detail": "signed with `5F4D2B9A1C3E7D60`, as the base version"},
+                {"check": "hashes", "ok": true, "detail": "every `zh:` hash is in the publisher'"'"'s checksums"}]},
+    {"kind": "module", "address": "Azure/naming/azurerm", "from": "0.4.3", "to": "0.4.4",
+     "files": ["main/naming.tf"], "admitted": false,
+     "checks": [{"check": "source", "ok": true, "detail": "registry module"},
+                {"check": "allow", "ok": true, "detail": "`Azure` is on the allow list"},
+                {"check": "age", "ok": false, "detail": "published 1 day ago; the minimum is 3 days, reached at 2026-10-04 12:00 UTC"}]}],
+  "problems": [{"check": "shape", "detail": "`main/versions.tf`: a change outside a version: `count = 1` → `count = 2`"}]}'
+A_ADMITTED='{"applies": true, "admitted": true, "push_run": false, "refused_count": 0, "total": 1, "problems": [],
+  "dependencies": [{"kind": "provider", "address": "registry.terraform.io/hashicorp/azurerm", "from": "4.41.0", "to": "4.42.0",
+    "files": ["envs/dev/.terraform.lock.hcl"], "admitted": true,
+    "checks": [{"check": "allow", "ok": true, "detail": "`hashicorp` is on the allow list"}]}]}'
+A_PUSH_RUN='{"applies": true, "admitted": true, "push_run": true, "dependencies": [], "problems": [], "refused_count": 0, "total": 0}'
+A_NOT_APPLYING='{"applies": false}'
+# The row of an environment the admission refused: every cell the aggregator's not-admitted cell.
+NADM='<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>'
+NADM_ROW_TAIL="| ${NADM} | ${NADM} | ${NADM} | ${NADM} | ${NADM} | ${NADM} |"
+
+# A1 — refused: the nothing-ran line in place of nothing-needed-verifying, then the admission
+# section, then the environments, each refused one a row of 🚫 counted as not admitted, never as
+# not affected, and explained by its own footer line. The whole summary, byte for byte.
+setup
+write_relevance diff diff 2 prod:prod:skip staging:staging:skip sandbox:sandbox:skip
+with_admission "${A_REFUSED}" "admission: not admitted"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+cat >"${RUNNER_TEMP}/expected.md" <<EXPECTED
+## Terraform run summary
+
+**3 environments · 0 affected · 0 not affected · 3 not admitted · 0 applied · 0 failed**
+
+_Nothing ran: the Dependabot admission refused this pull request._
+
+### 🚫 Dependabot pull request not admitted
+
+No Terraform ran: the Dependabot admission refused this pull request. The pull request's admission comment says what to do.
+
+| Dependency | Change | Result |
+|---|---|---|
+| provider \`hashicorp/azurerm\` | 4.41.0 → 4.42.0 | ✅ admitted |
+| provider \`cyrilgdn/postgresql\` | 1.25.0 → 1.26.0 | ❌ \`cyrilgdn\` is not on the allow list; published 1 day ago; the minimum is 3 days, reached at 2026-10-04 12:00 UTC |
+| module \`Azure/naming/azurerm\` | 0.4.3 → 0.4.4 | ❌ published 1 day ago; the minimum is 3 days, reached at 2026-10-04 12:00 UTC |
+| the change | — | ❌ \`main/versions.tf\`: a change outside a version: \`count = 1\` → \`count = 2\` |
+
+Relevance: \`diff\`, 2 changed files
+
+| Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |
+|---|:---:|---|---|---|---|---|
+| \`prod\` ${NADM_ROW_TAIL}
+| \`staging\` ${NADM_ROW_TAIL}
+| \`sandbox\` ${NADM_ROW_TAIL}
+
+_Plan / Apply / Destroy: \`💫\` added \`🛠️\` changed \`💥\` destroyed; apply and destroy cells are applied/planned, \`?\` when the operation did not complete. Time is the sum of the env's terraform invocations._
+
+_Rows of 🚫: the Dependabot admission refused this pull request, so nothing ran._
+
+EXPECTED
+assert "A1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "A1: the refused run's summary, byte for byte" diff "${RUNNER_TEMP}/expected.md" "${GITHUB_STEP_SUMMARY}"
+assert "A1: environment-count / failed-count as for any run" \
+  bash -c "[ \"\$(grep '^environment-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 3 ] && [ \"\$(grep '^failed-count=' '${GITHUB_OUTPUT}' | cut -d= -f2)\" = 0 ]"
+unset input_relevance_file
+teardown
+
+# A2 — a relevance file without the block (one from before the admission), and with it not
+# applying, admitted, or a Dependabot push run: no section, byte-identical to the file without it.
+# The push run keeps "nothing needed verifying", as for any run with no affected environment.
+A2_DIR=$(mktemp -d)
+for a2_case in nothing-affected one-affected; do
+  setup
+  if [ "${a2_case}" = 'nothing-affected' ]; then
+    write_relevance diff diff 2 prod:prod:skip staging:staging:skip sandbox:sandbox:skip
+  else
+    write_relevance diff diff 1 prod:prod:skip staging:staging:run sandbox:sandbox:skip
+    write_meta "staging" success "1:0:0" "0:04" "$(ops_apply success true 1 0 0 1:07)"
+  fi
+  export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+  run_step
+  cp "${GITHUB_STEP_SUMMARY}" "${A2_DIR}/without.md"; cp "${GITHUB_OUTPUT}" "${A2_DIR}/without.out"
+  for a2_block in A_NOT_APPLYING A_ADMITTED A_PUSH_RUN; do
+    : >"${GITHUB_STEP_SUMMARY}"; : >"${GITHUB_OUTPUT}"
+    if [ "${a2_block}" = 'A_PUSH_RUN' ]; then
+      with_admission "${!a2_block}" "admission: Dependabot push run"
+    else
+      with_admission "${!a2_block}"
+    fi
+    run_step
+    assert "A2: ${a2_case}, ${a2_block} → summary byte-identical to no admission block" \
+      cmp -s "${A2_DIR}/without.md" "${GITHUB_STEP_SUMMARY}"
+    assert "A2: ${a2_case}, ${a2_block} → outputs identical" cmp -s "${A2_DIR}/without.out" "${GITHUB_OUTPUT}"
+  done
+  # The last block rendered is the push run's.
+  assert "A2: ${a2_case}, no admission section" bash -c "! grep -q 'not admitted' '${GITHUB_STEP_SUMMARY}'"
+  if [ "${a2_case}" = 'nothing-affected' ]; then
+    assert "A2: the push run still says nothing needed verifying" \
+      grep -qxF '_Nothing needed verifying: no environment is affected by this change._' "${GITHUB_STEP_SUMMARY}"
+  fi
+  unset input_relevance_file
+  teardown
+done
+rm -rf "${A2_DIR}"
+
+# A3 — a refused block jq cannot read leaves the section out with a warning, never half a table
+# and never the step failed; the nothing-ran line stays, since the engine did refuse.
+setup
+write_relevance diff diff 2 prod:prod:skip staging:staging:skip
+with_admission '{"applies": true, "admitted": false, "push_run": false, "dependencies": "not a list", "problems": []}' "admission: not admitted"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "A3: exits 0" test "${LAST_EXIT}" -eq 0
+assert "A3: warned about" grep -q 'admission block .* could not be read' "${OUT_FILE}"
+assert "A3: no section, no table" bash -c "! grep -qE 'Dependabot pull request not admitted|\\| Dependency \\|' '${GITHUB_STEP_SUMMARY}'"
+assert "A3: the nothing-ran line" \
+  grep -qxF '_Nothing ran: the Dependabot admission refused this pull request._' "${GITHUB_STEP_SUMMARY}"
+assert "A3: the environments still render" test "$(row staging)" = "| \`staging\` ${NADM_ROW_TAIL}"
+unset input_relevance_file
+teardown
+
+# A4 — a refused run whose environments are not all refused: one trigger-events dropped before the
+# admission ruled keeps today's not-affected row and footer line; each kind is counted and explained
+# on its own. The whole summary, byte for byte.
+setup
+write_relevance diff diff 1 prod:prod:skip staging:staging:skip
+with_admission '{"applies": true, "admitted": false, "push_run": false, "refused_count": 1, "total": 1, "problems": [],
+  "dependencies": [{"kind": "provider", "address": "registry.terraform.io/cyrilgdn/postgresql", "from": "1.25.0", "to": "1.26.0",
+    "files": ["envs/prod/.terraform.lock.hcl"], "admitted": false,
+    "checks": [{"check": "allow", "ok": false, "detail": "`cyrilgdn` is not on the allow list"}]}]}' "admission: not admitted"
+jq '.environments |= map(if .environment == "staging" then .reasons = ["trigger-events: pull_request not enabled"] else . end)' \
+  "${RUNNER_TEMP}/relevance.json" >"${RUNNER_TEMP}/x.json" && mv "${RUNNER_TEMP}/x.json" "${RUNNER_TEMP}/relevance.json"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+cat >"${RUNNER_TEMP}/expected.md" <<EXPECTED
+## Terraform run summary
+
+**2 environments · 0 affected · 1 not affected · 1 not admitted · 0 applied · 0 failed**
+
+_Nothing ran: the Dependabot admission refused this pull request._
+
+### 🚫 Dependabot pull request not admitted
+
+No Terraform ran: the Dependabot admission refused this pull request. The pull request's admission comment says what to do.
+
+| Dependency | Change | Result |
+|---|---|---|
+| provider \`cyrilgdn/postgresql\` | 1.25.0 → 1.26.0 | ❌ \`cyrilgdn\` is not on the allow list |
+
+Relevance: \`diff\`, 1 changed file
+
+| Environment | Worst outcome | Plan | Apply | Destroy | Time | Job |
+|---|:---:|---|---|---|---|---|
+| \`prod\` ${NADM_ROW_TAIL}
+| \`staging\` ${DASH_ROW_TAIL}
+
+_Plan / Apply / Destroy: \`💫\` added \`🛠️\` changed \`💥\` destroyed; apply and destroy cells are applied/planned, \`?\` when the operation did not complete. Time is the sum of the env's terraform invocations._
+
+_Rows of 🚫: the Dependabot admission refused this pull request, so nothing ran._
+
+_Rows of \`—\`: not affected by this change, so not planned._
+
+EXPECTED
+assert "A4: exits 0" test "${LAST_EXIT}" -eq 0
+assert "A4: not admitted beside trigger-events dropped, byte for byte" diff "${RUNNER_TEMP}/expected.md" "${GITHUB_STEP_SUMMARY}"
+assert "A4: environment-count counts both" test "$(get_output environment-count)" = "2"
+unset input_relevance_file
+teardown
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

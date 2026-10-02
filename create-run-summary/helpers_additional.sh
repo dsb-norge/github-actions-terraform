@@ -8,6 +8,64 @@
 # not just the first: a reader hovers the cell they are looking at.
 NOT_AFFECTED_CELL='<span title="not affected">—</span>'
 
+# ----------------------------------------------------------------------------
+# Dependabot admission (docs/Dependabot-admission.md §7)
+# ----------------------------------------------------------------------------
+
+# The reason the engine gives every environment of a refused Dependabot pull
+# request (docs/Dependabot-admission.md §5.2, §9), read from reasons[0].
+NOT_ADMITTED_REASON='admission: not admitted'
+
+# One cell of a not-admitted environment's row, the aggregator's cell: a dash
+# would say the change does not touch it, which nobody judged.
+NOT_ADMITTED_CELL='<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>'
+
+# True when the relevance file says the Dependabot admission refused this run:
+# it applies, is not Dependabot's push run, and did not admit. A file without
+# the block (written before the admission existed) or with any other shape is
+# not refused, so it renders exactly as before; a run is only called refused
+# when the engine says so in as many words.
+#   $1 the relevance file
+function admission_refused {
+  jq -e '(.admission | type) == "object"
+         and .admission.applies == true and .admission.push_run == false and .admission.admitted == false' \
+    "${1}" >/dev/null 2>&1
+}
+
+# The admission section of a refused run: the heading, what happened, and the
+# table of every changed dependency and problem with its result, as the
+# engine's admission head renders it (comments.admission_report) but without
+# the help, which the admission comment carries (D15). Rendered by jq straight
+# from the file, so the inventory never sits in a shell variable under
+# allexport. Into a temp file first, so a block jq cannot read leaves no half
+# a table: the section is then left out with a warning, never the step failed.
+#   $1 the relevance file
+function render_admission_section {
+  local table
+  table=$(mktemp)
+  if ! jq -r '
+      .admission
+      | "| Dependency | Change | Result |", "|---|---|---|",
+        ((.dependencies // [])[]
+         | [(.checks // [])[] | select(.ok | not)] as $failed
+         | (if .kind == "provider"
+            then "provider `\(.address | tostring | ltrimstr("registry.terraform.io/"))`"
+            else "module `\(.address)`" end) as $label
+         | (if ($failed | length) == 0 then "✅ admitted"
+            else "❌ " + ($failed | map(.detail | tostring) | join("; ")) end) as $result
+         | "| \($label) | \(.from) → \(.to) | \($result) |"),
+        ((.problems // [])[] | "| the change | — | ❌ \(.detail) |")' "${1}" >"${table}" 2>/dev/null; then
+    log-warn "the admission block of ${1} could not be read; its section is left out" 1>&2
+    rm -f "${table}"
+    return 0
+  fi
+  printf '### 🚫 Dependabot pull request not admitted\n\n'
+  printf 'No Terraform ran: the Dependabot admission refused this pull request. The pull request'"'"'s admission comment says what to do.\n\n'
+  cat "${table}"
+  printf '\n'
+  rm -f "${table}"
+}
+
 # One step output from a metadata file; empty when absent or JSON null.
 function meta_step_output {
   local file="${1}" step="${2}" key="${3}"

@@ -30,7 +30,13 @@ inputs:
       `N environments · A affected · U not affected · X applied · Y failed`
       (plus `· D destroyed` before `failed` and `· M not reported` after it
       when non-zero), a line states the relevance mode and reason, and a
-      run with nothing affected says nothing needed verifying.
+      run with nothing affected says nothing needed verifying. A Dependabot
+      pull request the admission refused says nothing ran instead, followed
+      by an admission section: every changed dependency and problem with
+      its result, as the admission comment's table. Each environment it
+      refused gets a row of "🚫", is counted as `· N not admitted` after
+      `not affected` rather than under it, and a footer line explains the
+      rows (docs/Dependabot-admission.md §7).
       Empty, missing on disk (a failed download) or not a relevance
       document: rendered exactly as without it.
       See docs/Path-relevance.md §6.5.

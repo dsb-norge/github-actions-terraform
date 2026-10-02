@@ -2405,6 +2405,146 @@ test_ord_empty_stage_holds_nothing_back() {
 }
 
 # ============================================================================
+# Dependabot admission: not-admitted members (docs/Dependabot-admission.md §7)
+# ============================================================================
+
+# Every cell of a member the admission refused, and the reason that marks one.
+NADM='<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>'
+# The admission blocks the engine writes: refused, admitted, and not applying.
+ADMISSION_REFUSED='{"applies": true, "admitted": false, "push_run": false, "dependencies": [{"kind": "provider", "address": "registry.terraform.io/cyrilgdn/postgresql", "from": "1.25.0", "to": "1.26.0", "files": ["envs/prod/.terraform.lock.hcl"], "admitted": false, "checks": [{"check": "allow", "ok": false, "detail": "`cyrilgdn` is not on the allow list"}]}], "problems": [], "refused_count": 1, "total": 1}'
+ADMISSION_ADMITTED='{"applies": true, "admitted": true, "push_run": false, "dependencies": [{"kind": "provider", "address": "registry.terraform.io/hashicorp/azurerm", "from": "4.41.0", "to": "4.42.0", "files": ["envs/dev/.terraform.lock.hcl"], "admitted": true, "checks": [{"check": "allow", "ok": true, "detail": "hashicorp is on the allow list"}]}], "problems": [], "refused_count": 0, "total": 1}'
+ADMISSION_NOT_APPLYING='{"applies": false}'
+
+# Set the admission block of relevance.json.
+#   $1 the block as JSON
+with_admission() {
+  jq --argjson a "${1}" '.admission = $a' "${TEST_DIR}/relevance.json" >"${TEST_DIR}/x.json" && mv "${TEST_DIR}/x.json" "${TEST_DIR}/relevance.json"
+}
+# Replace the reasons of the named environments with one reason, as a rule that drops them writes it.
+#   $1 the reason, $2... github-environments
+with_reason() {
+  local reason="${1}"; shift
+  local names; names=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+  jq --arg r "${reason}" --argjson n "${names}" \
+    '.environments |= map(if ((.["github-environment"] // .environment) as $g | $n | index($g)) then .reasons = [$r] else . end)' \
+    "${TEST_DIR}/relevance.json" >"${TEST_DIR}/x.json" && mv "${TEST_DIR}/x.json" "${TEST_DIR}/relevance.json"
+}
+# The six always-present step rows, one cell per argument, for byte-exact bodies of any width.
+step_rows_n() {
+  local def row cell
+  for def in "Initialization|⚙️" "Lock file|🔒" "Format and Style|🖌" "Validate|✔" "TFLint|🧹" "Plan|📖"; do
+    row="| <span title=\"${def%%|*}\">${def##*|}</span> | ${def%%|*} |"
+    for cell in "$@"; do row+=" ${cell} |"; done
+    printf '%s\n' "${row}"
+  done
+}
+
+# Each kind of jobless member keeps its own cell and its own footer line, not admitted first, then
+# not affected, then held back. Not a combination a real run produces: a refused run runs nothing,
+# so nothing is held back. It pins that the three never mix.
+test_adm_not_admitted_beside_unaffected_and_held_back() {
+  write_meta "alpha" "g"
+  write_meta "shared" ""
+  write_staged_relevance 2 "shared||run|1" "alpha|g|run|1" "bravo|g|run|2|shared" "charlie|g|skip" "delta|g|skip"
+  with_reason "admission: not admitted" delta
+  with_admission "${ADMISSION_REFUSED}"
+  with_jobs_for alpha
+  STAGE_RESULTS='{"1": "failure", "2": "skipped", "3": "skipped"}'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local ok='<span title="success">✅</span>'
+  local pd='<div align="left"><span title="Resources to be added">`💫 0` add</span><br><span title="Resources to be changed">`🛠️ 0` change</span><br><span title="Resources to be destroyed">`💥 0` destroy</span></div>'
+  local expected
+  expected="### Terraform validation summary for group: \`g\`
+|  | Step | alpha | bravo | charlie | delta |
+|:---:|---|:---:|:---:|:---:|:---:|
+$(step_rows_n "${ok}" "${HB}" "${NA}" "${NADM}")
+| <span title=\"Plan details\">📊</span> | Plan details | ${pd} | ${HB} | ${NA} | ${NADM} |
+| <span title=\"Plan time\">⏱</span> | Plan time | <span title=\"mm:ss (minutes:seconds)\">—</span> | ${HB} | ${NA} | ${NADM} |
+| <span title=\"Links\">🔗</span> | Links | [job log](https://github.com/dsb-norge/test-repo/actions/runs/999/job/alpha#logs) |  |  |  |
+
+🚫 Not admitted: \`delta\`
+
+➖ Not affected by this pull request: \`charlie\`
+
+⏭️ Held back: \`bravo\`
+
+[Workflow log](https://github.com/dsb-norge/test-repo/actions/runs/999)"
+  local got; got="$(group_body g)"
+  [[ "${got}" == "${expected}" ]] || { echo "not-admitted group body mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# A refused run as the engine writes it: no job ran, so no metadata. The group's head is PATCHed
+# with its not-admitted members' columns; a member trigger-events dropped is a skip like any other
+# and keeps its dash. The ungrouped environment's head is the seed's to finalise, never this action's.
+test_adm_refused_run_without_metadata() {
+  write_relevance "prod||skip" "alpha|g|skip|true|apply-on-pr" "bravo|g|skip" "charlie|g|skip"
+  with_reason "admission: not admitted" prod alpha bravo
+  with_reason "trigger-events: pull_request not enabled" charlie
+  with_admission "${ADMISSION_REFUSED}"
+  with_comments '8801|<!-- tf:head:group:g -->' '8802|<!-- tf:head:env:prod -->'
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(write_calls)" == "gh api -X PATCH repos/dsb-norge/test-repo/issues/comments/8801 -F body=@FILE --jq .id" ]] ||
+    { echo "only the group head (8801) may be written"; write_calls; return 1; }
+  local expected
+  expected="### Terraform summary for group: \`g\`
+|  | Step | alpha | bravo | charlie |
+|:---:|---|:---:|:---:|:---:|
+| <span title=\"Mode\">🐙</span> | Mode | ${NADM} | ${NADM} | ${NA} |
+$(step_rows_n "${NADM}" "${NADM}" "${NA}")
+| <span title=\"Plan time\">⏱</span> | Plan time | ${NADM} | ${NADM} | ${NA} |
+| <span title=\"Links\">🔗</span> | Links |  |  |  |
+
+🚫 Not admitted: \`alpha\`, \`bravo\`
+
+➖ Not affected by this pull request: \`charlie\`
+
+[Workflow log](https://github.com/dsb-norge/test-repo/actions/runs/999)"
+  local got; got="$(group_body g)"
+  [[ "${got}" == "${expected}" ]] || { echo "refused group body mismatch"; diff <(echo "${expected}") <(echo "${got}") | sed 's/^/  /'; return 1; }
+  return 0
+}
+
+# Only the first reason, exactly, marks a member not admitted: a Dependabot push run's reason (which
+# never reaches this action, run on pull requests only) and the reason in a later position are skips
+# like any other.
+test_adm_only_the_first_reason_exactly() {
+  write_meta "alpha" "g"
+  write_relevance "alpha|g|run" "bravo|g|skip" "charlie|g|skip"
+  with_reason "admission: Dependabot push run" bravo
+  jq '.environments |= map(if .environment == "charlie" then .reasons = ["relevance: no changed file matches", "admission: not admitted"] else . end)' \
+    "${TEST_DIR}/relevance.json" >"${TEST_DIR}/x.json" && mv "${TEST_DIR}/x.json" "${TEST_DIR}/relevance.json"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  local got; got="$(group_body g)"
+  [[ "$(row Plan)" == *" | ${NA} | ${NA} |" ]] || { echo "both are not-affected columns: $(row Plan)"; return 1; }
+  [[ "${got}" == *'➖ Not affected by this pull request: `bravo`, `charlie`'* ]] || { echo "footer must name both as not affected"; echo "${got}"; return 1; }
+  [[ "${got}" != *'Not admitted'* && "${got}" != *'🚫'* ]] || { echo "no not-admitted cell or line"; echo "${got}"; return 1; }
+  return 0
+}
+
+# A relevance file without the admission block (one from before the admission), one where it does
+# not apply and an admitted Dependabot run's all render byte for byte alike: the not-admitted
+# rendering keys on a refused environment's reason, which none of them carries.
+test_adm_without_or_admitted_is_unchanged() {
+  _rel_baseline_fixture
+  write_relevance "alpha|g|run|true|apply-on-pr" "bravo|g|run" "charlie|h|run" "delta||run" "echo|h|skip"
+  _capture_run "${TEST_DIR}/without.out" || return 1
+  grep -qF '➖ Not affected by this pull request: `echo`' "${TEST_DIR}/without.out" || { echo "baseline must name echo as not affected"; cat "${TEST_DIR}/without.out"; return 1; }
+  local block name
+  for name in NOT_APPLYING ADMITTED; do
+    block="ADMISSION_${name}"
+    with_admission "${!block}"
+    _capture_run "${TEST_DIR}/${name}.out" || return 1
+    diff "${TEST_DIR}/without.out" "${TEST_DIR}/${name}.out" >/dev/null ||
+      { echo "admission ${name} must render as a file without the block:"; diff "${TEST_DIR}/without.out" "${TEST_DIR}/${name}.out" | sed 's/^/  /'; return 1; }
+  done
+  return 0
+}
+
+# ============================================================================
 # Run tests
 # ============================================================================
 
@@ -2500,6 +2640,10 @@ run_test "ordering: labels are github-environments, dependencies too"       test
 run_test "ordering: without stage results or stages, the run is unchanged"  test_ord_without_results_is_unchanged
 run_test "ordering: a stage with no environments holds nothing back"        test_ord_empty_stage_holds_nothing_back
 run_test "ordering: undeclared groups, the cell without a cause, lowest cause" test_ord_group_rules
+run_test "admission: not admitted beside not affected and held back"     test_adm_not_admitted_beside_unaffected_and_held_back
+run_test "admission: a refused run without metadata renders its group"    test_adm_refused_run_without_metadata
+run_test "admission: only an exact first reason marks a member"           test_adm_only_the_first_reason_exactly
+run_test "admission: no block, not applying or admitted render alike"     test_adm_without_or_admitted_is_unchanged
 
 # ============================================================================
 echo ""
