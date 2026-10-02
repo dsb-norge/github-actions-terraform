@@ -616,7 +616,7 @@ jobs:
           fetch-depth: 2
       - name: "🎰 Create env matrix"
         id: create-matrix
-        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
+        uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@preview/pr-82-bce951d
         with:
           inputs-json: ${{ toJSON(inputs) }}
       - name: "📦 Upload the relevance decision"
@@ -687,7 +687,7 @@ jobs:
           write_output gc-yml "${gc_yml}"
 
       - name: "🌱 Seed heads"
-        uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@v1
+        uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -779,7 +779,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -799,7 +799,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -814,7 +814,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -829,7 +829,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -839,7 +839,7 @@ jobs:
         continue-on-error: true
 
       - name: "🎰 Export environment variables and secrets"
-        uses: dsb-norge/github-actions-terraform/export-env-vars@v1
+        uses: dsb-norge/github-actions-terraform/export-env-vars@preview/pr-82-bce951d
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
@@ -852,7 +852,7 @@ jobs:
       # besides export-env-vars that is handed the secrets bag.
       - name: "🎰 Resolve per-goal environment variables"
         id: goal-envs
-        uses: dsb-norge/github-actions-terraform/resolve-goal-envs@v1
+        uses: dsb-norge/github-actions-terraform/resolve-goal-envs@preview/pr-82-bce951d
         with:
           extra-envs: ${{ toJSON(matrix.vars.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.vars.extra-envs-from-secrets) }}
@@ -877,12 +877,12 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v1
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@preview/pr-82-bce951d
 
       - name: "📥 Setup TFLint"
         id: setup-tflint
         if: contains(matrix.vars.goals-granted, 'lint')
-        uses: dsb-norge/github-actions-terraform/setup-tflint@v1
+        uses: dsb-norge/github-actions-terraform/setup-tflint@preview/pr-82-bce951d
         with:
           tflint-version: ${{ matrix.vars.tflint-version }}
           working-directory: ${{ matrix.vars.project-dir }}
@@ -916,7 +916,7 @@ jobs:
         if: |
           matrix.vars.cache-terraform-modules == 'true'
           && contains(matrix.vars.goals-granted, 'init')
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: resolve
           project-dir: ${{ matrix.vars.project-dir }}
@@ -949,7 +949,7 @@ jobs:
       - name: "📸 Snapshot restored module manifests"
         id: snapshot-module-cache
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: snapshot
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -959,7 +959,7 @@ jobs:
       - name: ⚙️ Terraform Init
         id: init
         if: contains(matrix.vars.goals-granted, 'init')
-        uses: dsb-norge/github-actions-terraform/terraform-init@v1
+        uses: dsb-norge/github-actions-terraform/terraform-init@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
@@ -990,7 +990,7 @@ jobs:
       - name: "🔍 Check terraform module cache"
         id: post-init-check
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: verify
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -1013,7 +1013,7 @@ jobs:
           && steps.init.outcome == 'success'
           && steps.restore-module-cache.outputs.cache-hit != 'true'
           && steps.post-init-check.outputs.safe-to-save == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: prune
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -1052,7 +1052,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v1
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
         continue-on-error: true # allow job to continue, step outcome is evaluated later
@@ -1060,7 +1060,7 @@ jobs:
       - name: 🖌 Terraform Format
         id: fmt
         if: contains(matrix.vars.goals-granted, 'format')
-        uses: dsb-norge/github-actions-terraform/terraform-fmt@v1
+        uses: dsb-norge/github-actions-terraform/terraform-fmt@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           format-check-in-root-dir: ${{ matrix.vars.format-check-in-root-dir }}
@@ -1070,7 +1070,7 @@ jobs:
       - name: ✔ Terraform Validate
         id: validate
         if: contains(matrix.vars.goals-granted, 'validate')
-        uses: dsb-norge/github-actions-terraform/terraform-validate@v1
+        uses: dsb-norge/github-actions-terraform/terraform-validate@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
@@ -1080,7 +1080,7 @@ jobs:
       - name: 🧹 Lint with TFLint
         id: lint
         if: contains(matrix.vars.goals-granted, 'lint')
-        uses: dsb-norge/github-actions-terraform/lint-with-tflint@v1
+        uses: dsb-norge/github-actions-terraform/lint-with-tflint@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/lint.json
@@ -1089,7 +1089,7 @@ jobs:
       - name: 📖 Terraform Plan
         id: plan
         if: steps.init.outcome == 'success' && contains(matrix.vars.goals-granted, 'plan')
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v1
+        uses: dsb-norge/github-actions-terraform/terraform-plan@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
@@ -1099,7 +1099,7 @@ jobs:
       - name: "🔍 Parse terraform plan"
         id: parse-plan
         if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@preview/pr-82-bce951d
         with:
           plan-console-file: ${{ steps.plan.outputs.console-output-file }}
           # The counts come from the JSON plan, which nothing in a resource's values can forge
@@ -1118,7 +1118,7 @@ jobs:
       - name: "⚠️ Parse init warnings"
         id: parse-init-warnings
         if: always() && steps.init.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.init.outputs.console-output-file }}
           step-label: init
@@ -1128,7 +1128,7 @@ jobs:
       - name: "⚠️ Parse validate warnings"
         id: parse-validate-warnings
         if: always() && steps.validate.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.validate.outputs.console-output-file }}
           step-label: validate
@@ -1138,7 +1138,7 @@ jobs:
       - name: "⚠️ Parse plan warnings"
         id: parse-plan-warnings
         if: always() && steps.plan.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.plan.outputs.console-output-file }}
           step-label: plan
@@ -1197,7 +1197,7 @@ jobs:
           && github.event_name == 'pull_request'
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }} # created by terraform by parsing the plan file, not available when plan fails
@@ -1262,7 +1262,7 @@ jobs:
         # the per-env head so the head's Links row can anchor at this
         # comment's id.
         if: always() && steps.create-validation-summary.outcome == 'success'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1291,7 +1291,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && matrix.vars.pr-comment-group == ''
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
@@ -1353,7 +1353,7 @@ jobs:
           always()
           && steps.create-validation-summary.outcome == 'success'
           && matrix.vars.pr-comment-group == ''
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1459,7 +1459,7 @@ jobs:
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v1
+        uses: dsb-norge/github-actions-terraform/terraform-apply@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.plan.outputs.terraform-plan-file }}
@@ -1487,7 +1487,7 @@ jobs:
       - name: "🔍 Parse terraform apply"
         id: parse-apply
         if: always() && steps.apply.outcome != 'cancelled' && steps.apply.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@preview/pr-82-bce951d
         with:
           apply-console-file: ${{ steps.apply.outputs.console-output-file }}
           # The exit code is the outcome; the parser only reads it to warn
@@ -1503,7 +1503,7 @@ jobs:
       - name: "⚠️ Parse apply warnings"
         id: parse-apply-warnings
         if: always() && steps.apply.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.apply.outputs.console-output-file }}
           step-label: apply
@@ -1515,7 +1515,7 @@ jobs:
         if: |
           steps.init.outcome == 'success'
           && contains(matrix.vars.goals-granted, 'destroy-plan')
-        uses: dsb-norge/github-actions-terraform/terraform-plan@v1
+        uses: dsb-norge/github-actions-terraform/terraform-plan@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: "${{ matrix.vars.github-environment }}-destroy"
@@ -1533,7 +1533,7 @@ jobs:
       - name: "🔍 Parse terraform destroy plan"
         id: parse-destroy-plan
         if: always() && steps.destroy-plan.outcome != 'cancelled' && steps.destroy-plan.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-plan@preview/pr-82-bce951d
         with:
           plan-console-file: ${{ steps.destroy-plan.outputs.console-output-file }}
           plan-json-file: ${{ steps.destroy-plan.outputs.json-output-file }}
@@ -1542,7 +1542,7 @@ jobs:
       - name: "⚠️ Parse destroy-plan warnings"
         id: parse-destroy-plan-warnings
         if: always() && steps.destroy-plan.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.destroy-plan.outputs.console-output-file }}
           step-label: destroy-plan
@@ -1569,7 +1569,7 @@ jobs:
               && github.event.action != 'converted_to_draft'
               && github.base_ref == matrix.vars.caller-repo-default-branch
           ) )
-        uses: dsb-norge/github-actions-terraform/terraform-apply@v1
+        uses: dsb-norge/github-actions-terraform/terraform-apply@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           terraform-plan-file: ${{ steps.destroy-plan.outputs.terraform-plan-file }}
@@ -1583,7 +1583,7 @@ jobs:
       - name: "🔍 Parse terraform destroy"
         id: parse-destroy-apply
         if: always() && steps.destroy.outcome != 'cancelled' && steps.destroy.outcome != 'skipped'
-        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-apply@preview/pr-82-bce951d
         with:
           apply-console-file: ${{ steps.destroy.outputs.console-output-file }}
           apply-exitcode: ${{ steps.destroy.outputs.exitcode }}
@@ -1592,7 +1592,7 @@ jobs:
       - name: "⚠️ Parse destroy warnings"
         id: parse-destroy-warnings
         if: always() && steps.destroy.outputs.console-output-file != ''
-        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@v1
+        uses: dsb-norge/github-actions-terraform/parse-terraform-warnings@preview/pr-82-bce951d
         with:
           console-output-file: ${{ steps.destroy.outputs.console-output-file }}
           step-label: destroy
@@ -1623,7 +1623,7 @@ jobs:
       - name: 📝 Create validation summary (phase 2)
         id: cvs-apply
         if: always()
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
@@ -1703,7 +1703,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1721,7 +1721,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && steps.destroy-plan.outcome != 'skipped' && steps.destroy-plan.outcome != ''
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1739,7 +1739,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && steps.destroy.outcome != 'skipped' && steps.destroy.outcome != ''
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1760,7 +1760,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && matrix.vars.pr-comment-group == ''
-        uses: dsb-norge/github-actions-terraform/create-validation-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-validation-summary@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           plan-txt-output-file: ${{ steps.plan.outputs.txt-output-file }}
@@ -1846,7 +1846,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && matrix.vars.pr-comment-group == ''
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -1862,7 +1862,7 @@ jobs:
       - name: "📣 Annotate outcome"
         id: annotate
         if: always()
-        uses: dsb-norge/github-actions-terraform/annotate-terraform-outcome@v1
+        uses: dsb-norge/github-actions-terraform/annotate-terraform-outcome@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           step-summary-file: ${{ steps.cvs-apply-final.outputs.step-summary-file || steps.cvs-apply.outputs.step-summary-file }}
@@ -1925,7 +1925,7 @@ jobs:
       - name: "📊 Capture matrix job metadata"
         id: capture-metadata
         if: always()
-        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@preview/pr-82-bce951d
         with:
           environment-name: ${{ matrix.vars.github-environment }}
           matrix-context-json: ${{ toJSON(matrix) }}
@@ -2063,7 +2063,7 @@ jobs:
         # it did before relevance.
         continue-on-error: true
       - name: "🧮 Reconcile per-group PR comments"
-        uses: dsb-norge/github-actions-terraform/aggregate-validation-summaries@v1
+        uses: dsb-norge/github-actions-terraform/aggregate-validation-summaries@preview/pr-82-bce951d
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
           # Groups whose members are all unaffected have no metadata; the file keeps them rendered.
@@ -2117,7 +2117,7 @@ jobs:
         # it did before relevance.
         continue-on-error: true
       - name: "📋 Write the run summary"
-        uses: dsb-norge/github-actions-terraform/create-run-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-run-summary@preview/pr-82-bce951d
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
           relevance-file: ${{ runner.temp }}/relevance/relevance.json
@@ -2165,7 +2165,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: "🎰 Export lane environment variables"
-        uses: dsb-norge/github-actions-terraform/export-env-vars@v1
+        uses: dsb-norge/github-actions-terraform/export-env-vars@preview/pr-82-bce951d
         with:
           extra-envs: ${{ toJSON(matrix.test.extra-envs) }}
           extra-envs-from-secrets: ${{ toJSON(matrix.test.extra-envs-from-secrets) }}
@@ -2245,7 +2245,7 @@ jobs:
 
       - name: "🗄️ Setup Terraform provider plugin cache"
         id: setup-terraform-cache
-        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@v1
+        uses: dsb-norge/github-actions-terraform/setup-terraform-plugin-cache@preview/pr-82-bce951d
 
       # Its own key, falling back to the environment job's: actions/cache saves only the first entry
       # for a key, so with the environment job's key the test-only providers would never be cached (P41).
@@ -2264,7 +2264,7 @@ jobs:
       - name: "🔏 Verify the lock covers this runner"
         id: provider-versions
         if: steps.copy-lock.outputs.lock-present == 'true'
-        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@v1
+        uses: dsb-norge/github-actions-terraform/verify-terraform-lock@preview/pr-82-bce951d
         with:
           working-directory: ${{ steps.copy-lock.outputs.lock-directory }}
           platforms: ${{ steps.copy-lock.outputs.platform }}
@@ -2275,7 +2275,7 @@ jobs:
       - name: "🗄️ Resolve terraform module cache"
         id: module-cache
         if: matrix.test.cache-terraform-modules == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: resolve
           project-dir: ${{ matrix.test.root }}
@@ -2297,7 +2297,7 @@ jobs:
       - name: "📸 Snapshot restored module manifests"
         id: snapshot-module-cache
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: snapshot
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -2307,7 +2307,7 @@ jobs:
       - name: "⚙️ Terraform Init"
         id: init
         if: steps.verify-credentials.outcome != 'failure' && steps.provider-versions.outcome != 'failure'
-        uses: dsb-norge/github-actions-terraform/terraform-init@v1
+        uses: dsb-norge/github-actions-terraform/terraform-init@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.test.root }}
           environment-name: ${{ matrix.slug }}
@@ -2323,7 +2323,7 @@ jobs:
       - name: "🔍 Check terraform module cache"
         id: post-init-check
         if: steps.module-cache.outputs.cache-enabled == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: verify
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -2338,7 +2338,7 @@ jobs:
           && steps.init.outcome == 'success'
           && steps.restore-module-cache.outputs.cache-hit != 'true'
           && steps.post-init-check.outputs.safe-to-save == 'true'
-        uses: dsb-norge/github-actions-terraform/terraform-module-cache@v1
+        uses: dsb-norge/github-actions-terraform/terraform-module-cache@preview/pr-82-bce951d
         with:
           phase: prune
           cache-paths: ${{ steps.module-cache.outputs.cache-paths }}
@@ -2362,7 +2362,7 @@ jobs:
       - name: "🧪 Terraform test"
         id: test
         if: "!cancelled()"
-        uses: dsb-norge/github-actions-terraform/terraform-test@v1
+        uses: dsb-norge/github-actions-terraform/terraform-test@preview/pr-82-bce951d
         with:
           working-directory: ${{ matrix.test.root }}
           test-file: ${{ matrix.test.rel }}
@@ -2390,7 +2390,7 @@ jobs:
       - name: "📦 Capture and upload test job metadata"
         id: capture-metadata
         if: always()
-        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
+        uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@preview/pr-82-bce951d
         with:
           entity-name: ${{ matrix.slug }}
           artifact-name: terraform-test-meta-${{ matrix.slug }}
@@ -2451,7 +2451,7 @@ jobs:
         continue-on-error: true
       - name: "🧾 Summarise the tests"
         id: summary
-        uses: dsb-norge/github-actions-terraform/create-test-summary@v1
+        uses: dsb-norge/github-actions-terraform/create-test-summary@preview/pr-82-bce951d
         with:
           tests-matrix-json: ${{ needs.create-matrix.outputs.tests-matrix-json }}
           not-run-file: ${{ runner.temp }}/relevance/relevance.json
@@ -2466,7 +2466,7 @@ jobs:
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
           && inputs.add-pr-comment == true
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -2485,7 +2485,7 @@ jobs:
           && github.event.pull_request.head.repo.fork == false
           && github.event.action != 'closed'
           && github.event.action != 'converted_to_draft'
-        uses: dsb-norge/github-actions-terraform/pr-comment@v1
+        uses: dsb-norge/github-actions-terraform/pr-comment@preview/pr-82-bce951d
         with:
           repo: ${{ github.repository }}
           issue-number: ${{ github.event.pull_request.number }}
@@ -2691,7 +2691,7 @@ jobs:
         continue-on-error: true
       - name: "🔍 Evaluate PR auto merge eligibility across all environments"
         id: evaluate-automerge
-        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@v1
+        uses: dsb-norge/github-actions-terraform/evaluate-automerge-eligibility@preview/pr-82-bce951d
         with:
           metadata-files-pattern: "matrix-job-meta-*.json"
           # Every affected environment must have its metadata; an unaffected one is judged on
@@ -2738,7 +2738,7 @@ jobs:
       - name: "🤖 Auto merge PR"
         id: auto-merge-pr
         if: steps.evaluate-automerge.outputs.is-eligible == 'true'
-        uses: dsb-norge/github-actions-terraform/auto-merge-pr@v1
+        uses: dsb-norge/github-actions-terraform/auto-merge-pr@preview/pr-82-bce951d
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           github-event-context-json: ${{ toJSON(github.event) }}
