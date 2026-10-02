@@ -63,6 +63,12 @@ outputs:
   tests-active:
     description: "'true' when the stage is on, the event runs tests and there is at least one row"
     value: ${{ steps.create-matrix.outputs.tests-active }}
+  admission-refused:
+    description: "'true' when the Dependabot admission refused the run (docs/Dependabot-admission.md §5.2), else 'false'."
+    value: ${{ steps.create-matrix.outputs.admission-refused }}
+  admission-reason:
+    description: "Why the admission refused the run, in one line; empty when it did not."
+    value: ${{ steps.create-matrix.outputs.admission-reason }}
   tests-required-missing:
     description: "Module mode: 'true' when a test file is required and there is none (docs/Module-ci.md D9)"
     value: ${{ steps.create-matrix.outputs.tests-required-missing }}
