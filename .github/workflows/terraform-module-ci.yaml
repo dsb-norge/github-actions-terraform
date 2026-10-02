@@ -124,9 +124,15 @@ jobs:
       tests-count: ${{ steps.create-matrix.outputs.tests-count }}
       tests-active: ${{ steps.create-matrix.outputs.tests-active }}
       tests-required-missing: ${{ steps.create-matrix.outputs.tests-required-missing }}
+      # The Dependabot admission's verdict, when a caller opts in (docs/Dependabot-admission.md §11).
+      admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
+      admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent: the admission judges the change between them.
+          fetch-depth: 2
       - name: "🎰 Create the test matrix"
         id: create-matrix
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
@@ -215,9 +221,14 @@ jobs:
 
   validate:
     name: "Validate module"
-    needs: generate-docs
-    # A docs commit starts a run of its own, which validates it; this run's tree is superseded.
-    if: "!cancelled() && needs.generate-docs.outputs.pushed != 'true'"
+    needs: [generate-docs, create-matrix]
+    # A docs commit starts a run of its own, which validates it; this run's tree is superseded. Validation runs
+    # the pull request's providers, so a Dependabot run validates only once create-matrix has decided and the
+    # admission did not refuse it (docs/Dependabot-admission.md D16).
+    if: |
+      !cancelled() && needs.generate-docs.outputs.pushed != 'true'
+      && (github.actor != 'dependabot[bot]'
+          || (needs.create-matrix.result == 'success' && needs.create-matrix.outputs.admission-refused != 'true'))
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read
@@ -456,11 +467,18 @@ jobs:
         env:
           LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
           REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
         run: |
           # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
           if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
             echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
             exit 0
+          fi
+          # A Dependabot run reads no environment secret, set or not (docs/Dependabot-admission.md D20, P19).
+          if [ "${ACTOR}" = "dependabot[bot]" ]; then
+            echo "::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment '${LANE_ENVIRONMENT}' gives it no ARM_TENANT_ID or ARM_CLIENT_ID."
+            echo "Give the lane its IDs as plain values in its extra-envs-yml; they are not secret (docs/Dependabot-admission.md D20)."
+            exit 1
           fi
           echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
           echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
@@ -783,12 +801,17 @@ jobs:
           TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
           TESTS_REQUIRED_MISSING: ${{ needs.create-matrix.outputs.tests-required-missing }}
           TESTS_RESULT: ${{ needs.terraform-test.result }}
+          ADMISSION_REFUSED: ${{ needs.create-matrix.outputs.admission-refused }}
+          ADMISSION_REASON: ${{ needs.create-matrix.outputs.admission-reason }}
         run: |
           # Judge the run from the named results and the engine's outputs (docs/Module-ci.md §8)
           set -euo pipefail
           verdict=red
           if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
             why="the test matrix could not be built (${CREATE_MATRIX_RESULT})"
+          elif [ "${ADMISSION_REFUSED:-}" = "true" ]; then
+            # Nothing ran: neither validation nor the tests (docs/Dependabot-admission.md D16).
+            why="Dependabot pull request not admitted: ${ADMISSION_REASON:-?}; see the admission comment"
           elif [ "${DOCS_RESULT}" != "success" ]; then
             why="the documentation check's result is ${DOCS_RESULT}"
           elif [ "${DOCS_PUSHED}" = "true" ]; then
