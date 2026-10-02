@@ -669,3 +669,7 @@ shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and 
   job now.
 - **A module's Dependabot pull requests were red at the docs check, admitted or not** (P25, D22). The
   template's README lists versions, and the docs job never committed on a Dependabot run.
+- **Configuration variables reach a Dependabot run; Actions secrets do not.** Verified on the test bed:
+  a run Dependabot started read a repository variable and an organisation variable. The docs job's App
+  ID therefore comes from its organisation variable on every run, and only the key needs to be a
+  Dependabot secret as well (D22).
