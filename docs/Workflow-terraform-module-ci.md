@@ -33,7 +33,7 @@ Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration
 
   For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents. `ORG_TF_CICD_APP_INSTALLATION_ID` is not read: the token action finds the installation itself.
 
-  With the [admission](#dependabot-pull-requests) on, the docs job also pushes to Dependabot's admitted pull requests. A Dependabot run reads the variable but no Actions secret, so the key must also be an **organisation Dependabot secret** named `ORG_TF_CICD_APP_PRIVATE_KEY` (the organisation's Dependabot secrets settings), with the repository in its repository access.
+  With the [admission](#dependabot-pull-requests) on, the docs job also pushes to Dependabot's admitted pull requests. A Dependabot run reads the variable but no Actions secret, so the key must also be an **organisation Dependabot secret** named `ORG_TF_CICD_APP_PRIVATE_KEY` (the organisation's Dependabot secrets settings), with the repository in its repository access. The key is then in every admitted Dependabot run, so keep the App installed on the module repositories alone: what it can write is what a release that passes the admission could reach.
 
 - **Terraform 1.13 or later** for the tests. `terraform-version` accepts a constraint such as `"1.14.x"`.
 
