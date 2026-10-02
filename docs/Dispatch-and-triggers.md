@@ -26,6 +26,14 @@ Both are the same gap: the caller cannot tell the workflow which environments an
 dispatch is for. Once it can, the extra workflow files go away, and the calling workflow can
 trigger on everything and let the engine decide.
 
+**A nightly check that does not apply.** Drift, a change made outside Terraform, or a default
+branch that was never applied after a failed apply (Path-relevance.md P16), shows only when someone
+plans. A schedule is the natural time to plan, but a schedule that applies cannot be put on an
+environment nobody wants applied unattended, and a plan-only twin of the environment cannot share
+its GitHub Environment, its credentials or its concurrency group, so its plans race the applies for
+the state lock. What an unattended run may do is the environment's decision too: a schedule plans
+unless the environment says otherwise (D12).
+
 ## 2. Decisions
 
 | # | Decision | Rationale |
@@ -40,6 +48,7 @@ trigger on everything and let the engine decide.
 | D8 | A dispatched environment is always relevant and always runs regardless of `paths`; relevance mode is `all` on dispatch, as the relevance spec says. | A dispatch is a person asking. |
 | D9 | Tests do not run on `workflow_dispatch` (Terraform-tests.md D7). | A recovery must not start integration tests against the tenant being recovered. A later addition may add a `test-file` dispatch input. |
 | D10 | The run records who dispatched what, with which goal and reason, in the run summary and a notice: both `github.actor` and `github.triggering_actor`, since a re-run keeps the original actor. | A dispatch that bypasses ordering ([Environment-ordering.md](Environment-ordering.md)) must be visible. |
+| D12 | **A scheduled run plans unless the environment says otherwise.** Per environment, `schedule-goal` caps a scheduled run's goals, with the dispatch `goal` input's vocabulary and meaning (D4, D5): `plan`, the default, keeps `init` to `plan`; `default` leaves the goals as a push to the default branch would grant them, a reconcile; `apply` keeps the standard goals and `apply`; `destroy-plan` keeps `init` and `destroy-plan`. Per environment only, as `schedule` is. A cap only removes, so `apply` and `destroy-plan` need the goal they keep, and a mistake is an error on every event. | A run nobody watches should not apply because one line was added to an environment. The safe default makes a nightly plan, and with it drift detection, possible on every environment, and a reconcile is one explicit line. One vocabulary for "which goals, on demand or unattended" keeps the model and the code path shared. It changes how a schedule behaved in 1.0.0; no v1 caller scheduled the workflow then, and the two v0 schedulers add the line when they move. |
 | D11 | Granted goals reach the workflow's operation gates through the engine's `goals-granted` row variable (Decision-engine.md D10); the gates keep their event and branch clauses as defence in depth. | Without it a `plan` cap could not stop an apply that `goals-yml` grants. |
 
 ## 3. Caller-facing API
@@ -83,10 +92,12 @@ gh workflow run terraform-ci-cd.yml --ref main -f environment=staging -f goal=ap
 |---|---|---|---|
 | `trigger-events-yml` (workflow input) | YAML list | `[pull_request, push, workflow_dispatch]` | Events on which an environment takes part unless it says otherwise. |
 | `trigger-events` (per environment in `environments-yml`) | list | the global default | Replaces the global list for this environment. |
+| `schedule-goal` (per environment in `environments-yml`) | `default`, `plan`, `apply` or `destroy-plan` | `plan` | On a scheduled run, caps the environment's goals as a dispatch's `goal` input caps a dispatch (§4.4); every other event ignores it. |
 
 Valid values: `pull_request`, `push`, `workflow_dispatch`, and, in an environment's own
 `trigger-events` only, `schedule` (D7). Anything else is a validation error, and so is `schedule`
-in `trigger-events-yml`.
+in `trigger-events-yml`. `schedule-goal` exists per environment only, with no workflow input,
+as `schedule` itself.
 
 ```yaml
 trigger-events-yml: |
@@ -95,12 +106,16 @@ trigger-events-yml: |
   - workflow_dispatch
 environments-yml: |
   - environment: prod
+    trigger-events: [pull_request, push, workflow_dispatch, schedule]   # nightly plan: a drift check
   - environment: staging
-    trigger-events: [pull_request, push, workflow_dispatch, schedule]   # nightly reconcile
+    trigger-events: [pull_request, push, workflow_dispatch, schedule]
+    schedule-goal: default                                               # nightly reconcile
+  - environment: sandbox
 ```
 
-with the calling workflow carrying `schedule: [{ cron: "0 2 * * *" }]` beside the other triggers.
-The nightly file goes away; the schedule reconciles `staging` and touches nothing else.
+with the calling workflow carrying `schedule: [{ cron: "23 2 * * *" }]` beside the other triggers.
+The nightly file goes away; the schedule plans `prod`, reconciles `staging`, and touches nothing
+else. A cron off the hour is less likely to be delayed or dropped by GitHub's scheduler.
 
 ### 3.3 What a caller does not do
 
@@ -141,7 +156,8 @@ workflow's gates do today, then applies the `goal` input as a cap:
 
 The `goal` input never grants `destroy`, `destroy-on-pr` or `apply-on-pr`. The engine's invariants
 I1, I3, I15, I16 and I17 assert these rules on every generated case, and the operation gates read
-`goals-granted` (D11).
+`goals-granted` (D11). A scheduled run is capped the same way, by each environment's
+`schedule-goal` (§4.4).
 
 ### 4.3 Errors
 
@@ -158,20 +174,40 @@ A validation error stops the run in `create-matrix`, red conclusion, with one me
 | a list that is empty or not a list | `environments-yml: environment 'prod': 'trigger-events' must be a non-empty list of events, not 'push'`, or `trigger-events-yml: the list must be …` |
 | `goal: destroy-plan` for an environment without it | `dispatch: environment 'prod' does not hold the goal 'destroy-plan' (goals: all)` |
 | a `goal` outside the four (a caller's own input of type `string`, or the API) | `dispatch: unknown goal 'destroy'; the goal input is one of default, plan, apply, destroy-plan` |
+| a `schedule-goal` outside the four, null, or not a string | `environments-yml: environment 'prod': 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'aply'` |
+| `schedule-goal: apply` for an environment without the goal | `environments-yml: environment 'sandbox': 'schedule-goal: apply' needs the goal 'apply' or 'all' (goals: init, format, validate, lint)` |
+| `schedule-goal: destroy-plan` for an environment without it | `environments-yml: environment 'prod': 'schedule-goal: destroy-plan' needs the goal 'destroy-plan' (goals: all)` |
 | the named environment takes no part in dispatches | `dispatch: environment 'staging' does not take part in workflow_dispatch (trigger-events: pull_request, push)` |
 | the run's event is outside the vocabulary | `event 'merge_group' is not supported by this workflow; supported: pull_request, push, workflow_dispatch, schedule` |
 | a dispatch with no inputs block at all | not an error: every environment runs with `goals-yml`, and the run summary says the block is missing and where to copy it from |
+
+The `schedule-goal` errors are checked on every event, every mistaken environment at once, so a
+mistake fails the next pull request rather than the night. A `schedule-goal` on an environment
+whose `trigger-events` lack `schedule` changes nothing and is a warning, not an error:
+`The environment 'prod' sets schedule-goal: default, but its trigger-events do not hold schedule, so it has no effect.`
 
 ### 4.4 Schedule
 
 On `schedule` the engine keeps only environments whose `trigger-events` contain `schedule`. When
 none does, the run does nothing, the conclusion is green, and a notice says so; the run summary
 names the key that would change it. A scheduled run is always on the default branch, so a kept
-environment gets push-on-default-branch semantics with one existing asymmetry the engine mirrors:
-`apply` is granted on `schedule`, `destroy` is not (the workflow's destroy gate has never accepted
-`schedule`); a scheduled environment holding `destroy` runs its destroy plan and stops there. The
-two calling repositories that schedule the workflow today add the one line of §3.2 to the
-environment their schedule was for as part of their move to v1.
+environment's goals are first expanded as for a push to the default branch, with one asymmetry
+the engine mirrors: `apply` can be granted on `schedule`, `destroy` never is (the workflow's
+destroy gate has never accepted `schedule`). Then the environment's `schedule-goal` caps them,
+exactly as a dispatch's `goal` input caps a dispatch (§4.2, D12):
+
+| `schedule-goal` | Granted goals on a schedule |
+|---|---|
+| absent, or `plan` | The expansion intersected with `init, format, validate, lint, plan`: a nightly plan. Removes `apply` and `destroy-plan`; never adds `plan` to an environment without it. |
+| `default` | The expansion: `apply` when the goals hold `apply` or `all`, `destroy-plan` when they hold it, never `destroy`. A nightly reconcile; an environment holding `destroy` runs its destroy plan and stops there. |
+| `apply` | The expansion intersected with the standard goals and `apply`: never `destroy-plan`. An error unless the goals hold `apply` or `all`. |
+| `destroy-plan` | The expansion intersected with `init` and `destroy-plan`. An error unless the goals hold `destroy-plan`. |
+
+`schedule-goal` is a rule field, never a row variable: the operation gates read the capped
+`goals-granted` (D11), and invariant I25 asserts the table on every generated case. A schedule
+capped to `plan` grants nothing that mutates, so ordering collapses to one stage. The two calling
+repositories that schedule the workflow on v0 reconcile: as part of their move to v1 they add the
+`schedule` line of §3.2 and `schedule-goal: default` to the environment their schedule was for.
 
 ## 5. What the run shows
 
@@ -191,6 +227,11 @@ A dispatch or schedule has no pull request, so the surfaces are the run summary 
   `dispatched by octocat: this dispatch delivered the inputs mode, target but neither 'environment' nor 'goal', so every environment runs with its goals; the standard block is in docs/Dispatch-and-triggers.md §3.1`.
   The standard block's `goal` is a choice with a default, always delivered, which is what makes the
   case recognisable. A schedule that no environment takes part in says which key would change it.
+- A schedule that environments take part in says what each was capped to, grouped by cap in the
+  order `default`, `plan`, `apply`, `destroy-plan`, in the same two places:
+  `schedule: goal default for staging; goal plan for prod (schedule-goal, plan where an environment sets none)`.
+  Each running environment's record line names its cap before its goals:
+  `prod: run — relevance: all:event; schedule-goal: plan; goals: init, format, validate, lint, plan`.
   None of these runs speaks of "this change": the relevance notice and the conclusion say
   `nothing to run` where a pull request or a push would say `nothing to verify for this change`.
 - The environment jobs and the conclusion are unchanged; the conclusion's own summary line already
@@ -221,8 +262,13 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | dispatch on `main` | `environment: scratch`, `goal: destroy-plan` | `scratch` | init, destroy-plan | the cap removed apply and destroy |
 | dispatch on `main` | `environment: prod`, but prod's `trigger-events` lack `workflow_dispatch` | none | error | §4.3, never a green empty run |
 | dispatch, caller has no inputs block | none available | all four | `goals-yml` | as today, plus the summary note |
-| schedule | none | `staging` | init … plan, apply | prod, sandbox and scratch do not opt in |
-| schedule, `scratch` opted in | none | `staging`, `scratch` | scratch: init, plan, apply, destroy-plan | destroy is never granted on schedule (§4.4) |
+| schedule | none | `staging` | init … plan | prod, sandbox and scratch do not opt in; staging sets no `schedule-goal`, so it plans |
+| schedule, `staging` with `schedule-goal: default` | none | `staging` | init … plan, apply | the nightly reconcile |
+| schedule, `scratch` opted in | none | `staging`, `scratch` | staging: init … plan; scratch: init, plan | the plan cap removes apply and destroy-plan |
+| schedule, `scratch` opted in with `schedule-goal: default` | none | `staging`, `scratch` | staging: init … plan; scratch: init, plan, apply, destroy-plan | destroy is never granted on schedule (§4.4) |
+| schedule, `scratch` opted in with `schedule-goal: destroy-plan` | none | `staging`, `scratch` | staging: init … plan; scratch: init, destroy-plan | read-only |
+| schedule, `sandbox` opted in with `schedule-goal: apply` | none | none | error | a cap only removes (D5, D12) |
+| schedule, `prod` with `schedule-goal: default` but no `schedule` | none | `staging` | init … plan | a warning: prod's `schedule-goal` has no effect |
 | schedule, no environment opts in | none | none | none | green, notice |
 | push to `main` | none | all four, subject to relevance | `goals-yml` | unchanged |
 
@@ -230,10 +276,10 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 
 | Concern | Relationship |
 |---|---|
-| Decision engine | Rules 2, 3 and 5 of its procedure and invariants I1, I2, I3, I15, I16 and I17 are this spec; `goals-granted` is how they reach the workflow. |
+| Decision engine | Rules 2, 3 and 5 of its procedure and invariants I1, I2, I3, I15, I16, I17 and I25 are this spec; `goals-granted` is how they reach the workflow. |
 | Path relevance | Dispatch and schedule are relevance mode `all`; a dispatched environment is affected by definition. |
 | Tests | Not run on dispatch (D9). `tests-active` is false; the conclusion treats that as benign. |
-| Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | A dispatch naming one environment carries no dependencies and is that spec's bypass and its recovery path for a held-back environment; D10's record is what makes the bypass visible. A dispatch capped to `goal: plan` grants no mutating goal, so ordering collapses to one stage. A scheduled run is staged like a push; a schedule that keeps one environment is stage 1 by construction, not by bypass. |
+| Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | A dispatch naming one environment carries no dependencies and is that spec's bypass and its recovery path for a held-back environment; D10's record is what makes the bypass visible. A dispatch capped to `goal: plan` grants no mutating goal, so ordering collapses to one stage. A scheduled run is staged like a push when a `schedule-goal` grants a mutating goal; capped to `plan`, it collapses to one stage, and a schedule that keeps one environment is stage 1 by construction, not by bypass. |
 
 ## 8. Pitfalls
 
@@ -251,6 +297,7 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 | P6 | Two dispatches of the same environment overlap. | Queued, not raced, by the per-environment concurrency group; with GitHub's default queue depth of one, a third overlapping run would cancel the pending one. | Every stage job's group sets `queue: max`, so overlapping runs wait in best-effort arrival order and none is cancelled. |
 | P7 | The `reason` input is free text and lands in the summary and a notice. | Anything typed there is on the run page; a line break would end the workflow command early and start another. | Whitespace is collapsed to single spaces, so the reason is one line; nothing else is done with it. |
 | P11 | The v0 gates' `contains(matrix.vars.goals, …)` read a list element or a substring of a string, without case. | A list written without its dashes, `init plan destroy-plan` on separate lines, is one string to YAML; it held `init`, `plan`, `destroy-plan` and `destroy`, so a caller who asked for a destroy preview got a destroy on the next push. | The goals a caller names are a list of known names, a single name written alone is that one goal, and anything else is a validation error (Decision-engine.md rule 1); the gates read `goals-granted`, which holds only the eight goal keys. |
+| P14 | One `schedule` line on an environment that holds `apply` applied it unattended every night. | A drift check could not be expressed without an unattended apply; a plan-only twin environment needed its own GitHub Environment, credentials and concurrency group, and raced the applies for the state lock. | A schedule plans unless `schedule-goal` says otherwise (D12); invariant I25. |
 | P12 | The on-PR gates compare `github.base_ref`, which is the runner's `GITHUB_BASE_REF`, not a payload field. | Reading the payload could disagree with the gate. | The adapter passes `GITHUB_BASE_REF` as `event.base_ref`. |
 
 ## 9. Tests
@@ -258,8 +305,16 @@ Configuration for all rows: `prod` with `goals-yml: [all, destroy-plan]`, `stagi
 All in the decision engine's suite (Decision-engine.md §8):
 
 - Table cases for every row of §6 and every error of §4.3.
-- Generated cases across events × `trigger-events` × dispatch inputs × branch × goals, with
-  invariants I1, I2, I3, I15, I16 and I17 asserted.
+- Generated cases across events × `trigger-events` × dispatch inputs × branch × goals, with every
+  `schedule-goal` cycled through them, and invariants I1, I2, I3, I15, I16, I17 and I25 asserted;
+  and every goal set under every `schedule-goal` on a schedule, on and off the default branch, with
+  capped, uncapped and refused cases all occurring. I25 holds a scheduled environment's goals to
+  exactly what the gates allow on the default branch, less `destroy`, within its `schedule-goal`,
+  and its own tests break an output beyond and below that.
+- `schedule-goal` itself: each value's cap, the cap never adding, never `destroy`, every error on
+  every event, the warning, the record and the trigger line, and no effect on other events or on a
+  dispatch's own goal.
+- The run summary quotes a capped schedule's trigger line, from the engine's own output.
 - The adapter: dispatch inputs read from the event payload and normalised; a run without the
   inputs block produces the informational summary line.
 
