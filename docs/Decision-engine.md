@@ -304,6 +304,12 @@ The features extend it; the full document, as they specify it:
   providers and the versions it records, or null when the environment has no lock. The adapter
   lists the files with `git ls-files`, so only committed files count, and reads the locks from the
   checkout; the section is present only when the caller's `terraform-test-enabled` is on.
+- `admission` is the Dependabot admission's facts ([Dependabot-admission.md](Dependabot-admission.md) §8):
+  the time of the run, the changed files (a `.tf` file's changed lines, a lock file parsed before and after),
+  every dependency the change touches with its registry or GitHub facts, and the directories with a committed
+  lock. The adapter gathers it only for a Dependabot pull request the admission applies to, and a document
+  without it on such a run is a fault (exit 1). `event.pull_request.author` (`pull_request.user.login`) tells
+  the comments whose pull request it is, which a person's push does not change.
 - `caller.workflow_name` (`GITHUB_WORKFLOW`) scopes the tests head per calling workflow, and
   `event.actor` (`GITHUB_ACTOR`) is how Dependabot runs are recognised; both are present only when
   the runner sets them.
@@ -431,6 +437,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder`, `not-affected` or `not-taking-part` (an environment whose `trigger-events` lack `pull_request`), `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`: the `trigger` lines first, then one per decision kind, in the relevance spec's format |
 | Dispatch-and-triggers.md §5 | the dispatch record line, the empty-schedule notice | `trigger.lines`, in `relevance.json` for the run summary |
+| Dependabot-admission.md §5, §9 | the verdict, `admission-refused`, `admission-reason` | `admission`: `{"applies": false}`, or `applies`, `admitted`, `push_run`, `dependencies[]` (each with its `checks[]`), `problems[]`, `refused_count`, `total`; in `relevance.json` in both modes. The two step outputs are derived from it; the `admission` head (`comments.heads[]` with `kind` `admission`, state `final`) and an environment head's `not-admitted` state come from it too |
 
 ## 6. The decision procedure
 
@@ -446,7 +453,8 @@ flowchart TD
   r7 --> r1b["rule 1, on the rows: duplicate names, shared<br/>github-environments, required fields, directories,<br/>the actor list in effect, all six limits"]
   r1b --> r23["rules 2 and 3: the event in each environment's<br/>trigger-events; a dispatch's named environment"]
   r23 --> r4["rule 4: relevance, for every environment;<br/>its paths and paths-ignore validated"]
-  r4 --> r5["rule 5: the granted goals for this event, ref and<br/>branch, capped by a dispatch's goal"]
+  r4 --> r3a["rule 3a: the Dependabot admission, on a Dependabot run:<br/>refused, every environment rules 2 and 3 kept is dropped"]
+  r3a --> r5["rule 5: the granted goals for this event, ref and<br/>branch, capped by a dispatch's goal"]
   r5 --> r6["rule 6: the stages, when something mutates<br/>and no dispatch names one environment"]
   r6 --> t["the test rows"]
   t --> out["goals-granted into each running row; comments,<br/>record, notices, warnings"]
@@ -463,10 +471,12 @@ flowchart TD
   te -->|no| s1["skip: trigger-events: EVENT not enabled"]
   te -->|yes| dn{"does a dispatch name<br/>another environment?"}
   dn -->|yes| s2["skip: dispatch: not the requested environment"]
-  dn -->|no| rel{"relevance mode all, or<br/>a changed file matches?"}
+  dn -->|no| adm{"a Dependabot run the admission<br/>refuses, or Dependabot's push?"}
+  adm -->|yes| s2a["skip: admission: not admitted,<br/>or admission: Dependabot push run"]
+  adm -->|no| rel{"relevance mode all, or<br/>a changed file matches?"}
   rel -->|no| s3["skip: relevance: no changed file matches"]
   rel -->|yes| run["run: relevance: RULE, then its stage,<br/>then goals: GRANTED"]
-  s1 & s2 & s3 & run --> entry["its entry in relevance.json: verdict, reasons,<br/>relevant, trigger-events, depends-on, a run's stage,<br/>and the row's settings"]
+  s1 & s2 & s2a & s3 & run --> entry["its entry in relevance.json: verdict, reasons,<br/>relevant, trigger-events, depends-on, a run's stage,<br/>and the row's settings"]
 ```
 
 For each environment, in order; the first rule that drops it wins and is recorded, later rules are
@@ -477,13 +487,15 @@ not evaluated:
 | 1 | Validation of the configuration: an entry's keys, goals (a list of known goal names, a single name written alone being that one goal, each with its prerequisite), init directories, variables, the auto-merge actors and limits, names, types, globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | Configuration-validation.md, and each spec's validation section | `error: …` |
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
+| 3a | Admission: on a run by `dependabot[bot]` with `dependabot-admission-enabled` on, a pull request every dependency of whose change passes the checks continues; one that does not, and a Dependabot push, drops every environment rules 2 and 3 kept. Relevance is still computed for each (rule 4), and the lock check reads it. Facts that cannot be gathered fail the step before the engine runs. | Dependabot-admission.md | `admission: not admitted` · `admission: Dependabot push run` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
 | 5 | Goals: expand the environment's `goals`, a list of known names by rule 1, to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal`, or on a schedule the environment's `schedule-goal` (`plan` where it sets none), as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3, a `schedule-goal`'s on every event. | Dispatch-and-triggers.md | `schedule-goal: …` on a schedule, then `goals: …` |
 | 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
 | 7 | Row variables: the generic forwarding of every scalar input, per-environment overrides, normalised booleans, the `caller-repo-*` facts, `goals-granted`. | today's builder, D10 | none |
 
 Secrets availability is not a rule for environments: a fork pull request's environments run and
-fail on authentication, as today (Path-relevance.md §7.4). It is a rule for test rows, in `tests.py`,
+fail on authentication, as today (Path-relevance.md §7.4); a Dependabot run's are kept or dropped by
+rule 3a. It is a rule for test rows, in `tests.py`,
 which follows its own procedure: the lanes and their environment names validated, the provider
 sets derived, then per file exclusion, lane match, root derivation and misplacement, secrets
 availability, then its rows. Comments are derived last, from the environments' verdicts and the
@@ -506,16 +518,16 @@ test rows agree, with every slug unique.
 | I1 | `apply` is granted only when (the event is `push`, `workflow_dispatch` or `schedule`, the ref is a branch and `ref_name` equals the default branch, and the goals hold `apply` or `all`) or (the event is `pull_request`, its action is not `closed` or `converted_to_draft`, `base_ref` equals the default branch, and the goals hold `apply-on-pr`). `destroy` likewise, with `push` and `workflow_dispatch` only and `destroy` or `destroy-on-pr`. The granted vocabulary is the eight goal keys; `all` and the `-on-pr` goals exist only in input. |
 | I2 | On `workflow_dispatch` naming an environment, exactly one environment has verdict `run` and it is the named one, or the output carries an error. |
 | I3 | On `workflow_dispatch`, the granted goals are a subset of what the same environment would be granted on a push to the same ref; the `goal` input only removes. |
-| I4 | When secrets are unavailable (fork, Dependabot), no test row has a credentialed lane or a non-empty `github-environment`. Environment rows are unaffected. |
-| I6 | Relevance mode `all` implies every environment that passed rules 2, 3 and 5 has verdict `run`. |
+| I4 | When secrets are unavailable (a fork, or Dependabot with the admission not applying), no test row has a credentialed lane or a non-empty `github-environment`. Environment rows are unaffected. An admitted Dependabot run keeps its credentialed rows ([Dependabot-admission.md](Dependabot-admission.md) D20). |
+| I6 | Relevance mode `all` implies every environment that passed rules 2, 3, 3a and 5 has verdict `run`. |
 | I7 | When `errors` is empty, environments with verdict `run` plus verdict `skip` equal the environments declared, and no environment name appears twice. |
 | I8 | The union of the per-stage matrices contains exactly the environments with verdict `run`; within a stage, rows are in `environments-yml` order; no environment appears in more than one matrix. |
 | I9 | A test row's environment name matches `^tftest-[a-z0-9-]{1,40}$` and, compared case-insensitively, equals no environment's `github-environment`. |
 | I10 | `model.py` rejects unknown top-level keys, no schema field holds a secret value, and the action's suite plants a sentinel in the process environment and in secret-shaped variables and asserts it never appears in the input file or any output. |
 | I11 | Every `skip` verdict and every `not_run` entry has a non-empty reason from the fixed vocabulary. |
 | I12 | The output is byte-identical across runs with `PYTHONHASHSEED=0` and `=1`, and invariant under a permutation of the input document's key order. |
-| I13 | With `path-relevance-enabled: false`, every environment's relevance reason is `all:disabled` and every environment that passed rules 2, 3 and 5 runs. |
-| I14 | A `not-affected` head, a `not-taking-part` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` and `add-pr-comment: true`: a `not-affected` head for a relevance reason, a `not-taking-part` head for a `trigger-events` reason, a tag purge for either; a grouped environment gets no per-environment head at all. |
+| I13 | With `path-relevance-enabled: false`, every environment's relevance reason is `all:disabled` and every environment that passed rules 2, 3, 3a and 5 runs. |
+| I14 | A `not-affected` head, a `not-taking-part` head or a tag purge is emitted only on a `pull_request` event that is not from a fork and whose action is not `closed` or `converted_to_draft`, for an environment with verdict `skip` and `add-pr-comment: true`: a `not-affected` head for a relevance reason, a `not-taking-part` head for a `trigger-events` reason, a tag purge for either; a grouped environment gets no per-environment head at all. A `not-admitted` head is emitted only for an environment skipped with `admission: not admitted`, the `admission` head only on a refused run, and the purge of a stale `admission` head (one rule, outside the four per purged environment) only on a Dependabot-authored pull request's run that is not refused. |
 | I15 | `destroy` is never granted on `schedule`; on `workflow_dispatch` it is granted only when the environment's own goals hold it and the ref is the default branch, never through the `goal` input. |
 | I16 | `environments[].goals` equals `vars.goals-granted` for every `run` row. |
 | I17 | A dispatch with a non-empty `environment` input yields at least one `run` verdict or an error, never a green empty matrix. On `schedule` the empty case is permitted, with the documented notice. |
@@ -527,6 +539,10 @@ test rows agree, with every slug unique.
 | I23 | The longest path of the **declared** graph never exceeds the cap; a deeper graph is a validation error naming the chain. The check is against the declared graph, not the graph restricted to this run, so a configuration's validity does not depend on which files changed. |
 | I24 | `stage` is a pure function of the resolved `depends-on` graph restricted to the `run` set and of the last-stage rule for free-standing environments. With I12 this makes stage assignment byte-stable across runs of the same input document. |
 | I25 | On `schedule`, a running environment's granted goals are exactly the goals the workflow's gates let through on the default branch for its raw goals, less `destroy`, intersected with its `schedule-goal`'s cap (`plan`: `init` to `plan`; `apply`: those and `apply`; `destroy-plan`: `init` and `destroy-plan`; `default`: no cap), `plan` where it sets none. Derived apart from `triggers.py`, from the declared `schedule-goal` and the raw goals. |
+| I26 | The `admission` block's `applies` is true only when the actor is `dependabot[bot]`, `dependabot-admission-enabled` is on and the event is `pull_request` or `push`. |
+| I27 | When the admission refuses a run, or the run is Dependabot's push, no environment has verdict `run` and the test matrix is empty. |
+| I28 | When the admission does not apply, the output equals the output of the same document without its `admission` facts. |
+| I29 | When the admission admits a pull request, every environment's verdict and every stage matrix equal those of the same document with the admission switched off. |
 
 I5 of the first draft restated rule 2 and is folded into it.
 

@@ -6,8 +6,7 @@ opts in, [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.y
 Dependabot runs may execute Terraform, decided by the engine from what the pull request changes,
 with no person in the loop for a dependency that passes.
 
-Status: **specification, not yet implemented.** §20 is reserved for what implementation teaches the
-spec.
+Status: **built, not yet validated on a test bed.** §20 records what implementation taught the spec.
 
 ## 1. Why
 
@@ -109,6 +108,9 @@ Every changed file is one Dependabot's Terraform updater writes, and every chang
   quoted value of a `version` argument (of a `required_providers` entry or of a `module` block) or
   inside the `ref` value of a GitHub module source. No line is added or removed. A constraint the
   updater rewrote (a range whose `!=` terms it dropped) passes: the difference is inside the value.
+  A line that changes only inside a version but belongs to no `module` block or `required_providers`
+  entry, a legacy `provider` block's `version` for one, is refused: the change it makes is one nothing
+  judges (P20).
 - **`.terraform.lock.hcl`**: parsed, before and after hold the same provider addresses; a block
   that changed changed its `version`, and may change its `constraints` and `hashes`; every other
   block is unchanged. Whitespace and comments are not compared: the updater regenerates a block
@@ -252,8 +254,9 @@ new §3 subsection when this is built:
 **The admission head**, marker `<!-- tf:head:admission:<caller> -->`, one per calling workflow
 like the tests head ([Workflow-pr-comments.md](Workflow-pr-comments.md) §2). The engine's comment
 manifest carries it, the seed job posts it with its final body (no matrix job runs to finalise it),
-and the seed deletes it on any later run of the same caller that is not refused: an admitted run, a
-person's run, a run with the admission switched off.
+and the seed deletes it on any later run of a Dependabot-authored pull request that is not refused: an
+admitted run, a person's push, a run with the admission switched off. The pull request's author
+(`event.pull_request.author`) is what says whose pull request it is.
 
 ```markdown
 ### 🚫 Dependabot pull request not admitted
@@ -297,9 +300,9 @@ What each failed check tells the reader:
 | the shape | the file and line that is not a dependency version; review it; a person's commit runs it |
 | the lock | the environment and its project directory; commit a lock file on the default branch, then `@dependabot rebase` |
 
-**Environment and group heads** of a refused run get a final body from the seed:
-`Not admitted: this Dependabot pull request failed the admission, so nothing ran. See the admission comment.`
-A group head lists its members with that cell.
+**Environment and group heads** of a refused run: an environment's head gets a final body from the
+seed, `🚫 Not admitted: this Dependabot pull request failed the admission, so nothing ran (run #N attempt #M). See the admission comment.`;
+a group head shows a member with a `🚫` cell and names it in a `🚫 Not admitted:` footer line.
 
 **The run summary** gains an admission section before the environments: the table above, without
 the help. **The conclusion** fails with the line of §5.2.
@@ -312,7 +315,9 @@ out `changed_files`.
 
 | Fact | Source | On failure |
 |---|---|---|
-| the change | `git diff --name-status` and `git show <rev>:<path>` between `github.sha`'s first parent and `github.sha`, in the `create-matrix` checkout (fetch depth 2) | `create-matrix` fails |
+| the change | `git diff --raw -z -M HEAD^1 HEAD` (statuses, renames, mode changes) and `git show <rev>:<path>`, in the `create-matrix` checkout (fetch depth 2); a `.tf` file's changed lines are paired, a lock file is parsed before and after | `create-matrix` fails |
+| where a changed line belongs | a scan of the `.tf` file that skips strings, comments and heredocs and maps each `version` or `source` argument to its `module` block or `required_providers` entry, written on several lines or on one | — |
+| the directories with a committed lock | `git ls-files` | `create-matrix` fails |
 | the time of the run | the adapter's clock, in UTC, once per run (the core reads no clock) | — |
 | a provider version's publication time | `GET https://registry.terraform.io/v1/providers/<ns>/<type>/<version>` → `published_at` | `create-matrix` fails |
 | a provider version's signing keys and checksum file | `GET …/v1/providers/<ns>/<type>/<version>/download/linux/amd64` → `signing_keys.gpg_public_keys[]` (`key_id`, `ascii_armor`, `trust_signature`), `shasums_url`; then the file at `shasums_url` | `create-matrix` fails |
@@ -331,10 +336,11 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
 
 ## 9. The engine
 
-- **Input document**: a new optional key, `admission`, present only when the admission applies: the
-  switch, the policy as parsed, the time of the run, the shape facts and the inventory of changed
-  dependencies with their facts. `model.check` validates its shape; `schema_version` stays 1, as for
-  the earlier optional keys.
+- **Input document**: a new optional key, `admission`, present only for a Dependabot pull request
+  the admission applies to: the time of the run, the changed files (a `.tf` file's changed lines, a
+  lock file parsed), the dependencies with their facts, and the directories with a committed lock.
+  The policy is read from the inputs, as every other setting. `event.pull_request.author` is new too.
+  `model.check` validates their shape; `schema_version` stays 1, as for the earlier optional keys.
 - **Core**: a new module, `admission.py`, pure like the rest of the core: the checks of §4 over the
   facts, giving the `admission` block of the output:
   `{"applies", "admitted", "push_run", "dependencies": [{"kind", "address", "from", "to", "files",
@@ -348,7 +354,7 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   `admission-refused`, in both modes.
 - **Vocabulary**: the reasons `admission: not admitted` and `admission: Dependabot push run`; the
   head state `not-admitted`; the admission head.
-- **Invariants**: I4 reads "When secrets are unavailable (a fork, or Dependabot with the admission
+- **Invariants** (as built in [Decision-engine.md](Decision-engine.md) §7): I4 reads "When secrets are unavailable (a fork, or Dependabot with the admission
   not applying)"; I6 and I13 read "passed rules 2, 3, 3a and 5"; I11 gains the two reasons; I14
   gains the `not-admitted` head and the admission head. New:
   - **I26**: the admission block's `applies` is true only when the actor is `dependabot[bot]`, the
@@ -514,6 +520,7 @@ it does today, and a refused run runs nothing.
 | P17 | Python's `urllib` tries the addresses in resolver order and does not race IPv4 against IPv6. | On a host that resolves the registry's AAAA records without working IPv6, each call waited about 25 seconds before falling back. | Registry calls through `curl` (§8). |
 | P18 | A partner key's trust signature covers the key's de-armoured bytes, not its armour text, as Terraform's `package_authentication.go` decodes both before checking. | Verifying over the text fails for every partner key. | Verify over the decoded key (§8). Verified with `gpg` against HashiCorp's partner key: two partners' keys good; another partner's signature over the same key and a key with one bit flipped bad. A trust signature that does not verify makes Terraform refuse the package outright, not fall back to "self-signed"; the admission refuses it as `key`. |
 | P19 | The lane credential check's message says the lane's environment "has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet". | On a Dependabot run the secret may well exist and still not arrive; the message sends a maintainer to set a secret that is already set. | On a Dependabot run the message says that environment secrets do not reach Dependabot runs and names the plain-value `extra-envs-yml` in the lane (D20). |
+| P20 | The adapter traces a changed `version` line to its dependency; a line it cannot trace (a legacy `provider` block, an unusual layout) would have passed the shape rule, which sees a change inside a version, and been judged by nothing. | A dependency admitted unchecked. | The adapter reports such lines as `unmapped`, and the engine refuses them (§4.1). Found by the mutation gate, through a mutant in the header scan that no test noticed. |
 
 ## 17. Tests
 
@@ -590,4 +597,23 @@ shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and 
 
 ## 20. What implementation taught the spec
 
-Reserved.
+- **The pull request's author is a fact.** Purging a stale admission head on every pull request run
+  would have changed every run's manifest and broken I14; only a Dependabot-authored pull request can
+  hold one, and its author survives a person's push. The adapter reads `pull_request.user.login`.
+- **A constraint that resolves to the same version is no dependency.** In a directory without a lock,
+  `~> 2.6` and `~> 2.12` both resolve to the newest 2.x: `init` installs what it installed before, so
+  nothing new runs and nothing is judged.
+- **The adapter hands over changed lines, not only inventories.** The shape rule is the engine's, so it
+  needs each changed line pair of a `.tf` file and each lock parsed; whole files never enter the
+  document.
+- **Three faults the tests found in the first draft:** the switch accepted `1` (`1 == True` in Python;
+  compared by identity now); a `version` written after a comma in a one-line `required_providers`
+  entry was not read, so an empty constraint resolved to the newest major; and the line of an argument
+  was counted from the start of its block's body, one line too early.
+- **`allow` that is neither a list nor a string** gets a message of its own (Configuration-validation.md
+  §3.9).
+- **A version change nothing explains is refused** (P20). The mutation gate's survivors in the `.tf`
+  scan showed that a line the adapter could not trace was skipped silently; the adapter now reports it
+  and the engine refuses it. The scan also reads a block's header after a comment or heredoc on its line.
+- **The module workflow's `validate` waits for `create-matrix` only on a Dependabot run**, so a refused
+  configuration elsewhere still shows validation's result as before.

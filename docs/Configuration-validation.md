@@ -267,6 +267,26 @@ required key of the input document. A run on a tag of that name is not on the de
 `dispatch: apply is only allowed from the default branch 'main'; this run is on the tag 'main'` (a
 branch keeps the existing wording, `this run is on 'feature/x'`).
 
+### 3.9 The Dependabot admission's settings
+
+`dependabot-admission-enabled` and `dependabot-admission-yml` ([Dependabot-admission.md](Dependabot-admission.md)
+§6) are workflow inputs only, never forwarded into a row, and validated on every event, so a mistake shows on
+the pull request that makes it. An environment that sets either gets the workflow-only message of §3.1. Every
+mistake is reported, in this order:
+
+| Mistake | Message |
+|---|---|
+| the switch is not a boolean (`1` is not) | `The input 'dependabot-admission-enabled' is 'yes'; it must be true or false!` |
+| the policy does not parse | `The specification for input 'dependabot-admission-yml' is not valid yaml!` |
+| the policy is not a mapping | `dependabot-admission-yml must be a mapping with the keys allow, min-age-days and min-age-exempt; it holds a list.` (or `a string`, `a number`, `a boolean`) |
+| an unknown key, each in turn | `dependabot-admission-yml holds the unknown key 'allows'; the keys are allow, min-age-days and min-age-exempt.` |
+| `allow` or `min-age-exempt` is neither a list nor a string | `dependabot-admission-yml: allow must be a list of namespaces; it holds a mapping.` |
+| an entry that is not `<namespace>` or `<namespace>/<name>`, each in turn | `dependabot-admission-yml: allow holds 'not ok!', which is not a namespace or namespace/name, for example 'elastic' or 'cyrilgdn/postgresql'.` |
+| `min-age-days` is not a whole number from 0 to 90 | `dependabot-admission-yml: min-age-days must be a whole number from 0 to 90; it holds 100.` |
+
+An empty policy is the built-in one; a string written alone in a list is its one item; each part of an
+entry matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
+
 ## 4. Message style
 
 A new message (D9):
