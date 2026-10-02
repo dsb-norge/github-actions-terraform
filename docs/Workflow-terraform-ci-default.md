@@ -56,8 +56,9 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`;
 |---|---|---|
 | `trigger-events-yml` (input) | `[pull_request, push, workflow_dispatch]` | The events an environment takes part in unless it sets its own. `schedule` is not allowed here. |
 | `trigger-events` (per environment) | the input | Replaces the input for this environment. The only place `schedule` may appear. |
+| `schedule-goal` (per environment) | `plan` | What a scheduled run may do: `plan`, `default` (what a push to the default branch would grant, a reconcile), `apply` or `destroy-plan`, the values of the dispatch `goal` input with the same meaning. Ignored on every other event. |
 
-**Schedule is opt-in per environment.** A scheduled environment that holds `apply` is applied unattended, so only the environment the schedule is for opts in; a schedule nothing opted into runs nothing, green, with a notice naming the key:
+**Schedule is opt-in per environment, and a scheduled run plans.** Only the environment the schedule is for opts in; a schedule nothing opted into runs nothing, green, with a notice naming the key. A scheduled environment plans and does not apply unless its `schedule-goal` says otherwise, so a nightly drift check is one line on any environment, and a nightly reconcile is two:
 
 ```yaml
 on:
@@ -70,11 +71,13 @@ jobs:
     with:
       environments-yml: |
         - environment: prod
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]   # nightly plan: a drift check
         - environment: staging
-          trigger-events: [pull_request, push, workflow_dispatch, schedule]   # nightly reconcile
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]
+          schedule-goal: default                                               # nightly reconcile
 ```
 
-A scheduled run never destroys; an environment holding `destroy` runs its destroy plan and stops there.
+A scheduled run never destroys; with `schedule-goal: default`, an environment holding `destroy` runs its destroy plan and stops there. A `schedule-goal` mistake is an error on every event, so it fails the next pull request rather than the night ([example 6](#6-scheduled-drift-detection)).
 
 **Dispatching one environment.** Add the standard inputs block to the calling workflow, the same in every repository; the workflow reads the inputs from the caller's event, nothing goes through `with:`:
 
@@ -501,40 +504,51 @@ dispatch: environment 'teardown' does not hold the goal 'apply' (goals: init, de
 
 ##### 6. Scheduled drift detection
 
-The calling workflow adds `schedule: [{ cron: "0 3 * * *" }]` to its `on:` block, and one environment opts in:
+The calling workflow adds `schedule: [{ cron: "23 3 * * *" }]` to its `on:` block, off the hour, where GitHub's scheduler delays or drops fewer runs, and the environments the schedule is for opt in. Goals are the default `[all]`:
 
 ```yaml
       environments-yml: |
-        - environment: dev
-        - environment: nightly
-          goals-yml: [init, format, validate, lint, plan]
-          trigger-events: [push, schedule]
+        - environment: prod
+          trigger-events: [pull_request, push, workflow_dispatch, schedule]
+        - environment: sandbox
+          trigger-events: [push, workflow_dispatch, schedule]
+          schedule-goal: default
 ```
 
 | Environment | Pull request | Push | Dispatch | Schedule |
 |---|---|---|---|---|
-| `dev` | `init … plan` | `init … plan, apply` | `init … plan, apply` | does not take part |
-| `nightly` | does not take part | `init … plan` | does not take part | `init … plan` |
+| `prod` | `init … plan` | `init … plan, apply` | `init … plan, apply` | `init … plan` |
+| `sandbox` | does not take part | `init … plan, apply` | `init … plan, apply` | `init … plan, apply` |
 
-`nightly` plans after every push that concerns it and every night, and never applies, so a plan with changes is drift to look into. It takes no part in pull requests, so its pull-request comment says `➖ Does not take part in pull requests: this environment's trigger-events are push, schedule`, and a dispatch that names it is refused:
+`prod` applies on every push that concerns it and plans every night without applying: a plan with changes is drift, or a default branch that a failed apply left unapplied, to look into. The nightly plan runs as `prod` itself, in its GitHub Environment, with its credentials and in its concurrency group, so it waits for a running apply instead of racing it for the state lock. `sandbox` reconciles every night: `schedule-goal: default` grants what a push to the default branch would. The run summary and a notice say what each environment was capped to:
 
 ```text
-dispatch: environment 'nightly' does not take part in workflow_dispatch (trigger-events: push, schedule)
+schedule: goal default for sandbox; goal plan for prod (schedule-goal, plan where an environment sets none)
 ```
 
-The same environment with `goals-yml: [all]`:
+and each environment's line of the decision record names its cap before its goals:
 
-| Environment | Pull request | Push | Dispatch | Schedule |
-|---|---|---|---|---|
-| `nightly` | does not take part | `init … plan, apply` | does not take part | `init … plan, apply` |
+```text
+prod: run — relevance: all:event; schedule-goal: plan; goals: init, format, validate, lint, plan
+sandbox: run — relevance: all:event; schedule-goal: default; goals: init, format, validate, lint, plan, apply
+```
 
-With `all`, the schedule applies every night, unattended: nobody reviews that plan. This is why `schedule` is opt-in per environment. It goes in the `trigger-events` of the environment the schedule is for; in the input `trigger-events-yml` it would reach every environment, including one added later, so there it is refused:
+`schedule-goal` takes the values of the dispatch `goal` input with the same meaning: `plan`, the default, `default`, `apply` (the standard goals and `apply`, no destroy plan) and `destroy-plan` (`init` and `destroy-plan`). A scheduled run never destroys. A cap only removes, so a mistake is an error, on every event:
+
+```text
+environments-yml: environment 'sandbox': 'schedule-goal: apply' needs the goal 'apply' or 'all' (goals: init, format, validate, lint)
+environments-yml: environment 'prod': 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'aply'
+```
+
+A `schedule-goal` on an environment whose `trigger-events` lack `schedule` changes nothing, and the run warns: `The environment 'prod' sets schedule-goal: default, but its trigger-events do not hold schedule, so it has no effect.`
+
+`schedule` itself goes in the `trigger-events` of the environment the schedule is for; in the input `trigger-events-yml` it would reach every environment, including one added later, so there it is refused:
 
 ```text
 trigger-events-yml: 'schedule' is per environment only; add it to the trigger-events of the environment the schedule is for
 ```
 
-A schedule that no environment opted into runs nothing, and the run is green with the notice `schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the environment the schedule is for`. A pull request that changes `nightly`'s files is never auto-merged ([example 13](#13-auto-merge-for-dependabot)).
+A schedule that no environment opted into runs nothing, and the run is green with the notice `schedule: no environment takes part in scheduled runs; add 'schedule' to the trigger-events of the environment the schedule is for`. `sandbox` takes no part in pull requests, so its pull-request comment says `➖ Does not take part in pull requests: this environment's trigger-events are push, workflow_dispatch, schedule`, and a pull request that changes its files is never auto-merged ([example 13](#13-auto-merge-for-dependabot)).
 
 ##### 7. Dispatching one environment
 

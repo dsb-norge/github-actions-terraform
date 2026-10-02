@@ -226,8 +226,10 @@ ordering bypassed: 'prod' depends on 'shared', which a single-environment dispat
 
 A dispatch that names no environment is staged normally. A dispatch capped to `goal: plan` grants
 no mutating goal, so by D4 it collapses to one stage and runs fully parallel. A scheduled run is
-staged like a push; a schedule that keeps one environment is stage 1 by construction, not by
-bypass, and the difference matters because a bypass is recorded and this is not.
+staged like a push when an environment's `schedule-goal` grants it a mutating goal; capped to
+`plan`, the default, it collapses to one stage. A schedule that keeps one environment is stage 1
+by construction, not by bypass, and the difference matters because a bypass is recorded and this
+is not.
 
 ## 7. What the run shows
 
