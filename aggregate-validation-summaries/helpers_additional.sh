@@ -343,6 +343,29 @@ function _render_not_affected_line {
   echo "➖ Not affected by this pull request: ${out}"
 }
 
+# The reason the engine gives every environment of a refused Dependabot pull
+# request (docs/Dependabot-admission.md §5.2, §9). Read from reasons[0] of the
+# relevance.json entry, the rule that dropped it.
+declare -gr NOT_ADMITTED_REASON='admission: not admitted'
+
+# Every cell of an environment the Dependabot admission refused. It is a skip
+# like a not-affected one, but a dash would say the change does not touch it,
+# which nobody judged: nothing ran because the admission refused the pull
+# request (docs/Dependabot-admission.md §7, P14).
+declare -gr NOT_ADMITTED_CELL='<span title="not admitted: the Dependabot admission refused this pull request">🚫</span>'
+
+# The footer line naming a group's not-admitted members, structured as the
+# not-affected line; nothing when there are none.
+#   $@ environment names
+function _render_not_admitted_line {
+  [ ${#} -eq 0 ] && return 0
+  local out="" name
+  for name in "${@}"; do
+    out+="${out:+, }\`${name}\`"
+  done
+  echo "🚫 Not admitted: ${out}"
+}
+
 # A step whose if: was false has the outcome STRING 'skipped', not ''. Both
 # mean "did not run" here. Gating on non-empty alone rendered three skipped
 # blocks on every plan-only environment in the first real run — breaking the
