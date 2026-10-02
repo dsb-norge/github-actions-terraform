@@ -2,7 +2,7 @@
 
 The reusable CI workflow for a Terraform **module** repository: one module at the repository root, its examples under `examples/`, and its `terraform test` files. On every run it:
 
-1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository, Dependabot's excepted, it commits the regenerated README, anywhere else a README that needs regenerating fails the check;
+1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository it commits the regenerated README, on Dependabot's only once the admission admitted it, and anywhere else a README that needs regenerating fails the check;
 2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint;
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
 4. reports on the pull request (a validation comment and one tests comment) and on the run page (a step summary from every job);
@@ -21,7 +21,7 @@ Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration
       permissions:
         id-token: write      # OIDC, for the test jobs
         contents: read       # checkout; the docs commit is pushed with the App token, not this one
-        pull-requests: write # the validation and tests comments
+        pull-requests: write # the validation, tests and admission comments
         actions: read        # job links in the tests comment
   ```
 
@@ -32,6 +32,8 @@ Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration
   - the organisation secret `ORG_TF_CICD_APP_PRIVATE_KEY`, a private key of the App.
 
   For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents. `ORG_TF_CICD_APP_INSTALLATION_ID` is not read: the token action finds the installation itself.
+
+  With the [admission](#dependabot-pull-requests) on, the docs job also pushes to Dependabot's admitted pull requests. A Dependabot run reads the variable but no Actions secret, so the key must also be an **organisation Dependabot secret** named `ORG_TF_CICD_APP_PRIVATE_KEY` (the organisation's Dependabot secrets settings), with the repository in its repository access.
 
 - **Terraform 1.13 or later** for the tests. `terraform-version` accepts a constraint such as `"1.14.x"`.
 
@@ -94,7 +96,7 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `terraform-test-timeout-minutes` | number | `30` | Timeout of each test job. A lane may set its own `timeout-minutes`. |
 | `terraform-test-lanes-yml` | string (YAML list) | `""` | Which test files run with which credentials, runner, Terraform version and GitHub Environment, see [credentials](#credentials-lanes). Empty: every file runs without credentials. |
 | `terraform-test-exclude-paths-yml` | string (YAML list) | `""` | Glob patterns of test files that do not run ([Terraform-tests.md §4.4](Terraform-tests.md)). |
-| `dependabot-admission-enabled` | boolean | `false` | Judge a Dependabot pull request before validation and the tests run it; an admitted one runs every lane, credentialed ones included. See [Dependabot pull requests](#dependabot-pull-requests). |
+| `dependabot-admission-enabled` | boolean | `false` | Judge a Dependabot pull request before validation and the tests run it; an admitted one runs every lane, credentialed ones included, and gets its regenerated README committed. See [Dependabot pull requests](#dependabot-pull-requests). |
 | `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy, added to the built-in one ([Dependabot-admission.md §6](Dependabot-admission.md)). |
 
 A setting the workflow cannot use, such as an unknown lane key or a boolean that is not `true` or `false`, is refused by the `Create test matrix` job with an error annotation per problem, before any test runs.
@@ -104,11 +106,14 @@ A setting the workflow cannot use, such as an unknown lane key or a boolean that
 ```mermaid
 flowchart LR
   matrix["create-matrix: decide the tests"]
+  seed["seed-pr-comments: the admission comment"]
   docs["generate-docs: terraform-docs"]
   validate["validate: init, fmt, validate, lint"]
   test["terraform-test: one job per test file"]
   summary["terraform-test-summary: one comment for all tests"]
   conclusion["conclusion: the Terraform conclusion check"]
+  matrix --> seed
+  matrix --> docs
   docs --> validate
   matrix --> test
   docs --> test
@@ -122,12 +127,13 @@ flowchart LR
   test --> conclusion
 ```
 
-An arrow is a `needs:` of the job it points to. Validation and the tests run side by side: a failing test is worth seeing next to a failing lint. Both wait for the docs job, because a docs commit starts a run of its own and leaves this run's tree out of date.
+An arrow is a `needs:` of the job it points to. Validation and the tests run side by side: a failing test is worth seeing next to a failing lint. Both wait for the docs job, because a docs commit starts a run of its own and leaves this run's tree out of date. The docs job waits for `create-matrix`, whose admission verdict decides whether it may push to a Dependabot pull request, and runs whatever that job's result.
 
 | Job (check name) | Runs | On a pull request | On the run page |
 |---|---|---|---|
 | `create-matrix` (Create test matrix) | on every run | — | Validates the test inputs and lanes, lists the committed test files and decides which run, in which lane. Warns about a misplaced test file and about a missing one. A refused configuration fails here. |
-| `generate-docs` (Update documentation) | on every run | From the repository, not from Dependabot: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
+| `seed-pr-comments` (Seed PR comment heads) | on a pull request Dependabot opened | The admission comment of a refused pull request, titled "🚫 Dependabot pull request not admitted"; deleted on a later run that is not refused. | — |
+| `generate-docs` (Update documentation) | on every run | From the repository, and from Dependabot once the admission admitted the run: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
 | `validate` (Validate module) | unless the docs job pushed a commit | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
@@ -135,7 +141,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 
 The comments are not posted on a pull request from a fork, with `add-pr-comment: false`, or on a closed or draft-converted pull request; the step summaries are written on every run. The tests summary job is not among the conclusion's `needs`, so reporting can never turn the check red.
 
-Each comment is updated in place on every run. The validation comment carries the marker `<!-- tf:head:module -->`, the tests comment `<!-- tf:head:tests:<calling workflow's name> -->`, the name kept to letters, digits, `-` and `_`.
+Each comment is updated in place on every run. The validation comment carries the marker `<!-- tf:head:module -->`, the tests comment `<!-- tf:head:tests:<calling workflow's name> -->` and the admission comment `<!-- tf:head:admission:<calling workflow's name> -->`, the name kept to letters, digits, `-` and `_`.
 
 ### The conclusion
 
@@ -160,16 +166,21 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`,
 | Event | Docs | Validation | Tests | Comments |
 |---|---|---|---|---|
 | Pull request from the repository | regenerated, committed and pushed | yes, unless the docs job pushed | every file, unless the docs job pushed | yes |
+| Dependabot pull request, admission on and admitted | regenerated, committed and pushed | yes, unless the docs job pushed | every file, unless the docs job pushed | yes |
+| Dependabot pull request, admission on and refused | checked; a stale README fails | no | none | the admission comment |
+| Dependabot pull request, admission off | checked; a stale README fails | yes | files in lanes without credentials | yes |
 | Pull request from a fork | checked; a stale README fails | yes | files in lanes without credentials; a credentialed lane's files are listed as "secrets unavailable" | no |
 | Push, dispatch, schedule | checked; a stale README fails | yes | every file | no |
 
-A fork's run has no secrets, so a credentialed lane cannot run there; a Dependabot pull request is treated the same way by the tests, unless the admission is on (below), and by the docs job, which checks its README instead of committing. A file held back like this still counts as a test file for `terraform-test-required`.
+A fork's run has no secrets, so a credentialed lane cannot run there; a Dependabot pull request is treated the same way by the tests and by the docs job, which checks its README instead of committing, unless the admission is on and admits it (below). A file held back like this still counts as a test file for `terraform-test-required`.
 
 ### Dependabot pull requests
 
 Without the admission, a Dependabot pull request validates and runs the tests that need no credentials; its credentialed lanes are listed as "secrets unavailable". It reaches no cloud identity, which is why the admission is off by default here and on in the project workflow.
 
-With `dependabot-admission-enabled: true`, a run Dependabot starts first meets the admission ([Dependabot-admission.md](Dependabot-admission.md)): every provider and module the pull request changes must come from an allowed namespace (built in `dsb-norge`, `hashicorp`, `microsoft`, `Azure`), be old enough and, for a provider, be signed as the version before it. An admitted pull request validates and runs **every** lane, credentialed ones included, so all its tests run; a lane's IDs must then be plain values in its `extra-envs-yml`, since a Dependabot run reads no environment secret. A refused pull request runs neither validation nor tests, and the conclusion is red with the reason.
+With `dependabot-admission-enabled: true`, a run Dependabot starts first meets the admission ([Dependabot-admission.md](Dependabot-admission.md)): every provider and module the pull request changes must come from an allowed namespace (built in `dsb-norge`, `hashicorp`, `microsoft`, `Azure`), be old enough and, for a provider, be signed as the version before it. An admitted pull request validates and runs **every** lane, credentialed ones included, so all its tests run; a lane's IDs must then be plain values in its `extra-envs-yml`, since a Dependabot run reads no environment secret. A refused pull request runs neither validation nor tests, the conclusion is red with the reason, and the admission comment lists every dependency with its result and what to do, as in the [project workflow](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission).
+
+A Dependabot bump usually changes the README too, since terraform-docs lists the providers' constraints and the modules' versions. On an admitted pull request the docs job commits the regenerated README to Dependabot's branch, as it does on a person's pull request; the commit message carries `[dependabot skip]`, so Dependabot keeps rebasing and updating the pull request, and a rebase drops the commit and the next admitted run makes it again. The commit starts a run of its own, which is the App's, not Dependabot's: it is not judged, as a person's push is not, and it reads the repository's Actions secrets. It carries nothing the admission has not admitted, because the docs job commits only on top of the commit its run evaluated; when Dependabot has pushed since, it commits nothing and that newer commit's own run decides. With the admission off, a Dependabot pull request's README is checked and a stale one fails, since a commit would hand a change nobody judged to a run that reads every secret.
 
 There is one run per ref at a time: a newer push to the same pull request waits for the running one and replaces a waiting one. A test job also queues on its file, across the repository, so two pull requests never run the same integration test at the same time.
 
@@ -177,9 +188,9 @@ There is one run per ref at a time: a newer push to the same pull request waits 
 
 terraform-docs writes the module's inputs, outputs and resources into `README.md` in `readme-file-path` and, when the repository has an `examples/` directory, into each `examples/<example>/README.md`, between the `BEGIN_TF_DOCS` and `END_TF_DOCS` delimiters. A README without the delimiters gets them appended; delimiters in the wrong order, or twice, fail the job. The configuration is the repository's `.terraform-docs.yml` (in the root, and `examples/.terraform-docs.yml` for the examples), or the action's default where there is none.
 
-**On a pull request from the repository**, the docs job regenerates the READMEs and, when anything changed, commits and pushes to the pull request's branch with the App token. That push starts a new run on the new commit; a push with the job's own `GITHUB_TOKEN` would start none, and the required check would stay on the old commit. The run that pushed skips validation and the tests and concludes green, pointing at the new run. Pull the branch before pushing to it again.
+**On a pull request from the repository**, and on a Dependabot pull request the admission admitted, the docs job regenerates the READMEs and, when anything changed, commits and pushes to the pull request's branch with the App token. That push starts a new run on the new commit; a push with the job's own `GITHUB_TOKEN` would start none, and the required check would stay on the old commit. The run that pushed skips validation and the tests and concludes green, pointing at the new run. Pull the branch before pushing to it again. The commit goes only on top of the commit the run evaluated: when the branch has moved since, the job commits nothing and checks the README instead, and the newer commit's run regenerates it.
 
-**On every other event**, a push, a dispatch, a schedule or a pull request from a fork or from Dependabot, nothing is committed: a dispatch or a push must never commit to the branch it runs on, `main` included. A README that differs from what terraform-docs generates fails the docs job, and with it the conclusion. Fix it in either of two ways:
+**On every other event**, a push, a dispatch, a schedule or a pull request from a fork, or from Dependabot without the admission's admittance, nothing is committed: a dispatch or a push must never commit to the branch it runs on, `main` included. A README that differs from what terraform-docs generates fails the docs job, and with it the conclusion. Fix it in either of two ways:
 
 - open a pull request from the repository and let the workflow regenerate and push the README; or
 - regenerate locally with **terraform-docs 0.20**, the version the pinned action runs, with the same configuration, and commit. Another version can format the tables differently and fail the check again.
@@ -345,13 +356,13 @@ Commit it with `git add -f .tflint.hcl`; `git ls-files .tflint.hcl` shows whethe
 
 ### The README needs regenerating
 
-On a push, a dispatch, a schedule or a pull request from a fork or from Dependabot, the docs job fails with `📝 Docs: README needs regenerating …`, and the conclusion is `red — the documentation check's result is failure`. Nothing is committed on those events. Regenerate with terraform-docs 0.20 and commit, or open a pull request from the repository and let the workflow push the README, see [documentation](#documentation).
+On a push, a dispatch, a schedule or a pull request from a fork, or from Dependabot with the admission off, the docs job fails with `📝 Docs: README needs regenerating …`, and the conclusion is `red — the documentation check's result is failure`. For Dependabot's pull requests, switch the [admission](#dependabot-pull-requests) on: an admitted one gets the README committed. Nothing is committed on those events. Regenerate with terraform-docs 0.20 and commit, or open a pull request from the repository and let the workflow push the README, see [documentation](#documentation).
 
 ### The docs job cannot create the App token
 
 On a pull request from the repository, `Update documentation` fails before terraform-docs runs. The step that fails names the cause:
 
-- `🔐 Check the App's variable and secret` fails with `This repository cannot read the organisation variable ORG_TF_CICD_APP_ID` or `… the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY`, one error for each that is missing. Add the repository to that variable's or secret's repository access (the organisation's settings, Secrets and variables, Actions); for the secret, the calling job also needs `secrets: inherit`.
+- `🔐 Check the App's variable and secret` fails with `This repository cannot read the organisation variable ORG_TF_CICD_APP_ID` or `… the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY`, one error for each that is missing. Add the repository to that variable's or secret's repository access (the organisation's settings, Secrets and variables, Actions); for the secret, the calling job also needs `secrets: inherit`. On an admitted Dependabot pull request the error is `This Dependabot run cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY`: the key must also be an organisation Dependabot secret of that name, with the repository in its repository access, see [requirements](#requirements).
 - `🔐 Explain the failed App token` fails with `The App whose ID is ORG_TF_CICD_APP_ID gave no token for this repository` when both reach the repository but the token step failed: the App is not installed on the repository, or the key is not a key of that App. The token step's log above it has GitHub's answer.
 
 See [requirements](#requirements).

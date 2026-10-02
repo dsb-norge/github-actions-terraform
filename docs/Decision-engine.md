@@ -209,8 +209,10 @@ runs the same discovery, root rule, lanes and validation with no environment row
 root floats its providers. It checks the event as rule 2 does, and tests run on `pull_request`,
 `push`, `workflow_dispatch` and `schedule`. With the module workflow's `terraform-test-required`,
 the tests block's `missing` flag is set and a warning names the fix when no test file runs or is
-held back from a fork. The output carries `tests`, `notices`, `warnings`, `trigger` and a record of
-one line per test file. The decision file holds those keys and the mode.
+held back from a fork. The output carries `tests`, `notices`, `warnings`, `trigger`, `admission`,
+`comments` and a record of one line per test file; `comments` holds the admission head alone
+(`heads` and `gc`), which the module workflow's seed job posts or purges as the project workflow's
+does. The decision file holds those keys and the mode.
 
 Exit codes: 0 success, 2 validation error, 1 anything that is not the caller's configuration: a
 malformed input document, an unreadable file, a broken `yq`, an unanswerable API, a usage error
@@ -437,7 +439,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder`, `not-affected` or `not-taking-part` (an environment whose `trigger-events` lack `pull_request`), `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`: the `trigger` lines first, then one per decision kind, in the relevance spec's format |
 | Dispatch-and-triggers.md §5 | the dispatch record line, the empty-schedule notice | `trigger.lines`, in `relevance.json` for the run summary |
-| Dependabot-admission.md §5, §9 | the verdict, `admission-refused`, `admission-reason` | `admission`: `{"applies": false}`, or `applies`, `admitted`, `push_run`, `dependencies[]` (each with its `checks[]`), `problems[]`, `refused_count`, `total`; in `relevance.json` in both modes. The two step outputs are derived from it; the `admission` head (`comments.heads[]` with `kind` `admission`, state `final`) and an environment head's `not-admitted` state come from it too |
+| Dependabot-admission.md §5, §9 | the verdict, `admission-refused`, `admission-reason`, `admission-admitted` | `admission`: `{"applies": false}`, or `applies`, `admitted`, `push_run`, `dependencies[]` (each with its `checks[]`), `problems[]`, `refused_count`, `total`; in `relevance.json` in both modes. The three step outputs are derived from it (`admission-admitted` is `true` only when the run was judged and admitted, which the module workflow's docs push requires); the `admission` head (`comments.heads[]` with `kind` `admission`, state `final`) and an environment head's `not-admitted` state come from it too |
 
 ## 6. The decision procedure
 

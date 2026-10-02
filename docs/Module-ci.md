@@ -29,7 +29,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | D3 | **Tests run on `pull_request`, `push`, `workflow_dispatch` and `schedule`** in module mode. | Module callers use a dispatch as their manual build, and a nightly schedule catches provider and API drift; a module has no environment to recover, which is why the project mode keeps tests off dispatches. |
 | D4 | **Credentials come only from lanes**: none by default; one credential, the normal case, is one fallback lane that maps the repository's secrets; several are several lanes, and a lane may run in its own GitHub Environment with OIDC (§6). | The v0 workflow gave every file the repository's principal through workflow-level `env:`. Every module caller already carries the same three secret names in a calling-workflow `env:` block that never reached the called workflow; the lane replaces that block line for line. An implicit default lane would fail every repository without those secrets and keep unit tests on the principal. |
 | D5 | **Terraform 1.13 or later** for the test jobs, as in the project workflow. | One floor, one authoring rule (Terraform-tests.md D11). |
-| D6 | **terraform-docs pushes only on a pull request from the repository**, not from a fork or Dependabot; everywhere else a README that needs regenerating fails the docs check. The action is converted to the modern layout and keeps the upstream Docker action. | A dispatch or a push must never commit to the branch it runs on, `main` included. The Docker action's pinned terraform-docs keeps every README's table spacing. |
+| D6 | **terraform-docs pushes only on a pull request from the repository**, not from a fork, and on Dependabot's only when the admission admitted the run ([Dependabot-admission.md](Dependabot-admission.md) D22); everywhere else a README that needs regenerating fails the docs check. The action is converted to the modern layout and keeps the upstream Docker action. | A dispatch or a push must never commit to the branch it runs on, `main` included. The Docker action's pinned terraform-docs keeps every README's table spacing. |
 | D7 | **App tokens come from `actions/create-github-app-token@v3`**, in module CI and module release. | The organisation's own token action needs Deno from v3, which the hosted runners do not carry; the project workflow already uses the upstream action. |
 | D8 | **Reporting follows the project workflow**: a validation head and a tests head on a pull request, a step summary from every job, and a conclusion line in the log, the step summary and an annotation. The per-file test comments of v0 are deleted once. | One reporting model for both kinds of repository ([Workflow-pr-comments.md](Workflow-pr-comments.md)); the actions exist. |
 | D9 | **A module needs at least one test file**: with none, the conclusion is red, `terraform-test-required: false` opts out. Everything from a unit suite up is supported: lanes, GitHub Environments, OIDC, several credentials. | A module's tests are its contract with its callers; a unit suite needs no credentials, so every module can have one. |
@@ -65,7 +65,7 @@ the same rules and messages ([Configuration-validation.md](Configuration-validat
     permissions:
       id-token: write      # OIDC, for the test jobs
       contents: read       # checkout; the docs job pushes with the App token, not this one
-      pull-requests: write # the heads
+      pull-requests: write # the heads, the admission head included
       actions: read        # job links in the tests head
     secrets: inherit
 ```
@@ -73,6 +73,8 @@ the same rules and messages ([Configuration-validation.md](Configuration-validat
 No job asks for `contents: write`: the docs commit is pushed with the App token, which carries its
 own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID` and
 `secrets.ORG_TF_CICD_APP_PRIVATE_KEY`. `vars.ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
+A Dependabot run reads the variable but Dependabot secrets only, so the docs push on an admitted
+Dependabot pull request needs the key as an organisation Dependabot secret of the same name too.
 Both are the organisation's, and reach a repository only when it is on each one's repository
 access list. The docs job and the release job check them before the token step and fail naming
 each one missing; the token step may then fail, and the step after it names the two causes left,
@@ -85,6 +87,8 @@ from its outcome rather than checked a second time with the key.
 ```mermaid
 flowchart LR
     matrix["create-matrix: the engine, module mode"] --> tests["terraform-test: one job per test file"]
+    matrix --> seed["seed-pr-comments: the admission head, on Dependabot's pull requests"]
+    matrix --> docs
     docs["generate-docs: terraform-docs"] --> validate["validate: init, fmt, validate, lint"]
     docs --> tests
     tests --> summary["terraform-test-summary: tests head, step summary"]
@@ -100,7 +104,8 @@ flowchart LR
 | Job | Check name | What it does |
 |---|---|---|
 | `create-matrix` | `Create test matrix` | Runs `create-tf-vars-matrix` with `mode: module`; uploads `relevance` (the decision, for the summary). |
-| `generate-docs` | `Update documentation` | terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run; elsewhere a README that needs regenerating fails it. |
+| `seed-pr-comments` | `Seed PR comment heads` | The project workflow's seed job, step for step (F20), on a pull request Dependabot opened: posts the admission head of a refused one and deletes it on a later run that is not refused ([Dependabot-admission.md](Dependabot-admission.md) D21). |
+| `generate-docs` | `Update documentation` | After `create-matrix`, whatever its result. terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run, on Dependabot's only when the admission admitted the run and only on top of the commit the run evaluated (D22); elsewhere a README that needs regenerating fails it. |
 | `validate` | `Validate module` | Init in the module root (a plain `terraform init`, not `-backend=false`; the test jobs' init passes `backend: false`), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. On a Dependabot run it also waits for `create-matrix` and is skipped when that failed or the admission refused the pull request ([Dependabot-admission.md](Dependabot-admission.md) D16). |
 | `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
 | `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, while the stage is on: on every event with test files, and on a pull request. It waits for validation, so the validation head is posted first, and skips when the docs job pushed. |
