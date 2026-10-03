@@ -31,6 +31,8 @@
     "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": "",
     "environments-yml": "- env-a\n",
     "extra-envs-from-secrets-per-goal-yml": "{}",
     "extra-envs-from-secrets-yml": "{}",
@@ -62,6 +64,10 @@
       {}
     ],
     "inputs": {
+      "dependabot-admission-yml": {
+        "ok": true,
+        "value": null
+      },
       "environments-yml": {
         "ok": true,
         "value": [

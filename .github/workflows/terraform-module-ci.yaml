@@ -4,13 +4,14 @@ name: "DSB Terraform Module CI"
 # its examples and its terraform test files. Spec: docs/Module-ci.md; user guide:
 # docs/Workflow-terraform-module-ci.md. The project workflow, terraform-ci-cd-default.yml, is its
 # sibling for repositories of environments; the two share the test stage (the decision engine's
-# module mode, and the test jobs, written out here again and held to the same steps by F20).
+# module mode, and the test jobs, written out here again and held to the same steps by F20) and the
+# seed job, which here posts a refused Dependabot pull request's admission head alone.
 #
 # The calling job grants:
 #   permissions:
 #     id-token: write       # OIDC, for the test jobs
 #     contents: read        # checkout; the docs job pushes with the App token, not this one
-#     pull-requests: write  # the validation and tests heads
+#     pull-requests: write  # the validation, tests and admission heads
 #     actions: read         # job links in the tests head
 #   secrets: inherit
 #
@@ -88,6 +89,19 @@ on:
         description: "Glob patterns of test files discovery ignores (docs/Terraform-tests.md §4.4)."
         type: string
         default: ""
+      dependabot-admission-enabled:
+        description: |
+          Whether a run started by Dependabot runs validate and the tests only after the admission admits its pull request;
+          an admitted run also runs the credentialed test lanes, whose IDs must then be plain values in the lane, and
+          gets its regenerated README committed, for which the App's key must also be an organisation Dependabot secret
+          (docs/Dependabot-admission.md §11). Off by default: without it a Dependabot run's credentialed lanes do not run,
+          and its README is checked, not committed.
+        type: boolean
+        default: false
+      dependabot-admission-yml:
+        description: "The admission's policy, added to its built-in one (docs/Dependabot-admission.md §6)."
+        type: string
+        default: ""
 
 # One run per ref. The default queue depth (one pending run) is deliberate: a pending run is a
 # superseded commit of the same ref and nothing here applies to shared state, so dropping it when
@@ -113,9 +127,16 @@ jobs:
       tests-count: ${{ steps.create-matrix.outputs.tests-count }}
       tests-active: ${{ steps.create-matrix.outputs.tests-active }}
       tests-required-missing: ${{ steps.create-matrix.outputs.tests-required-missing }}
+      # The Dependabot admission's verdict, when a caller opts in (docs/Dependabot-admission.md §11).
+      admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
+      admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
+      admission-admitted: ${{ steps.create-matrix.outputs.admission-admitted }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent: the admission judges the change between them.
+          fetch-depth: 2
       - name: "🎰 Create the test matrix"
         id: create-matrix
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
@@ -129,8 +150,84 @@ jobs:
           name: relevance
           path: ${{ steps.create-matrix.outputs.relevance-file }}
 
+  # A refused Dependabot pull request's admission head, and its purge on a later run, posted as the project
+  # workflow's seed job posts them: the job is that job but for its if, which F20 in
+  # evaluate-automerge-eligibility/run_all_tests.sh holds (docs/Dependabot-admission.md §7, D21).
+  # Only a pull request Dependabot opened can hold the head, so no other pull request runs the job.
+  seed-pr-comments:
+    if: |
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.fork == false
+      && github.event.action != 'closed'
+      && github.event.action != 'converted_to_draft'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+    name: "Seed PR comment heads"
+    needs: create-matrix
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v8
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        continue-on-error: true # a missing manifest seeds nothing; the matrix jobs still post their heads
+      - name: "📋 Read the head manifest"
+        id: compose
+        run: |
+          # Hand the decision engine's heads and tag purges to the reconcile action as YAML
+          #
+          # The engine composed them with relevance (docs/Path-relevance.md §6.3): group heads
+          # first, then one head per ungrouped commenting environment, a placeholder when it is
+          # affected and its final "not affected" body when it is not. Reconcile POSTs in this
+          # order, so on a fresh pull request it becomes the conversation's order.
+          set -euo pipefail
+          manifest="${RUNNER_TEMP}/relevance/relevance.json"
+          if [ -f "${manifest}" ]; then
+            heads_yml=$(jq '[.comments.heads[] | {marker, body}]' "${manifest}" | yq -P '.')
+            gc_yml=$(jq '.comments.gc' "${manifest}" | yq -P '.')
+          else
+            echo "::warning title=Seed PR comment heads::The relevance decision is missing; no heads are seeded and no tags are purged."
+            heads_yml='[]'
+            gc_yml='[]'
+          fi
+          echo "Composed heads-yml:"
+          printf '%s\n' "${heads_yml}"
+          echo "Composed gc-yml:"
+          printf '%s\n' "${gc_yml}"
+          write_output() {
+            local delim
+            delim="EOF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+            printf '%s<<%s\n%s\n%s\n' "${1}" "${delim}" "${2}" "${delim}" >>"${GITHUB_OUTPUT}"
+          }
+          write_output heads-yml "${heads_yml}"
+          write_output gc-yml "${gc_yml}"
+
+      - name: "🌱 Seed heads"
+        uses: dsb-norge/github-actions-terraform/pr-comments-reconcile@v1
+        with:
+          repo: ${{ github.repository }}
+          issue-number: ${{ github.event.pull_request.number }}
+          github-token: ${{ github.token }}
+          heads-yml: ${{ steps.compose.outputs.heads-yml }}
+          # Only unaffected environments' tags. Each matrix job purges its own environment's
+          # prior tags as its first commenting step, which holds when the seed is skipped on
+          # "Re-run failed jobs"; purging an affected environment here would delete tags that
+          # environments not re-run still show. An unaffected environment's job does not run, so
+          # without this a plan from an earlier run would stay under a head saying "not affected".
+          gc-yml: ${{ steps.compose.outputs.gc-yml }}
+        continue-on-error: true # never fail the workflow over PR comment seeding
+
   generate-docs:
     name: "Update documentation"
+    # The admission's verdict decides whether a Dependabot run may push (docs/Dependabot-admission.md D22);
+    # every other run waits for create-matrix for nothing worse than its few seconds, and runs whatever its result.
+    needs: create-matrix
+    if: ${{ !cancelled() }}
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read # a docs commit is pushed with the App token, which starts the next run
@@ -139,8 +236,11 @@ jobs:
       status: ${{ steps.docs.outputs.status }}
     steps:
       # Only a pull request from this repository gets a docs commit (docs/Module-ci.md D6): a fork's
-      # run has no secrets, a Dependabot run only Dependabot's, and a push, a dispatch or a schedule
-      # must never commit to its branch. Everywhere else the docs job checks, and needs no App.
+      # run has no secrets, and a push, a dispatch or a schedule must never commit to its branch.
+      # Dependabot's pull request gets one only when the admission judged and admitted this run: the
+      # App's commit starts a run that is the App's, not Dependabot's, so nobody judges it, and it
+      # must carry nothing the admission has not admitted (docs/Dependabot-admission.md D22).
+      # Everywhere else the docs job checks, and needs no App.
       #
       # The App's variable and secret belong to the organisation and reach a repository only when it
       # is on each one's repository access list. Without them the token step fails with "client-id
@@ -150,10 +250,11 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && github.actor != 'dependabot[bot]'
+          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
         env:
           APP_ID: ${{ vars.ORG_TF_CICD_APP_ID }}
           PRIVATE_KEY_SET: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}
+          ACTOR: ${{ github.actor }}
         run: |
           # Fail naming each organisation variable or secret this repository cannot read
           missing=0
@@ -161,7 +262,11 @@ jobs:
             echo "::error title=GitHub App::This repository cannot read the organisation variable ORG_TF_CICD_APP_ID. Add the repository to the variable's repository access: organisation settings, Secrets and variables, Actions, Variables, ORG_TF_CICD_APP_ID."
             missing=1
           fi
-          if [ "${PRIVATE_KEY_SET}" != "true" ]; then
+          if [ "${PRIVATE_KEY_SET}" != "true" ] && [ "${ACTOR}" = "dependabot[bot]" ]; then
+            # A Dependabot run reads Dependabot secrets only (docs/Dependabot-admission.md D22).
+            echo "::error title=GitHub App::This Dependabot run cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. A Dependabot run reads Dependabot secrets only: add the App's key as an organisation Dependabot secret of that name (organisation settings, Secrets and variables, Dependabot) with this repository in its repository access, and pass 'secrets: inherit' in the calling job."
+            missing=1
+          elif [ "${PRIVATE_KEY_SET}" != "true" ]; then
             echo "::error title=GitHub App::This repository cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. Add the repository to the secret's repository access (organisation settings, Secrets and variables, Actions, Secrets, ORG_TF_CICD_APP_PRIVATE_KEY), and pass 'secrets: inherit' in the calling job."
             missing=1
           fi
@@ -171,7 +276,7 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && github.actor != 'dependabot[bot]'
+          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
@@ -195,18 +300,42 @@ jobs:
           ref: ${{ steps.app-token.outcome == 'success' && github.event.pull_request.head.ref || '' }}
           token: ${{ steps.app-token.outputs.token || github.token }}
 
+      # The branch's tip may have moved past the commit this run evaluated, by a push or by Dependabot
+      # rebasing; a commit on top of it would carry what nobody judged (docs/Dependabot-admission.md P23).
+      # The push itself is a plain git push, which GitHub refuses when the branch moves after this check.
+      - name: "📌 Pin the docs commit to the evaluated head"
+        id: pin
+        if: steps.app-token.outcome == 'success'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Push only on top of the commit this run evaluated; a newer commit's own run regenerates the README
+          if [ "$(git rev-parse HEAD)" = "${HEAD_SHA}" ]; then
+            echo "at-head=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "::notice title=Update documentation::The branch has moved past ${HEAD_SHA}, the commit this run evaluated; its newer commit's run regenerates the README."
+            echo "at-head=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       - name: "📝 Validate and update the README"
         id: docs
         uses: dsb-norge/github-actions-terraform/terraform-docs@v1
         with:
           readme-file-path: ${{ inputs.readme-file-path }}
-          push: ${{ steps.app-token.outcome == 'success' && 'true' || 'false' }}
+          push: ${{ steps.app-token.outcome == 'success' && steps.pin.outputs.at-head == 'true' && 'true' || 'false' }}
+          # '[dependabot skip]' keeps Dependabot rebasing and updating its pull request despite the commit
+          commit-message: "${{ github.actor == 'dependabot[bot]' && 'terraform-docs: automated action [dependabot skip]' || 'terraform-docs: automated action' }}"
 
   validate:
     name: "Validate module"
-    needs: generate-docs
-    # A docs commit starts a run of its own, which validates it; this run's tree is superseded.
-    if: "!cancelled() && needs.generate-docs.outputs.pushed != 'true'"
+    needs: [generate-docs, create-matrix]
+    # A docs commit starts a run of its own, which validates it; this run's tree is superseded. Validation runs
+    # the pull request's providers, so a Dependabot run validates only once create-matrix has decided and the
+    # admission did not refuse it (docs/Dependabot-admission.md D16).
+    if: |
+      !cancelled() && needs.generate-docs.outputs.pushed != 'true'
+      && (github.actor != 'dependabot[bot]'
+          || (needs.create-matrix.result == 'success' && needs.create-matrix.outputs.admission-refused != 'true'))
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read
@@ -445,11 +574,18 @@ jobs:
         env:
           LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
           REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
         run: |
           # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
           if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
             echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
             exit 0
+          fi
+          # A Dependabot run reads no environment secret, set or not (docs/Dependabot-admission.md D20, P19).
+          if [ "${ACTOR}" = "dependabot[bot]" ]; then
+            echo "::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment '${LANE_ENVIRONMENT}' gives it no ARM_TENANT_ID or ARM_CLIENT_ID."
+            echo "Give the lane its IDs as plain values in its extra-envs-yml; they are not secret (docs/Dependabot-admission.md D20)."
+            exit 1
           fi
           echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
           echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
@@ -772,12 +908,17 @@ jobs:
           TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
           TESTS_REQUIRED_MISSING: ${{ needs.create-matrix.outputs.tests-required-missing }}
           TESTS_RESULT: ${{ needs.terraform-test.result }}
+          ADMISSION_REFUSED: ${{ needs.create-matrix.outputs.admission-refused }}
+          ADMISSION_REASON: ${{ needs.create-matrix.outputs.admission-reason }}
         run: |
           # Judge the run from the named results and the engine's outputs (docs/Module-ci.md §8)
           set -euo pipefail
           verdict=red
           if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
             why="the test matrix could not be built (${CREATE_MATRIX_RESULT})"
+          elif [ "${ADMISSION_REFUSED:-}" = "true" ]; then
+            # Nothing ran: neither validation nor the tests (docs/Dependabot-admission.md D16).
+            why="Dependabot pull request not admitted: ${ADMISSION_REASON:-?}; see the admission comment"
           elif [ "${DOCS_RESULT}" != "success" ]; then
             why="the documentation check's result is ${DOCS_RESULT}"
           elif [ "${DOCS_PUSHED}" = "true" ]; then

@@ -21,7 +21,9 @@
 # Optional environment variables:
 #   input_relevance_file - Path of the matrix builder's relevance.json. Empty,
 #                          missing on disk or unreadable → rendered exactly as
-#                          without it (docs/Path-relevance.md §6.5, P8)
+#                          without it (docs/Path-relevance.md §6.5, P8). Its
+#                          admission block adds the section of a refused
+#                          Dependabot pull request (docs/Dependabot-admission.md §7)
 #   input_stage_results_json - {"1": <result>, "2": ..., "3": ...}, the stage
 #                          jobs' results; a shell-local, never exported. With
 #                          the relevance file it tells a held-back environment
@@ -178,7 +180,7 @@ function usable_relevance_file {
 # order the metadata artifacts cannot provide.
 function render_with_relevance {
   local file="${1}" run_url="${2}"
-  local n_env=0 n_affected=0 n_unaffected=0 n_missing=0 n_held=0 n_applied=0 n_destroyed=0 n_failed=0
+  local n_env=0 n_affected=0 n_unaffected=0 n_not_admitted=0 n_missing=0 n_held=0 n_applied=0 n_destroyed=0 n_failed=0
   local rows_file
   rows_file=$(mktemp)
   declare -A listed=()
@@ -196,13 +198,16 @@ function render_with_relevance {
     held_result["${h_genv}"]="${h_result}"
   done < <(held_back_entries "${file}")
 
-  local verdict genv stage
+  local verdict genv stage first_reason
   # Metadata is keyed by github-environment (the workflow passes it as the
   # capture's environment name), so rows are matched and labelled by it,
   # exactly as today's rows are.
   # Unit separator, not tab: tab is IFS whitespace, so `read` would collapse an
   # empty verdict field and shift the name into it.
-  while IFS=$'\x1f' read -r verdict genv stage; do
+  # The last field is the first reason, the rule that decided the verdict: it
+  # tells an environment the Dependabot admission refused from one the change
+  # does not touch (docs/Dependabot-admission.md §7).
+  while IFS=$'\x1f' read -r verdict genv stage first_reason; do
     if [ -z "${genv}" ]; then
       log-warn "skipping a relevance entry without github-environment" 1>&2
       continue
@@ -211,6 +216,17 @@ function render_with_relevance {
     row_names+=("${genv}")
     [ "${verdict}" = 'run' ] && env_stage["${genv}"]="${stage}"
     n_env=$((n_env + 1))
+    # Refused by the Dependabot admission: a skip, but not "not affected",
+    # which nobody judged; nothing ran because the pull request was refused
+    # (docs/Dependabot-admission.md §7, P14). Other skips on the same run,
+    # trigger-events ones, keep the not-affected row.
+    if [ "${verdict}" = 'skip' ] && [ "${first_reason}" = "${NOT_ADMITTED_REASON}" ]; then
+      n_not_admitted=$((n_not_admitted + 1))
+      printf '| `%s` | %s | %s | %s | %s | %s | %s |\n' "${genv}" \
+        "${NOT_ADMITTED_CELL}" "${NOT_ADMITTED_CELL}" "${NOT_ADMITTED_CELL}" \
+        "${NOT_ADMITTED_CELL}" "${NOT_ADMITTED_CELL}" "${NOT_ADMITTED_CELL}" >>"${rows_file}"
+      continue
+    fi
     if [ "${verdict}" = 'skip' ]; then
       n_unaffected=$((n_unaffected + 1))
       printf '| `%s` | %s | %s | %s | %s | %s | %s |\n' "${genv}" \
@@ -239,7 +255,7 @@ function render_with_relevance {
       printf '| `%s` | <span title="affected, but its job left no metadata: cancelled, crashed or not uploaded">❔</span> | — | — | — | — | [run](%s) |\n' \
         "${genv}" "${run_url}" >>"${rows_file}"
     fi
-  done < <(jq -r '.environments[] | [(.verdict // "" | tostring), (.["github-environment"] // .environment // "" | tostring), (.stage // "" | tostring)] | join("\u001f")' "${file}" 2>/dev/null)
+  done < <(jq -r '.environments[] | [(.verdict // "" | tostring), (.["github-environment"] // .environment // "" | tostring), (.stage // "" | tostring), (if (.reasons | type) == "array" then .reasons[0] // "" else "" end | tostring)] | join("\u001f")' "${file}" 2>/dev/null)
 
   # Metadata for an environment the file does not list cannot happen when both
   # come from the same run's matrix builder. Render it rather than drop it, and
@@ -268,7 +284,10 @@ function render_with_relevance {
 
   local env_word="environments"; [ "${n_env}" -eq 1 ] && env_word="environment"
   local headline
-  headline="${n_env} ${env_word} · ${n_affected} affected · ${n_unaffected} not affected · ${n_applied} applied"
+  headline="${n_env} ${env_word} · ${n_affected} affected · ${n_unaffected} not affected"
+  # Only on a refused Dependabot pull request; every other run keeps its headline.
+  [ "${n_not_admitted}" -gt 0 ] && headline="${headline} · ${n_not_admitted} not admitted"
+  headline="${headline} · ${n_applied} applied"
   # Destroyed and not-reported appear only when non-zero, like today's
   # destroyed counter: permanent zeros would be noise on almost every run.
   [ "${n_destroyed}" -gt 0 ] && headline="${headline} · ${n_destroyed} destroyed"
@@ -278,8 +297,15 @@ function render_with_relevance {
 
   printf '## Terraform run summary\n\n'
   printf '**%s**\n\n' "${headline}"
+  # A refused Dependabot pull request skips every environment, so the
+  # nothing-to-verify line would claim the change touches none, which nobody
+  # judged. It says why nothing ran instead, and the admission section comes
+  # before the environments it explains (docs/Dependabot-admission.md §7).
+  if admission_refused "${file}"; then
+    printf '_Nothing ran: the Dependabot admission refused this pull request._\n\n'
+    render_admission_section "${file}"
   # A dispatch or a schedule carries no change; its trigger line says why nothing ran.
-  if [ "${n_affected}" -eq 0 ] && [ "${event}" != 'workflow_dispatch' ] && [ "${event}" != 'schedule' ]; then
+  elif [ "${n_affected}" -eq 0 ] && [ "${event}" != 'workflow_dispatch' ] && [ "${event}" != 'schedule' ]; then
     printf '_Nothing needed verifying: no environment is affected by this change._\n\n'
   fi
   # In mode diff the reason is always 'diff' and the count is what matters; in
@@ -302,6 +328,9 @@ function render_with_relevance {
   render_ordering_line "${file}"
   print_footer
   # A tooltip does not show on a phone, where this page is often read.
+  if [ "${n_not_admitted}" -gt 0 ]; then
+    printf '\n_Rows of 🚫: the Dependabot admission refused this pull request, so nothing ran._\n'
+  fi
   if [ "${n_unaffected}" -gt 0 ] && { [ "${event}" = 'workflow_dispatch' ] || [ "${event}" = 'schedule' ]; }; then
     printf '\n_Rows of `—`: not part of this run, so not planned._\n'
   elif [ "${n_unaffected}" -gt 0 ]; then

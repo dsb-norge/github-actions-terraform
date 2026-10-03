@@ -10,6 +10,8 @@ the seed job composed from the matrix before relevance.
 
 import re
 
+from . import admission as admission_rule
+
 # The matrix job purges its own environment's tags; an unaffected environment's job does not run.
 TAG_KINDS = ("plan", "apply", "destroy-plan", "destroy")
 # The seed job does not run for these, and a seed would reopen what they closed.
@@ -17,6 +19,8 @@ UNSEEDED_ACTIONS = ("closed", "converted_to_draft")
 MODE_LINES = {"apply-on-pr": "🐙 applies on PR", "destroy-on-pr": "☠ destroys on PR"}
 # Byte-identical to the summary's final title, so the head never renames itself mid-run.
 TESTS_TITLE = "Terraform tests summary"
+ADMISSION_TITLE = "🚫 Dependabot pull request not admitted"
+SPEC = "https://github.com/dsb-norge/github-actions-terraform/blob/main/docs/Dependabot-admission.md"
 
 
 def _commenting(entry):
@@ -53,6 +57,89 @@ def _not_taking_part(entry, run):
             f"(run #{run['id']} attempt #{run['attempt']}).")
 
 
+def _not_admitted(run):
+    return (f"🚫 Not admitted: this Dependabot pull request failed the admission, so nothing ran "
+            f"(run #{run['id']} attempt #{run['attempt']}). See the admission comment.")
+
+
+def _label(dependency):
+    if dependency["kind"] == "provider":
+        return f"provider `{dependency['address'].removeprefix(admission_rule.REGISTRY + '/')}`"
+    return f"module `{dependency['address']}`"
+
+
+def _help(dependency, check):
+    """What to do when the change is trusted and intended, per failed check (docs/Dependabot-admission.md §7)."""
+    label, version = _label(dependency), dependency["to"]
+    name = dependency["address"].removeprefix(admission_rule.REGISTRY + "/").split("/")
+    namespace = name[0]
+    entry = "/".join(name[:2])
+    if check["check"] == "allow":
+        return (f"**If you trust {label} and the update is intended:** add `{entry}` (or `{namespace}`) to `allow` in "
+                "`dependabot-admission-yml` in the calling workflow on the default branch, then comment "
+                "`@dependabot rebase` on this pull request.")
+    if check["check"] == "age":
+        return f"**{label} {version} is too new:** {check['detail']}. Then re-run all jobs of this run."
+    if check["check"] == "key":
+        return (f"**{label} {version}:** {check['detail']}. A new key HashiCorp does not vouch for is lock-file "
+                "maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a "
+                "commit of your own.")
+    if check["check"] == "hashes":
+        return f"**{label} {version}:** {check['detail']}. Do not merge; comment `@dependabot recreate`."
+    return (f"**{label}:** {check['detail']}; the admission judges registry and GitHub sources only. A commit of "
+            "your own runs it as you.")
+
+
+def _problem_help(problem):
+    if problem["check"] == "lock":
+        return (f"**{problem['detail']}:** commit a lock file on the default branch, then comment "
+                "`@dependabot rebase` on this pull request.")
+    return f"**The change:** {problem['detail']}. Review it; a commit of your own runs it as you."
+
+
+def admission_report(admitted):
+    """The table of every changed dependency and problem with its result (D15); the run summary shows it too."""
+    lines = ["| Dependency | Change | Result |", "|---|---|---|"]
+    for dependency in admitted["dependencies"]:
+        failed = [check for check in dependency["checks"] if not check["ok"]]
+        result = "✅ admitted" if not failed else "❌ " + "; ".join(check["detail"] for check in failed)
+        lines.append(f"| {_label(dependency)} | {dependency['from']} → {dependency['to']} | {result} |")
+    lines += [f"| the change | — | ❌ {problem['detail']} |" for problem in admitted["problems"]]
+    return "\n".join(lines)
+
+
+def _admission_body(admitted):
+    files = [f"- {', '.join(f'`{path}`' for path in dependency['files'])}: {_label(dependency)}"
+             for dependency in admitted["dependencies"]]
+    helps = [_help(dependency, check) for dependency in admitted["dependencies"]
+             for check in dependency["checks"] if not check["ok"]]
+    helps += [_problem_help(problem) for problem in admitted["problems"]]
+    parts = [f"### {ADMISSION_TITLE}",
+             "No Terraform ran. Every dependency a Dependabot pull request changes must pass the admission before any "
+             f"job runs it ([what the admission checks]({SPEC})).",
+             admission_report(admitted)]
+    if files:
+        parts.append("<details><summary>Files</summary>\n\n" + "\n".join(files) + "\n\n</details>")
+    parts += helps
+    parts.append("**To run this pull request once without changing the policy:** push a commit to its branch. That "
+                 "run is yours and is not judged; Dependabot stops rebasing the pull request.")
+    return "\n\n".join(parts)
+
+
+def _admission_head(document, admitted):
+    """The admission head when the run is refused, else the purge of a stale one (docs/Dependabot-admission.md §7)."""
+    caller = re.sub(r"[^A-Za-z0-9_-]", "", document["caller"].get("workflow_name", ""))
+    marker = f"<!-- tf:head:admission:{caller} -->"
+    refused = admitted["applies"] and not admitted["push_run"] and not admitted["admitted"]
+    if refused:
+        commenting = document["workflow_inputs"].get("add-pr-comment") in (True, "true")
+        return ([{"kind": "admission", "key": caller, "state": "final", "title": ADMISSION_TITLE, "marker": marker,
+                  "body": _admission_body(admitted)}] if commenting else []), []
+    # Only Dependabot's pull requests can hold one: purge it when a later run is admitted or is a person's.
+    author = document["event"]["pull_request"].get("author", "")
+    return [], [{"marker-prefix": marker, "keep-marker-substring": ""}] if author == admission_rule.DEPENDABOT else []
+
+
 def _tests_head(document, tests_block, waiting):
     """The tests head, after the environment heads: scoped per calling workflow, because a repository
     may call this workflow from two and both would discover the same files (docs/Terraform-tests.md §6.3)."""
@@ -63,17 +150,33 @@ def _tests_head(document, tests_block, waiting):
              "marker": f"<!-- tf:head:tests:{caller} -->", "body": f"### {TESTS_TITLE}\n\n{waiting}"}]
 
 
-def manifest(document, block, entries, tests_block):
-    """The heads and tag purges for this run, empty where the seed job does not run."""
+def _seeded(document):
+    """Whether the seed job runs: a pull request from the repository, neither closed nor turned into a draft."""
     event = document["event"]
     pull_request = event.get("pull_request")
-    if (event["name"] != "pull_request" or pull_request is None or pull_request["is_fork"]
-            or event.get("action", "") in UNSEEDED_ACTIONS or "run" not in document):
+    return not (event["name"] != "pull_request" or pull_request is None or pull_request["is_fork"]
+                or event.get("action", "") in UNSEEDED_ACTIONS or "run" not in document)
+
+
+def module_manifest(document, admitted):
+    """A module run's heads: the admission head alone, posted by the module workflow as the seed job posts it
+    (docs/Dependabot-admission.md §7)."""
+    if not _seeded(document):
+        return {"heads": [], "gc": []}
+    heads, gc = _admission_head(document, admitted)
+    return {"heads": heads, "gc": gc}
+
+
+def manifest(document, block, entries, tests_block, admitted=admission_rule.NOT_APPLYING):
+    """The heads and tag purges for this run, empty where the seed job does not run."""
+    if not _seeded(document):
         return {"heads": [], "purge_tags_for": [], "gc": []}
+    pull_request = document["event"]["pull_request"]
     run = document["run"]
     waiting = f"⏳ Awaiting results (run #{run['id']} attempt #{run['attempt']})…"
 
-    heads = []
+    # The admission head first: on a refused run it is what the reader needs (docs/Dependabot-admission.md §7).
+    heads, admission_gc = _admission_head(document, admitted)
     groups = sorted({entry["pr-comment-group"] for entry in entries
                      if _commenting(entry) and entry["pr-comment-group"] != ""})
     for group in groups:
@@ -87,6 +190,8 @@ def manifest(document, block, entries, tests_block):
             mode = " · ".join(MODE_LINES[goal] for goal in mutates)
             heads.append(_head("env", entry["github-environment"], "placeholder", mutates,
                                waiting + (f"\n\n{mode}" if mode else "")))
+        elif entry["reasons"][0] == admission_rule.REFUSED:
+            heads.append(_head("env", entry["github-environment"], "not-admitted", mutates, _not_admitted(run)))
         elif entry["reasons"][0].startswith("trigger-events:"):
             # Dropped before relevance: "not affected by this change" would be the wrong reason.
             heads.append(_head("env", entry["github-environment"], "not-taking-part", mutates,
@@ -100,4 +205,4 @@ def manifest(document, block, entries, tests_block):
     purge = [entry["github-environment"] for entry in entries if _commenting(entry) and entry["verdict"] == "skip"]
     gc = [{"marker-prefix": f"<!-- tf:tag:{kind}:{name}:", "keep-marker-substring": ""}
           for name in purge for kind in TAG_KINDS]
-    return {"heads": heads, "purge_tags_for": purge, "gc": gc}
+    return {"heads": heads, "purge_tags_for": purge, "gc": gc + admission_gc}

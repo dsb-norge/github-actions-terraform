@@ -6,8 +6,12 @@ opts in, [`terraform-module-ci.yaml`](../.github/workflows/terraform-module-ci.y
 Dependabot runs may execute Terraform, decided by the engine from what the pull request changes,
 with no person in the loop for a dependency that passes.
 
-Status: **specification, not yet implemented.** §20 is reserved for what implementation teaches the
-spec.
+Status: **built, and validated on a test bed**: in the project workflow, admitted and refused pull
+requests for providers and modules, Dependabot push runs, a module bump needing a new provider, which
+`init` refuses as P8 says, and an admitted pull request auto-merged; in the module workflow, admitted
+and refused pull requests, the admission head, and the README committed to an admitted pull request,
+which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the minimum age. §20
+records what implementation and the test bed taught the spec.
 
 ## 1. Why
 
@@ -80,6 +84,8 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 | D18 | Azure IDs are plain values in the caller (`extra-envs-yml`, per environment), not secrets. | Decided by the maintainer. A Dependabot run cannot read Actions or environment secrets, and Dependabot secrets have no environment level, so a repository with several environments could not give each its own ID. The IDs protect nothing (§1). |
 | D19 | `allow-failing-terraform-operations` never softens a not-admitted run. | Nothing ran; the setting is about operations that did. |
 | D20 | On an admitted Dependabot run, the test stage drops no lane for `secrets unavailable`: a credentialed lane runs as on a person's run. Its credentials reach a Dependabot run only as plain values in the lane's `extra-envs-yml` (the IDs, with OIDC through the lane's GitHub Environment) or as Dependabot secrets; a lane that keeps them as environment secrets fails there. No setting selects the lanes, and nothing detects which lanes would succeed. Fork runs and runs with the admission off keep today's rule. | Decided by the maintainer: callers move the lane IDs to plain values, as D18 does for environments, and a lane that has not moved fails visibly rather than being skipped. A behaviour change for callers on v1 with credentialed lanes, accepted while few callers are on v1 (§13). |
+| D21 | The module workflow posts the admission head too: the engine's module output carries it, and a copy of the project workflow's seed job posts it on a refused run and purges it on a later run of the pull request that is not refused. The copy runs on pull requests Dependabot opened only. | Found on the test bed: a refused module pull request showed no comment at all, while its conclusion said "see the admission comment". |
+| D22 | On a Dependabot pull request, the module workflow's docs job commits the regenerated README when `create-matrix` judged and admitted the run (`admission-admitted`), and on no other Dependabot run. It commits only on top of the commit the run evaluated (P23), with `[dependabot skip]` in the message so Dependabot keeps rebasing (P24), using the organisation App, whose key must then also be an organisation Dependabot secret. The run the commit starts is the App's: it is not judged, as a person's push is not, and it reads the repository's Actions secrets (R7). | Decided by the maintainer: module repositories move to Dependabot, and the template's README lists the providers' constraints and the modules' versions, so nearly every bump made the README stale and the docs check red (P25). Without the admission, or on a refused run, a commit would hand a change nobody judged to a run that reads every secret, so the README is checked as before. |
 
 ## 3. Who meets the admission
 
@@ -109,6 +115,9 @@ Every changed file is one Dependabot's Terraform updater writes, and every chang
   quoted value of a `version` argument (of a `required_providers` entry or of a `module` block) or
   inside the `ref` value of a GitHub module source. No line is added or removed. A constraint the
   updater rewrote (a range whose `!=` terms it dropped) passes: the difference is inside the value.
+  A line that changes only inside a version but belongs to no `module` block or `required_providers`
+  entry, a legacy `provider` block's `version` for one, is refused: the change it makes is one nothing
+  judges (P20).
 - **`.terraform.lock.hcl`**: parsed, before and after hold the same provider addresses; a block
   that changed changed its `version`, and may change its `constraints` and `hashes`; every other
   block is unchanged. Whitespace and comments are not compared: the updater regenerates a block
@@ -252,8 +261,9 @@ new §3 subsection when this is built:
 **The admission head**, marker `<!-- tf:head:admission:<caller> -->`, one per calling workflow
 like the tests head ([Workflow-pr-comments.md](Workflow-pr-comments.md) §2). The engine's comment
 manifest carries it, the seed job posts it with its final body (no matrix job runs to finalise it),
-and the seed deletes it on any later run of the same caller that is not refused: an admitted run, a
-person's run, a run with the admission switched off.
+and the seed deletes it on any later run of a Dependabot-authored pull request that is not refused: an
+admitted run, a person's push, a run with the admission switched off. The pull request's author
+(`event.pull_request.author`) is what says whose pull request it is.
 
 ```markdown
 ### 🚫 Dependabot pull request not admitted
@@ -291,18 +301,22 @@ What each failed check tells the reader:
 |---|---|
 | `allow` | add the namespace, or namespace and name, to `allow` on the default branch, then `@dependabot rebase` |
 | `age` | the date and time it becomes old enough; then "Re-run all jobs", since the verdict is decided in `create-matrix` |
-| `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); a drop to self-signed is lock-file maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a commit of their own |
+| `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); a new key HashiCorp does not vouch for, a self-signed one, is lock-file maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a commit of their own |
 | `hashes` | the lock records a hash the publisher did not publish: do not merge; comment `@dependabot recreate` |
 | `host`, `source` | the admission judges registry and GitHub sources only; a person's commit runs it |
 | the shape | the file and line that is not a dependency version; review it; a person's commit runs it |
 | the lock | the environment and its project directory; commit a lock file on the default branch, then `@dependabot rebase` |
 
-**Environment and group heads** of a refused run get a final body from the seed:
-`Not admitted: this Dependabot pull request failed the admission, so nothing ran. See the admission comment.`
-A group head lists its members with that cell.
+**Environment and group heads** of a refused run: an environment's head gets a final body from the
+seed, `🚫 Not admitted: this Dependabot pull request failed the admission, so nothing ran (run #N attempt #M). See the admission comment.`;
+a group head shows a member with a `🚫` cell and names it in a `🚫 Not admitted:` footer line.
 
 **The run summary** gains an admission section before the environments: the table above, without
 the help. **The conclusion** fails with the line of §5.2.
+
+**The module workflow** posts the same admission head, through its own copy of the seed job (D21):
+the engine's module output carries the head and its purge as the project manifest does, and the
+module workflow has no environment or group heads to add.
 
 ## 8. Facts and where they come from
 
@@ -312,7 +326,9 @@ out `changed_files`.
 
 | Fact | Source | On failure |
 |---|---|---|
-| the change | `git diff --name-status` and `git show <rev>:<path>` between `github.sha`'s first parent and `github.sha`, in the `create-matrix` checkout (fetch depth 2) | `create-matrix` fails |
+| the change | `git diff --raw -z -M HEAD^1 HEAD` (statuses, renames, mode changes) and `git show <rev>:<path>`, in the `create-matrix` checkout (fetch depth 2); a `.tf` file's changed lines are paired, a lock file is parsed before and after | `create-matrix` fails |
+| where a changed line belongs | a scan of the `.tf` file that skips strings, comments and heredocs and maps each `version` or `source` argument to its `module` block or `required_providers` entry, written on several lines or on one | — |
+| the directories with a committed lock | `git ls-files` | `create-matrix` fails |
 | the time of the run | the adapter's clock, in UTC, once per run (the core reads no clock) | — |
 | a provider version's publication time | `GET https://registry.terraform.io/v1/providers/<ns>/<type>/<version>` → `published_at` | `create-matrix` fails |
 | a provider version's signing keys and checksum file | `GET …/v1/providers/<ns>/<type>/<version>/download/linux/amd64` → `signing_keys.gpg_public_keys[]` (`key_id`, `ascii_armor`, `trust_signature`), `shasums_url`; then the file at `shasums_url` | `create-matrix` fails |
@@ -331,10 +347,11 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
 
 ## 9. The engine
 
-- **Input document**: a new optional key, `admission`, present only when the admission applies: the
-  switch, the policy as parsed, the time of the run, the shape facts and the inventory of changed
-  dependencies with their facts. `model.check` validates its shape; `schema_version` stays 1, as for
-  the earlier optional keys.
+- **Input document**: a new optional key, `admission`, present only for a Dependabot pull request
+  the admission applies to: the time of the run, the changed files (a `.tf` file's changed lines, a
+  lock file parsed), the dependencies with their facts, and the directories with a committed lock.
+  The policy is read from the inputs, as every other setting. `event.pull_request.author` is new too.
+  `model.check` validates their shape; `schema_version` stays 1, as for the earlier optional keys.
 - **Core**: a new module, `admission.py`, pure like the rest of the core: the checks of §4 over the
   facts, giving the `admission` block of the output:
   `{"applies", "admitted", "push_run", "dependencies": [{"kind", "address", "from", "to", "files",
@@ -348,7 +365,7 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   `admission-refused`, in both modes.
 - **Vocabulary**: the reasons `admission: not admitted` and `admission: Dependabot push run`; the
   head state `not-admitted`; the admission head.
-- **Invariants**: I4 reads "When secrets are unavailable (a fork, or Dependabot with the admission
+- **Invariants** (as built in [Decision-engine.md](Decision-engine.md) §7): I4 reads "When secrets are unavailable (a fork, or Dependabot with the admission
   not applying)"; I6 and I13 read "passed rules 2, 3, 3a and 5"; I11 gains the two reasons; I14
   gains the `not-admitted` head and the admission head. New:
   - **I26**: the admission block's `applies` is true only when the actor is `dependabot[bot]`, the
@@ -359,7 +376,8 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   - **I29**: when the admission admits, every environment's verdict and row equal those of the same
     document without the `admission` key.
 - **Module mode**: `_module` applies the admission before the test stage; a refusal lists every test
-  file as not run and publishes `admission-refused`.
+  file as not run and publishes `admission-refused`. Its output carries `comments`, the admission
+  head alone (D21), and `create-matrix` publishes `admission-admitted` in both modes (D22).
 - **The test stage**: `tests.py`'s secrets-unavailable rule drops credentialed rows for a fork, and for
   a Dependabot run only when the admission does not apply (D20).
 
@@ -379,10 +397,18 @@ Module workflow:
 - The two inputs, the switch defaulting to `false`.
 - `validate` waits for `create-matrix` and runs only when the admission did not refuse; the module
   conclusion gains the same branch.
+- `seed-pr-comments`, the project workflow's seed job but for its condition, on pull requests
+  Dependabot opened: the admission head (D21).
+- `generate-docs` waits for `create-matrix`, whatever its result, and on a Dependabot run asks the
+  App for a token only when `admission-admitted` is `true`. A step after the checkout compares the
+  checked-out tip with the pull request's head the run evaluated; the push needs both (D22, P23).
+  The terraform-docs action gains a `commit-message` input, `[dependabot skip]` on Dependabot runs.
 
 Structural tests in `evaluate-automerge-eligibility/run_all_tests.sh` change with them: F11
-(create-matrix's outputs), F20 (the shared test jobs stay equal), F21 (the module conclusion and
-`validate`'s needs), and a new one asserting the init expression and the conclusion branch.
+(create-matrix's outputs), F20 (the shared test jobs and the seed job stay equal), F21 (the module
+conclusion and `validate`'s needs), F24 (the App check names the Dependabot secret on a Dependabot
+run), F25 (the init expression and the conclusion branch), and F26 (the docs job's gate, pin, push
+and commit message).
 
 ## 11. The module workflow, and why it is opt-in
 
@@ -398,6 +424,14 @@ are plain values. A refused run runs nothing, `validate` included (D16).
 
 Module repositories usually commit no lock file, so their providers are judged at the newest
 version their constraints allow (§4.3), and D10 does not apply.
+
+A Dependabot bump usually makes the README stale, since terraform-docs lists the providers'
+constraints and the modules' versions (P25). On an admitted run the docs job commits the
+regenerated README to Dependabot's branch (D22). That run then skips validation and the tests, as
+any run whose docs job pushed does, and the run the commit starts, the App's, validates and tests
+the admitted change with the generated README on top. With the admission off the README is checked,
+and a stale one fails: turning the admission on is also how a module repository gets its Dependabot
+pull requests green.
 
 ## 12. What stays out
 
@@ -468,6 +502,7 @@ it does today, and a refused run runs nothing.
 | R4 | Module content is not inspected (D9). | §12. |
 | R5 | The registry's version detail endpoints are undocumented. | A change in their shape fails `create-matrix` (D11) rather than admitting. |
 | R6 | An admitted Dependabot run's credentialed test lanes run the pull request's dependencies with the lanes' identities. | The same decision as for the environments (D3); a lane identity reaches a sandbox only, by the isolation preconditions of Terraform-tests.md §3.6. |
+| R7 | The run a docs commit starts on an admitted Dependabot pull request is the App's, not Dependabot's: it reads the repository's Actions secrets, and the admission does not judge it (D22). | It carries the admitted change and the generated README only (P23), whose dependencies the admission judged minutes before, and the admitted run already held the App's key as a Dependabot secret; a module repository's other Actions secrets are what an admitted release reaches beyond R1. The key itself reaches what the App can write, so the App is installed on the module repositories alone. |
 
 ## 15. Examples
 
@@ -514,6 +549,12 @@ it does today, and a refused run runs nothing.
 | P17 | Python's `urllib` tries the addresses in resolver order and does not race IPv4 against IPv6. | On a host that resolves the registry's AAAA records without working IPv6, each call waited about 25 seconds before falling back. | Registry calls through `curl` (§8). |
 | P18 | A partner key's trust signature covers the key's de-armoured bytes, not its armour text, as Terraform's `package_authentication.go` decodes both before checking. | Verifying over the text fails for every partner key. | Verify over the decoded key (§8). Verified with `gpg` against HashiCorp's partner key: two partners' keys good; another partner's signature over the same key and a key with one bit flipped bad. A trust signature that does not verify makes Terraform refuse the package outright, not fall back to "self-signed"; the admission refuses it as `key`. |
 | P19 | The lane credential check's message says the lane's environment "has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet". | On a Dependabot run the secret may well exist and still not arrive; the message sends a maintainer to set a secret that is already set. | On a Dependabot run the message says that environment secrets do not reach Dependabot runs and names the plain-value `extra-envs-yml` in the lane (D20). |
+| P20 | The adapter traces a changed `version` line to its dependency; a line it cannot trace (a legacy `provider` block, an unusual layout) would have passed the shape rule, which sees a change inside a version, and been judged by nothing. | A dependency admitted unchecked. | The adapter reports such lines as `unmapped`, and the engine refuses them (§4.1). Found by the mutation gate, through a mutant in the header scan that no test noticed. |
+| P21 | The directories of `terraform-init-additional-dirs-yml` are initialised with a writable lock on a Dependabot run too. | `init` there downloads and records a provider the environment's lock does not have. | Nothing runs it: those directories get `init` only, for TFLint; `validate` and `plan` run in the environment root, whose `init` reads the lock only (D10). Seen on the test bed: an admitted run's additional directory, which has no lock, installed the newest `hashicorp/azurerm`. |
+| P22 | A Dependabot run's `init` reads the lock only (D10), so it cannot add the `h1:` checksum of the runner's platform to a lock entry that lacks it. | `init` installs the package, verified against its `zh:` hash, and passes with "Provider lock file not updated"; `validate` then fails: "the cached package … does not match any of the checksums recorded in the dependency lock file". A person's run adds the checksum and passes, so only Dependabot's runs fail. | `verify-lock-file`, on by default, keeps `linux_amd64` in every lock entry. Seen on the test bed, which runs with it off: an entry made on `linux_arm64`. |
+| P23 | The module docs job checked out the pull request's branch by name, so its tip, not the commit the run evaluated. | Had Dependabot pushed a newer commit since, a docs commit on top of it would start the App's run, which nobody judges, on a dependency nobody admitted. | A step compares the checked-out tip with `github.event.pull_request.head.sha` and the push needs it to match; the push is a plain `git push`, which GitHub refuses when the branch moves after the check (D22). |
+| P24 | Dependabot stops rebasing and updating a pull request once a commit of anyone else's is on its branch. | After a docs commit the pull request would be left behind its base and never moved to a newer version. | The docs commit's message carries `[dependabot skip]`, which Dependabot ignores: it keeps rebasing, the rebase drops the commit, and the next admitted run commits the README again. |
+| P25 | terraform-docs lists the providers' constraints and the modules' versions in the README, as the module template configures it, and a Dependabot run never got a docs commit. | Every Dependabot bump in a module repository failed the docs check, admitted or not (seen on the test bed). | D22. |
 
 ## 17. Tests
 
@@ -535,9 +576,11 @@ it does today, and a refused run runs nothing.
   with `gpg` against recorded registry answers, valid and tampered; a 404 for a release read as "no
   release"; the diff read from a two-commit checkout; the input-document log free of inventories.
 - Workflows: the structural tests of §10; the conclusion's run block on `admission-refused` with
-  `allow-failing-terraform-operations: true`.
+  `allow-failing-terraform-operations: true`; the module docs job's pin step run against a
+  repository whose tip is at, and past, the evaluated head.
 - Renderers: the admission head, the `not-admitted` environment and group bodies, the run summary
-  section, and the admission head deleted on a later run.
+  section, and the admission head deleted on a later run, in both modes; in module mode no head where
+  the seed does not run (a push, a fork, `add-pr-comment: false`).
 
 **Should:**
 
@@ -550,8 +593,8 @@ it does today, and a refused run runs nothing.
   Dependabot run meets it.
 
 **On the test bed**, when built: admitted and refused Dependabot pull requests, a push run, a
-re-run after the minimum age, a module bump needing a new provider under `-lockfile=readonly`, and
-the module workflow opted in.
+re-run after the minimum age, a module bump needing a new provider under `-lockfile=readonly`, the
+module workflow opted in, and an admitted module pull request's README committed by the docs job.
 
 **What tests cannot cover**: whether an admitted release is benign (R1).
 
@@ -590,4 +633,45 @@ shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and 
 
 ## 20. What implementation taught the spec
 
-Reserved.
+- **The pull request's author is a fact.** Purging a stale admission head on every pull request run
+  would have changed every run's manifest and broken I14; only a Dependabot-authored pull request can
+  hold one, and its author survives a person's push. The adapter reads `pull_request.user.login`.
+- **A constraint that resolves to the same version is no dependency.** In a directory without a lock,
+  `~> 2.6` and `~> 2.12` both resolve to the newest 2.x: `init` installs what it installed before, so
+  nothing new runs and nothing is judged.
+- **The adapter hands over changed lines, not only inventories.** The shape rule is the engine's, so it
+  needs each changed line pair of a `.tf` file and each lock parsed; whole files never enter the
+  document.
+- **Three faults the tests found in the first draft:** the switch accepted `1` (`1 == True` in Python;
+  compared by identity now); a `version` written after a comma in a one-line `required_providers`
+  entry was not read, so an empty constraint resolved to the newest major; and the line of an argument
+  was counted from the start of its block's body, one line too early.
+- **`allow` that is neither a list nor a string** gets a message of its own (Configuration-validation.md
+  §3.9).
+- **A version change nothing explains is refused** (P20). The mutation gate's survivors in the `.tf`
+  scan showed that a line the adapter could not trace was skipped silently; the adapter now reports it
+  and the engine refuses it. The scan also reads a block's header after a comment or heredoc on its line.
+- **The module workflow's `validate` waits for `create-matrix` only on a Dependabot run**, so a refused
+  configuration elsewhere still shows validation's result as before.
+- **A held run's relevance notice is the change's.** On the test bed a refused run printed
+  `0 of 4 environments affected; nothing to verify for this change` for a change that touched one
+  environment: the notice counted verdicts after rule 3a had dropped them all. It is computed before
+  rule 3a now, so a held run says what the change touches and the admission's notice says why nothing
+  runs.
+- **Dependabot rewrites only the block form of `required_providers`.** The test bed's first probe wrote
+  each provider on one line; every provider update failed in Dependabot's job with "Content didn't
+  change!" and only the module pull requests opened
+  ([user guide](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission)).
+- **A move between two self-signed keys fails the key check too.** A community provider on the test bed
+  signed its new major with another self-signed key; the help said "a drop to self-signed", and says
+  "a new key HashiCorp does not vouch for" now.
+- **The module workflow reported nothing on a refusal** (D21). On the test bed a refused module pull
+  request ran nothing and showed no comment, while its conclusion pointed at "the admission comment":
+  the project workflow's seed job posts the head, and the module workflow had none. It has the same
+  job now.
+- **A module's Dependabot pull requests were red at the docs check, admitted or not** (P25, D22). The
+  template's README lists versions, and the docs job never committed on a Dependabot run.
+- **Configuration variables reach a Dependabot run; Actions secrets do not.** Verified on the test bed:
+  a run Dependabot started read a repository variable and an organisation variable. The docs job's App
+  ID therefore comes from its organisation variable on every run, and only the key needs to be a
+  Dependabot secret as well (D22).

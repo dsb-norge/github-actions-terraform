@@ -374,6 +374,32 @@ on:
           environment on every change, set its 'paths' to ['**'].
         required: false
         default: true
+      dependabot-admission-enabled:
+        type: boolean
+        description: |
+          Whether a run started by Dependabot executes Terraform only after the admission admits its pull request: every
+          dependency it changes comes from an allowed namespace, is old enough and, for a provider, is signed as the version
+          before it. A pull request that is not admitted runs no Terraform job and fails the 'Terraform conclusion' check,
+          with a comment saying why and what to do. See docs/Dependabot-admission.md.
+
+          Set this to 'false' to run Dependabot's pull requests as before the admission existed.
+        required: false
+        default: true
+      dependabot-admission-yml:
+        type: string
+        description: |
+          The admission's policy, added to its built-in one. Keys:
+            allow           namespaces (or namespace/name) whose providers and modules are admitted, besides the built-in
+                            dsb-norge, hashicorp, microsoft and Azure; compared without case
+            min-age-days    how long a new version must have been published, 0 to 90 (default 3)
+            min-age-exempt  namespaces exempt from the minimum age, besides the built-in dsb-norge
+          Example:
+            dependabot-admission-yml: |
+              allow:
+                - elastic
+                - cyrilgdn/postgresql
+        required: false
+        default: ""
       trigger-events-yml:
         type: string
         description: |
@@ -576,11 +602,18 @@ jobs:
       tests-matrix-json: ${{ steps.create-matrix.outputs.tests-matrix-json }}
       tests-count: ${{ steps.create-matrix.outputs.tests-count }}
       tests-active: ${{ steps.create-matrix.outputs.tests-active }}
+      # The Dependabot admission's verdict, for the conclusion (docs/Dependabot-admission.md §5.2).
+      admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
+      admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
       - name: "⬇ Checkout working branch"
         uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent: the Dependabot admission judges the change between them
+          # (docs/Dependabot-admission.md §8).
+          fetch-depth: 2
       - name: "🎰 Create env matrix"
         id: create-matrix
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
@@ -933,6 +966,9 @@ jobs:
           additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json
+          # On a run the Dependabot admission admitted, the lock is the complete list of what may be installed:
+          # a provider it does not record fails init and never runs (docs/Dependabot-admission.md D10, P8).
+          lockfile-mode: ${{ github.actor == 'dependabot[bot]' && inputs.dependabot-admission-enabled && 'readonly' || 'default' }}
           # Authenticates the 'git clone' calls terraform makes for remote
           # modules. Anonymous clones are charged to a 60/hour per-IP budget
           # that every runner behind the same NAT address shares, and a module
@@ -2145,11 +2181,18 @@ jobs:
         env:
           LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
           REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
         run: |
           # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
           if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
             echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
             exit 0
+          fi
+          # A Dependabot run reads no environment secret, set or not (docs/Dependabot-admission.md D20, P19).
+          if [ "${ACTOR}" = "dependabot[bot]" ]; then
+            echo "::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment '${LANE_ENVIRONMENT}' gives it no ARM_TENANT_ID or ARM_CLIENT_ID."
+            echo "Give the lane its IDs as plain values in its extra-envs-yml; they are not secret (docs/Dependabot-admission.md D20)."
+            exit 1
           fi
           echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
           echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
@@ -2490,6 +2533,8 @@ jobs:
           TESTS_COUNT: ${{ needs.create-matrix.outputs.tests-count }}
           TESTS_RESULT: ${{ needs.terraform-test.result }}
           EVENT_NAME: ${{ github.event_name }}
+          ADMISSION_REFUSED: ${{ needs.create-matrix.outputs.admission-refused }}
+          ADMISSION_REASON: ${{ needs.create-matrix.outputs.admission-reason }}
         run: |
           # Judge the run from the named results and the builder's counts (docs/Path-relevance.md §7.2, docs/Environment-ordering.md §7.3, docs/Terraform-tests.md §7)
           set -euo pipefail
@@ -2497,6 +2542,9 @@ jobs:
           verdict=red
           if [ "${CREATE_MATRIX_RESULT}" != "success" ]; then
             why="the matrix could not be built (${CREATE_MATRIX_RESULT})"
+          elif [ "${ADMISSION_REFUSED:-}" = "true" ]; then
+            # Nothing ran, so nothing can be tolerated either (docs/Dependabot-admission.md D4, D19).
+            why="Dependabot pull request not admitted: ${ADMISSION_REASON:-?}; see the admission comment"
           else
             if [ "${STAGE_2_COUNT}" = "0" ] && [ "${STAGE_3_COUNT}" = "0" ]; then
               # One stage, as on every run of a repository without depends-on: stage 1 holds every

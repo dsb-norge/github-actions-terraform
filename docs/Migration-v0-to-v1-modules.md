@@ -106,9 +106,10 @@ A file that is not committed is not seen at all.
 
 ### 2.7 The README
 
-Only a pull request from the repository itself gets a docs commit from the App. On a push, a
-dispatch, a schedule, a fork's pull request or a Dependabot pull request, a README that needs
-regenerating fails the docs check. Regenerate it before the move, with terraform-docs 0.20, the
+Only a pull request from the repository itself gets a docs commit from the App, and a Dependabot
+pull request once the admission admitted it (§4). On a push, a dispatch, a schedule, a fork's pull
+request or a Dependabot pull request without the admission, a README that needs regenerating fails
+the docs check. Regenerate it before the move, with terraform-docs 0.20, the
 version of the pinned action, or let a pull request do it.
 
 ### 2.8 The App
@@ -117,7 +118,9 @@ Both workflows read `vars.ORG_TF_CICD_APP_ID` and `secrets.ORG_TF_CICD_APP_PRIVA
 repository must have access to, and the App must be installed on it. A step before the token
 names a variable or secret the repository cannot read, and a step after it explains a failed
 token: the App not installed, or a key that is not the App's.
-`ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read.
+`ORG_TF_CICD_APP_INSTALLATION_ID` is no longer read. A repository whose Dependabot pull requests
+should get the docs commit needs the key as an organisation Dependabot secret of the same name too
+(§4).
 
 ## 3. Should do / check
 
@@ -183,6 +186,13 @@ the identity.
 - **Per-lane settings**: `runs-on`, `timeout-minutes`, `terraform-version`, `cache-terraform-modules`,
   and `allow-failing-terraform-tests` while a lane is brought up.
 - **Exclusions**: `terraform-test-exclude-paths-yml` for files discovery should not run.
+- **Dependabot's pull requests admitted** ([Dependabot-admission.md](Dependabot-admission.md) §11):
+  `dependabot-admission-enabled: true` judges each Dependabot pull request before validation and the
+  tests run it. An admitted one runs every lane, credentialed ones too, so a lane's IDs must be plain
+  values in its `extra-envs-yml`, and gets its regenerated README committed, for which the App's key
+  must also be an organisation Dependabot secret named `ORG_TF_CICD_APP_PRIVATE_KEY`. A refused one
+  runs nothing and gets a comment saying why. The steps, with `dependabot.yml`:
+  [Workflow-terraform-module-ci.md, setting it up](Workflow-terraform-module-ci.md#setting-it-up).
 
 ## 5. The calling workflows, before and after
 
@@ -302,7 +312,8 @@ them back.
 | A unit test without `mock_provider` in a lane without credentials | The provider fails to configure | Mock it, or give the lane the credential (§3.1) |
 | A unit test that configures the real provider and mocks only an alias (`mock_provider "azurerm" { alias = "mock" }`) | In a lane without credentials the file fails before its runs: `unable to build authorizer for Resource Manager API`, every run skipped | Make the mock the file's only provider (`mock_provider "azurerm" {}`) and drop the runs' `providers` maps; a run that only plans needs nothing else (§3.1) |
 | `.tflint.hcl` not committed | Lint fails: "could not find a TFLint config file" | The template's `.gitignore` matches `**/.tflint.hcl`; keep it force-added (`git add -f .tflint.hcl`) |
-| A stale README on a push, dispatch, schedule, fork or Dependabot pull request | The docs check fails | Regenerate with terraform-docs 0.20, or through a pull request (§2.7) |
+| A stale README on a push, dispatch, schedule, fork or Dependabot pull request | The docs check fails | Regenerate with terraform-docs 0.20, or through a pull request (§2.7); for Dependabot's, switch the admission on (§4) |
+| The admission on, the key not a Dependabot secret | An admitted Dependabot pull request's docs job fails at `🔐 Check the App's variable and secret`: `This Dependabot run cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY` | Add the key as an organisation Dependabot secret of that name, with the repository in its repository access (§2.8) |
 | The App variable or secret missing | The docs job fails on a pull request at `🔐 Check the App's variable and secret`, naming each one the repository cannot read | Give the repository access to both (§2.8) |
 | A test file outside `tests/` or not committed | It is misplaced or not seen | Move it, commit it (§2.6) |
 | `actions: read` missing | The run fails at startup, with no job and no check | Grant it (§2.3) |

@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 import urllib.parse
 
-from . import SCHEMA_VERSION, decide, environments, ordering, relevance, tests, workflow
+from . import SCHEMA_VERSION, admission, admission_facts, decide, environments, ordering, relevance, tests, workflow
 
 TITLE = "create-tf-vars-matrix"
 EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
@@ -54,9 +54,10 @@ NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
-             "record", "trigger", "ordering")
-# A module's decision has its test stage alone (docs/Module-ci.md §5).
-MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger")
+             "record", "trigger", "ordering", "admission")
+# A module's decision has its test stage and its admission head alone (docs/Module-ci.md §5).
+MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission",
+                    "comments")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -238,9 +239,14 @@ def event_facts(event_name, payload):
         return {}
     repo = head.get("repo")
     action = payload.get("action")
+    user = pull_request.get("user")
+    author = user.get("login") if isinstance(user, dict) else None
+    # The author says whose pull request it is, which a person's push does not change; only the admission's
+    # comment reads it (docs/Dependabot-admission.md §7).
     return {"action": action if isinstance(action, str) else "",
             "pull_request": {"number": pull_request["number"], "head_sha": head_sha,
-                             "is_fork": isinstance(repo, dict) and repo.get("fork") is True}}
+                             "is_fork": isinstance(repo, dict) and repo.get("fork") is True,
+                             "author": author if isinstance(author, str) else ""}}
 
 
 class _Unanswered(Exception):
@@ -428,7 +434,33 @@ def build_document(inputs, facts, tools, isdir, module=False):
     # A caller without the test stage's inputs has no test stage; one that switched it off lists nothing.
     if "terraform-test-enabled" in inputs and inputs["terraform-test-enabled"] not in (False, "false"):
         document["tests"] = gather_tests(tools, entries)
+    if _admission_applies(document, module) and event["name"] == "pull_request":
+        try:
+            document["admission"] = admission_facts.gather(tools)
+        except admission_facts.FactError as error:
+            # D11: neither admitting nor refusing on a guess; "Re-run failed jobs" decides again.
+            raise AdapterError(f"the Dependabot admission cannot be decided: {error}") from None
     return document
+
+
+def _admission_applies(document, module):
+    """Whether the admission judges this run; an invalid policy gathers nothing and the engine reports it."""
+    try:
+        policy = admission.settings(document, default_enabled=not module)
+    except environments.ConfigError:
+        return False
+    return admission.applies(document, policy)
+
+
+def admission_outputs(output):
+    """The step outputs the jobs read: whether the admission refused the run, and why in one line, and whether
+    it judged and admitted it, which the module workflow's docs push needs (docs/Dependabot-admission.md D22)."""
+    admitted = output["admission"]
+    judged = admitted["applies"] and not admitted["push_run"]
+    refused = judged and not admitted["admitted"]
+    return {"admission-refused": "true" if refused else "false",
+            "admission-reason": decide.refusal(admitted) if refused else "",
+            "admission-admitted": "true" if judged and admitted["admitted"] else "false"}
 
 
 def compact(value):
@@ -484,6 +516,14 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
         log.group("changed files", "\n".join(paths))
         shown = {**document, "changed_files": {**document["changed_files"],
                                                "files": f"{len(paths)} paths, listed in the group 'changed files'"}}
+    if "admission" in document:
+        facts = document["admission"]
+        log.group("admission facts", "\n".join(
+            [f"{item['path']}: {item['status']} ({item['kind']})" for item in facts["files"]]
+            + [f"{item['kind']} {item['address']} {item['from']} -> {item['to']}: {json.dumps(item['facts'])}"
+               for item in facts["dependencies"]]))
+        shown = {**shown, "admission": f"{len(facts['files'])} files and {len(facts['dependencies'])} dependencies, "
+                                      "listed in the group 'admission facts'"}
     log.group("decision engine input document", json.dumps(shown, indent=2, sort_keys=True, ensure_ascii=False))
     output = decide.decide(document)
     if output["errors"]:
@@ -510,6 +550,7 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
             "tests-count": str(output["tests"]["count"]),
             "tests-active": "true" if output["tests"]["active"] else "false",
             "tests-required-missing": "true" if output["tests"]["missing"] else "false",
+            **admission_outputs(output),
         }
         for name, value in outputs.items():
             workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
@@ -529,6 +570,7 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
         "tests-matrix-json": compact(output["tests"]["matrix"]),
         "tests-count": str(output["tests"]["count"]),
         "tests-active": "true" if output["tests"]["active"] else "false",
+        **admission_outputs(output),
     }
     for name, value in outputs.items():
         workflow.append_output(environ["GITHUB_OUTPUT"], name, value)

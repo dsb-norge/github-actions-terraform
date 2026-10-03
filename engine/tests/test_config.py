@@ -25,7 +25,7 @@ YAML_SETTINGS = {"goals-yml", "terraform-init-additional-dirs-yml", "extra-envs-
 WORKFLOW_ONLY = {"environments-yml", "trigger-events-yml", "path-relevance-enabled", "allow-failing-terraform-tests",
                  "terraform-test-enabled", "terraform-test-exclude-paths-yml", "terraform-test-lanes-yml",
                  "terraform-test-runs-on", "terraform-test-timeout-minutes", "pr-auto-merge-app-id",
-                 "pr-auto-merge-app-private-key-secret"}
+                 "pr-auto-merge-app-private-key-secret", "dependabot-admission-enabled", "dependabot-admission-yml"}
 
 
 def errors(*entries):

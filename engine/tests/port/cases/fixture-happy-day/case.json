@@ -26,7 +26,9 @@
     "pr-auto-merge-enabled": "true",
     "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",
     "pr-auto-merge-limits-yml": "plan-max-count-add: 0\nplan-max-count-change: 0\nplan-max-count-destroy: 0\nplan-max-count-import: -1\nplan-max-count-move: -1\nplan-max-count-remove: 0\n",
-    "trigger-events-yml": "[pull_request, push, workflow_dispatch]"
+    "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": ""
   },
   "ref_name": "main",
   "default_branch": "main",

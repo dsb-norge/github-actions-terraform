@@ -410,18 +410,28 @@ class EventFactsTest(unittest.TestCase):
                          adapter.event_facts("push", {"created": "true", "forced": 1, "deleted": None, "before": "0"}))
 
     def test_a_pull_request_reports_its_action_number_head_and_fork(self):
-        self.assertEqual({"action": "opened", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
+        self.assertEqual({"action": "opened", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False,
+                                                               "author": ""}},
                          adapter.event_facts("pull_request", {"action": "opened",
                                                               "pull_request": {"number": 87, "head": {"sha": "abc"}}}))
         head = {"sha": "abc", "repo": {"fork": True}}
-        self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": True}},
-                         adapter.event_facts("pull_request", {"pull_request": {"number": 87, "head": head}}))
+        self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": True,
+                                                         "author": "dependabot[bot]"}},
+                         adapter.event_facts("pull_request", {"pull_request": {
+                             "number": 87, "head": head, "user": {"login": "dependabot[bot]"}}}))
+
+    def test_an_author_that_is_not_a_login_is_empty(self):
+        for user in (None, [], {}, {"login": 5}, {"login": None}):
+            with self.subTest(user=user):
+                payload = {"pull_request": {"number": 87, "head": {"sha": "abc"}, "user": user}}
+                self.assertEqual("", adapter.event_facts("pull_request", payload)["pull_request"]["author"])
 
     def test_only_a_true_fork_is_a_fork(self):
         for repo in (None, {}, {"fork": "true"}, {"fork": False}, []):
             with self.subTest(repo=repo):
                 payload = {"action": 5, "pull_request": {"number": 87, "head": {"sha": "abc", "repo": repo}}}
-                self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}},
+                self.assertEqual({"action": "", "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False,
+                                                                 "author": ""}},
                                  adapter.event_facts("pull_request", payload))
 
     def test_a_pull_request_payload_without_them_reports_nothing(self):
@@ -648,7 +658,8 @@ class RelevanceDocumentTest(unittest.TestCase):
     def test_the_document_carries_the_event_facts_and_the_changed_files(self):
         document = adapter.build_document(DEFAULT_INPUTS, self.FACTS, FakeTools(api=self.API), lambda path: True)
         self.assertEqual({"name": "pull_request", "ref_name": "x", "ref_type": "branch", "action": "",
-                          "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False}}, document["event"])
+                          "pull_request": {"number": 87, "head_sha": "abc", "is_fork": False, "author": ""}},
+                         document["event"])
         self.assertEqual({"available": True, "truncated": False, "error": None, "api_head_sha": "abc", "count": 1,
                           "files": ["envs/env-a/main.tf"]}, document["changed_files"])
         self.assertEqual({"mode": "diff", "reason": "diff", "changed_count": 1}, decide.decide(document)["relevance"])
@@ -661,7 +672,8 @@ class RelevanceDocumentTest(unittest.TestCase):
                                                   tools, lambda path: True)
                 self.assertNotIn("changed_files", document)
                 self.assertEqual([], tools.endpoints())
-                self.assertEqual({"number": 87, "head_sha": "abc", "is_fork": False}, document["event"]["pull_request"])
+                self.assertEqual({"number": 87, "head_sha": "abc", "is_fork": False, "author": ""},
+                                 document["event"]["pull_request"])
 
     def test_an_event_without_changed_files_has_no_section(self):
         facts = {**self.FACTS, "event_name": "schedule", "payload": {}}
@@ -744,8 +756,11 @@ class RunTest(unittest.TestCase):
         self.assertEqual(["matrix-json", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
                           "stage-1-count", "stage-2-count", "stage-3-count", "affected-count", "unaffected-count",
                           "relevance-mode", "relevance-reason", "changed-count", "relevance-file", "tests-matrix-json",
-                          "tests-count", "tests-active"],
+                          "tests-count", "tests-active", "admission-refused", "admission-reason",
+                          "admission-admitted"],
                          list(outputs))
+        self.assertEqual(("false", "", "false"), (outputs["admission-refused"], outputs["admission-reason"],
+                                                  outputs["admission-admitted"]))
         self.assertEqual(("1", "0", "0", '{"environment":[],"include":[]}'),
                          (outputs["stage-1-count"], outputs["stage-2-count"], outputs["stage-3-count"],
                           outputs["matrix-stage-2-json"]))
@@ -761,7 +776,7 @@ class RunTest(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
         self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
-                          "warnings", "record", "trigger", "ordering"}, set(published))
+                          "warnings", "record", "trigger", "ordering", "admission"}, set(published))
         self.assertEqual((["env-a", "b"], ["run", "skip"],
                           {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}),
                          ([e["environment"] for e in published["environments"]],
@@ -1053,3 +1068,107 @@ class ToolsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdmissionTest(unittest.TestCase):
+    """docs/Dependabot-admission.md §8: the facts are gathered only for a run the admission judges."""
+
+    PAYLOAD = {"repository": {"default_branch": "main"}, "action": "synchronize",
+               "pull_request": {"number": 87, "head": {"sha": "abc"}, "user": {"login": "dependabot[bot]"}}}
+
+    def run_with(self, facts=None, error=None, inputs=None, event="pull_request", module=False):
+        from unittest import mock
+        from dsb_tf_engine import admission_facts
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "path-relevance-enabled": False, **(inputs or {})},
+                        payload=self.PAYLOAD if event == "pull_request" else PUSH_PAYLOAD,
+                        environ={"GITHUB_EVENT_NAME": event, "GITHUB_ACTOR": "dependabot[bot]",
+                                 "GITHUB_WORKFLOW": "CI"})
+        calls = []
+
+        def gather(tools):
+            calls.append(tools)
+            if error:
+                raise admission_facts.FactError(error)
+            return facts
+
+        with mock.patch.object(admission_facts, "gather", gather):
+            if module:
+                tools = FakeTools()
+                code = adapter.run(runner.inputs_file, runner.environ, runner.log, tools, lambda path: True, True)
+            else:
+                code = runner.run()
+        return code, runner, calls
+
+    def test_a_refused_pull_request(self):
+        facts = support.admission_facts([support.provider_dependency(published=support.NOW)])
+        code, runner, calls = self.run_with(facts)
+        self.assertEqual((0, 1), (code, len(calls)))
+        outputs = runner.outputs()
+        self.assertEqual(("true", "1 of 1 dependencies failed", "false"),
+                         (outputs["admission-refused"], outputs["admission-reason"], outputs["admission-admitted"]))
+        log = runner.log.getvalue()
+        self.assertIn("provider registry.terraform.io/hashicorp/azurerm 4.41.0 -> 4.42.0: {", log)
+        self.assertIn('"admission": "0 files and 1 dependencies, listed in the group \'admission facts\'"', log)
+        with open(outputs["relevance-file"], encoding="utf-8") as handle:
+            self.assertEqual(False, json.load(handle)["admission"]["admitted"])
+
+    def test_the_facts_list_the_files_too(self):
+        facts = support.admission_facts([], [{"path": "x.tf", "status": "added", "kind": "other"}])
+        _, runner, _ = self.run_with(facts)
+        self.assertIn("x.tf: added (other)", runner.log.getvalue())
+        self.assertEqual(("true", "1 problem with the change"),
+                         (runner.outputs()["admission-refused"], runner.outputs()["admission-reason"]))
+
+    def test_an_admitted_pull_request(self):
+        code, runner, _ = self.run_with(support.admission_facts())
+        self.assertEqual(0, code)
+        self.assertEqual(("false", "", "true"), (runner.outputs()["admission-refused"], runner.outputs()["admission-reason"],
+                                                 runner.outputs()["admission-admitted"]))
+
+    def test_a_fact_that_cannot_be_gathered_fails_the_step(self):
+        code, runner, _ = self.run_with(error="the versions of provider azure/azapi: HTTP 503")
+        self.assertEqual(1, code)
+        self.assertIn("the Dependabot admission cannot be decided: the versions of provider azure/azapi: HTTP 503",
+                      runner.log.getvalue())
+        self.assertEqual("", runner.output())
+
+    def test_nothing_is_gathered_where_the_admission_does_not_judge(self):
+        for kwargs in (dict(inputs={"dependabot-admission-enabled": False}), dict(event="push"),
+                       dict(inputs={"dependabot-admission-yml": '{"allow": 5}'})):
+            with self.subTest(kwargs=kwargs):
+                code, runner, calls = self.run_with(support.admission_facts(), **kwargs)
+                self.assertEqual([], calls)
+                self.assertEqual(2 if "dependabot-admission-yml" in kwargs.get("inputs", {}) else 0, code)
+
+    def test_whether_it_applies_is_a_boolean(self):
+        document = support.dependabot_pull_request(support.document())
+        self.assertIs(True, adapter._admission_applies(document, False))
+        document["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"allow": 5})
+        self.assertIs(False, adapter._admission_applies(document, False))
+
+    def test_the_facts_group(self):
+        facts = support.admission_facts([support.provider_dependency()], [{"path": "x.tf", "status": "added",
+                                                                           "kind": "other"}])
+        _, runner, _ = self.run_with(facts)
+        log = runner.log.getvalue()
+        start = log.index("::group::create-tf-vars-matrix: admission facts\n")
+        block = log[start:log.index("::endgroup::", start)].splitlines()
+        self.assertEqual("x.tf: added (other)", block[2])
+        self.assertTrue(block[3].startswith("provider registry.terraform.io/hashicorp/azurerm 4.41.0 -> 4.42.0: {"))
+
+    def test_a_module_s_admission_is_opt_in(self):
+        module_inputs = {"terraform-version": "latest", "runs-on": "ubuntu-latest", "terraform-test-enabled": True}
+        from unittest import mock
+        from dsb_tf_engine import admission_facts
+        for switch, gathered in ((None, 0), (True, 1)):
+            with self.subTest(switch=switch):
+                inputs = module_inputs if switch is None else {**module_inputs, "dependabot-admission-enabled": switch}
+                runner = Runner(self, inputs=inputs, payload=self.PAYLOAD,
+                                environ={"GITHUB_EVENT_NAME": "pull_request", "GITHUB_ACTOR": "dependabot[bot]"})
+                calls = []
+                with mock.patch.object(admission_facts, "gather",
+                                       lambda tools: calls.append(1) or support.admission_facts([], locks={})):
+                    code = adapter.run(runner.inputs_file, runner.environ, runner.log, FakeTools(), lambda p: True, True)
+                self.assertEqual((0, gathered), (code, len(calls)))
+                self.assertEqual("false", runner.outputs()["admission-refused"])
+                self.assertEqual("false" if switch is None else "true", runner.outputs()["admission-admitted"])

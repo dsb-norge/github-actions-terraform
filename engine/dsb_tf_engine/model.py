@@ -14,7 +14,8 @@ class DocumentError(Exception):
 
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
 # Present only when the adapter fetched them; absent means "relevance not computed".
-OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode")
+# admission: the facts of a Dependabot run the admission judges (docs/Dependabot-admission.md §8).
+OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission")
 # Absent means the project workflow's decision; a module decides its test stage alone (docs/Module-ci.md §5).
 MODES = ("project", "module")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
@@ -63,6 +64,71 @@ def _is_tests(value):
                     for lock in locks.values()))
 
 
+ADMISSION_KEYS = ("now", "files", "dependencies", "locks")
+FILE_STATUSES = ("modified", "added", "removed", "renamed", "changed")
+PROVIDER_FACTS = ("published", "keys_from", "keys_to", "vouched", "class_from", "class_to", "zh", "shasums")
+
+
+def _is_lock(value):
+    """A parsed lock file: address to its version, constraints and hashes; null when it could not be read."""
+    return value is None or (isinstance(value, dict) and all(
+        isinstance(block, dict) and set(block) == {"version", "constraints", "hashes"}
+        and isinstance(block["version"], str) and isinstance(block["constraints"], (str, type(None)))
+        and _is_strings(block["hashes"]) for block in value.values()))
+
+
+def _is_tf_file(item):
+    return (set(item) == {"path", "status", "kind", "lines", "unmapped"} and _is_strings(item["unmapped"])
+            and isinstance(item["lines"], list) and all(
+                isinstance(line, dict) and set(line) == {"old", "new"}
+                and all(isinstance(line[key], (str, type(None))) for key in ("old", "new")) for line in item["lines"]))
+
+
+def _is_lock_file(item):
+    return set(item) == {"path", "status", "kind", "before", "after"} and _is_lock(item["before"]) \
+        and _is_lock(item["after"])
+
+
+def _is_admission_file(item):
+    return (isinstance(item, dict) and isinstance(item.get("path"), str) and item.get("status") in FILE_STATUSES
+            and isinstance(item.get("kind"), str)
+            and (_is_tf_file(item) if item["kind"] == "tf" else _is_lock_file(item) if item["kind"] == "lock"
+                 else set(item) == {"path", "status", "kind"}))
+
+
+def _is_published(value):
+    return value is None or _is_count(value)
+
+
+def _is_module(item):
+    return (set(item) == {"kind", "address", "from", "to", "files", "facts", "source_kind", "namespace", "name"}
+            and all(isinstance(item[key], str) for key in ("source_kind", "namespace", "name"))
+            and set(item["facts"]) == {"published"} and _is_published(item["facts"]["published"]))
+
+
+def _is_provider(item):
+    facts = item["facts"]
+    return (set(item) == {"kind", "address", "from", "to", "files", "facts", "locked"} and isinstance(item["locked"], bool)
+            and set(facts) == set(PROVIDER_FACTS) and _is_published(facts["published"])
+            and isinstance(facts["vouched"], bool)
+            and all(_is_strings(facts[key]) for key in ("keys_from", "keys_to", "zh", "shasums"))
+            and all(isinstance(facts[key], str) for key in ("class_from", "class_to")))
+
+
+def _is_dependency(item):
+    return (isinstance(item, dict) and item.get("kind") in ("provider", "module")
+            and all(isinstance(item.get(key), str) for key in ("address", "from", "to"))
+            and _is_strings(item.get("files")) and isinstance(item.get("facts"), dict)
+            and (_is_module(item) if item["kind"] == "module" else _is_provider(item)))
+
+
+def _is_admission(value):
+    return (isinstance(value, dict) and set(value) == set(ADMISSION_KEYS) and _is_count(value["now"])
+            and isinstance(value["files"], list) and all(_is_admission_file(item) for item in value["files"])
+            and isinstance(value["dependencies"], list) and all(_is_dependency(item) for item in value["dependencies"])
+            and isinstance(value["locks"], dict) and all(isinstance(v, bool) for v in value["locks"].values()))
+
+
 def check(document):
     """Raise DocumentError unless the document has the shape the engine reads."""
     _require(isinstance(document, dict), "input document: not a JSON object")
@@ -91,6 +157,8 @@ def check(document):
                  and isinstance(pull_request.get("head_sha"), str) and isinstance(pull_request.get("is_fork"), bool),
                  "input document: 'event.pull_request' needs the integer 'number', the string 'head_sha' and the "
                  "boolean 'is_fork'")
+        _require(isinstance(pull_request.get("author", ""), str),
+                 "input document: 'event.pull_request.author' is not a string")
     _require(isinstance(event.get("action", ""), str), "input document: 'event.action' is not a string")
     _require(isinstance(event.get("actor", ""), str), "input document: 'event.actor' is not a string")
     _require(isinstance(event.get("triggering_actor", ""), str),
@@ -127,6 +195,10 @@ def check(document):
                  "'count' and 'files', typed as the adapter reports them")
     _require(document.get("mode", "project") in MODES,
              f"input document: 'mode' is {document.get('mode')!r}, expected one of {', '.join(MODES)}")
+    if "admission" in document:
+        _require(_is_admission(document["admission"]),
+                 "input document: 'admission' needs exactly 'now', 'files', 'dependencies' and 'locks', shaped as "
+                 "docs/Dependabot-admission.md §8 describes")
     if "tests" in document:
         _require(_is_tests(document["tests"]),
                  "input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "

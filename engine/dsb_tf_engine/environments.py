@@ -47,6 +47,8 @@ TEST_INPUTS = (
     "terraform-test-timeout-minutes",
 )
 
+# The Dependabot admission's inputs: read by admission.py, never forwarded (docs/Dependabot-admission.md §6).
+ADMISSION_INPUTS = ("dependabot-admission-enabled", "dependabot-admission-yml")
 # The list settings, replaced per environment: the environment's value, else the global one, a plain
 # string written alone being its one item and none an empty list.
 REPLACE_FIELDS = ("goals-yml", "pr-auto-merge-from-actors-yml", "terraform-init-additional-dirs-yml")
@@ -91,7 +93,7 @@ PER_ENVIRONMENT_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "ca
                           "terraform-version", "tflint-version", "verify-lock-file")
 # path-relevance-enabled is refused per environment by relevance.py, with its own advice.
 WORKFLOW_ONLY_INPUTS = ("environments-yml", "trigger-events-yml", "path-relevance-enabled", *TEST_INPUTS,
-                        "pr-auto-merge-app-id", "pr-auto-merge-app-private-key-secret")
+                        *ADMISSION_INPUTS, "pr-auto-merge-app-id", "pr-auto-merge-app-private-key-secret")
 # What the engine writes into a row itself.
 ENGINE_SET_FIELDS = ("goals-granted", "caller-repo-default-branch", "caller-repo-calling-branch",
                      "caller-repo-is-on-default-branch")
@@ -480,7 +482,7 @@ def build_row(document, globals_, index, environment):
 
     # Generic forwarding: an input the environment does not set is copied in as a string.
     for input_name in sorted(document["workflow_inputs"]):
-        if input_name not in row and input_name not in YML_INPUTS and input_name not in TEST_INPUTS:
+        if input_name not in row and input_name not in (*YML_INPUTS, *TEST_INPUTS, *ADMISSION_INPUTS):
             row[input_name] = values.get_val(document["workflow_inputs"][input_name])
 
     row.setdefault("github-environment", name)

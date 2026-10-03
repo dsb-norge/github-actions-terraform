@@ -2547,7 +2547,7 @@ problems = []
 create = jobs["create-matrix"]
 names = ["matrix-json", "affected-count", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
          "stage-1-count", "stage-2-count", "stage-3-count", "unaffected-count", "relevance-mode", "relevance-reason",
-         "changed-count", "tests-matrix-json", "tests-count", "tests-active"]
+         "changed-count", "tests-matrix-json", "tests-count", "tests-active", "admission-refused", "admission-reason"]
 if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
@@ -3248,18 +3248,20 @@ else
 fi
 
 # ============================================================================
-# F20 — the module workflow's test jobs are the project workflow's, step for step.
+# F20 — the module workflow's test jobs and seed job are the project workflow's, step for step.
 #
 # docs/Module-ci.md D2: one test stage for both kinds of repository, written out in each workflow
 # and held together here. Everything but `needs` and `if` must be equal: the name, the runner, the
 # timeout, the permissions, the environment, the strategy, the concurrency and every step. The
 # module test job waits for the docs job and skips when it pushed; the module summary job runs on
-# every event with test files, since a module tests on dispatches and schedules too.
+# every event with test files, since a module tests on dispatches and schedules too. The seed job
+# posts a refused Dependabot pull request's admission head in both (docs/Dependabot-admission.md
+# D21); the module's runs on Dependabot's pull requests alone.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}TEST ${TESTS_RUN}: F20 - the module workflow's test jobs are the project workflow's${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F20 - the module workflow's test and seed jobs are the project workflow's${NC}"
 echo -e "${BLUE}========================================${NC}"
 _f20_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
 import sys, yaml
@@ -3271,7 +3273,7 @@ def jobs(path):
 project = jobs('.github/workflows/terraform-ci-cd-default.yml')
 module = jobs('.github/workflows/terraform-module-ci.yaml')
 problems = []
-for name in ('terraform-test', 'terraform-test-summary'):
+for name in ('terraform-test', 'terraform-test-summary', 'seed-pr-comments'):
     if name not in module:
         problems.append(f"the module workflow has no job '{name}'")
         continue
@@ -3283,6 +3285,16 @@ for name in ('terraform-test', 'terraform-test-summary'):
     if len(module[name].get('steps', [])) != len(project[name].get('steps', [])):
         problems.append(f"job '{name}': {len(module[name].get('steps', []))} steps, the project workflow has "
                         f"{len(project[name].get('steps', []))}")
+
+# The module's seed posts the admission head alone, which only a pull request Dependabot opened can hold
+# (docs/Dependabot-admission.md D21): the project's condition and that one clause more.
+seed = module.get('seed-pr-comments', {})
+if seed.get('needs') != 'create-matrix':
+    problems.append(f"the module seed job must need create-matrix, not {seed.get('needs')}")
+seed_if = ' '.join(str(seed.get('if', '')).split())
+project_if = ' '.join(str(project['seed-pr-comments'].get('if', '')).split())
+if seed_if != f"{project_if} && github.event.pull_request.user.login == 'dependabot[bot]'":
+    problems.append(f"the module seed job's if is not the project's for Dependabot's pull requests: {seed_if!r}")
 
 test = module.get('terraform-test', {})
 if sorted(test.get('needs', [])) != ['create-matrix', 'generate-docs']:
@@ -3539,6 +3551,19 @@ for path in WORKFLOWS:
                 if rc != want_rc or len(errors) != len(want_named) or named != sorted(want_named):
                     problems.append(f"{where}: with APP_ID='{app_id}' and the key {'set' if key_set == 'true' else 'unset'}, "
                                     f"the check exited {rc} with {len(errors)} error(s) naming {named}; expected {want_rc}, {sorted(want_named)}")
+            # The docs job also runs on an admitted Dependabot pull request, which reads Dependabot secrets
+            # only, so its check names the Dependabot secret there (docs/Dependabot-admission.md D22).
+            if job_name == "generate-docs":
+                if env.get("ACTOR") != "${{ github.actor }}":
+                    problems.append(f"{where}: '{CHECK}' does not read the actor")
+                for key_set, want_rc in (("false", 1), ("true", 0)):
+                    rc, out = run(before["run"], {"APP_ID": "123", "PRIVATE_KEY_SET": key_set, "ACTOR": "dependabot[bot]"})
+                    errors = [line for line in out.splitlines() if line.startswith("::error")]
+                    if rc != want_rc or len(errors) != want_rc or (errors and (
+                            "cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY." not in errors[0]
+                            or "Dependabot secret" not in errors[0])):
+                        problems.append(f"{where}: on a Dependabot run with the key {'set' if key_set == 'true' else 'unset'}, "
+                                        f"the check exited {rc} with {errors}; expected {want_rc} and the Dependabot secret named")
             if after.get("name") == EXPLAIN:
                 rc, out = run(after["run"], {})
                 if rc != 1 or "ORG_TF_CICD_APP_ID" not in out or not out.startswith("::error"):
@@ -3557,6 +3582,181 @@ if [[ "${_f24_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f24_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F25 — the Dependabot admission is wired as the spec says (docs/Dependabot-admission.md §10).
+#
+# Both workflows declare its two inputs with their defaults, check out the merge commit's parent for the
+# change the engine judges, and fail the conclusion on a refused run before anything else is judged, so
+# allow-failing never softens it (D19); the conclusion's run block is executed here on a refused run. The
+# project workflow's environment init reads the lock only on a Dependabot run the admission judges (D10),
+# and the module workflow validates a Dependabot pull request only once create-matrix admitted it (D16).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F25 - the Dependabot admission's inputs, checkout, init lock and conclusions are wired${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f25_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, subprocess, sys, yaml
+
+PROJECT, MODULE = ".github/workflows/terraform-ci-cd-default.yml", ".github/workflows/terraform-module-ci.yaml"
+LOCK = "${{ github.actor == 'dependabot[bot]' && inputs.dependabot-admission-enabled && 'readonly' || 'default' }}"
+problems = []
+
+def load(path):
+    return yaml.safe_load(open(path, encoding="utf-8"))
+
+def run(script, env):
+    done = subprocess.run(["bash", "-c", script], env={"PATH": os.environ["PATH"], **env}, capture_output=True,
+                          text=True)
+    return done.returncode, done.stdout
+
+for path, default in ((PROJECT, True), (MODULE, False)):
+    workflow = load(path)
+    inputs = workflow[True]["workflow_call"]["inputs"]
+    switch, policy = inputs.get("dependabot-admission-enabled", {}), inputs.get("dependabot-admission-yml", {})
+    if (switch.get("type"), switch.get("default")) != ("boolean", default):
+        problems.append(f"{path}: dependabot-admission-enabled is not a boolean defaulting to {default}")
+    if (policy.get("type"), policy.get("default")) != ("string", ""):
+        problems.append(f"{path}: dependabot-admission-yml is not a string defaulting to ''")
+    create = workflow["jobs"]["create-matrix"]
+    checkouts = [step for step in create["steps"] if str(step.get("uses", "")).startswith("actions/checkout")]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("fetch-depth") != 2:
+        problems.append(f"{path}: create-matrix does not check out with fetch-depth 2")
+    for name in ("admission-refused", "admission-reason"):
+        if create.get("outputs", {}).get(name) != f"${{{{ steps.create-matrix.outputs.{name} }}}}":
+            problems.append(f"{path}: create-matrix does not output {name}")
+    step = workflow["jobs"]["conclusion"]["steps"][0]
+    env = step.get("env", {})
+    if env.get("ADMISSION_REFUSED") != "${{ needs.create-matrix.outputs.admission-refused }}" \
+            or env.get("ADMISSION_REASON") != "${{ needs.create-matrix.outputs.admission-reason }}":
+        problems.append(f"{path}: the conclusion does not read the admission's outputs")
+    green = {name: "success" for name in env if name.endswith("_RESULT")}
+    case = {**green, "CREATE_MATRIX_RESULT": "success", "ADMISSION_REFUSED": "true",
+            "ADMISSION_REASON": "1 of 2 dependencies failed", "STAGE_1_COUNT": "0", "STAGE_2_COUNT": "0",
+            "STAGE_3_COUNT": "0", "AFFECTED_COUNT": "0", "DOCS_PUSHED": "false", "TESTS_ACTIVE": "false",
+            "TESTS_REQUIRED_MISSING": "false", "GITHUB_STEP_SUMMARY": os.devnull}
+    rc, out = run(step["run"], case)
+    if rc != 1 or "Dependabot pull request not admitted: 1 of 2 dependencies failed; see the admission comment" \
+            not in out:
+        problems.append(f"{path}: the conclusion does not fail a refused run with its reason (exit {rc}): {out!r}")
+    rc, out = run(step["run"], {**case, "ADMISSION_REFUSED": "false", "ADMISSION_REASON": ""})
+    if "not admitted" in out:
+        problems.append(f"{path}: the conclusion speaks of the admission on a run it did not refuse")
+
+jobs = load(PROJECT)["jobs"]
+inits = [step for name in ("terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3") for step in jobs[name]["steps"]
+         if str(step.get("uses", "")).startswith("dsb-norge/github-actions-terraform/terraform-init@")]
+if len(inits) != 3 or any(step.get("with", {}).get("lockfile-mode") != LOCK for step in inits):
+    problems.append(f"the environment init's lockfile-mode is not {LOCK}")
+validate = load(MODULE)["jobs"]["validate"]
+condition = " ".join(str(validate.get("if", "")).split())
+if "create-matrix" not in validate.get("needs", []) or (
+        "github.actor != 'dependabot[bot]' || (needs.create-matrix.result == 'success' && "
+        "needs.create-matrix.outputs.admission-refused != 'true')") not in condition:
+    problems.append("the module's validate does not wait for the admission on a Dependabot run")
+print(f"checked both workflows' inputs, checkout, outputs and conclusion, and {len(inits)} environment init(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f25_rc=0 || _f25_rc=$?
+if [[ "${_f25_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f25_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f25_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F26 — the module docs job updates Dependabot's pull request only when the admission admitted it.
+#
+# docs/Dependabot-admission.md D22: the App's docs commit starts a run that is the App's, which
+# nobody judges, so on a Dependabot run the docs job pushes only when create-matrix judged and
+# admitted the run, and only on top of the commit the run evaluated (P23). The commit message keeps
+# Dependabot rebasing ('[dependabot skip]'), and the terraform-docs action passes it on. The pin
+# step's run block is executed here against real repositories.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F26 - the module docs job pushes to Dependabot's pull request only when admitted${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f26_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, subprocess, sys, tempfile, yaml
+
+problems = []
+with open(".github/workflows/terraform-module-ci.yaml", encoding="utf-8") as fh:
+    jobs = yaml.safe_load(fh)["jobs"]
+create, docs = jobs["create-matrix"], jobs["generate-docs"]
+if create.get("outputs", {}).get("admission-admitted") != "${{ steps.create-matrix.outputs.admission-admitted }}":
+    problems.append("create-matrix does not output admission-admitted")
+if docs.get("needs") != "create-matrix" or docs.get("if") != "${{ !cancelled() }}":
+    problems.append(f"the docs job does not wait for create-matrix whatever its result: needs {docs.get('needs')}, if {docs.get('if')}")
+steps = {step.get("id"): step for step in docs["steps"]}
+gate = ("(github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')")
+for step_id in ("app-access", "app-token"):
+    condition = " ".join(str(steps.get(step_id, {}).get("if", "")).split())
+    if gate not in condition:
+        problems.append(f"the docs job's {step_id} step does not require an admitted run on Dependabot's: {condition!r}")
+order = [step.get("id") or step.get("name") for step in docs["steps"]]
+pin = steps.get("pin", {})
+if "pin" not in order or order.index("pin") != order.index("docs") - 1 or "⬇ Checkout" not in order[:order.index("pin")]:
+    problems.append(f"the pin step does not sit between the checkout and the docs step: {order}")
+if pin.get("if") != "steps.app-token.outcome == 'success'" \
+        or (pin.get("env") or {}).get("HEAD_SHA") != "${{ github.event.pull_request.head.sha }}":
+    problems.append("the pin step does not compare against the pull request's head on every pushing run")
+with_ = steps.get("docs", {}).get("with") or {}
+if with_.get("push") != "${{ steps.app-token.outcome == 'success' && steps.pin.outputs.at-head == 'true' && 'true' || 'false' }}":
+    problems.append(f"the docs step pushes without the pin: {with_.get('push')}")
+if with_.get("commit-message") != ("${{ github.actor == 'dependabot[bot]' && 'terraform-docs: automated action "
+                                   "[dependabot skip]' || 'terraform-docs: automated action' }}"):
+    problems.append(f"the docs commit message does not keep Dependabot rebasing: {with_.get('commit-message')}")
+
+def git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+
+with tempfile.TemporaryDirectory() as work:
+    git(work, "init", "-q")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "evaluated")
+    evaluated = git(work, "rev-parse", "HEAD")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "newer")
+    newer = git(work, "rev-parse", "HEAD")
+    for head, want in ((newer, "true"), (evaluated, "false")):
+        output = os.path.join(work, "output")
+        open(output, "w").close()
+        done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", pin.get("run", "")], cwd=work, capture_output=True,
+                              text=True, env={"PATH": os.environ["PATH"], "HEAD_SHA": head, "GITHUB_OUTPUT": output})
+        got = open(output).read().strip()
+        if done.returncode != 0 or got != f"at-head={want}":
+            problems.append(f"the pin step with the tip {'at' if want == 'true' else 'past'} the evaluated head wrote "
+                            f"{got!r} (exit {done.returncode}); expected at-head={want}")
+
+with open("terraform-docs/action.yaml", encoding="utf-8") as fh:
+    action = yaml.safe_load(fh)
+if action["inputs"].get("commit-message", {}).get("default") != "terraform-docs: automated action":
+    problems.append("the terraform-docs action has no commit-message input defaulting to upstream's message")
+passed = [step.get("with", {}).get("git-commit-message") for step in action["runs"]["steps"]
+          if str(step.get("uses", "")).startswith("terraform-docs/gh-actions@")]
+if passed != ["${{ inputs.commit-message }}"] * 2:
+    problems.append(f"the terraform-docs steps do not both take the commit message: {passed}")
+print("checked the docs job's gate, pin, push and commit message, and the action's input")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f26_rc=0 || _f26_rc=$?
+if [[ "${_f26_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f26_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f26_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

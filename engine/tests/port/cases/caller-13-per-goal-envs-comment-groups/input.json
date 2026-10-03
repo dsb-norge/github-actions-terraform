@@ -41,6 +41,8 @@
     "allow-failing-terraform-tests": false,
     "apply-extract-include-outputs": false,
     "cache-terraform-modules": true,
+    "dependabot-admission-enabled": true,
+    "dependabot-admission-yml": "",
     "environments-yml": "- environment: \"env-a\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/a\"\n- environment: \"env-b\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/b\"\n- environment: \"env-c\"\n  runs-on: \"runner-a\"\n  pr-comment-group: \"group-a\"\n  url: \"https://example.com/c\"\n- environment: \"env-d\"\n  runs-on: \"runner-b\"\n  pr-comment-group: \"group-b\"\n  url: \"https://example.com/d\"\n",
     "extra-envs-from-secrets-per-goal-yml": "{}",
     "extra-envs-from-secrets-yml": "ARM_TENANT_ID: SECRET_A\nARM_SUBSCRIPTION_ID: SECRET_B\nARM_CLIENT_ID: SECRET_C\n",
@@ -75,6 +77,10 @@
       {}
     ],
     "inputs": {
+      "dependabot-admission-yml": {
+        "ok": true,
+        "value": null
+      },
       "environments-yml": {
         "ok": true,
         "value": [
