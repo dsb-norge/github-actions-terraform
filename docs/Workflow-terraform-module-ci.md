@@ -182,6 +182,61 @@ With `dependabot-admission-enabled: true`, a run Dependabot starts first meets t
 
 A Dependabot bump usually changes the README too, since terraform-docs lists the providers' constraints and the modules' versions. On an admitted pull request the docs job commits the regenerated README to Dependabot's branch, as it does on a person's pull request; the commit message carries `[dependabot skip]`, so Dependabot keeps rebasing and updating the pull request, and a rebase drops the commit and the next admitted run makes it again. The commit starts a run of its own, which is the App's, not Dependabot's: it is not judged, as a person's push is not, and it reads the repository's Actions secrets. It carries nothing the admission has not admitted, because the docs job commits only on top of the commit its run evaluated; when Dependabot has pushed since, it commits nothing and that newer commit's own run decides. With the admission off, a Dependabot pull request's README is checked and a stale one fails, since a commit would hand a change nobody judged to a run that reads every secret.
 
+#### Setting it up
+
+For a module repository whose dependencies Dependabot keeps current:
+
+1. **`.github/dependabot.yml`** on the default branch. The module's own directory is enough; add `/examples/*` when the examples pin versions of their own.
+
+   ```yaml
+   version: 2
+   updates:
+     - package-ecosystem: "terraform"
+       directories: ["/"]
+       schedule:
+         interval: "weekly"
+       commit-message:
+         prefix: "chore(deps)"
+   ```
+
+   Write each `required_providers` entry in the block form, `source` and `version` on lines of their own: Dependabot does not update an entry written on one line ([project workflow](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission)).
+
+2. **The admission**, in the calling workflow's `with:`:
+
+   ```yaml
+         dependabot-admission-enabled: true
+         # dependabot-admission-yml: |   # only for publishers outside the built-in allow list
+         #   allow:
+         #     - cloudposse/label
+   ```
+
+3. **Lane IDs as plain values.** A credentialed lane reads its IDs from its `extra-envs-yml` on a Dependabot run, since a Dependabot run reads no environment secret; the IDs are not secret, the GitHub Environment's OIDC subject is what the identity trusts:
+
+   ```yaml
+         terraform-test-lanes-yml: |
+           - name: integration
+             match: ["tests/integration-*.tftest.hcl"]
+             github-environment: auto     # tftest-integration; ARM_USE_OIDC is assumed there
+             extra-envs-yml:
+               ARM_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+               ARM_SUBSCRIPTION_ID: "00000000-0000-0000-0000-000000000000"
+               ARM_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
+   ```
+
+4. **The organisation's settings**, by an organisation owner, with the repository in the repository access of each:
+
+   | Setting | Kind | Read by |
+   |---|---|---|
+   | `ORG_TF_CICD_APP_ID` | Actions variable | every run, Dependabot's included: a Dependabot run reads Actions variables |
+   | `ORG_TF_CICD_APP_PRIVATE_KEY` | Actions secret | the docs job on a person's pull request and on the App's own run, and the release workflow |
+   | `ORG_TF_CICD_APP_PRIVATE_KEY` | **Dependabot secret**, the same key | the docs job on an admitted Dependabot pull request: a Dependabot run reads Dependabot secrets only |
+
+   The App stays installed on the repository with write access to contents, as for the docs commit on any pull request. Keep it installed on the module repositories alone: its key is in every admitted Dependabot run. When the key is rotated, update both secrets.
+
+5. **One dependency bot.** The admission judges Dependabot's pull requests only; another bot's pull requests run as a person's do, with every secret and every lane, unjudged.
+
+Then: an admitted pull request gets its README committed and its tests run, credentialed lanes included, and a person merges it; a refused one runs nothing and gets the admission comment, whose help says what to change.
+
 There is one run per ref at a time: a newer push to the same pull request waits for the running one and replaces a waiting one. A test job also queues on its file, across the repository, so two pull requests never run the same integration test at the same time.
 
 ## Documentation

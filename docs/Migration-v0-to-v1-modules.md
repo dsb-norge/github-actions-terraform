@@ -191,7 +191,8 @@ the identity.
   tests run it. An admitted one runs every lane, credentialed ones too, so a lane's IDs must be plain
   values in its `extra-envs-yml`, and gets its regenerated README committed, for which the App's key
   must also be an organisation Dependabot secret named `ORG_TF_CICD_APP_PRIVATE_KEY`. A refused one
-  runs nothing and gets a comment saying why.
+  runs nothing and gets a comment saying why. The steps, with `dependabot.yml`:
+  [Workflow-terraform-module-ci.md, setting it up](Workflow-terraform-module-ci.md#setting-it-up).
 
 ## 5. The calling workflows, before and after
 
