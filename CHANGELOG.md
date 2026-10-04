@@ -6,6 +6,19 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.2.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.1.0...v1.2.0) (2026-10-04)
+
+
+### Features
+
+* **comments:** show refused Dependabot pull requests in the summaries ([d7653f8](https://github.com/dsb-norge/github-actions-terraform/commit/d7653f866d097466335bf5593eb7c9b3015a2f5f))
+* **engine:** gather the Dependabot admission's facts in the adapter ([cdb60f2](https://github.com/dsb-norge/github-actions-terraform/commit/cdb60f260c00cb8f88b2f7275aa9b5a16eef21b5))
+* **engine:** judge Dependabot pull requests before they run Terraform ([5f1a9b7](https://github.com/dsb-norge/github-actions-terraform/commit/5f1a9b720dbff64723912bc9900ed29840cce6d6))
+* **engine:** publish the module admission head and verdict ([440bf5a](https://github.com/dsb-norge/github-actions-terraform/commit/440bf5a6bc5f307009b6db118e16b225966c2128))
+* **workflows:** commit the README on admitted Dependabot runs ([c769660](https://github.com/dsb-norge/github-actions-terraform/commit/c769660119ae3baeecc5d061d0903db628b97f65))
+* **workflows:** post the admission head in the module workflow ([99c00f8](https://github.com/dsb-norge/github-actions-terraform/commit/99c00f8dbfdc25147e8615fb345d14a2ec324c08))
+* **workflows:** run nothing for a refused Dependabot pull request ([fbf3016](https://github.com/dsb-norge/github-actions-terraform/commit/fbf301675a597e58306e4fa92b01a8eeeac367f2))
+
 ## [1.1.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.0.1...v1.1.0) (2026-10-02)
 
 
