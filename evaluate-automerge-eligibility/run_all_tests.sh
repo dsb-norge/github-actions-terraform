@@ -3677,8 +3677,9 @@ fi
 # F26 — the module docs job updates Dependabot's pull request only when the admission admitted it.
 #
 # docs/Dependabot-admission.md D22: the App's docs commit starts a run that is the App's, which
-# nobody judges, so on a Dependabot run the docs job pushes only when create-matrix judged and
-# admitted the run, and only on top of the commit the run evaluated (P23). The commit message keeps
+# nobody judges, so on Dependabot's pull request the docs job pushes only when create-matrix judged
+# and admitted the run, whoever started it (docs/Module-auto-merge.md M4), and only on top of the
+# commit the run evaluated (P23). The commit message keeps
 # Dependabot rebasing ('[dependabot skip]'), and the terraform-docs action passes it on. The pin
 # step's run block is executed here against real repositories.
 # ============================================================================
@@ -3699,7 +3700,8 @@ if create.get("outputs", {}).get("admission-admitted") != "${{ steps.create-matr
 if docs.get("needs") != "create-matrix" or docs.get("if") != "${{ !cancelled() }}":
     problems.append(f"the docs job does not wait for create-matrix whatever its result: needs {docs.get('needs')}, if {docs.get('if')}")
 steps = {step.get("id"): step for step in docs["steps"]}
-gate = ("(github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')")
+gate = ("((github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]') "
+        "|| needs.create-matrix.outputs.admission-admitted == 'true')")
 for step_id in ("app-access", "app-token"):
     condition = " ".join(str(steps.get(step_id, {}).get("if", "")).split())
     if gate not in condition:
