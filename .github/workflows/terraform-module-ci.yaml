@@ -239,7 +239,10 @@ jobs:
       # run has no secrets, and a push, a dispatch or a schedule must never commit to its branch.
       # Dependabot's pull request gets one only when the admission judged and admitted this run: the
       # App's commit starts a run that is the App's, not Dependabot's, so nobody judges it, and it
-      # must carry nothing the admission has not admitted (docs/Dependabot-admission.md D22).
+      # must carry nothing the admission has not admitted (docs/Dependabot-admission.md D22). Keyed
+      # on the pull request's author as well as the actor: a person's run on Dependabot's pull request
+      # (reopened, labelled) is judged by nobody either, and auto-merge accepts the docs commit
+      # (docs/Module-auto-merge.md M4).
       # Everywhere else the docs job checks, and needs no App.
       #
       # The App's variable and secret belong to the organisation and reach a repository only when it
@@ -250,7 +253,8 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
+          && ((github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')
+              || needs.create-matrix.outputs.admission-admitted == 'true')
         env:
           APP_ID: ${{ vars.ORG_TF_CICD_APP_ID }}
           PRIVATE_KEY_SET: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}
@@ -276,7 +280,8 @@ jobs:
         if: |
           github.event_name == 'pull_request'
           && github.event.pull_request.head.repo.full_name == github.repository
-          && (github.actor != 'dependabot[bot]' || needs.create-matrix.outputs.admission-admitted == 'true')
+          && ((github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')
+              || needs.create-matrix.outputs.admission-admitted == 'true')
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
