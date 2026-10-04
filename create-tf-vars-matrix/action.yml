@@ -13,8 +13,8 @@ inputs:
   mode:
     description: |
       'project' (the default) for the project workflow; 'module' for the module workflow, which
-      decides its test stage alone and publishes the tests-* outputs and relevance-file only
-      (docs/Module-ci.md §5).
+      decides its test stage alone and publishes the tests-*, admission-* and automerge-* outputs
+      and relevance-file only (docs/Module-ci.md §5).
     required: false
     default: "project"
 outputs:
@@ -72,6 +72,12 @@ outputs:
   admission-admitted:
     description: "'true' when the Dependabot admission judged the run and admitted it, else 'false' (docs/Dependabot-admission.md D22)."
     value: ${{ steps.create-matrix.outputs.admission-admitted }}
+  automerge-eligible:
+    description: "Module mode: 'true' when auto-merge's rule rules this pull request run eligible, else 'false' (docs/Module-auto-merge.md §5)"
+    value: ${{ steps.create-matrix.outputs.automerge-eligible }}
+  automerge-confirm-app:
+    description: "Module mode: 'true' when the eligible pull request ends with docs commits, so the merge job confirms the run is the CI App's"
+    value: ${{ steps.create-matrix.outputs.automerge-confirm-app }}
   tests-required-missing:
     description: "Module mode: 'true' when a test file is required and there is none (docs/Module-ci.md D9)"
     value: ${{ steps.create-matrix.outputs.tests-required-missing }}

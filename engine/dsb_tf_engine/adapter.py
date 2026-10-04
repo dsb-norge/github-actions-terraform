@@ -19,7 +19,8 @@ import subprocess
 import tempfile
 import urllib.parse
 
-from . import SCHEMA_VERSION, admission, admission_facts, decide, environments, ordering, relevance, tests, workflow
+from . import (SCHEMA_VERSION, admission, admission_facts, automerge, automerge_facts, decide, environments, ordering,
+               relevance, tests, workflow)
 
 TITLE = "create-tf-vars-matrix"
 EXIT_OK, EXIT_FAULT, EXIT_INVALID = 0, 1, 2
@@ -57,7 +58,7 @@ PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "
              "record", "trigger", "ordering", "admission")
 # A module's decision has its test stage and its admission head alone (docs/Module-ci.md §5).
 MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission",
-                    "comments")
+                    "comments", "automerge")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -434,6 +435,9 @@ def build_document(inputs, facts, tools, isdir, module=False):
     # A caller without the test stage's inputs has no test stage; one that switched it off lists nothing.
     if "terraform-test-enabled" in inputs and inputs["terraform-test-enabled"] not in (False, "false"):
         document["tests"] = gather_tests(tools, entries)
+    if module and _automerge_applies(document):
+        # A listing that fails is a fact the engine rules ineligible on; the run goes on (docs/Module-auto-merge.md M11).
+        document["automerge"] = automerge_facts.gather(tools, facts["repository"], facts["payload"])
     if _admission_applies(document, module) and event["name"] == "pull_request":
         try:
             document["admission"] = admission_facts.gather(tools)
@@ -441,6 +445,15 @@ def build_document(inputs, facts, tools, isdir, module=False):
             # D11: neither admitting nor refusing on a guess; "Re-run failed jobs" decides again.
             raise AdapterError(f"the Dependabot admission cannot be decided: {error}") from None
     return document
+
+
+def _automerge_applies(document):
+    """Whether the rule reads a module pull request's commits; an invalid setting gathers nothing and the
+    engine reports it."""
+    try:
+        return automerge.wants_facts(document, automerge.settings(document))
+    except environments.ConfigError:
+        return False
 
 
 def _admission_applies(document, module):
@@ -551,6 +564,9 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
             "tests-active": "true" if output["tests"]["active"] else "false",
             "tests-required-missing": "true" if output["tests"]["missing"] else "false",
             **admission_outputs(output),
+            # The merge job reads them (docs/Module-auto-merge.md §6).
+            "automerge-eligible": "true" if output["automerge"].get("eligible") else "false",
+            "automerge-confirm-app": "true" if output["automerge"].get("confirm_app") else "false",
         }
         for name, value in outputs.items():
             workflow.append_output(environ["GITHUB_OUTPUT"], name, value)

@@ -51,7 +51,7 @@ REPO_GITHUB_DIR = os.path.join(os.path.dirname(ENGINE_DIR), ".github")
 # so they run last and a mutant rarely reaches them.
 SLOW_LAST = ("test_generated", "test_determinism")
 # A module's own tests, where the name does not say it.
-OWN_TESTS = {"__main__.py": "test_cli", "__init__.py": "test_model"}
+OWN_TESTS = {"__main__.py": "test_cli", "__init__.py": "test_model", "automerge_facts.py": "test_automerge"}
 # A hung mutant counts as killed after this many baseline durations, and never before the floor.
 TIMEOUT_FACTOR, TIMEOUT_FLOOR, BASELINE_TIMEOUT = 6, 60, 300
 

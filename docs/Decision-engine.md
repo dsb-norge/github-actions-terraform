@@ -70,8 +70,13 @@ engine/
 │   ├── comments.py           # core: the seed manifest, heads and tag purges (Path-relevance.md §6.3)
 │   ├── tests.py              # core: the test rows: roots, lanes, environments, provider sets (Terraform-tests.md §3-§4)
 │   ├── record.py             # core: the decision record
+│   ├── admission.py          # core: rule 3a, the Dependabot admission (Dependabot-admission.md)
+│   ├── hashicorp.py          # core: HashiCorp's provider signing keys, for the admission
+│   ├── automerge.py          # core: module auto-merge's rule (Module-auto-merge.md §3)
 │   ├── __main__.py           # adapter side: the command line, decide and create-matrix
 │   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
+│   ├── admission_facts.py    # adapter side: the admission's facts: the change, the registry, GitHub
+│   ├── automerge_facts.py    # adapter side: a module pull request's commits and their files
 │   └── workflow.py           # adapter side: GitHub Actions I/O, groups, annotations, outputs
 ├── run_all_tests.sh          # the canonical suite entry (§8), at the depth discovery expects
 └── tests/
@@ -185,6 +190,11 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
   same step; the engine derives roots, lanes, environments and provider sets and validates them.
   The module CI workflow gathers the same test facts through the same adapter in mode `module`
   (§3.3); `create-tftest-matrix` is retired.
+- gathering the admission's facts (`admission_facts.py`, Dependabot-admission.md §8) for a
+  Dependabot pull request the admission applies to.
+- listing a module pull request's commits and each commit's files (`automerge_facts.py`,
+  Module-auto-merge.md §4), only where module auto-merge's rule reads them: the switch on, a pull
+  request from the repository against the default branch, by a listed author.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -194,7 +204,7 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | Command | Input | Output | Used by |
 |---|---|---|---|
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
-| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing` and the decision file (§3.3) | the `create-tf-vars-matrix` action |
+| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing`, the admission's and auto-merge's outputs and the decision file (§3.3) | the `create-tf-vars-matrix` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
 partial document before the adapters run, and a `render-summary` of an output document. The run
@@ -209,8 +219,9 @@ runs the same discovery, root rule, lanes and validation with no environment row
 root floats its providers. It checks the event as rule 2 does, and tests run on `pull_request`,
 `push`, `workflow_dispatch` and `schedule`. With the module workflow's `terraform-test-required`,
 the tests block's `missing` flag is set and a warning names the fix when no test file runs or is
-held back from a fork. The output carries `tests`, `notices`, `warnings`, `trigger`, `admission`,
-`comments` and a record of one line per test file; `comments` holds the admission head alone
+held back from a fork. It judges the Dependabot admission and module auto-merge
+([Module-auto-merge.md](Module-auto-merge.md) §3). The output carries `tests`, `notices`,
+`warnings`, `trigger`, `admission`, `automerge`, `comments` and a record of one line per test file; `comments` holds the admission head alone
 (`heads` and `gc`), which the module workflow's seed job posts or purges as the project workflow's
 does. The decision file holds those keys and the mode.
 
@@ -312,6 +323,12 @@ The features extend it; the full document, as they specify it:
   lock. The adapter gathers it only for a Dependabot pull request the admission applies to, and a document
   without it on such a run is a fault (exit 1). `event.pull_request.author` (`pull_request.user.login`) tells
   the comments whose pull request it is, which a person's push does not change.
+- `automerge` is a module pull request's commits ([Module-auto-merge.md](Module-auto-merge.md) §4):
+  `available`, `reason`, the head branch and commit count the event gives, and each commit's SHA,
+  parent count, author and committer logins, `verified`, subject (`message`) and files (name,
+  status, previous name), with `files_truncated`. A listing that failed is `available: false` with its reason, which the
+  rule turns into "not eligible", never a fault. An absent section on a run the rule judges is "not
+  gathered", not eligible either.
 - `caller.workflow_name` (`GITHUB_WORKFLOW`) scopes the tests head per calling workflow, and
   `event.actor` (`GITHUB_ACTOR`) is how Dependabot runs are recognised; both are present only when
   the runner sets them.
@@ -439,6 +456,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §6.3, Terraform-tests.md §6.3 | the seed manifest and `gc-yml` | `comments.heads[]` with `kind` `group`, `env` or `tests`, `key`, `state` `placeholder`, `not-affected` or `not-taking-part` (an environment whose `trigger-events` lack `pull_request`), `title`, `marker` and the rendered `body` (with the mode line for an environment that mutates on pull request); `comments.purge_tags_for` (github-environments) and `comments.gc`, their four reconcile rules each; all empty on non-pull-request events, forks, `closed`, `converted_to_draft` and a document without `run` |
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`: the `trigger` lines first, then one per decision kind, in the relevance spec's format |
 | Dispatch-and-triggers.md §5 | the dispatch record line, the empty-schedule notice | `trigger.lines`, in `relevance.json` for the run summary |
+| Module-auto-merge.md §5 | the verdict, `automerge-eligible`, `automerge-confirm-app` | `automerge`: `{"applies": false}`, or `applies`, `author`, `actor`, `eligible`, `reason`, `confirm_app`, `commits[]` (each with `sha`, `author`, `kind`); in the module mode's output and `relevance.json`, and its notice in `notices[]` |
 | Dependabot-admission.md §5, §9 | the verdict, `admission-refused`, `admission-reason`, `admission-admitted` | `admission`: `{"applies": false}`, or `applies`, `admitted`, `push_run`, `dependencies[]` (each with its `checks[]`), `problems[]`, `refused_count`, `total`; in `relevance.json` in both modes. The three step outputs are derived from it (`admission-admitted` is `true` only when the run was judged and admitted, which the module workflow's docs push requires); the `admission` head (`comments.heads[]` with `kind` `admission`, state `final`) and an environment head's `not-admitted` state come from it too |
 
 ## 6. The decision procedure

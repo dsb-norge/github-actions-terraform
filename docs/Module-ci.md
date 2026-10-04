@@ -55,6 +55,10 @@ results. Module CI takes that stage over instead of keeping a second one.
 | `terraform-test-timeout-minutes` | number | `30` | Each test job's timeout; per lane `timeout-minutes`. |
 | `terraform-test-lanes-yml` | string | `""` | Lanes, exactly as in the project workflow ([Terraform-tests.md §3.2](Terraform-tests.md)). |
 | `terraform-test-exclude-paths-yml` | string | `""` | Globs of test files discovery ignores. |
+| `dependabot-admission-enabled` | boolean | `false` | The Dependabot admission ([Dependabot-admission.md §11](Dependabot-admission.md)). |
+| `dependabot-admission-yml` | string | `""` | The admission's policy, added to its built-in one. |
+| `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green ([Module-auto-merge.md](Module-auto-merge.md)). |
+| `pr-auto-merge-from-actors-yml` | string | `"[]"` | The bots whose pull requests may merge, by the pull request's author. |
 
 Every input with a project-workflow namesake means the same there; the engine validates them with
 the same rules and messages ([Configuration-validation.md](Configuration-validation.md)).
@@ -76,8 +80,8 @@ own permissions. The App is the organisation's CI App: `vars.ORG_TF_CICD_APP_ID`
 A Dependabot run reads the variable but Dependabot secrets only, so the docs push on an admitted
 Dependabot pull request needs the key as an organisation Dependabot secret of the same name too.
 Both are the organisation's, and reach a repository only when it is on each one's repository
-access list. The docs job and the release job check them before the token step and fail naming
-each one missing; the token step may then fail, and the step after it names the two causes left,
+access list. The docs job, the auto-merge job and the release job check them before the token
+step and fail naming each one missing; the token step may then fail, and the step after it names the two causes left,
 the App not installed on the repository or a key that is not the App's (P9). Only the App can ask
 GitHub about its installation, and the token step is that question, so the installation is judged
 from its outcome rather than checked a second time with the key.
@@ -99,17 +103,19 @@ flowchart LR
     validate --> conclusion
     tests --> conclusion
     matrix --> conclusion
+    conclusion --> automerge["automerge: a listed bot's pull request, merged by the CI App"]
 ```
 
 | Job | Check name | What it does |
 |---|---|---|
-| `create-matrix` | `Create test matrix` | Runs `create-tf-vars-matrix` with `mode: module`; uploads `relevance` (the decision, for the summary). |
+| `create-matrix` | `Create test matrix` | Runs `create-tf-vars-matrix` with `mode: module`, which also judges the Dependabot admission and auto-merge; uploads `relevance` (the decision, for the summary). |
 | `seed-pr-comments` | `Seed PR comment heads` | The project workflow's seed job, step for step (F20), on a pull request Dependabot opened: posts the admission head of a refused one and deletes it on a later run that is not refused ([Dependabot-admission.md](Dependabot-admission.md) D21). |
 | `generate-docs` | `Update documentation` | After `create-matrix`, whatever its result. terraform-docs on the README and the examples; on a pull request it commits a regenerated README with the App token, which starts a new run, on Dependabot's only when the admission admitted the run and only on top of the commit the run evaluated (D22); elsewhere a README that needs regenerating fails it. |
 | `validate` | `Validate module` | Init in the module root (a plain `terraform init`, not `-backend=false`; the test jobs' init passes `backend: false`), fmt, validate, TFLint, the init and validate warnings, the validation head and its step summary, then the gates. Skipped when the docs job pushed a commit: the run the push starts validates. On a Dependabot run it also waits for `create-matrix` and is skipped when that failed or the admission refused the pull request ([Dependabot-admission.md](Dependabot-admission.md) D16). |
 | `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
 | `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, while the stage is on: on every event with test files, and on a pull request. It waits for validation, so the validation head is posted first, and skips when the docs job pushed. |
 | `conclusion` | `Terraform conclusion` | §8. The only check a caller requires. |
+| `automerge` | `PR auto merger` | After a green conclusion, on a pull request the engine ruled eligible and the docs job pushed nothing to: confirms the run is the CI App's where docs commits are at the head, and merges with the App's token, pinned to the evaluated head and base ([Module-auto-merge.md §6](Module-auto-merge.md)). |
 
 The test jobs do not wait for validation: they install their own providers, and a failing test is
 worth seeing next to a failing lint. They do wait for the docs job, as validation does: a docs
@@ -128,11 +134,16 @@ directories with `.tf` files; no locks, since a module commits none). The docume
    provider sets: every test root floats its providers;
 4. with `terraform-test-required` true and the stage run, sets the tests block's `missing` when no
    test file runs or is held back from a fork (a misplaced or excluded file counts as none), with
-   a warning naming the fix; the adapter publishes it as `tests-required-missing` (§8).
+   a warning naming the fix; the adapter publishes it as `tests-required-missing` (§8);
+5. judges the Dependabot admission ([Dependabot-admission.md §11](Dependabot-admission.md)) and
+   auto-merge ([Module-auto-merge.md §3](Module-auto-merge.md)), over the facts the adapter
+   gathered for them.
 
-The output carries `tests`, `notices`, `warnings`, `trigger` and a record of one line per test
-file (`tests/unit-tests.tftest.hcl: run, lane unit` or `…: not run, misplaced`). The adapter
-publishes `tests-matrix-json`, `tests-count`, `tests-active`, `tests-required-missing` and
+The output carries `tests`, `notices`, `warnings`, `trigger`, `admission`, `automerge`,
+`comments` and a record of one line per test file (`tests/unit-tests.tftest.hcl: run, lane unit`
+or `…: not run, misplaced`). The adapter publishes `tests-matrix-json`, `tests-count`,
+`tests-active`, `tests-required-missing`, the admission's `admission-refused`, `admission-reason`
+and `admission-admitted`, auto-merge's `automerge-eligible` and `automerge-confirm-app`, and
 `relevance-file`; the file holds the output without matrices, as in the project mode, so
 `create-test-summary` reads its not-run rows from the same place.
 
@@ -227,6 +238,8 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 - F24: in both module workflows the App check runs under the token step's condition, the token
   step continues on error and the explaining step follows it; the check's own run block is run for
   every combination of a missing variable and secret.
+- F26: the docs job's token on Dependabot's pull request only in an admitted run, and its pin; F27:
+  the auto-merge job's inputs, needs, condition, permissions, steps and App confirmation.
 - `terraform-docs`: a suite for the converted steps (a push with `push: true` only, fail on a diff
   otherwise, the counts); the workflow passes `push: true` on a pull request from the repository
   alone.
@@ -242,7 +255,8 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | The module head | `create-validation-summary/` (`subject`, the `absent` status) |
 | Docs | `terraform-docs/` |
 | The workflows | `.github/workflows/terraform-module-ci.yaml`, `terraform-module-release.yaml` |
-| Parity and conclusion tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21) |
+| Auto-merge | `engine/dsb_tf_engine/automerge.py` (the rule), `automerge_facts.py` (the commits) |
+| Parity, conclusion and wiring tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21, F24, F26, F27) |
 
 ## 13. Open questions
 

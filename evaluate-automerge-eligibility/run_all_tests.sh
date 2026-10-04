@@ -3551,9 +3551,10 @@ for path in WORKFLOWS:
                 if rc != want_rc or len(errors) != len(want_named) or named != sorted(want_named):
                     problems.append(f"{where}: with APP_ID='{app_id}' and the key {'set' if key_set == 'true' else 'unset'}, "
                                     f"the check exited {rc} with {len(errors)} error(s) naming {named}; expected {want_rc}, {sorted(want_named)}")
-            # The docs job also runs on an admitted Dependabot pull request, which reads Dependabot secrets
-            # only, so its check names the Dependabot secret there (docs/Dependabot-admission.md D22).
-            if job_name == "generate-docs":
+            # The docs job and the auto-merge job also run on an admitted Dependabot pull request, which reads
+            # Dependabot secrets only, so their check names the Dependabot secret there (docs/Dependabot-admission.md
+            # D22, docs/Module-auto-merge.md §6).
+            if job_name in ("generate-docs", "automerge"):
                 if env.get("ACTOR") != "${{ github.actor }}":
                     problems.append(f"{where}: '{CHECK}' does not read the actor")
                 for key_set, want_rc in (("false", 1), ("true", 0)):
@@ -3568,8 +3569,8 @@ for path in WORKFLOWS:
                 rc, out = run(after["run"], {})
                 if rc != 1 or "ORG_TF_CICD_APP_ID" not in out or not out.startswith("::error"):
                     problems.append(f"{where}: '{EXPLAIN}' does not fail with an error naming the App")
-if checked != 2:
-    problems.append(f"expected 2 ORG_TF_CICD token steps (docs job, release job), found {checked}")
+if checked != 3:
+    problems.append(f"expected 3 ORG_TF_CICD token steps (docs job, auto-merge job, release job), found {checked}")
 print(f"checked {checked} token step(s), 4 cases each")
 for problem in problems:
     print(f"PROBLEM {problem}")
@@ -3759,6 +3760,107 @@ if [[ "${_f26_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f26_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F27 — the module auto-merge job merges only what the engine ruled eligible, as the CI App.
+#
+# docs/Module-auto-merge.md §6: create-matrix lists the commits (pull-requests: read) and outputs the
+# verdict; the job needs the conclusion, the docs job and validation, runs only on an eligible pull
+# request run the docs job pushed nothing in, holds no permission of its own, checks the App like the
+# docs job, confirms the actor is the App when docs commits are at the head, and pins the merge.
+# The confirmation's run block is executed here for the App, another bot and a missing slug. The
+# docs job's message on a Dependabot run is the engine's DEPENDABOT_DOCS_MESSAGE.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F27 - the module auto-merge job is gated, unprivileged, confirms the App and pins the merge${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f27_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, re, subprocess, sys, yaml
+
+problems = []
+with open(".github/workflows/terraform-module-ci.yaml", encoding="utf-8") as fh:
+    workflow = yaml.safe_load(fh)
+inputs, jobs = workflow[True]["workflow_call"]["inputs"], workflow["jobs"]
+for name, kind, default in (("pr-auto-merge-enabled", "boolean", False), ("pr-auto-merge-from-actors-yml", "string", "[]")):
+    declared = inputs.get(name, {})
+    if (declared.get("type"), declared.get("default")) != (kind, default):
+        problems.append(f"input {name} is {declared.get('type')} defaulting to {declared.get('default')!r}; expected {kind}, {default!r}")
+create = jobs["create-matrix"]
+if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
+    problems.append(f"create-matrix cannot list the pull request's commits: {create.get('permissions')}")
+for output in ("automerge-eligible", "automerge-confirm-app"):
+    if create.get("outputs", {}).get(output) != f"${{{{ steps.create-matrix.outputs.{output} }}}}":
+        problems.append(f"create-matrix does not output {output}")
+job = jobs.get("automerge", {})
+if job.get("needs") != ["create-matrix", "generate-docs", "validate", "conclusion"]:
+    problems.append(f"the job's needs are {job.get('needs')}")
+if job.get("permissions") != {}:
+    problems.append(f"the job holds permissions of its own: {job.get('permissions')}")
+condition = [line.strip() for line in str(job.get("if", "")).strip().splitlines()]
+wanted = ["!cancelled()", "&& needs.conclusion.result == 'success'", "&& needs.create-matrix.result == 'success'",
+          "&& needs.generate-docs.result == 'success'", "&& needs.validate.result == 'success'",
+          "&& needs.generate-docs.outputs.pushed != 'true'", "&& needs.create-matrix.outputs.automerge-eligible == 'true'",
+          "&& inputs.pr-auto-merge-enabled == true", "&& github.event_name == 'pull_request'",
+          "&& github.event.action != 'closed'", "&& github.event.action != 'converted_to_draft'",
+          "&& github.event.pull_request.draft != true", "&& github.base_ref == github.event.repository.default_branch",
+          "&& github.event.pull_request.head.repo.full_name == github.repository"]
+if condition != wanted:
+    problems.append(f"the job's condition is {condition}")
+steps = job.get("steps", [])
+names = [step.get("name") for step in steps]
+expected = ["🔐 Check the App's variable and secret", "🔑 Create GitHub App token", "🔐 Explain the failed App token",
+            "🤖 Confirm the run is the CI App's", "🤖 Auto merge PR"]
+if names != expected:
+    problems.append(f"the job's steps are {names}")
+else:
+    docs = {step.get("id"): step for step in jobs["generate-docs"]["steps"]}
+    if steps[0].get("run") != docs["app-access"].get("run") or steps[0].get("env") != docs["app-access"].get("env"):
+        problems.append("the App check is not the docs job's")
+    token = steps[1].get("with") or {}
+    if (token.get("permission-contents"), token.get("permission-pull-requests")) != ("write", "write"):
+        problems.append(f"the App token cannot merge: {token}")
+    confirm = steps[3]
+    if confirm.get("if") != "needs.create-matrix.outputs.automerge-confirm-app == 'true'" \
+            or confirm.get("env") != {"ACTOR": "${{ github.actor }}", "APP_SLUG": "${{ steps.app-token.outputs.app-slug }}"}:
+        problems.append(f"the confirmation does not compare the actor with the App's slug: {confirm.get('if')}, {confirm.get('env')}")
+    for actor, slug, want in (("ci-app[bot]", "ci-app", 0), ("other-app[bot]", "ci-app", 1), ("ci-app", "ci-app", 1),
+                              ("[bot]", "", 1)):
+        done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", confirm.get("run", "")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "ACTOR": actor, "APP_SLUG": slug})
+        if done.returncode != want or (want and "::error title=PR auto merger::" not in done.stdout):
+            problems.append(f"the confirmation with actor {actor} and slug {slug!r} exited {done.returncode}; expected {want}")
+    merge = steps[4]
+    if not str(merge.get("uses", "")).startswith("dsb-norge/github-actions-terraform/auto-merge-pr@") \
+            or merge.get("with") != {"github-token": "${{ steps.app-token.outputs.token }}",
+                                     "github-event-context-json": "${{ toJSON(github.event) }}",
+                                     "head-sha": "${{ github.event.pull_request.head.sha }}", "merge-sha": "${{ github.sha }}"}:
+        problems.append(f"the merge is not auto-merge-pr pinned to the evaluated head and base: {merge.get('with')}")
+# On Dependabot's pull request the rule accepts a docs commit only with the message the docs job writes in Dependabot's
+# own run (docs/Module-auto-merge.md §3, rule 5): the engine's constant and the workflow's must be one text.
+message = str(((next((step for step in jobs["generate-docs"]["steps"] if step.get("id") == "docs"), {}).get("with")
+                or {}).get("commit-message", "")))
+written = re.search(r"github\.actor == 'dependabot\[bot\]' && '([^']+)'", message)
+with open("engine/dsb_tf_engine/automerge.py", encoding="utf-8") as fh:
+    engine = fh.read()
+if not written or f'DEPENDABOT_DOCS_MESSAGE = "{written.group(1)}"' not in engine:
+    problems.append(f"the engine's DEPENDABOT_DOCS_MESSAGE is not the docs job's message on a Dependabot run: {message}")
+print("checked the inputs, create-matrix, the job's needs, condition, permissions and steps, the confirmation and the "
+      "docs message")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f27_rc=0 || _f27_rc=$?
+if [[ "${_f27_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f27_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f27_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
