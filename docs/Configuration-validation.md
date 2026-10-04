@@ -246,6 +246,15 @@ With the workflow input `pr-auto-merge-enabled: true`, every environment whose e
 
 Eligibility and the merge are [Auto-merge.md](Auto-merge.md).
 
+**The module workflow** has the global inputs only, no environments, and validates them on every
+event with the same rules and messages, plus its own ([Module-auto-merge.md](Module-auto-merge.md)
+§5):
+
+- `pr-auto-merge-enabled` must be true or false: `The input 'pr-auto-merge-enabled' is 1; it must be true or false!`
+- The list names bots only, whether the switch is on or off: `pr-auto-merge-from-actors-yml names octocat, which is not a bot; the module workflow merges bots' pull requests only (their commits are signed by GitHub, a person's web edits are too).`
+- With the switch on, `dependabot[bot]` on the list needs the Dependabot admission: `Auto-merge may merge Dependabot's pull requests (pr-auto-merge-from-actors-yml names dependabot[bot]), but the Dependabot admission is off, so nothing judges them before they run. Switch dependabot-admission-enabled on, or remove dependabot[bot] from the list.`
+- With the switch on, an empty list is the message naming the input, as above.
+
 ### 3.7 Dispatch inputs
 
 A dispatch whose delivered inputs hold neither `environment` nor `goal` runs every environment

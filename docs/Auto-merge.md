@@ -9,6 +9,10 @@ specifies; this spec is what happens with them.
 §3 is the pipeline as kept, §4 what changed from the first auto-merge, §12 where each piece lives,
 §13 what implementation taught the spec.
 
+The module workflow's auto-merge, which merges a listed bot's pull request on validation and the
+tests rather than plans, is [Module-auto-merge.md](Module-auto-merge.md); it reuses this spec's merge
+(§6).
+
 ## 1. Why
 
 Auto-merge merges with `gh pr merge --admin`, past the branch protection's required reviews. That

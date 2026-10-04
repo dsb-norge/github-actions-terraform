@@ -15,7 +15,8 @@ class DocumentError(Exception):
 TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml", "directories_exist")
 # Present only when the adapter fetched them; absent means "relevance not computed".
 # admission: the facts of a Dependabot run the admission judges (docs/Dependabot-admission.md §8).
-OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission")
+# automerge: a module pull request's commits, for its auto-merge (docs/Module-auto-merge.md §4).
+OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission", "automerge")
 # Absent means the project workflow's decision; a module decides its test stage alone (docs/Module-ci.md §5).
 MODES = ("project", "module")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
@@ -129,6 +130,31 @@ def _is_admission(value):
             and isinstance(value["locks"], dict) and all(isinstance(v, bool) for v in value["locks"].values()))
 
 
+AUTOMERGE_KEYS = ("available", "reason", "head_ref", "count", "commits")
+COMMIT_KEYS = ("sha", "parents", "author", "committer", "verified", "message", "files", "files_truncated")
+
+
+def _is_commit_file(item):
+    return (isinstance(item, dict) and set(item) == {"name", "status", "previous"} and isinstance(item["name"], str)
+            and isinstance(item["status"], str) and isinstance(item["previous"], (str, type(None))))
+
+
+def _is_commit(item):
+    return (isinstance(item, dict) and set(item) == set(COMMIT_KEYS) and isinstance(item["sha"], str)
+            and isinstance(item["message"], str)
+            and _is_count(item["parents"]) and all(isinstance(item[key], (str, type(None))) for key in ("author", "committer"))
+            and isinstance(item["verified"], bool) and isinstance(item["files_truncated"], bool)
+            and (item["files"] is None or (isinstance(item["files"], list)
+                                           and all(_is_commit_file(entry) for entry in item["files"]))))
+
+
+def _is_automerge(value):
+    return (isinstance(value, dict) and set(value) == set(AUTOMERGE_KEYS) and isinstance(value["available"], bool)
+            and isinstance(value["reason"], (str, type(None))) and isinstance(value["head_ref"], str)
+            and _is_count(value["count"])
+            and isinstance(value["commits"], list) and all(_is_commit(item) for item in value["commits"]))
+
+
 def check(document):
     """Raise DocumentError unless the document has the shape the engine reads."""
     _require(isinstance(document, dict), "input document: not a JSON object")
@@ -199,6 +225,10 @@ def check(document):
         _require(_is_admission(document["admission"]),
                  "input document: 'admission' needs exactly 'now', 'files', 'dependencies' and 'locks', shaped as "
                  "docs/Dependabot-admission.md §8 describes")
+    if "automerge" in document:
+        _require(_is_automerge(document["automerge"]),
+                 "input document: 'automerge' needs exactly 'available', 'reason', 'head_ref', 'count' and 'commits', "
+                 "shaped as docs/Module-auto-merge.md §4 describes")
     if "tests" in document:
         _require(_is_tests(document["tests"]),
                  "input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "

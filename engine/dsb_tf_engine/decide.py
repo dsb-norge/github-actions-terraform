@@ -1,7 +1,7 @@
 """The `decide` command: the input document in, the output document out."""
 
-from . import (SCHEMA_VERSION, admission, comments, environments, model, ordering, record, relevance, tests, triggers,
-               values)
+from . import (SCHEMA_VERSION, admission, automerge, comments, environments, model, ordering, record, relevance, tests,
+               triggers, values)
 
 
 def _failed(errors):
@@ -98,6 +98,7 @@ def _module(document):
     try:
         triggers.check_event(document)
         policy = admission.settings(document, default_enabled=False)
+        merge_policy = automerge.settings(document)
         admitted = admission.NOT_APPLYING
         if admission.applies(document, policy):
             _require_facts(document)
@@ -105,14 +106,17 @@ def _module(document):
         tests_block, warnings, notices = tests.decide_tests(document, [], tests.MODULE_TEST_EVENTS, admitted)
     except environments.ConfigError as error:
         return _failed(error.messages)
+    merge = automerge.judge(document, merge_policy, admitted)
+    merge_notice = automerge.notice(merge)
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "module",
         "errors": [],
-        "notices": [*_admission_notices(admitted), *notices],
+        "notices": [*_admission_notices(admitted), *notices, *([merge_notice] if merge_notice else [])],
         "warnings": warnings,
         "tests": tests_block,
         "admission": admitted,
+        "automerge": merge,
         "trigger": {"event": document["event"]["name"], "lines": []},
         "comments": comments.module_manifest(document, admitted),
         "record": tests.record(tests_block),

@@ -11,6 +11,8 @@ flowchart LR
 
 It is the release half of a module repository; the CI half is [`terraform-module-ci`](Workflow-terraform-module-ci.md). The design is [Module-ci.md](Module-ci.md), D7.
 
+With the CI workflow's [auto-merge](Workflow-terraform-module-ci.md#auto-merge) on and the CI App's bot account on its list, the release pull request merges itself once its run is green, provided it changes only `CHANGELOG.md` and `.release-please-manifest.json`; a release that also updates other files waits for a person ([Module-auto-merge.md](Module-auto-merge.md) M5).
+
 ## What it runs
 
 One job, `release-pr`, with two steps:

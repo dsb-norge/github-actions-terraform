@@ -547,6 +547,46 @@ else
   fail "exit ${STEP_EXIT}, or the missing test file was not published: $(tail -n 5 "${OUT_FILE}")"
 fi
 
+begin "module mode: auto-merge lists a listed bot's commits and publishes its verdict"
+make_sandbox "${baseline}"
+make_gh
+head_sha="$(printf 'c%.0s' {1..40})"
+jq -n '{"terraform-version": "1.14.x", "tflint-version": "v0.64.0", "readme-file-path": ".",
+        "runs-on": "ubuntu-latest", "add-pr-comment": true, "cache-terraform-modules": true,
+        "terraform-test-enabled": true, "terraform-test-required": false, "allow-failing-terraform-tests": false,
+        "terraform-test-runs-on": "ubuntu-latest", "terraform-test-timeout-minutes": 30,
+        "terraform-test-lanes-yml": "", "terraform-test-exclude-paths-yml": "",
+        "pr-auto-merge-enabled": true, "pr-auto-merge-from-actors-yml": "- release-bot[bot]\n"}' >"${SANDBOX}/inputs.json"
+jq -n --arg sha "${head_sha}" '{action: "synchronize", number: 12, repository: {default_branch: "main"},
+  pull_request: {number: 12, commits: 1, user: {login: "release-bot[bot]"},
+                 head: {sha: $sha, ref: "release-please--branches--main", repo: {fork: false}}}}' >"${SANDBOX}/event.json"
+jq -n --arg sha "${head_sha}" '[{sha: $sha, parents: [{sha: "p"}], author: {login: "release-bot[bot]"},
+  committer: {login: "web-flow"}, commit: {message: "chore(main): release 1.0.1", verification: {verified: true}}}]' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_pulls_12_commits?per_page=100&page=1"
+echo '{"files": [{"filename": "CHANGELOG.md", "status": "modified"}]}' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_commits_${head_sha}?per_page=300&page=1"
+run_step MODE=module GITHUB_EVENT_NAME=pull_request GITHUB_ACTOR='release-bot[bot]' GITHUB_BASE_REF=main
+if [[ ${STEP_EXIT} -eq 0 ]] \
+  && [[ "$(step_output automerge-eligible) $(step_output automerge-confirm-app)" == "true false" ]] \
+  && [[ "$(jq -r '.automerge.commits[0].kind' "$(step_output relevance-file)")" == "author" ]] \
+  && [[ "$(wc -l <"${SANDBOX}/gh-calls")" -eq 2 ]] \
+  && grep -q "auto-merge: eligible: release-bot\[bot\]'s pull request, 1 commit (1 the author's, 0 docs)" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the auto-merge verdict was not published: $(cat "${SANDBOX}/gh-calls"); $(tail -n 5 "${OUT_FILE}")"
+fi
+
+begin "module mode: auto-merge makes no call for an author it does not list"
+jq '.pull_request.user.login = "octocat"' "${SANDBOX}/event.json" >"${SANDBOX}/event.tmp" && mv "${SANDBOX}/event.tmp" "${SANDBOX}/event.json"
+: >"${SANDBOX}/gh-calls"
+run_step MODE=module GITHUB_EVENT_NAME=pull_request GITHUB_ACTOR=octocat GITHUB_BASE_REF=main
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output automerge-eligible)" == "false" ]] && [[ ! -s "${SANDBOX}/gh-calls" ]] \
+  && grep -q "auto-merge: not eligible: its author, octocat, is not in pr-auto-merge-from-actors-yml" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or an unlisted author's commits were listed: $(cat "${SANDBOX}/gh-calls"); $(tail -n 5 "${OUT_FILE}")"
+fi
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}      CREATE-TF-VARS-MATRIX SUMMARY         ${NC}"

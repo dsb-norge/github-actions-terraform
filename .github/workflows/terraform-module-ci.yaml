@@ -15,9 +15,10 @@ name: "DSB Terraform Module CI"
 #     actions: read         # job links in the tests head
 #   secrets: inherit
 #
-# The docs job's App token reads the organisation's CI App: vars.ORG_TF_CICD_APP_ID and
-# secrets.ORG_TF_CICD_APP_PRIVATE_KEY. Test credentials come from lanes only
-# (terraform-test-lanes-yml, docs/Module-ci.md §6).
+# The docs job's App token, and the auto-merge job's, read the organisation's CI App:
+# vars.ORG_TF_CICD_APP_ID and secrets.ORG_TF_CICD_APP_PRIVATE_KEY. Test credentials come from lanes
+# only (terraform-test-lanes-yml, docs/Module-ci.md §6). Auto-merge merges a listed bot's pull
+# request, judged by the decision engine (docs/Module-auto-merge.md).
 #
 on:
   workflow_call:
@@ -102,6 +103,21 @@ on:
         description: "The admission's policy, added to its built-in one (docs/Dependabot-admission.md §6)."
         type: string
         default: ""
+      pr-auto-merge-enabled:
+        description: |
+          Merge a listed bot's pull request without review once its run is green (docs/Module-auto-merge.md):
+          Dependabot's admitted bumps, with the docs commit, and release-please's release pull requests. The
+          CI App merges, with the docs job's variable and secret. Off by default.
+        type: boolean
+        default: false
+      pr-auto-merge-from-actors-yml:
+        description: |
+          The bots whose pull requests may merge, by the pull request's author; bots only, and
+          dependabot[bot] only with dependabot-admission-enabled. For example:
+
+            pr-auto-merge-from-actors-yml: '["dependabot[bot]", "<the CI App's slug>[bot]"]'
+        type: string
+        default: "[]"
 
 # One run per ref. The default queue depth (one pending run) is deliberate: a pending run is a
 # superseded commit of the same ref and nothing here applies to shared state, so dropping it when
@@ -122,6 +138,7 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read
+      pull-requests: read # auto-merge lists the pull request's commits (docs/Module-auto-merge.md §4)
     outputs:
       tests-matrix-json: ${{ steps.create-matrix.outputs.tests-matrix-json }}
       tests-count: ${{ steps.create-matrix.outputs.tests-count }}
@@ -131,6 +148,9 @@ jobs:
       admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
       admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
       admission-admitted: ${{ steps.create-matrix.outputs.admission-admitted }}
+      # Auto-merge's verdict, and whether the merge job must confirm the run is the CI App's (docs/Module-auto-merge.md §5).
+      automerge-eligible: ${{ steps.create-matrix.outputs.automerge-eligible }}
+      automerge-confirm-app: ${{ steps.create-matrix.outputs.automerge-confirm-app }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
@@ -955,3 +975,102 @@ jobs:
             echo "::error title=Terraform conclusion::${line}"
             exit 1
           fi
+
+  # Merges a listed bot's pull request without review (docs/Module-auto-merge.md §6). The decision engine
+  # judged whose pull request it is, its commits and the run (§3); this job confirms the CI App where the
+  # rule needs it and merges, pinned to the head and the base this run evaluated (auto-merge-pr).
+  automerge:
+    # Runs when:
+    #   - the conclusion is green, and create-matrix, the docs job and validation succeeded AND
+    #   - the docs job pushed nothing: a docs commit's own run decides AND
+    #   - the engine ruled the pull request eligible AND
+    #   - pr-auto-merge-enabled is true AND
+    #   - the run is a pull request's, not closing, not a draft, against the default branch, from this
+    #     repository (docs/Auto-merge.md D9); the engine rules these too, the condition keeps them visible
+    # !cancelled() replaces the implicit success(), which the tests' skipped job would fail; the conclusion
+    # judges the tests (docs/Module-auto-merge.md M8).
+    if: |
+      !cancelled()
+      && needs.conclusion.result == 'success'
+      && needs.create-matrix.result == 'success'
+      && needs.generate-docs.result == 'success'
+      && needs.validate.result == 'success'
+      && needs.generate-docs.outputs.pushed != 'true'
+      && needs.create-matrix.outputs.automerge-eligible == 'true'
+      && inputs.pr-auto-merge-enabled == true
+      && github.event_name == 'pull_request'
+      && github.event.action != 'closed'
+      && github.event.action != 'converted_to_draft'
+      && github.event.pull_request.draft != true
+      && github.base_ref == github.event.repository.default_branch
+      && github.event.pull_request.head.repo.full_name == github.repository
+    name: "PR auto merger"
+    needs: [create-matrix, generate-docs, validate, conclusion]
+    runs-on: ${{ inputs.runs-on }}
+    permissions: {} # the merge is the App's
+    steps:
+      # As in the docs job: the variable and the secret named when this repository cannot read them, the
+      # Dependabot secret on a Dependabot run.
+      - name: "🔐 Check the App's variable and secret"
+        id: app-access
+        env:
+          APP_ID: ${{ vars.ORG_TF_CICD_APP_ID }}
+          PRIVATE_KEY_SET: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY != '' }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Fail naming each organisation variable or secret this repository cannot read
+          missing=0
+          if [ -z "${APP_ID}" ]; then
+            echo "::error title=GitHub App::This repository cannot read the organisation variable ORG_TF_CICD_APP_ID. Add the repository to the variable's repository access: organisation settings, Secrets and variables, Actions, Variables, ORG_TF_CICD_APP_ID."
+            missing=1
+          fi
+          if [ "${PRIVATE_KEY_SET}" != "true" ] && [ "${ACTOR}" = "dependabot[bot]" ]; then
+            # A Dependabot run reads Dependabot secrets only (docs/Dependabot-admission.md D22).
+            echo "::error title=GitHub App::This Dependabot run cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. A Dependabot run reads Dependabot secrets only: add the App's key as an organisation Dependabot secret of that name (organisation settings, Secrets and variables, Dependabot) with this repository in its repository access, and pass 'secrets: inherit' in the calling job."
+            missing=1
+          elif [ "${PRIVATE_KEY_SET}" != "true" ]; then
+            echo "::error title=GitHub App::This repository cannot read the organisation secret ORG_TF_CICD_APP_PRIVATE_KEY. Add the repository to the secret's repository access (organisation settings, Secrets and variables, Actions, Secrets, ORG_TF_CICD_APP_PRIVATE_KEY), and pass 'secrets: inherit' in the calling job."
+            missing=1
+          fi
+          exit "${missing}"
+      - name: "🔑 Create GitHub App token"
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.ORG_TF_CICD_APP_ID }}
+          private-key: ${{ secrets.ORG_TF_CICD_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+        continue-on-error: true # explained by the next step, which fails the job
+      - name: "🔐 Explain the failed App token"
+        if: steps.app-token.outcome == 'failure'
+        run: |
+          # The variable and the secret reach this repository, so the App or its key is what failed
+          echo "::error title=GitHub App::The App whose ID is ORG_TF_CICD_APP_ID gave no token for this repository. The variable and the secret reach the repository, so either the App is not installed on it (organisation settings, GitHub Apps, the App, Configure, Repository access), or ORG_TF_CICD_APP_PRIVATE_KEY is not a key of that App. The token step's log above has GitHub's answer."
+          exit 1
+
+      # Docs commits at the head merge only in the run the CI App's docs push started (docs/Module-auto-merge.md
+      # M2). The engine knows the actor is a bot; only the token step knows which bot the App is.
+      - name: "🤖 Confirm the run is the CI App's"
+        if: needs.create-matrix.outputs.automerge-confirm-app == 'true'
+        env:
+          ACTOR: ${{ github.actor }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          # Merge a pull request ending in docs commits only in the run the CI App's docs commit started
+          if [ -n "${APP_SLUG}" ] && [ "${ACTOR}" = "${APP_SLUG}[bot]" ]; then
+            echo "The run is the CI App's (${ACTOR}), the one its docs commit started."
+            exit 0
+          fi
+          echo "::error title=PR auto merger::The pull request ends with docs commits, which merge only in the run the CI App's docs commit starts; this run was started by ${ACTOR}, not by the CI App (${APP_SLUG:-whose name the token step did not give}). Nothing is merged."
+          exit 1
+
+      - name: "🤖 Auto merge PR"
+        uses: dsb-norge/github-actions-terraform/auto-merge-pr@v1
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          github-event-context-json: ${{ toJSON(github.event) }}
+          # The merge is pinned to what the run evaluated: its head and, through the merge commit's first
+          # parent, the base (docs/Auto-merge.md D2, D3).
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          merge-sha: ${{ github.sha }}

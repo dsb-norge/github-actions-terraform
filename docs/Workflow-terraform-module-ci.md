@@ -6,7 +6,8 @@ The reusable CI workflow for a Terraform **module** repository: one module at th
 2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint;
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
 4. reports on the pull request (a validation comment and one tests comment) and on the run page (a step summary from every job);
-5. ends in one check to require, `Terraform conclusion`.
+5. ends in one check to require, `Terraform conclusion`;
+6. with [auto-merge](#auto-merge) on, merges a listed bot's green pull request: Dependabot's admitted bumps and release-please's release pull requests.
 
 Repositories of environments that are planned and applied use the sibling [`terraform-ci-cd-default`](Workflow-terraform-ci-default.md) instead; the two share the test stage, so lanes, credentials and the test reports work the same in both. The design is [Module-ci.md](Module-ci.md), the test stage [Terraform-tests.md](Terraform-tests.md), and releases are [`terraform-module-release`](Workflow-terraform-module-release.md). The module template is [dsb-norge/tf-module-template](https://github.com/dsb-norge/tf-module-template).
 
@@ -27,11 +28,11 @@ Moving a module repository from `@v0`: [Migration-v0-to-v1-modules.md](Migration
 
   No job asks for more than `contents: read`, so a calling workflow that still grants `contents: write` from v0 keeps working, with a permission it no longer needs.
 
-- **The organisation's CI App.** The docs job mints a token from the App to push a regenerated README. It reads:
+- **The organisation's CI App.** The docs job mints a token from the App to push a regenerated README, and the auto-merge job one to merge. Both read:
   - the organisation variable `ORG_TF_CICD_APP_ID`, the App's ID (or its client ID);
   - the organisation secret `ORG_TF_CICD_APP_PRIVATE_KEY`, a private key of the App.
 
-  For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents. `ORG_TF_CICD_APP_INSTALLATION_ID` is not read: the token action finds the installation itself.
+  For a new repository, give it access to both (the organisation's Actions secrets and variables settings, "Repository access"), and add the repository to the App's installation (the organisation's GitHub Apps settings, "Configure"); the installation needs write access to contents, and for auto-merge to pull requests. `ORG_TF_CICD_APP_INSTALLATION_ID` is not read: the token action finds the installation itself.
 
   With the [admission](#dependabot-pull-requests) on, the docs job also pushes to Dependabot's admitted pull requests. A Dependabot run reads the variable but no Actions secret, so the key must also be an **organisation Dependabot secret** named `ORG_TF_CICD_APP_PRIVATE_KEY` (the organisation's Dependabot secrets settings), with the repository in its repository access. The key is then in every admitted Dependabot run, so keep the App installed on the module repositories alone: what it can write is what a release that passes the admission could reach.
 
@@ -98,6 +99,8 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `terraform-test-exclude-paths-yml` | string (YAML list) | `""` | Glob patterns of test files that do not run ([Terraform-tests.md §4.4](Terraform-tests.md)). |
 | `dependabot-admission-enabled` | boolean | `false` | Judge a Dependabot pull request before validation and the tests run it; an admitted one runs every lane, credentialed ones included, and gets its regenerated README committed. See [Dependabot pull requests](#dependabot-pull-requests). |
 | `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy, added to the built-in one ([Dependabot-admission.md §6](Dependabot-admission.md)). |
+| `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green. See [auto-merge](#auto-merge). |
+| `pr-auto-merge-from-actors-yml` | string (YAML list) | `"[]"` | The bots whose pull requests may merge, by the pull request's author: bots only, and `dependabot[bot]` only with the admission on. |
 
 A setting the workflow cannot use, such as an unknown lane key or a boolean that is not `true` or `false`, is refused by the `Create test matrix` job with an error annotation per problem, before any test runs.
 
@@ -112,6 +115,7 @@ flowchart LR
   test["terraform-test: one job per test file"]
   summary["terraform-test-summary: one comment for all tests"]
   conclusion["conclusion: the Terraform conclusion check"]
+  automerge["automerge: merge a listed bot's pull request"]
   matrix --> seed
   matrix --> docs
   docs --> validate
@@ -125,6 +129,10 @@ flowchart LR
   docs --> conclusion
   validate --> conclusion
   test --> conclusion
+  matrix --> automerge
+  docs --> automerge
+  validate --> automerge
+  conclusion --> automerge
 ```
 
 An arrow is a `needs:` of the job it points to. Validation and the tests run side by side: a failing test is worth seeing next to a failing lint. Both wait for the docs job, because a docs commit starts a run of its own and leaves this run's tree out of date. The docs job waits for `create-matrix`, whose admission verdict decides whether it may push to a Dependabot pull request, and runs whatever that job's result.
@@ -138,6 +146,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
 | `conclusion` (Terraform conclusion) | on every run | — | One line, in the log, the step summary and an annotation. |
+| `automerge` (PR auto merger) | with auto-merge on, on a pull request the run ruled eligible, once the conclusion is green and the docs job pushed nothing | Merges the pull request with the CI App's token, a rebase merge, and deletes its branch. | `Create test matrix` gives the verdict as a notice, see [auto-merge](#auto-merge). |
 
 The comments are not posted on a pull request from a fork, with `add-pr-comment: false`, or on a closed or draft-converted pull request; the step summaries are written on every run. The tests summary job is not among the conclusion's `needs`, so reporting can never turn the check red.
 
@@ -228,16 +237,69 @@ For a module repository whose dependencies Dependabot keeps current:
    | Setting | Kind | Read by |
    |---|---|---|
    | `ORG_TF_CICD_APP_ID` | Actions variable | every run, Dependabot's included: a Dependabot run reads Actions variables |
-   | `ORG_TF_CICD_APP_PRIVATE_KEY` | Actions secret | the docs job on a person's pull request and on the App's own run, and the release workflow |
-   | `ORG_TF_CICD_APP_PRIVATE_KEY` | **Dependabot secret**, the same key | the docs job on an admitted Dependabot pull request: a Dependabot run reads Dependabot secrets only |
+   | `ORG_TF_CICD_APP_PRIVATE_KEY` | Actions secret | the docs job on a person's pull request and on the App's own run, the auto-merge job on the App's own run, and the release workflow |
+   | `ORG_TF_CICD_APP_PRIVATE_KEY` | **Dependabot secret**, the same key | the docs job and the auto-merge job on an admitted Dependabot pull request: a Dependabot run reads Dependabot secrets only |
 
    The App stays installed on the repository with write access to contents, as for the docs commit on any pull request. Keep it installed on the module repositories alone: its key is in every admitted Dependabot run. When the key is rotated, update both secrets.
 
 5. **One dependency bot.** The admission judges Dependabot's pull requests only; another bot's pull requests run as a person's do, with every secret and every lane, unjudged.
 
-Then: an admitted pull request gets its README committed and its tests run, credentialed lanes included, and a person merges it; a refused one runs nothing and gets the admission comment, whose help says what to change.
+Then: an admitted pull request gets its README committed and its tests run, credentialed lanes included, and a person merges it, or [auto-merge](#auto-merge) does; a refused one runs nothing and gets the admission comment, whose help says what to change.
 
 There is one run per ref at a time: a newer push to the same pull request waits for the running one and replaces a waiting one. A test job also queues on its file, across the repository, so two pull requests never run the same integration test at the same time.
+
+## Auto-merge
+
+With `pr-auto-merge-enabled: true`, a pull request whose author is a bot on `pr-auto-merge-from-actors-yml` merges without a person once its run is green. Two bots open a module repository's routine pull requests, and both can be listed:
+
+- **Dependabot**, whose bumps the [admission](#dependabot-pull-requests) judges. An admitted bump merges in Dependabot's own run, or, when the docs job committed a regenerated README to it, in the run that commit starts.
+- **release-please**, which opens its release pull request with the CI App. It merges when it comes from release-please's branch, `release-please--branches--<default branch>`, and changes only `CHANGELOG.md` and `.release-please-manifest.json`; merging it tags the release ([`terraform-module-release`](Workflow-terraform-module-release.md)).
+
+Together they release a bump with no person involved: Dependabot's `fix(deps)` bump merges, release-please updates its release pull request, and that merges too.
+
+What makes a pull request eligible is the decision engine's rule ([Module-auto-merge.md §3](Module-auto-merge.md)). In short: the pull request is from the repository, against the default branch, by a listed bot; every commit on it is that bot's, signed by GitHub, except the docs job's commits at the head; and the run is the bot's own, or the one the CI App's docs commit started. A person's commit on the pull request, GitHub's "Update branch", or a run a person started (by reopening or labelling the pull request) keeps it from merging, and a person merges it instead. The merge is the project workflow's: a rebase merge, made only while the pull request's head and its base are still what this run tested ([Auto-merge.md §6](Auto-merge.md)).
+
+### Setting it up
+
+1. **The inputs**, in the calling workflow's `with:`. List the CI App's bot account under its slug, the App's name in its URL followed by `[bot]`:
+
+   ```yaml
+         dependabot-admission-enabled: true   # required to list dependabot[bot]
+         pr-auto-merge-enabled: true
+         pr-auto-merge-from-actors-yml: |
+           - dependabot[bot]
+           - <the CI App's slug>[bot]           # release-please's release pull requests
+   ```
+
+   The list names bots only: a person's commits made in GitHub's web editor are signed by GitHub too, so a person on the list would have them merged unreviewed. `dependabot[bot]` on the list needs the admission on.
+
+2. **The CI App** needs write access to pull requests as well as contents, and the key as an Actions secret and a Dependabot secret, as for the docs commit, see [requirements](#requirements).
+
+3. **The required check.** Require `tf / Terraform conclusion` on the default branch, as for any module repository: the merge waits for it, and a person cannot merge a pull request whose run refused.
+
+4. **Releases for bumps.** Give Dependabot the commit message prefix `fix(deps)`, so that release-please releases each merged bump; with `chore(deps)` the bump merges and waits for the next release.
+
+### The verdict
+
+`Create test matrix` writes the verdict as a notice on every pull request run of a listed author, for example:
+
+```text
+auto-merge: eligible: dependabot[bot]'s pull request, 2 commits (1 the author's, 1 docs)
+auto-merge: not eligible: the run was started by octocat, neither the author (dependabot[bot]) nor the CI App's docs commit
+```
+
+and the `PR auto merger` job runs only on an eligible one, once the conclusion is green. A pull request that does not merge stays open for a person; nothing turns red over it.
+
+| Pull request | The run that decides | Merges |
+|---|---|---|
+| Dependabot's, admitted, README unchanged | Dependabot's own | yes |
+| Dependabot's, admitted, README regenerated | the one the docs commit starts | yes |
+| Dependabot's, refused, then reopened or labelled by a person | the person's | no |
+| Dependabot's, with a README commit from a run nobody judged | the one that commit starts | no |
+| Dependabot's, a person pushed to it or pressed "Update branch" | the person's | no |
+| release-please's, changing only the changelog and the manifest | the App's own push | yes |
+| release-please's, changing `versions.tf`, `README.md` or other files | the App's own push | no |
+| a person's | the person's | no |
 
 ## Documentation
 
@@ -421,6 +483,26 @@ On a pull request from the repository, `Update documentation` fails before terra
 - `🔐 Explain the failed App token` fails with `The App whose ID is ORG_TF_CICD_APP_ID gave no token for this repository` when both reach the repository but the token step failed: the App is not installed on the repository, or the key is not a key of that App. The token step's log above it has GitHub's answer.
 
 See [requirements](#requirements).
+
+### A pull request did not merge
+
+`Create test matrix` says why in its notice, `auto-merge: not eligible: <reason>`; when there is no such notice, auto-merge is off or the run was not a listed author's pull request. The usual reasons:
+
+| Reason | What to do |
+|---|---|
+| `its author, <login>, is not in pr-auto-merge-from-actors-yml` | Expected for a person's pull request. For a bot, add it to the list. |
+| `the run was started by <login>, neither the author (<bot>) nor the CI App's docs commit` | A person reopened, labelled or edited the pull request; merge it yourself, or have the bot update it (`@dependabot rebase`). |
+| `commit <sha> by <login> is neither the author's (<bot>), signed by GitHub, nor a docs commit (…)` | Someone pushed to the bot's branch, or pressed "Update branch". Merge it yourself, or have the bot recreate it (`@dependabot recreate`). |
+| `the Dependabot admission did not admit this run` | The admission comment says why. |
+| `docs commit <sha> was not made in an admitted Dependabot run: …` | The README was committed in a run nobody judged, such as a person's. Have Dependabot recreate the pull request (`@dependabot recreate`), or merge it yourself. |
+| `another bot's pull request merges only as a release, …` or `release commit <sha> changes <file>, …` | A release pull request that touches more than the changelog and the manifest is merged by a person. |
+| `its commits could not be listed (…)` | The GitHub API failed; re-run the workflow. |
+
+When `PR auto merger` ran and failed:
+
+- `🤖 Confirm the run is the CI App's` fails when the pull request ends with docs commits and the run was not started by the CI App's push: another App pushed them. Merge it yourself.
+- `🤖 Auto merge PR` refuses when the pull request's head or the default branch moved while the run was going; the newer commit's run decides, and for a moved base the bot's next rebase does.
+- `🔐 Check the App's variable and secret` and `🔐 Explain the failed App token` fail as in the docs job, see [the docs job cannot create the App token](#the-docs-job-cannot-create-the-app-token).
 
 ### Terraform below 1.13
 
