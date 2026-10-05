@@ -151,7 +151,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | `validate` (Validate module) | unless the docs job pushed a commit or the module is not affected by the change | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
-| `conclusion` (Terraform conclusion) | on every run | — | One line, in the log, the step summary and an annotation. |
+| `conclusion` (Terraform conclusion) | on every run | — | One line, in the log and an annotation; the run summary's headline shows it. |
 | `run-summary` (Run summary) | on every run, last | — | One block for the whole run, see [the run summary](#the-run-summary). |
 | `automerge` (PR auto merger) | with auto-merge on, on a pull request the run ruled eligible, once the conclusion is green and the docs job pushed nothing | Merges the pull request with the CI App's token, a rebase merge, and deletes its branch. | `Create test matrix` gives the verdict as a notice, see [auto-merge](#auto-merge). |
 
@@ -320,13 +320,13 @@ A release pull request changes only `CHANGELOG.md`, so it is not affected, and [
 
 The `Run summary` job writes one block for the whole run to the run page, on every event, push, dispatch and schedule included, which get no pull-request comment:
 
-- a headline with the conclusion, green or red, and the conclusion's line;
+- a headline with the conclusion and why, for example `❌ Module CI: red — validation's result is failure`;
 - the relevance line;
-- a table: the docs, each validation step (or why validation was skipped) and the warnings, and the tests (passed, failed, tolerated, not run);
+- a row each for the docs, validation (the steps that failed, or that all passed, with the warnings count; or why it was skipped) and the tests (passed, failed, tolerated, not run);
 - auto-merge's verdict, and whether the pull request was merged, when auto-merge applies;
 - the admission's table when it refused a Dependabot pull request.
 
-It never fails the run, and the conclusion does not wait for it.
+It is the overview; the jobs' own blocks on the same page are the detail, each validation step and each test file. It never fails the run, and the conclusion does not wait for it.
 
 ## Documentation
 
