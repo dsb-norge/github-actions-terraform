@@ -405,7 +405,7 @@ Module workflow:
   evaluated; the push needs both (D22, P23).
   The terraform-docs action gains a `commit-message` input, `[dependabot skip]` on Dependabot runs.
 
-Structural tests in `evaluate-automerge-eligibility/run_all_tests.sh` change with them: F11
+Structural tests in `structural-tests/run_all_tests.sh` change with them: F11
 (create-matrix's outputs), F20 (the shared test jobs and the seed job stay equal), F21 (the module
 conclusion and `validate`'s needs), F24 (the App check names the Dependabot secret on a Dependabot
 run), F25 (the init expression and the conclusion branch), and F26 (the docs job's gate, pin, push

@@ -187,7 +187,7 @@ jobs:
 
   # A refused Dependabot pull request's admission head, and its purge on a later run, posted as the project
   # workflow's seed job posts them: the job is that job but for its if, which F20 in
-  # evaluate-automerge-eligibility/run_all_tests.sh holds (docs/Dependabot-admission.md §7, D21).
+  # structural-tests/run_all_tests.sh holds (docs/Dependabot-admission.md §7, D21).
   # Only a pull request Dependabot opened can hold the head, so no other pull request runs the job.
   seed-pr-comments:
     if: |

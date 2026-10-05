@@ -58,7 +58,7 @@ Emits two job outputs:
 - `tests-matrix` — JSON array of action names with tests, fed straight into the `test` matrix.
 - `no-tests-list` — JSON array of action names without tests, consumed by `summary`.
 
-A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. The decision engine in [`engine/`](../engine) is the one such suite: it is not an action, but its suite gates the pull request like every action's ([Decision-engine.md](Decision-engine.md) §8).
+A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. There are two such suites, neither of them an action, and both gate the pull request like every action's: the decision engine in [`engine/`](../engine) ([Decision-engine.md](Decision-engine.md) §8), and the structural tests in [`structural-tests/`](../structural-tests), the invariants that hold across the workflows, the actions and the documentation (F2-F28).
 
 Dynamic discovery means newly-added test suites are picked up automatically; no workflow edit is needed when a legacy action gets modernized.
 
@@ -256,6 +256,7 @@ Path filters: intentionally omitted. "Did this workflow run at all" being load-b
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
 | `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). In CI it runs with `ENGINE_MUTATION=shards`, which leaves its mutation gate to §14; locally it runs both gates. |
 | `engine/tests/mutation.py` | The engine's mutation gate: `--shard K/N --out <file>` runs one shard, `--merge <files>` judges them (§14). |
+| `structural-tests/run_all_tests.sh` | The structural tests F2-F28: the invariants across the workflows, the actions, the engine and the documentation that no action's suite owns. Discovered by the second pass (§2.1). A new one takes the next number. |
 
 The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function (the test suite has none), and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — the first two serve this workflow, the rewrite pair `pr-preview.yml`.
 
@@ -268,7 +269,7 @@ When a legacy action gets modernized and gains a `run_all_tests.sh`:
 1. Make sure the suite prints the three `Tests run:` / `Tests passed:` / `Tests failed:` lines (§4).
 2. Make sure it writes the step's output to a `mktemp` file, never a fixed path under `/tmp`: in CI
    each suite has a job of its own, but locally every suite can run side by side, and two sharing a
-   file fail at random. The structural test F18 (`evaluate-automerge-eligibility/run_all_tests.sh`)
+   file fail at random. The structural test F18 (`structural-tests/run_all_tests.sh`)
    fails on a redirect into a fixed `/tmp` path.
 3. Drop the action name from the §3 exclusion list if it was there.
 4. That's it — discovery picks it up automatically on the next PR run.
@@ -511,7 +512,7 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   `test-result-engine-mutation-gate` whatever its result. `summary` needs the gate, so a red gate
   is a red row and the totals cannot read green over it.
 
-The structural test F17 (`evaluate-automerge-eligibility/run_all_tests.sh`) holds this together:
+The structural test F17 (`structural-tests/run_all_tests.sh`) holds this together:
 - every job that runs the engine suite sets `ENGINE_MUTATION=shards`;
 - the shards are 1..N, with the same N in the matrix, the command and the job name;
 - the merge needs the shards, checks their result and reports a `test-result-*` artifact, which

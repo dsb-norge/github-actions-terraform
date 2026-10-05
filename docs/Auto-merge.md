@@ -353,7 +353,7 @@ the test and its lane.
 - `auto-merge-pr`: `--match-head-commit` passed; a moved base refused before merging; a moved
   head's message; the retry stopping on `CONFLICTING` and not retrying a refused pin.
 - Engine: relevance published for every environment, whatever its verdict.
-- Structural (F14 in `evaluate-automerge-eligibility/run_all_tests.sh`, and `terraform-plan`'s own
+- Structural (F14 in `structural-tests/run_all_tests.sh`, and `terraform-plan`'s own
   suite): the auto-merge job's base-branch and same-repository conditions, the head and merge SHA
   wiring, the JSON file wiring from both plan steps to their parse steps, the test metadata
   downloaded before the evaluation, no JSON plan artifact.

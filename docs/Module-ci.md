@@ -326,7 +326,7 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | Auto-merge | `engine/dsb_tf_engine/automerge.py` (the rule), `automerge_facts.py` (the commits) |
 | Path relevance | `engine/dsb_tf_engine/relevance.py` (`decide_module_relevance`) |
 | The run summary | `create-run-summary/` (`mode: module`) |
-| Parity, conclusion and wiring tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21, F24, F26, F27, F28) |
+| Parity, conclusion and wiring tests | `structural-tests/run_all_tests.sh` (F20, F21, F24, F26, F27, F28) |
 
 ## 13. Open questions
 

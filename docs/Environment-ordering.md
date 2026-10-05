@@ -440,7 +440,7 @@ The contract between the pieces:
 As built: the engine's `test_ordering.py` (every case of the Must list, every message of §5) and a
 generated dimension of 600 random graphs across events, goals, changed files and dispatches, with
 I18 to I24 derived apart from `ordering.py`; F10 (the conclusion's lines) and F15 (the three stage
-jobs' shape) in `evaluate-automerge-eligibility/run_all_tests.sh`; the held-back cases of
+jobs' shape) in `structural-tests/run_all_tests.sh`; the held-back cases of
 `create-run-summary`, `aggregate-validation-summaries` and `evaluate-automerge-eligibility`, each
 with the unordered output held byte-identical.
 
