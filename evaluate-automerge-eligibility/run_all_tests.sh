@@ -1922,6 +1922,107 @@ unset TEST_RELEVANCE_FILE
 cleanup_test_dir
 
 # ============================================================================
+# Golden cases (docs/Auto-merge.md §14): every case under engine/tests/evaluator_port, run
+# through the action's own run block as the runner runs it: the block's expressions pasted
+# into the script text, the step's env: set, nothing else of this suite's environment.
+# The engine's suite replays the same cases through its adapter; this one holds the shim.
+# ============================================================================
+_cases_dir="$(cd -- "${_this_script_dir}/../engine/tests/evaluator_port" &>/dev/null && pwd)"
+_step_json="$(mktemp)"
+yq -o json '.runs.steps[0]' "${_this_script_dir}/action.yml" >"${_step_json}"
+
+# A sandbox for the case in $1: its files in a workspace, the run block with the case's inputs
+# pasted in (step.sh), and the step's env: with them substituted, one assignment a line (env).
+make_golden_sandbox() {
+  SANDBOX="$(mktemp -d)"
+  python3 - "${_this_script_dir}" "${_step_json}" "${1}" "${SANDBOX}" <<'PY'
+import json, os, shlex, sys
+action_dir, step_file, case_file, sandbox = sys.argv[1:5]
+with open(step_file, encoding="utf-8") as handle:
+    step = json.load(handle)
+with open(case_file, encoding="utf-8") as handle:
+    case = json.load(handle)
+os.makedirs(f"{sandbox}/ws")
+for name, content in case["files"].items():
+    with open(f"{sandbox}/ws/{name}", "w", encoding="utf-8") as handle:
+        handle.write(content["text"] if "text" in content else json.dumps(content["json"], indent=2))
+inputs = {"metadata-files-pattern": case["metadata_files_pattern"], "relevance-file": case["relevance_file"],
+          "test-metadata-files-pattern": case["test_metadata_files_pattern"],
+          "stage-results-json": case["stage_results_json"]}
+def paste(text):
+    for name, value in inputs.items():
+        text = text.replace("${{ inputs." + name + " }}", value)
+    return text.replace("${{ github.action_path }}", action_dir)
+with open(f"{sandbox}/step.sh", "w", encoding="utf-8") as handle:
+    handle.write(paste(step["run"]))
+with open(f"{sandbox}/env", "w", encoding="utf-8") as handle:
+    for key, value in (step.get("env") or {}).items():
+        handle.write(f"{key}={shlex.quote(paste(str(value)))}\n")
+    handle.write(f"GITHUB_ACTOR={shlex.quote(case['actor'])}\n")
+PY
+}
+
+# A step output by name, in either form GitHub reads: name=value or name<<delimiter.
+golden_output() {
+  python3 - "${1}" "${2}" <<'PY'
+import sys
+path, name = sys.argv[1:3]
+with open(path, encoding="utf-8") as handle:
+    lines = handle.read().split("\n")
+for index, line in enumerate(lines):
+    if line.startswith(name + "="):
+        print(line[len(name) + 1:])
+        break
+    if line.startswith(name + "<<"):
+        print("\n".join(lines[index + 1:lines.index(line[len(name) + 2:], index + 1)]))
+        break
+PY
+}
+
+for case_file in "${_cases_dir}"/*.json; do
+  TESTS_RUN=$((TESTS_RUN + 1))
+  echo ""
+  echo -e "${BLUE}TEST ${TESTS_RUN}: golden $(basename "${case_file}" .json)${NC}"
+  make_golden_sandbox "${case_file}"
+  : >"${SANDBOX}/output.txt"
+  (
+    cd "${SANDBOX}/ws" || exit 1
+    # What the runner sets for a composite step; the rest comes from the step's env:.
+    env -i PATH="${PATH}" HOME="${HOME}" LANG="${LANG:-C.UTF-8}" GITHUB_OUTPUT="${SANDBOX}/output.txt" \
+      GITHUB_ACTION_PATH="${_this_script_dir}" \
+      bash --noprofile --norc -c 'set -a; source "${1}"; set +a; exec bash --noprofile --norc -eo pipefail "${2}"' \
+      _ "${SANDBOX}/env" "${SANDBOX}/step.sh"
+  ) >"${_test_output}" 2>&1
+  exit_code=$?
+  expected_exit="$(jq -r '.expected.exit' "${case_file}")"
+  expected_eligible="$(jq -r '.expected.is_eligible' "${case_file}")"
+  actual_eligible="$(golden_output "${SANDBOX}/output.txt" is-eligible)"
+  problems=()
+  [[ "${exit_code}" == "${expected_exit}" ]] || problems+=("exit code ${exit_code}, expected ${expected_exit}")
+  [[ "${actual_eligible}" == "${expected_eligible}" ]] ||
+    problems+=("is-eligible '${actual_eligible}', expected '${expected_eligible}'")
+  while IFS= read -r text; do
+    if [[ "${text}" == '!'* ]]; then
+      grep -qF -- "${text#!}" "${_test_output}" && problems+=("output holds: ${text#!}")
+    else
+      grep -qF -- "${text}" "${_test_output}" || problems+=("output lacks: ${text}")
+    fi
+  done < <(jq -r '.expected.texts[]' "${case_file}")
+  if [[ ${#problems[@]} -eq 0 ]]; then
+    echo -e "${GREEN}✓ PASSED${NC}: exit ${exit_code}, is-eligible '${actual_eligible}'"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+  else
+    echo -e "${RED}✗ FAILED${NC}:"
+    printf '  %s\n' "${problems[@]}"
+    echo "Step output:"
+    cat "${_test_output}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+  fi
+  rm -rf "${SANDBOX}"
+done
+rm -f "${_step_json}"
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
