@@ -97,7 +97,7 @@ Test harnesses must mirror their shim: a suite that `export`s a large input the 
 
 ### PRs are gated by per-action test suites
 
-`.github/workflows/action-tests.yml` runs every action's `run_all_tests.sh` in parallel on each PR and exposes a single `tests-conclusion` check (required by branch protection). Result is reported as a PR comment, run-page annotations, and a `$GITHUB_STEP_SUMMARY` block — all three driven by the result-JSON artifacts each matrix job uploads. The cross-file invariants (the structural tests F2–F28: workflow wiring, heredoc captures, the stage jobs' shape, the docs index) are a suite of their own, `structural-tests/run_all_tests.sh`; a new one takes the next number.
+`.github/workflows/action-tests.yml` runs every action's `run_all_tests.sh` in parallel on each PR and exposes a single `tests-conclusion` check (required by branch protection). Result is reported as a PR comment, run-page annotations, and a `$GITHUB_STEP_SUMMARY` block — all three driven by the result-JSON artifacts each matrix job uploads. The cross-file invariants (the structural tests F2–F29: workflow wiring, heredoc captures, the stage jobs' shape, the docs index) are a suite of their own, `structural-tests/run_all_tests.sh`; a new one takes the next number.
 
 Suites must emit the canonical `Tests run: N` / `Tests passed: N` / `Tests failed: N` summary lines verbatim — CI parses them and fails the suite on drift. Full design and verification procedures: [docs/Testing-in-ci.md](docs/Testing-in-ci.md).
 
