@@ -28,6 +28,7 @@ once, under the kind of document it is.
 | [Workflow-terraform-ci-default.md](Workflow-terraform-ci-default.md) | The default workflow for Terraform projects: every input, `environments-yml`, and worked examples from a single environment to ordered stages, dispatch and test lanes. |
 | [Workflow-terraform-module-ci.md](Workflow-terraform-module-ci.md) | The module workflow: terraform-docs, validation, `terraform test` with or without credentials. |
 | [Workflow-terraform-module-release.md](Workflow-terraform-module-release.md) | The module release workflow: release-please and the App token. |
+| [Module-dependencies.md](Module-dependencies.md) | A module repository's dependencies: provider ranges and module pins, what Dependabot moves, what merges itself, and what a developer does when. |
 
 ## Migration
 
