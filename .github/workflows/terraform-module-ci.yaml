@@ -118,6 +118,17 @@ on:
             pr-auto-merge-from-actors-yml: '["dependabot[bot]", "<the CI App's slug>[bot]"]'
         type: string
         default: "[]"
+      path-relevance-enabled:
+        description: |
+          Skip validation and the tests on a pull request or push that changes only ignored files (docs/Module-ci.md
+          §5.1); the docs job and the conclusion run as always. false runs everything on every change.
+        type: boolean
+        default: true
+      paths-ignore-yml:
+        description: |
+          Glob patterns of files that never make the module affected. Empty means ["**/*.md"]; [] ignores nothing.
+        type: string
+        default: ""
 
 # One run per ref. The default queue depth (one pending run) is deliberate: a pending run is a
 # superseded commit of the same ref and nothing here applies to shared state, so dropping it when
@@ -151,6 +162,10 @@ jobs:
       # Auto-merge's verdict, and whether the merge job must confirm the run is the CI App's (docs/Module-auto-merge.md §5).
       automerge-eligible: ${{ steps.create-matrix.outputs.automerge-eligible }}
       automerge-confirm-app: ${{ steps.create-matrix.outputs.automerge-confirm-app }}
+      # Whether the change is relevant to the module: affected-count is 1 or 0 (docs/Module-ci.md §5.1).
+      relevance-mode: ${{ steps.create-matrix.outputs.relevance-mode }}
+      relevance-reason: ${{ steps.create-matrix.outputs.relevance-reason }}
+      affected-count: ${{ steps.create-matrix.outputs.affected-count }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
@@ -356,9 +371,11 @@ jobs:
     needs: [generate-docs, create-matrix]
     # A docs commit starts a run of its own, which validates it; this run's tree is superseded. Validation runs
     # the pull request's providers, so a Dependabot run validates only once create-matrix has decided and the
-    # admission did not refuse it (docs/Dependabot-admission.md D16).
+    # admission did not refuse it (docs/Dependabot-admission.md D16). A change the module is not affected by
+    # validates nothing (docs/Module-ci.md §5.1); a failed create-matrix publishes no count, and validation runs.
     if: |
       !cancelled() && needs.generate-docs.outputs.pushed != 'true'
+      && needs.create-matrix.outputs.affected-count != '0'
       && (github.actor != 'dependabot[bot]'
           || (needs.create-matrix.result == 'success' && needs.create-matrix.outputs.admission-refused != 'true'))
     runs-on: ${{ inputs.runs-on }}
@@ -935,6 +952,7 @@ jobs:
           TESTS_RESULT: ${{ needs.terraform-test.result }}
           ADMISSION_REFUSED: ${{ needs.create-matrix.outputs.admission-refused }}
           ADMISSION_REASON: ${{ needs.create-matrix.outputs.admission-reason }}
+          AFFECTED_COUNT: ${{ needs.create-matrix.outputs.affected-count }}
         run: |
           # Judge the run from the named results and the engine's outputs (docs/Module-ci.md §8)
           set -euo pipefail
@@ -949,6 +967,9 @@ jobs:
           elif [ "${DOCS_PUSHED}" = "true" ]; then
             # The docs commit started a run of its own, which validates and tests it.
             verdict=green why="documentation regenerated and pushed; the run it started decides"
+          elif [ "${AFFECTED_COUNT:-}" = "0" ]; then
+            # Every changed file is ignored: validation and the tests were skipped on purpose (docs/Module-ci.md §5.1).
+            verdict=green why="the module is not affected by this change; nothing to validate or test"
           elif [ "${VALIDATE_RESULT}" != "success" ]; then
             why="validation's result is ${VALIDATE_RESULT}"
           elif [ "${TESTS_REQUIRED_MISSING}" = "true" ]; then
@@ -981,7 +1002,8 @@ jobs:
   # rule needs it and merges, pinned to the head and the base this run evaluated (auto-merge-pr).
   automerge:
     # Runs when:
-    #   - the conclusion is green, and create-matrix, the docs job and validation succeeded AND
+    #   - the conclusion is green, and create-matrix, the docs job and validation succeeded, validation also
+    #     when skipped because the module is not affected (a release changes only CHANGELOG.md) AND
     #   - the docs job pushed nothing: a docs commit's own run decides AND
     #   - the engine ruled the pull request eligible AND
     #   - pr-auto-merge-enabled is true AND
@@ -994,7 +1016,8 @@ jobs:
       && needs.conclusion.result == 'success'
       && needs.create-matrix.result == 'success'
       && needs.generate-docs.result == 'success'
-      && needs.validate.result == 'success'
+      && (needs.validate.result == 'success'
+          || (needs.validate.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0'))
       && needs.generate-docs.outputs.pushed != 'true'
       && needs.create-matrix.outputs.automerge-eligible == 'true'
       && inputs.pr-auto-merge-enabled == true
@@ -1074,3 +1097,4 @@ jobs:
           # parent, the base (docs/Auto-merge.md D2, D3).
           head-sha: ${{ github.event.pull_request.head.sha }}
           merge-sha: ${{ github.sha }}
+

@@ -556,7 +556,8 @@ jq -n '{"terraform-version": "1.14.x", "tflint-version": "v0.64.0", "readme-file
         "terraform-test-enabled": true, "terraform-test-required": false, "allow-failing-terraform-tests": false,
         "terraform-test-runs-on": "ubuntu-latest", "terraform-test-timeout-minutes": 30,
         "terraform-test-lanes-yml": "", "terraform-test-exclude-paths-yml": "",
-        "pr-auto-merge-enabled": true, "pr-auto-merge-from-actors-yml": "- release-bot[bot]\n"}' >"${SANDBOX}/inputs.json"
+        "pr-auto-merge-enabled": true, "pr-auto-merge-from-actors-yml": "- release-bot[bot]\n",
+        "path-relevance-enabled": false}' >"${SANDBOX}/inputs.json"
 jq -n --arg sha "${head_sha}" '{action: "synchronize", number: 12, repository: {default_branch: "main"},
   pull_request: {number: 12, commits: 1, user: {login: "release-bot[bot]"},
                  head: {sha: $sha, ref: "release-please--branches--main", repo: {fork: false}}}}' >"${SANDBOX}/event.json"
@@ -585,6 +586,22 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output automerge-eligible)" == "false"
   pass
 else
   fail "exit ${STEP_EXIT}, or an unlisted author's commits were listed: $(cat "${SANDBOX}/gh-calls"); $(tail -n 5 "${OUT_FILE}")"
+fi
+
+begin "module mode: a pull request that changes only Markdown is not affected"
+jq '.["path-relevance-enabled"] = true' "${SANDBOX}/inputs.json" >"${SANDBOX}/inputs.tmp" && mv "${SANDBOX}/inputs.tmp" "${SANDBOX}/inputs.json"
+: >"${SANDBOX}/gh-calls"
+echo "{\"head\": {\"sha\": \"${head_sha}\"}, \"changed_files\": 2}" >"${SANDBOX}/api/repos_example-org_example-repo_pulls_12"
+echo '[{"filename": "README.md"}, {"filename": "docs/Development.md"}]' \
+  >"${SANDBOX}/api/repos_example-org_example-repo_pulls_12_files?per_page=100&page=1"
+run_step MODE=module GITHUB_EVENT_NAME=pull_request GITHUB_ACTOR=octocat GITHUB_BASE_REF=main
+if [[ ${STEP_EXIT} -eq 0 ]] \
+  && [[ "$(step_output relevance-mode)/$(step_output relevance-reason) $(step_output affected-count) $(step_output changed-count)" == "diff/diff 0 2" ]] \
+  && [[ "$(jq -r '.relevance.affected' "$(step_output relevance-file)")" == "false" ]] \
+  && grep -q "the module is not affected: every changed file is ignored (\*\*/\*.md); nothing to validate or test" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, or the module's relevance was not published: $(cat "${SANDBOX}/gh-calls"); $(tail -n 5 "${OUT_FILE}")"
 fi
 
 echo ""

@@ -712,8 +712,9 @@ class GatherTest(unittest.TestCase):
         self.assertEqual((True, 0), (facts["available"], facts["count"]))
 
 
+# Relevance off: these tests count auto-merge's calls alone.
 MERGE_INPUTS = {**test_module.MODULE_RUNNER_INPUTS, "pr-auto-merge-enabled": True,
-                "pr-auto-merge-from-actors-yml": json.dumps([APP])}
+                "pr-auto-merge-from-actors-yml": json.dumps([APP]), "path-relevance-enabled": False}
 PULL_PAYLOAD = {"action": "synchronize", "number": 12, "repository": {"default_branch": "main"},
                 "pull_request": {"number": 12, "commits": 1, "user": {"login": APP},
                                  "head": {"sha": HEAD, "ref": RELEASE_BRANCH, "repo": {"fork": False}}}}

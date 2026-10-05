@@ -163,6 +163,16 @@ Messages:
 As [Dispatch-and-triggers.md](Dispatch-and-triggers.md) §3.2 and [Path-relevance.md](Path-relevance.md)
 §3 specify, with their existing messages.
 
+The module workflow's path relevance ([Module-ci.md](Module-ci.md) §5.1) has two workflow
+inputs instead: `path-relevance-enabled` must be true or false, with the message above, and
+`paths-ignore-yml` must be a list of globs:
+
+- `The specification for input 'paths-ignore-yml' is not valid yaml!`
+- `The input 'paths-ignore-yml' is 'docs'; it must be a list of patterns!`
+- `The input 'paths-ignore-yml' has an invalid entry: the pattern 'a**b' is not supported: '**' must be a whole segment!`, one per entry, as for an environment's `paths-ignore`
+
+An empty value means `["**/*.md"]`, and `[]` ignores nothing.
+
 ### 3.4 Additional init directories
 
 `terraform-init-additional-dirs-yml` is a list of directories, relative to the repository root. A

@@ -612,6 +612,7 @@ environments-yml: |
 
 | Concern | Relationship |
 |---|---|
+| The module workflow ([Module-ci.md](Module-ci.md) §5.1) | The same changed files, fail-open rules and globs, for one unit, the module: any changed file that `paths-ignore-yml` (default `**/*.md`) does not ignore makes it affected. Unlike here, a module that is not affected holds back its tests as well as its validation (Module-ci.md D12). |
 | Test stage | Tests are not filtered here (D11). The conclusion judges them independently (§7.2). The test job's `if:` drops its `seed-pr-comments` result clause for the same reason as §5.3. |
 | Ordering between environments ([Environment-ordering.md](Environment-ordering.md)) | Conditionality comes for free: a dependency on an environment that is not in the run is satisfied trivially, and is recorded. `relevance.json` carries what the stage builder needs. The conclusion rule for a stage skipped while its row count is non-zero is shared with that spec. |
 | Dispatch and trigger events ([Dispatch-and-triggers.md](Dispatch-and-triggers.md)) | `workflow_dispatch` and `schedule` are mode `all`; the trigger events and the dispatch filter come first, so an environment that does not take part, or that a dispatch did not name, is skipped for that reason and a dispatched environment is always affected. A pull request skip for trigger events gets its own head, not the "not affected" one. |

@@ -103,7 +103,9 @@ def _module(document):
         if admission.applies(document, policy):
             _require_facts(document)
             admitted = admission.judge(document, policy, {})
-        tests_block, warnings, notices = tests.decide_tests(document, [], tests.MODULE_TEST_EVENTS, admitted)
+        relevant = relevance.decide_module_relevance(document)
+        tests_block, warnings, notices = tests.decide_tests(
+            document, [], tests.MODULE_TEST_EVENTS, admitted, None if relevant["affected"] else relevance.NOT_AFFECTED)
     except environments.ConfigError as error:
         return _failed(error.messages)
     merge = automerge.judge(document, merge_policy, admitted)
@@ -112,9 +114,11 @@ def _module(document):
         "schema_version": SCHEMA_VERSION,
         "mode": "module",
         "errors": [],
-        "notices": [*_admission_notices(admitted), *notices, *([merge_notice] if merge_notice else [])],
+        "notices": [*_admission_notices(admitted), relevance.module_notice(relevant), *notices,
+                    *([merge_notice] if merge_notice else [])],
         "warnings": warnings,
         "tests": tests_block,
+        "relevance": relevant,
         "admission": admitted,
         "automerge": merge,
         "trigger": {"event": document["event"]["name"], "lines": []},
