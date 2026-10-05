@@ -24,6 +24,10 @@
 #                          without it (docs/Path-relevance.md §6.5, P8). Its
 #                          admission block adds the section of a refused
 #                          Dependabot pull request (docs/Dependabot-admission.md §7)
+#   input_mode           - 'module' renders a module run's one block instead
+#                          (docs/Module-ci.md §7.1); anything else, the project rollup
+#   input_module_results_json - module mode: toJSON(needs) of the run summary job,
+#                          a shell-local, never exported; written to a file at once
 #   input_stage_results_json - {"1": <result>, "2": ..., "3": ...}, the stage
 #                          jobs' results; a shell-local, never exported. With
 #                          the relevance file it tells a held-back environment
@@ -454,7 +458,167 @@ function count_env {
   return 0
 }
 
+# One value of the module results file (toJSON(needs)): a job's 'result', or one of its outputs; empty
+# when the job or the value is absent, or the file unreadable.
+#   $1 the results file, $2 the job, $3 'result' or an output name
+function needs_value {
+  if [ "${3}" = "result" ]; then
+    jq -r --arg j "${2}" '(.[$j].result // "") | tostring' "${1}" 2>/dev/null || true
+  else
+    jq -r --arg j "${2}" --arg k "${3}" '(.[$j].outputs[$k] // "") | tostring' "${1}" 2>/dev/null || true
+  fi
+}
+
+# A step's or a job's outcome as a cell.
+function outcome_cell {
+  case "${1}" in
+    success) printf '✅ success' ;;
+    failure) printf '❌ failure' ;;
+    cancelled) printf '🚫 cancelled' ;;
+    skipped) printf '⏭️ skipped' ;;
+    '') printf '—' ;;
+    *) printf '%s' "${1}" ;;
+  esac
+}
+
+# The relevance file of a module run when it can be used, else empty.
+function usable_module_relevance_file {
+  local file="${1}"
+  [ -z "${file}" ] && return 0
+  if [ ! -f "${file}" ] || ! jq -e '.mode == "module"' "${file}" >/dev/null 2>&1; then
+    log-warn "no module decision at '${file}'; rendering without relevance, admission and auto-merge" 1>&2
+    return 0
+  fi
+  printf '%s' "${file}"
+}
+
+# The module run's one block (docs/Module-ci.md §7.1). Values come from files through jq, never from
+# exported shell variables.
+#   $1 the module results file, $2 the usable relevance file or empty
+function render_module_summary {
+  local results="${1}" relevance="${2}"
+  local conclusion line
+  conclusion=$(needs_value "${results}" conclusion result)
+  line=$(needs_value "${results}" conclusion line)
+  case "${conclusion}" in
+    success) printf '### ✅ Module CI: green\n\n' ;;
+    failure) printf '### ❌ Module CI: red\n\n' ; FAILED_COUNT=1 ;;
+    *) printf '### ❔ Module CI: the conclusion did not run (%s)\n\n' "${conclusion:-unknown}" ;;
+  esac
+  [ -n "${line}" ] && printf '`%s`\n\n' "${line}"
+
+  local relevance_line="" merge_line=""
+  if [ -n "${relevance}" ]; then
+    relevance_line=$(jq -r '[(.notices // [])[] | select(type == "string" and startswith("relevance "))][0] // ""' \
+      "${relevance}" 2>/dev/null || true)
+    merge_line=$(jq -r '[(.notices // [])[] | select(type == "string" and startswith("auto-merge: "))][0] // ""' \
+      "${relevance}" 2>/dev/null || true)
+  fi
+  [ -n "${relevance_line}" ] && printf '_%s_\n\n' "${relevance_line}"
+
+  local docs_status docs_cell
+  docs_status=$(needs_value "${results}" generate-docs status)
+  case "${docs_status}" in
+    up-to-date) docs_cell='✅ up to date' ;;
+    pushed) docs_cell='✅ regenerated and pushed; the run it started decides' ;;
+    needs-regeneration) docs_cell='❌ the README needs regenerating' ;;
+    failed) docs_cell='❌ failed' ;;
+    *) docs_cell=$(outcome_cell "$(needs_value "${results}" generate-docs result)") ;;
+  esac
+
+  local affected validate_result
+  affected=$(needs_value "${results}" create-matrix affected-count)
+  validate_result=$(needs_value "${results}" validate result)
+  printf '| Step | Result |\n|---|---|\n'
+  printf '| 📝 Docs | %s |\n' "${docs_cell}"
+  if [ "${validate_result}" = "skipped" ]; then
+    local why='skipped'
+    if [ "${docs_status}" = "pushed" ]; then
+      why='skipped: the run the docs commit started validates'
+    elif [ "${affected}" = "0" ]; then
+      why='skipped: the module is not affected by this change'
+    fi
+    printf '| ✔ Validation | ⏭️ %s |\n' "${why}"
+  else
+    local step label
+    for step in init:'⚙️ Init' fmt:'🖌 Format' validate:'✔ Validate' lint:'🧹 TFLint'; do
+      label="${step#*:}"
+      printf '| %s | %s |\n' "${label}" "$(outcome_cell "$(needs_value "${results}" validate "${step%%:*}")")"
+    done
+    local warnings
+    warnings=$(needs_value "${results}" validate warning-count)
+    [[ "${warnings}" =~ ^[1-9][0-9]*$ ]] && printf '| ⚠️ Warnings | %s from init and validate |\n' "${warnings}"
+  fi
+
+  local tests_result tests_cell
+  tests_result=$(needs_value "${results}" terraform-test-summary result)
+  # Not affected, every file was held back, which the summary job counts as not run; say why instead.
+  if [ "${affected}" = "0" ]; then
+    tests_cell='⏭️ held back: the module is not affected by this change'
+  elif [ "${tests_result}" = "success" ]; then
+    local parts=() count name
+    for name in passed failed tolerated not-run; do
+      count=$(needs_value "${results}" terraform-test-summary "${name}-count")
+      [[ "${count}" =~ ^[1-9][0-9]*$ ]] || continue
+      case "${name}" in
+        passed) parts+=("✅ ${count} passed") ;;
+        failed) parts+=("❌ ${count} failed") ;;
+        tolerated) parts+=("⚠️ ${count} tolerated") ;;
+        not-run) parts+=("${count} not run") ;;
+      esac
+    done
+    tests_cell="no test files"
+    if [ "${#parts[@]}" -gt 0 ]; then
+      tests_cell=$(IFS='|'; printf '%s' "${parts[*]}")
+      tests_cell="${tests_cell//|/ · }"
+    fi
+  else
+    tests_cell=$(outcome_cell "${tests_result}")
+  fi
+  printf '| 🧪 Tests | %s |\n' "${tests_cell}"
+
+  if [ -n "${merge_line}" ]; then
+    local merge_result
+    merge_result=$(needs_value "${results}" automerge result)
+    case "${merge_result}" in
+      success) merge_line+=" — merged ✅" ;;
+      failure) merge_line+=" — the merge did not go through; see the PR auto merger job ❌" ;;
+    esac
+    printf '\n**%s**\n' "${merge_line}"
+  fi
+
+  if [ -n "${relevance}" ] && admission_refused "${relevance}"; then
+    printf '\n'
+    render_admission_section "${relevance}"
+  fi
+}
+
 function main {
+  if [ "${input_mode:-project}" = "module" ]; then
+    log-info "rendering the module run summary ..."
+    ENVIRONMENT_COUNT=0
+    FAILED_COUNT=0
+    local results_file module_body relevance
+    results_file=$(mktemp)
+    printf '%s' "${input_module_results_json:-}" >"${results_file}"
+    jq -e 'type == "object"' "${results_file}" >/dev/null 2>&1 || printf '{}' >"${results_file}"
+    relevance=$(usable_module_relevance_file "${input_relevance_file:-}")
+    module_body="${RUNNER_TEMP:-/tmp}/run-summary-$$.md"
+    # Redirection, not $(...): the renderer sets FAILED_COUNT.
+    render_module_summary "${results_file}" "${relevance}" >"${module_body}"
+    log-multiline "run summary" "$(cat "${module_body}")"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      { cat "${module_body}"; printf '\n'; } >>"${GITHUB_STEP_SUMMARY}"
+      log-info "appended to the job summary"
+    else
+      log-warn "GITHUB_STEP_SUMMARY is not set; rendered to the log only"
+    fi
+    rm -f "${results_file}" "${module_body}"
+    set-output 'environment-count' "${ENVIRONMENT_COUNT}"
+    set-output 'failed-count' "${FAILED_COUNT}"
+    log-info "create-run-summary completed (module mode)."
+    return 0
+  fi
   log-info "rendering run summary from '${input_metadata_files_pattern:-matrix-job-meta-*.json}' ..."
 
   ENVIRONMENT_COUNT=0

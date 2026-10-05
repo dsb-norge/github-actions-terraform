@@ -80,6 +80,7 @@ run_step() {
     # As the shim does: stage-results-json is a shell-local captured before allexport, never
     # exported, and empty when the caller passes nothing.
     input_stage_results_json="${STAGE_RESULTS:-}"
+    input_module_results_json="${MODULE_RESULTS:-}"
     set -o allexport
     source "${_this_script_dir}/step_summary.sh"
   ) >"${OUT_FILE}" 2>&1
@@ -1171,6 +1172,135 @@ assert "A4: exits 0" test "${LAST_EXIT}" -eq 0
 assert "A4: not admitted beside trigger-events dropped, byte for byte" diff "${RUNNER_TEMP}/expected.md" "${GITHUB_STEP_SUMMARY}"
 assert "A4: environment-count counts both" test "$(get_output environment-count)" = "2"
 unset input_relevance_file
+teardown
+
+# ----------------------------------------------------------------------
+# M — module mode (docs/Module-ci.md §7.1): one block from toJSON(needs) and the module decision
+# ----------------------------------------------------------------------
+module_relevance() { # <relevance notice> <auto-merge notice or ''> [admission json]
+  jq -n --arg r "${1}" --arg m "${2}" --argjson a "${3:-{\"applies\": false\}}" \
+    '{schema_version: 1, mode: "module", notices: ([$r] + (if $m == "" then [] else [$m] end)), admission: $a,
+      tests: {count: 0, not_run: []}, automerge: {applies: ($m != "")}}' >"${RUNNER_TEMP}/relevance.json"
+}
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/relevance.json"
+module_relevance "relevance diff (diff): the module is affected (main.tf is not ignored)" \
+  "auto-merge: eligible: dependabot[bot]'s pull request, 2 commits (1 the author's, 1 docs)"
+MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-count": "1"}},
+  "generate-docs": {"result": "success", "outputs": {"status": "up-to-date", "pushed": "false"}},
+  "validate": {"result": "success", "outputs": {"init": "success", "fmt": "success", "validate": "success", "lint": "failure", "warning-count": "2"}},
+  "terraform-test-summary": {"result": "success", "outputs": {"passed-count": "3", "failed-count": "0", "tolerated-count": "1", "not-run-count": "2"}},
+  "conclusion": {"result": "success", "outputs": {"line": "conclusion: green — validation succeeded; tests: 4"}},
+  "automerge": {"result": "success", "outputs": {}}}' run_step
+cat >"${RUNNER_TEMP}/expected.md" <<'EXPECTED'
+### ✅ Module CI: green
+
+`conclusion: green — validation succeeded; tests: 4`
+
+_relevance diff (diff): the module is affected (main.tf is not ignored)_
+
+| Step | Result |
+|---|---|
+| 📝 Docs | ✅ up to date |
+| ⚙️ Init | ✅ success |
+| 🖌 Format | ✅ success |
+| ✔ Validate | ✅ success |
+| 🧹 TFLint | ❌ failure |
+| ⚠️ Warnings | 2 from init and validate |
+| 🧪 Tests | ✅ 3 passed · ⚠️ 1 tolerated · 2 not run |
+
+**auto-merge: eligible: dependabot[bot]'s pull request, 2 commits (1 the author's, 1 docs) — merged ✅**
+
+EXPECTED
+assert "M1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "M1: a module run's block, byte for byte" diff "${RUNNER_TEMP}/expected.md" "${GITHUB_STEP_SUMMARY}"
+assert "M1: environment-count 0 and failed-count 0" test "$(get_output environment-count) $(get_output failed-count)" = "0 0"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/relevance.json"
+module_relevance "relevance diff (diff): the module is not affected: every changed file is ignored (**/*.md); nothing to validate or test" \
+  "auto-merge: eligible: ci-app[bot]'s pull request, 1 commit (1 the author's, 0 docs)"
+MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-count": "0"}},
+  "generate-docs": {"result": "success", "outputs": {"status": "up-to-date"}},
+  "validate": {"result": "skipped", "outputs": {}},
+  "terraform-test-summary": {"result": "success", "outputs": {"not-run-count": "1"}},
+  "conclusion": {"result": "success", "outputs": {"line": "conclusion: green — the module is not affected by this change; nothing to validate or test; tests: 0"}},
+  "automerge": {"result": "failure", "outputs": {}}}' run_step
+assert "M2: exits 0" test "${LAST_EXIT}" -eq 0
+assert "M2: validation skipped as not affected" grep -qxF '| ✔ Validation | ⏭️ skipped: the module is not affected by this change |' "${GITHUB_STEP_SUMMARY}"
+assert "M2: tests held back as not affected" grep -qxF '| 🧪 Tests | ⏭️ held back: the module is not affected by this change |' "${GITHUB_STEP_SUMMARY}"
+assert "M2: a failed merge says so" grep -qF '— the merge did not go through; see the PR auto merger job ❌**' "${GITHUB_STEP_SUMMARY}"
+assert "M2: no validation step rows" bash -c "! grep -qF '⚙️ Init' '${GITHUB_STEP_SUMMARY}'"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/relevance.json"
+module_relevance "relevance diff (diff): the module is affected (versions.tf is not ignored)" "" \
+  '{"applies": true, "push_run": false, "admitted": false, "dependencies": [{"kind": "module", "address": "cloudposse/label/null", "from": "0.24.1", "to": "0.25.0", "checks": [{"ok": false, "detail": "`cloudposse` is not on the allow list"}]}], "problems": []}'
+MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-count": "1"}},
+  "generate-docs": {"result": "failure", "outputs": {"status": "needs-regeneration"}},
+  "validate": {"result": "skipped", "outputs": {}},
+  "terraform-test-summary": {"result": "success", "outputs": {"not-run-count": "1"}},
+  "conclusion": {"result": "failure", "outputs": {"line": "conclusion: red — Dependabot pull request not admitted: 1 of 1 dependencies failed; see the admission comment; tests: 0"}},
+  "automerge": {"result": "skipped"}}' run_step
+assert "M3: exits 0" test "${LAST_EXIT}" -eq 0
+assert "M3: red headline" grep -qxF '### ❌ Module CI: red' "${GITHUB_STEP_SUMMARY}"
+assert "M3: failed-count 1" test "$(get_output failed-count)" = "1"
+assert "M3: the docs row says what to do" grep -qxF '| 📝 Docs | ❌ the README needs regenerating |' "${GITHUB_STEP_SUMMARY}"
+assert "M3: the admission section, with its table row" bash -c "grep -qxF '### 🚫 Dependabot pull request not admitted' '${GITHUB_STEP_SUMMARY}' && grep -qxF '| module \`cloudposse/label/null\` | 0.24.1 → 0.25.0 | ❌ \`cloudposse\` is not on the allow list |' '${GITHUB_STEP_SUMMARY}'"
+assert "M3: no auto-merge line where it does not apply" bash -c "! grep -qF 'auto-merge' '${GITHUB_STEP_SUMMARY}'"
+assert "M3: one not-run test" grep -qxF '| 🧪 Tests | 1 not run |' "${GITHUB_STEP_SUMMARY}"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/relevance.json"
+module_relevance "relevance diff (diff): the module is affected (main.tf is not ignored)" ""
+MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-count": "1"}},
+  "generate-docs": {"result": "success", "outputs": {"status": "pushed", "pushed": "true"}},
+  "validate": {"result": "skipped"}, "terraform-test-summary": {"result": "skipped"},
+  "conclusion": {"result": "success", "outputs": {"line": "conclusion: green — documentation regenerated and pushed; the run it started decides; tests: 1"}}}' run_step
+assert "M4: validation skipped for the docs commit's run" grep -qxF '| ✔ Validation | ⏭️ skipped: the run the docs commit started validates |' "${GITHUB_STEP_SUMMARY}"
+assert "M4: docs pushed" grep -qxF '| 📝 Docs | ✅ regenerated and pushed; the run it started decides |' "${GITHUB_STEP_SUMMARY}"
+assert "M4: tests skipped" grep -qxF '| 🧪 Tests | ⏭️ skipped |' "${GITHUB_STEP_SUMMARY}"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/missing.json"
+MODULE_RESULTS='not json' run_step
+assert "M5: exits 0 with nothing readable" test "${LAST_EXIT}" -eq 0
+assert "M5: the conclusion did not run" grep -qxF '### ❔ Module CI: the conclusion did not run (unknown)' "${GITHUB_STEP_SUMMARY}"
+assert "M5: every row is a dash" bash -c "[ \"\$(grep -c '| —' '${GITHUB_STEP_SUMMARY}')\" = 6 ]"
+assert "M5: warns about the missing decision" grep -qF "no module decision at '${RUNNER_TEMP}/missing.json'" "${OUT_FILE}"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module input_relevance_file="${RUNNER_TEMP}/relevance.json"
+jq -n '{schema_version: 1, relevance: {}, environments: []}' >"${RUNNER_TEMP}/relevance.json"
+MODULE_RESULTS='{"conclusion": {"result": "success", "outputs": {"line": "conclusion: green — validation succeeded; tests: 0"}},
+  "terraform-test-summary": {"result": "success", "outputs": {"passed-count": "0"}}}' run_step
+assert "M6: a project decision is not a module's: no relevance line" bash -c "! grep -qF 'relevance' '${GITHUB_STEP_SUMMARY}'"
+assert "M6: no test files" grep -qxF '| 🧪 Tests | no test files |' "${GITHUB_STEP_SUMMARY}"
+unset input_mode input_relevance_file
+teardown
+
+setup
+export input_mode=module
+big=$(printf 'x%.0s' $(seq 1 140000))
+# A plain assignment, as the shim's capture: a prefix assignment would export it to the step's forks and
+# test the harness, not the step (CLAUDE.md, "Test harnesses must mirror their shim").
+MODULE_RESULTS="{\"create-matrix\": {\"result\": \"success\", \"outputs\": {\"tests-matrix-json\": \"${big}\"}}, \"conclusion\": {\"result\": \"success\"}}"
+run_step
+unset MODULE_RESULTS
+assert "M7: results larger than one environment string do not reach envp" test "${LAST_EXIT}" -eq 0
+assert "M7: and render" grep -qxF '### ✅ Module CI: green' "${GITHUB_STEP_SUMMARY}"
+unset input_mode big
 teardown
 
 # ----------------------------------------------------------------------

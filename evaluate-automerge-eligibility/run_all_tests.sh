@@ -3866,6 +3866,93 @@ else
 fi
 
 # ============================================================================
+# F28 — the module workflow's path relevance and run summary are wired as the spec says.
+#
+# docs/Module-ci.md §5.1 and §7.1: two inputs; create-matrix publishes the module's relevance; validation is
+# skipped for a change the module is not affected by and publishes its steps' outcomes; the conclusion's run
+# block, executed here, says green for such a change and hands its line on; the tests summary job publishes
+# its counts in both workflows; the run summary job reads every job as toJSON(needs), never fails the run,
+# and stays out of the conclusion's needs.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F28 - the module workflow's path relevance and run summary are wired${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f28_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import os, subprocess, sys, tempfile, yaml
+
+problems = []
+with open(".github/workflows/terraform-module-ci.yaml", encoding="utf-8") as fh:
+    workflow = yaml.safe_load(fh)
+with open(".github/workflows/terraform-ci-cd-default.yml", encoding="utf-8") as fh:
+    project = yaml.safe_load(fh)
+inputs, jobs = workflow[True]["workflow_call"]["inputs"], workflow["jobs"]
+for name, kind, default in (("path-relevance-enabled", "boolean", True), ("paths-ignore-yml", "string", "")):
+    declared = inputs.get(name, {})
+    if (declared.get("type"), declared.get("default")) != (kind, default):
+        problems.append(f"input {name} is {declared.get('type')} defaulting to {declared.get('default')!r}; expected {kind}, {default!r}")
+for output in ("relevance-mode", "relevance-reason", "affected-count"):
+    if jobs["create-matrix"].get("outputs", {}).get(output) != f"${{{{ steps.create-matrix.outputs.{output} }}}}":
+        problems.append(f"create-matrix does not output {output}")
+validate = jobs["validate"]
+if "&& needs.create-matrix.outputs.affected-count != '0'" not in [line.strip() for line in str(validate.get("if", "")).splitlines()]:
+    problems.append("validation is not skipped for a change the module is not affected by")
+wanted = {"init": "${{ steps.init.outcome }}", "fmt": "${{ steps.fmt.outcome }}", "validate": "${{ steps.validate.outcome }}",
+          "lint": "${{ steps.lint.outcome }}", "warning-count": "${{ steps.warnings.outputs.warning-count }}"}
+if validate.get("outputs") != wanted:
+    problems.append(f"the validate job's outputs are {validate.get('outputs')}")
+counts = {f"{name}-count": f"${{{{ steps.summary.outputs.{name}-count }}}}" for name in ("passed", "failed", "tolerated", "not-run")}
+for label, flow in (("module", workflow), ("project", project)):
+    if flow["jobs"]["terraform-test-summary"].get("outputs") != counts:
+        problems.append(f"the {label} workflow's tests summary job does not publish its counts")
+conclusion = jobs["conclusion"]
+if conclusion.get("outputs") != {"line": "${{ steps.verdict.outputs.line }}"}:
+    problems.append(f"the conclusion does not hand its line on: {conclusion.get('outputs')}")
+step = next((s for s in conclusion["steps"] if s.get("id") == "verdict"), {})
+if (step.get("env") or {}).get("AFFECTED_COUNT") != "${{ needs.create-matrix.outputs.affected-count }}":
+    problems.append("the conclusion does not read affected-count")
+base = {"CREATE_MATRIX_RESULT": "success", "DOCS_RESULT": "success", "DOCS_PUSHED": "false", "VALIDATE_RESULT": "skipped",
+        "TESTS_ACTIVE": "false", "TESTS_COUNT": "0", "TESTS_REQUIRED_MISSING": "false", "TESTS_RESULT": "skipped",
+        "ADMISSION_REFUSED": "false", "ADMISSION_REASON": "", "AFFECTED_COUNT": "0"}
+with tempfile.TemporaryDirectory() as work:
+    for overrides, want_rc, want_line in (
+            ({}, 0, "conclusion: green — the module is not affected by this change; nothing to validate or test; tests: 0"),
+            ({"DOCS_RESULT": "failure"}, 1, "conclusion: red — the documentation check's result is failure; tests: 0"),
+            ({"AFFECTED_COUNT": "1"}, 1, "conclusion: red — validation's result is skipped; tests: 0")):
+        output, summary = os.path.join(work, "out"), os.path.join(work, "summary")
+        open(output, "w").close(); open(summary, "w").close()
+        done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step.get("run", "")], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], **base, **overrides, "GITHUB_OUTPUT": output, "GITHUB_STEP_SUMMARY": summary})
+        got = open(output).read().strip()
+        if done.returncode != want_rc or got != f"line={want_line}":
+            problems.append(f"the conclusion with {overrides or 'nothing affected'} exited {done.returncode} and wrote {got!r}; expected {want_rc}, line={want_line}")
+summary_job = jobs.get("run-summary", {})
+if summary_job.get("needs") != ["create-matrix", "generate-docs", "validate", "terraform-test-summary", "conclusion", "automerge"] \
+        or summary_job.get("if") != "always()" or summary_job.get("permissions") != {}:
+    problems.append(f"the run summary job's needs, condition or permissions: {summary_job.get('needs')}, {summary_job.get('if')}, {summary_job.get('permissions')}")
+writer = next((s for s in summary_job.get("steps", []) if str(s.get("uses", "")).startswith("dsb-norge/github-actions-terraform/create-run-summary@")), {})
+if writer.get("with") != {"mode": "module", "relevance-file": "${{ runner.temp }}/relevance/relevance.json",
+                          "module-results-json": "${{ toJSON(needs) }}"} or writer.get("continue-on-error") is not True:
+    problems.append(f"the run summary step: {writer.get('with')}, continue-on-error {writer.get('continue-on-error')}")
+if "run-summary" in conclusion.get("needs", []):
+    problems.append("the conclusion waits for the run summary")
+print("checked the inputs, the relevance outputs, validation, the conclusion's verdicts, the counts and the run summary job")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f28_rc=0 || _f28_rc=$?
+if [[ "${_f28_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f28_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f28_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

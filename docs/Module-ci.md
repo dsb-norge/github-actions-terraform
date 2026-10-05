@@ -36,6 +36,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | D10 | **The test bed is a module-shaped branch of the project test bed**, with the kept test identity; close to release a real module repository is moved by the migration guide. | No new repository to administer; the identity and its environment exist. |
 | D11 | **Scope: everything that makes sense to share**, and the module workflow's own gaps with it: the plugin cache, per-job permissions, parsed warnings, the docs. | The two workflows are held together by the structural tests from here on. |
 | D12 | **Path relevance for the module**: on a pull request or a push, the module is affected unless every changed file matches `paths-ignore-yml` (default `**/*.md`). Not affected, the run validates nothing and holds every test file back; the docs job runs as always, and the conclusion is green. `path-relevance-enabled: false` runs everything. Unlike the project workflow's relevance, it also holds back the tests (Path-relevance.md D11 keeps them there). | Decided by the maintainer: a README- or docs-only pull request ran validation and every test, credentialed integration lanes included, for nothing a change to Markdown can break. A module is one unit, so its relevance is one verdict; the project workflow keeps its tests because they test environments' code that path rules may not see. |
+| D13 | **A run summary job**, `run-summary`, writes one block for the whole run to the run page on every event: the conclusion, the relevance line, the docs, validation and test results, the admission's table when it refused, and auto-merge's verdict and result. It is `create-run-summary` in `mode: module`. | Decided by the maintainer: each job described only itself, so the run page had no single answer, and the admission's table, which the project workflow puts there, appeared nowhere. |
 
 ## 3. Caller-facing API
 
@@ -107,6 +108,8 @@ flowchart LR
     tests --> conclusion
     matrix --> conclusion
     conclusion --> automerge["automerge: a listed bot's pull request, merged by the CI App"]
+    conclusion --> runsummary["run-summary: one block for the run"]
+    automerge --> runsummary
 ```
 
 | Job | Check name | What it does |
@@ -118,6 +121,7 @@ flowchart LR
 | `terraform-test` | `Terraform test (<file>)` | The project workflow's test job, step for step (F20); it waits for the docs job and skips when that pushed a commit. |
 | `terraform-test-summary` | `Terraform tests summary` | The project workflow's summary job, step for step, while the stage is on: on every event with test files, and on a pull request. It waits for validation, so the validation head is posted first, and skips when the docs job pushed. |
 | `conclusion` | `Terraform conclusion` | §8. The only check a caller requires. |
+| `run-summary` | `Run summary` | On every run, after everything else: one block for the whole run on the run page (§7.1). Never in the conclusion's needs. |
 | `automerge` | `PR auto merger` | After a green conclusion, on a pull request the engine ruled eligible and the docs job pushed nothing to: confirms the run is the CI App's where docs commits are at the head, and merges with the App's token, pinned to the evaluated head and base ([Module-auto-merge.md §6](Module-auto-merge.md)). |
 
 The test jobs do not wait for validation: they install their own providers, and a failing test is
@@ -218,6 +222,25 @@ Lanes are the project workflow's, key for key ([Terraform-tests.md §3.2, §3.6]
 The docs job writes one line to its step summary: regenerated and pushed, up to date, needs
 regenerating, or failed.
 
+### 7.1 The run summary
+
+The `run-summary` job runs on every event, after the conclusion and auto-merge, and never fails.
+`create-run-summary` with `mode: module` reads `relevance.json` and one JSON object of the run's
+results, which the job builds from its `needs`: the conclusion's result and line, the docs job's
+result and status, the validate job's result and its four steps' outcomes and warnings count, the
+tests summary job's result and counts, and the auto-merge job's result. It writes:
+
+- a headline with the conclusion, and the conclusion's line;
+- the relevance line (§5.1);
+- a table with a row for the docs, each validation step and the tests (passed, failed, tolerated,
+  not run);
+- when the admission refused the pull request, the admission's section, as in the project
+  workflow (Dependabot-admission.md §7);
+- when auto-merge applies, its verdict, and whether the pull request was merged.
+
+The validate job and the tests summary job publish what it reads as job outputs; the tests summary
+job's outputs are on both workflows' copy of the job, which F20 holds equal.
+
 ## 8. The conclusion
 
 Judges named results and the engine's outputs, like the project workflow's
@@ -275,7 +298,12 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
   step continues on error and the explaining step follows it; the check's own run block is run for
   every combination of a missing variable and secret.
 - F26: the docs job's token on Dependabot's pull request only in an admitted run, and its pin; F27:
-  the auto-merge job's inputs, needs, condition, permissions, steps and App confirmation.
+  the auto-merge job's inputs, needs, condition, permissions, steps and App confirmation; F28: the
+  relevance inputs and outputs, validation skipped when not affected, the conclusion's run block
+  for a change that does not affect the module, the tests summary's counts in both workflows, and
+  the run summary job.
+- `create-run-summary`: module mode byte for byte, not affected, a refused admission, a docs push,
+  nothing readable, a project decision, and results larger than one environment string.
 - `terraform-docs`: a suite for the converted steps (a push with `push: true` only, fail on a diff
   otherwise, the counts); the workflow passes `push: true` on a pull request from the repository
   alone.
@@ -293,7 +321,8 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | The workflows | `.github/workflows/terraform-module-ci.yaml`, `terraform-module-release.yaml` |
 | Auto-merge | `engine/dsb_tf_engine/automerge.py` (the rule), `automerge_facts.py` (the commits) |
 | Path relevance | `engine/dsb_tf_engine/relevance.py` (`decide_module_relevance`) |
-| Parity, conclusion and wiring tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21, F24, F26, F27) |
+| The run summary | `create-run-summary/` (`mode: module`) |
+| Parity, conclusion and wiring tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21, F24, F26, F27, F28) |
 
 ## 13. Open questions
 
@@ -301,6 +330,11 @@ None. Schedules run a module's tests too (D3), which the engine's tests cover. G
 schedule only from the default branch, which the test bed's module branch is not.
 
 ## 14. What implementation taught the spec
+
+- **A suite must hand over a large value as the shim does.** The run summary's module-mode test of
+  results larger than one environment string first failed with "Argument list too long" in the
+  harness's own `dirname`: `MODULE_RESULTS=… run_step` exports the value to every fork of the
+  function. The shim captures it as a shell-local, and so does the test now.
 
 - **The test bed ran the rest through the workflow at the preview ref**, on a module-shaped branch
   of the project test bed made from the module template:

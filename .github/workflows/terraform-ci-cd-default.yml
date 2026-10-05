@@ -2428,6 +2428,12 @@ jobs:
       && (github.event_name == 'pull_request' || github.event_name == 'push')
       && (needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request')
     runs-on: ${{ inputs.runs-on }} # global setting
+    # The module run summary's test row (docs/Module-ci.md §7.1); unused by the project workflow, held equal by F20.
+    outputs:
+      passed-count: ${{ steps.summary.outputs.passed-count }}
+      failed-count: ${{ steps.summary.outputs.failed-count }}
+      tolerated-count: ${{ steps.summary.outputs.tolerated-count }}
+      not-run-count: ${{ steps.summary.outputs.not-run-count }}
     permissions:
       pull-requests: write # the tests head
       actions: read        # the Jobs API, for the job links
