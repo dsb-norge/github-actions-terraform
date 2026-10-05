@@ -77,7 +77,7 @@ class LogTest(unittest.TestCase):
 
 
 class RunTest(unittest.TestCase):
-    def run_step(self, files, stage_results="", actor="dependabot[bot]", stages_file=True):
+    def run_step(self, files, stage_results="", actor="example-bot[bot]", stages_file=True):
         with tempfile.TemporaryDirectory() as work, inside(work):
             for name, content in files.items():
                 with open(name, "w", encoding="utf-8") as handle:
