@@ -167,11 +167,12 @@ class LaneTest(unittest.TestCase):
         row = rows(["tests/other.tftest.hcl"], lanes=self.LANES)[0]["test"]
         self.assertEqual({"runs-on": "ubuntu-latest", "terraform-version": "1.15.x", "timeout-minutes": 30,
                           "allow-failing-terraform-tests": False, "cache-terraform-modules": "true",
-                          "github-environment": "", "fork-safe": True, "extra-envs": {}, "extra-envs-from-secrets": {}},
+                          "github-environment": "", "fork-safe": True, "extra-envs": {}, "extra-envs-from-secrets": {},
+                          "required-credentials": []},
                          {key: row[key] for key in ("runs-on", "terraform-version", "timeout-minutes",
                                                     "allow-failing-terraform-tests", "cache-terraform-modules",
                                                     "github-environment", "fork-safe", "extra-envs",
-                                                    "extra-envs-from-secrets")})
+                                                    "extra-envs-from-secrets", "required-credentials")})
 
     def test_absent_inputs_take_the_documented_defaults(self):
         # terraform-version and cache-terraform-modules set per environment only, not as workflow inputs.
@@ -228,6 +229,18 @@ class LaneTest(unittest.TestCase):
 
 
 class EnvironmentLaneTest(unittest.TestCase):
+    def test_an_environment_lane_requires_the_azure_pair_unless_it_names_its_credentials(self):
+        lanes = [{"name": "azure", "match": ["**/azure-*.tftest.hcl"], "github-environment": "auto"},
+                 {"name": "github", "match": ["**/github-*.tftest.hcl"], "github-environment": "auto",
+                  "required-credentials": ["TF_VAR_github_auth_app_private_key"]},
+                 {"name": "mapped", "match": ["**/mapped-*.tftest.hcl"],
+                  "extra-envs-from-secrets-yml": {"ARM_CLIENT_ID": "REPO_CLIENT_ID"}}]
+        found = {row["test"]["lane"]: row["test"]["required-credentials"]
+                 for row in rows(["tests/azure-a.tftest.hcl", "tests/github-a.tftest.hcl", "tests/mapped-a.tftest.hcl",
+                                  "tests/unit-a.tftest.hcl"], lanes=lanes)}
+        self.assertEqual({"azure": ["ARM_TENANT_ID", "ARM_CLIENT_ID"], "github": ["TF_VAR_github_auth_app_private_key"],
+                          "mapped": [], "default": []}, found)
+
     def test_auto_resolves_to_the_prefixed_lane_name(self):
         row = rows(["tests/x.tftest.hcl"], lanes=[{"name": "directory", "github-environment": "auto"}])[0]["test"]
         self.assertEqual(("tftest-directory", False, {"ARM_USE_OIDC": "true"}),
@@ -298,6 +311,24 @@ class ValidationTest(unittest.TestCase):
                                                                   "to 'X'; it must be a mapping of variable names to "
                                                                   "secret names!"),
             ([{"name": "a", "runs-on": 5}], "The test lane 'a' sets 'runs-on' to 5, which is not a string; quote it!"),
+            ([{"name": "a", "required-credentials": ["X"]}], "The test lane 'a' sets 'required-credentials' without "
+                                                             "'github-environment'; only an environment lane checks "
+                                                             "its credentials!"),
+            ([{"name": "a", "github-environment": "auto", "required-credentials": []}],
+             "The test lane 'a' sets 'required-credentials' to []; it must be a non-empty list of environment variable "
+             "names!"),
+            ([{"name": "a", "github-environment": "auto", "required-credentials": "TF_VAR_key"}],
+             "The test lane 'a' sets 'required-credentials' to 'TF_VAR_key'; it must be a non-empty list of environment "
+             "variable names!"),
+            ([{"name": "a", "github-environment": "auto", "required-credentials": ["TF_VAR_key", 5]}],
+             "The test lane 'a' sets 'required-credentials' to [\"TF_VAR_key\", 5]; it must be a non-empty list of "
+             "environment variable names!"),
+            ([{"name": "a", "github-environment": "auto", "required-credentials": ["1KEY"]}],
+             "The test lane 'a' sets 'required-credentials' to [\"1KEY\"]; it must be a non-empty list of environment "
+             "variable names!"),
+            ([{"name": "a", "github-environment": "auto", "required-credentials": ["MY-KEY"]}],
+             "The test lane 'a' sets 'required-credentials' to [\"MY-KEY\"]; it must be a non-empty list of environment "
+             "variable names!"),
             ([{"name": "a", "terraform-version": 1.12}], "The test lane 'a' sets 'terraform-version' to 1.12, which is "
                                                          "not a string; quote it!"),
             ([{"name": "a", "timeout-minutes": 0}], "The test lane 'a' sets 'timeout-minutes' to 0; it must be a "

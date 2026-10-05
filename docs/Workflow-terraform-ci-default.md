@@ -196,9 +196,21 @@ terraform-test-lanes-yml: |
 
 The first lane whose `match` covers a file owns it; a lane without `match` takes the rest. The workflow's own `extra-envs-*` inputs never reach a test job, so a test can never borrow the apply identity. A lane either maps secrets by name (`extra-envs-from-secrets-yml`) or, better, runs in a GitHub Environment: its `ARM_*` and `TF_VAR_*` secrets are exported under their own names, and its OIDC subject names the lane. GitHub upper-cases secret names, so a `TF_VAR_tenant_id` secret arrives as `TF_VAR_TENANT_ID`; the lane exports it under both that name and `TF_VAR_tenant_id`, so a snake_case or an upper-case declaration works. A mixed-case variable name needs an explicit mapping in `extra-envs-from-secrets-yml`. A test file that uses `var.x` itself declares `variable "x" {}`.
 
+An environment lane's jobs check their credentials before init: by default `ARM_TENANT_ID` and `ARM_CLIENT_ID`. A lane whose tests log in to something other than Azure lists the variables it needs instead, so its credential stays a secret of its own environment rather than a repository secret every workflow can read:
+
+```yaml
+  - name: github
+    match: ["**/integration-github-*.tftest.hcl"]
+    github-environment: auto          # tftest-github: a GitHub App's private key, no Azure login
+    required-credentials:
+      - TF_VAR_github_auth_app_private_key
+```
+
+Set `TF_VAR_GITHUB_AUTH_APP_PRIVATE_KEY` as a secret of `tftest-github`; the lane exports it under that name and as `TF_VAR_github_auth_app_private_key`, which the check finds and Terraform reads. `required-credentials` is allowed on environment lanes only and must name at least one variable ([Terraform-tests.md §3.2, §3.6](./Terraform-tests.md)).
+
 **Bringing up an environment lane:**
 
-1. Add the lane with `github-environment: auto` and open a pull request. The first run creates `tftest-<lane>`, and its jobs fail with `no-credentials`, printing a `gh secret set` command for each of `ARM_TENANT_ID` and `ARM_CLIENT_ID`.
+1. Add the lane with `github-environment: auto` and open a pull request. The first run creates `tftest-<lane>`, and its jobs fail with `no-credentials`, printing a `gh secret set` command for each credential the lane lacks: by default `ARM_TENANT_ID` and `ARM_CLIENT_ID`, otherwise the variables its `required-credentials` lists.
 2. Someone with write access sets the secrets (the environment must exist first; the settings page needs admin, `gh` does not):
    ```bash
    gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<tenant-id>'

@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F28 and the documentation cites them by
+# document missing from the index. They are numbered F2-F29 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -2063,6 +2063,82 @@ if [[ "${_f28_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f28_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F29 — an environment lane's credential check names exactly the credentials it lacks.
+#
+# The check requires the variables the row's required-credentials lists, by default ARM_TENANT_ID
+# and ARM_CLIENT_ID (docs/Terraform-tests.md §3.6, D22), and names each missing one with the command
+# that sets it; a name the prefix export cannot provide is told the other way in. Its run block is
+# executed here from both workflows' text, with literal expected output: for the default lane every
+# line is the one the check printed before lanes could name their credentials.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F29 - the lane credential check names exactly the credentials it lacks${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f29_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import json, os, subprocess, sys, yaml
+
+WORKFLOWS = {".github/workflows/terraform-ci-cd-default.yml": "terraform-test",
+             ".github/workflows/terraform-module-ci.yaml": "terraform-test"}
+DEFAULT = ["ARM_TENANT_ID", "ARM_CLIENT_ID"]
+BASE = {"LANE_ENVIRONMENT": "tftest-x", "REPOSITORY": "o/r", "ACTOR": "octocat"}
+NO_SECRET = "::error title=Terraform test::The environment 'tftest-x' has no {} secret yet."
+SET_THEM = "Set them, then re-run (docs/Terraform-tests.md §3.6):"
+GH = "  gh secret set {} --env 'tftest-x' --repo 'o/r'"
+CASES = [
+    ("default, both set", DEFAULT, {"ARM_TENANT_ID": "t", "ARM_CLIENT_ID": "c"}, 0,
+     ["The lane's environment 'tftest-x' provides ARM_TENANT_ID and ARM_CLIENT_ID."]),
+    ("default, neither set", DEFAULT, {}, 1,
+     [NO_SECRET.format("ARM_TENANT_ID or ARM_CLIENT_ID"), SET_THEM, GH.format("ARM_TENANT_ID"), GH.format("ARM_CLIENT_ID")]),
+    ("default, the client ID empty", DEFAULT, {"ARM_TENANT_ID": "t", "ARM_CLIENT_ID": ""}, 1,
+     [NO_SECRET.format("ARM_CLIENT_ID"), SET_THEM, GH.format("ARM_CLIENT_ID")]),
+    ("a GitHub App's key, set", ["TF_VAR_github_auth_app_private_key"], {"TF_VAR_github_auth_app_private_key": "k"}, 0,
+     ["The lane's environment 'tftest-x' provides TF_VAR_github_auth_app_private_key."]),
+    ("three names, none set", ["TF_VAR_a", "ARM_B", "MY_KEY"], {}, 1,
+     [NO_SECRET.format("TF_VAR_a, ARM_B or MY_KEY"), SET_THEM, GH.format("TF_VAR_a"), GH.format("ARM_B"),
+      "  MY_KEY: an environment secret reaches the job under its name only when it starts with ARM_ or TF_VAR_; "
+      "set MY_KEY in the lane's extra-envs-yml, or map a secret to it in extra-envs-from-secrets-yml"]),
+    ("Dependabot, neither set", DEFAULT, {"ACTOR": "dependabot[bot]"}, 1,
+     ["::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment "
+      "'tftest-x' gives it no ARM_TENANT_ID or ARM_CLIENT_ID.",
+      "Give the lane its IDs as plain values in its extra-envs-yml; they are not secret (docs/Dependabot-admission.md D20).",
+      "A secret, such as a private key, cannot reach a Dependabot run at all."]),
+]
+problems = []
+for path, job in WORKFLOWS.items():
+    with open(path, encoding="utf-8") as fh:
+        steps = yaml.safe_load(fh)["jobs"][job]["steps"]
+    found = [step for step in steps if step.get("id") == "verify-credentials"]
+    if len(found) != 1:
+        problems.append(f"{path}: {len(found)} steps with id verify-credentials, expected 1")
+        continue
+    step = found[0]
+    if (step.get("env") or {}).get("REQUIRED_CREDENTIALS_JSON") != "${{ toJSON(matrix.test.required-credentials) }}":
+        problems.append(f"{path}: the check does not read the row's required-credentials")
+    for label, required, env, want_rc, want in CASES:
+        run_env = {"PATH": os.environ["PATH"], **BASE, "REQUIRED_CREDENTIALS_JSON": json.dumps(required), **env}
+        done = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step["run"]], env=run_env, capture_output=True,
+                              text=True)
+        if done.returncode != want_rc or done.stdout.splitlines() != want:
+            problems.append(f"{path}: {label}: exited {done.returncode} printing {done.stdout.splitlines()!r} "
+                            f"{done.stderr.strip()!r}; expected {want_rc} and {want!r}")
+print(f"checked the credential check of {len(WORKFLOWS)} workflows, {len(CASES)} cases each")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f29_rc=0 || _f29_rc=$?
+if [[ "${_f29_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f29_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f29_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
