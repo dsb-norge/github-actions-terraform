@@ -26,29 +26,35 @@ echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}            STRUCTURAL TESTS                ${NC}"
 echo -e "${YELLOW}============================================${NC}"
+
 # ============================================================================
-# F2 — the step id this action reads by literal name must exist in the
-# reusable workflow (docs/Apply-and-destroy-reporting.md §5.1, P7, F2).
+# F2 — every step id the auto-merge evaluator reads by literal name must exist
+# in the reusable workflow (docs/Apply-and-destroy-reporting.md §5.1, P7, F2).
 #
-# extract_environment_data looks up .steps["parse-destroy-plan"].outputs.*
-# in the captured metadata. For a long time no step with that id existed,
-# so the destroy plan's counts read as empty and never reached the
-# plan-max-count-* limits — with every test here green, because the tests
-# write the metadata themselves. This is a structural check across the two
-# files that have to agree; it is the only thing standing between that
-# defect and a silent recurrence on the next workflow refactor.
+# The evaluator looks up .steps["parse-destroy-plan"].outputs.* in the
+# captured metadata. For a long time no step with that id existed, so the
+# destroy plan's counts read as empty and never reached the plan-max-count-*
+# limits — with every evaluator test green, because the tests write the
+# metadata themselves. This is a structural check across the two files that
+# have to agree; it is the only thing standing between that defect and a
+# silent recurrence on the next workflow refactor.
 # ============================================================================
 _workflow="${_this_script_dir}/../.github/workflows/terraform-ci-cd-default.yml"
-_helper="${_this_script_dir}/../evaluate-automerge-eligibility/helpers_additional.sh"
 
-# The step ids the helper reads out of the metadata, by literal string: the
-# outputs and outcomes it reads one by one, and the operation steps whose
-# outcomes block auto-merge. An operation step renamed in the workflow would
-# read as absent, which the operations check takes for "did not fail".
-_ids_read_by_helper=$( {
-  grep -oE 'get_step_(output|outcome_success) "\$\{file\}" "[a-z-]+"' "${_helper}" | grep -oE '"[a-z-]+"$' | tr -d '"'
-  sed -nE 's/^_OPERATION_STEP_IDS=\((.*)\)$/\1/p' "${_helper}" | tr ' ' '\n'
-} | sort -u)
+# The step ids the evaluator (engine/dsb_tf_engine/automerge_project.py) reads
+# out of the metadata: the steps each plan is counted, made and applied by, and
+# the operation steps whose outcomes block auto-merge. An operation step renamed
+# in the workflow would read as absent, which the operations check takes for
+# "did not fail".
+_ids_read_by_evaluator=$(cd "${_this_script_dir}/../engine" && python3 -I -B -c '
+import sys
+sys.path.insert(0, ".")
+from dsb_tf_engine import automerge_project
+ids = set(automerge_project.OPERATION_STEP_IDS)
+for _kind, *steps in automerge_project.PLAN_STEPS:
+    ids.update(steps)
+print("\n".join(sorted(ids)))
+')
 # The step ids the workflow's matrix job actually defines.
 _ids_in_workflow=$(python3 - "${_workflow}" <<'PYEOF'
 import sys, yaml
@@ -62,21 +68,21 @@ PYEOF
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}TEST ${TESTS_RUN}: F2 - every step id the helper reads exists in the workflow${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F2 - every step id the evaluator reads exists in the workflow${NC}"
 echo -e "${BLUE}========================================${NC}"
 _f2_missing=""
-for _id in ${_ids_read_by_helper}; do
+for _id in ${_ids_read_by_evaluator}; do
   if ! grep -qx "${_id}" <<<"${_ids_in_workflow}"; then
     _f2_missing+=" ${_id}"
   fi
 done
-if [[ -z "${_f2_missing}" ]] && grep -qx "parse-destroy-plan" <<<"${_ids_read_by_helper}" \
-   && grep -qx "verify-lock" <<<"${_ids_read_by_helper}"; then
-  echo -e "${GREEN}✓ PASSED${NC}: helper reads [$(echo ${_ids_read_by_helper} | tr '\n' ' ')] — all defined in the workflow"
+if [[ -z "${_f2_missing}" ]] && grep -qx "parse-destroy-plan" <<<"${_ids_read_by_evaluator}" \
+   && grep -qx "verify-lock" <<<"${_ids_read_by_evaluator}"; then
+  echo -e "${GREEN}✓ PASSED${NC}: the evaluator reads [$(echo ${_ids_read_by_evaluator} | tr '\n' ' ')] — all defined in the workflow"
   TESTS_PASSED=$((TESTS_PASSED + 1))
 else
-  echo -e "${RED}✗ FAILED${NC}: step id(s) read by helpers_additional.sh but not defined in terraform-ci-cd-default.yml:${_f2_missing:- (parse-destroy-plan or the operation step ids no longer read by the helper?)}"
-  echo "  helper reads:  $(echo ${_ids_read_by_helper} | tr '\n' ' ')"
+  echo -e "${RED}✗ FAILED${NC}: step id(s) read by automerge_project.py but not defined in terraform-ci-cd-default.yml:${_f2_missing:- (parse-destroy-plan or the operation step ids no longer read by the evaluator?)}"
+  echo "  evaluator reads: $(echo ${_ids_read_by_evaluator} | tr '\n' ' ')"
   echo "  workflow has:  $(echo ${_ids_in_workflow} | tr '\n' ' ')"
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi

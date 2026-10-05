@@ -346,10 +346,10 @@ the test and its lane.
   unreadable file, output changes only, a data-source read, and each structural refusal.
 - `contract-tests`: the JSON capture and the comparison with every scenario's `expected.json`
   under every supported minor.
-- `evaluate-automerge-eligibility`: `goals-granted` against raw goals that differ; the actor list
-  without case; a per-environment list replacing the global one; an environment out of pull
-  requests, relevant and not; each operation step failed under tolerance; a tolerated failing test
-  named and not blocking; the existing suites unchanged elsewhere.
+- The evaluator: `goals-granted` against raw goals that differ; the actor list without case; a
+  per-environment list replacing the global one; an environment out of pull requests, relevant and
+  not; each operation step failed under tolerance; a tolerated failing test named and not
+  blocking. Since §14 these are golden cases, replayed by the engine's suite and the action's.
 - `auto-merge-pr`: `--match-head-commit` passed; a moved base refused before merging; a moved
   head's message; the retry stopping on `CONFLICTING` and not retrying a refused pin.
 - Engine: relevance published for every environment, whatever its verdict.
@@ -390,7 +390,7 @@ None; the decisions are the maintainer's (D3, D7, D9, D10, D13).
 | The counts, `plan-complete`, `counts-source` | `parse-terraform-plan/helpers_additional.sh` (`plan-json-counts`), `step_parse_plan_output.sh` |
 | The JSON comparison across the supported minors | `contract-tests/run.sh` |
 | `relevant` for every environment | `engine/dsb_tf_engine/relevance.py` |
-| The checks of §5.1, the tolerated tests | `evaluate-automerge-eligibility/step_evaluate.sh`, `helpers_additional.sh` |
+| The checks of §5.1, the tolerated tests | `engine/dsb_tf_engine/automerge_project.py`; the files read by `automerge_evidence.py` (§14) |
 | The base check, the head pin, the retry | `auto-merge-pr/step_auto_merge_pr.sh` |
 | The wiring and the job's scope | `.github/workflows/terraform-ci-cd-default.yml`, held by F14 |
 
