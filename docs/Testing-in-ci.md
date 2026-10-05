@@ -494,7 +494,7 @@ split across parallel jobs, instead of inside every job that runs the engine sui
   prints `Mutation gate not run here (ENGINE_MUTATION=shards) …`, and counts one gate test, not
   two. Nothing else reads the variable, and locally it is unset, so `bash engine/run_all_tests.sh`
   still runs both gates.
-- **`engine-mutation`** is a matrix of N shards, eight, on Python 3.12, the floor. The
+- **`engine-mutation`** is a matrix of N shards, twelve, on Python 3.12, the floor. The
   mutants' keys are printed by `ast.unparse`, so every shard runs one Python and the keys match
   `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/N --out
   mutation-shard-K.json`: the unmutated baseline first, then every N-th mutant from the K-th,
@@ -521,10 +521,20 @@ The structural test F17 (`structural-tests/run_all_tests.sh`) holds this togethe
 
 To change the shard count, change all three places together. F17 fails until they agree.
 
-**Why eight.** With four shards the run took 6.4 minutes, and the slowest shard, 5.9 of them, was
+**Why twelve.** With four shards the run took 6.4 minutes, and the slowest shard, 5.9 of them, was
 the critical path; runners were not the limit. With eight it took 4.3 minutes, the shards between
 91 and 243 seconds, the spread set by the few mutants that hang until their timeout. The merged
-verdict was the local one both times.
+verdict was the local one both times. As the engine grew to about 7,300 mutants, eight shards took
+159 to 421 seconds each. The spread followed the runner more than the share: the two shards whose
+unmutated baseline took 15 seconds finished in under 200, the six whose baseline took 25 in 340 to
+420, and a slow runner's longer baseline also lengthened its timeout for the mutants that hang.
+With the auto-merge evaluator the engine has about 8,600 mutants. Twelve shards hold about 715
+each, and the timeout came down from six baselines to three. A local sample of every eighth mutant
+showed why: two of 1,069 hung, and took 23 percent of the sample's time at the old timeout. On the
+full local run (12 workers, 8,547 mutants, 8.5 minutes) 15 hung; the slowest that finished is the
+listed equivalent, which runs the whole suite, at 2.1 baselines under that load. Each run's log
+names the mutants that hung and the slowest of the rest (`HUNG <key>`), so the next tuning starts
+from data.
 
 **What made it fast**, measured on the full gate (4,038 mutants at the time), before and after, on 12 local
 cores: 22 minutes became 3.6, and CI's three full runs of about 66 to 78 minutes each became one
@@ -535,10 +545,12 @@ sharded run.
   of the suite's time. The previous fixed order listed fast modules by hand and left new ones
   after the slow two. A mutant that only its own module's tests kill therefore ran about eight
   seconds of unrelated tests first.
-- **A timeout from the baseline.** A mutant that hangs counts as killed after six times the
-  baseline's duration, and never before 60 seconds, instead of after a fixed 300 seconds. A
-  mutant that makes the suite six times slower without failing it counts as killed too; that is
-  the bound's meaning.
+- **A timeout from the baseline.** A mutant that hangs counts as killed after three times the
+  baseline's duration (six at first), and never before 60 seconds, instead of after a fixed 300
+  seconds. A mutant that makes the suite three times slower without failing it counts as killed
+  too; that is the bound's meaning. A mutant that survives runs the suite once, which took 2.1
+  baselines with every core busy; three leave it room, and the log's slowest finished mutant says
+  when they no longer do.
 - **Mutants built in the workers.** Listing the mutants re-parsed each module once per mutant, 46
   seconds of serial work before any mutant ran. The listing now walks each module once, and each
   worker builds its own mutant's source from its index. The keys, lines and mutated sources are
