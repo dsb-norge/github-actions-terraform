@@ -307,12 +307,13 @@ def _row(slug, path, root, rel, kind, lane, provider_set, name):
         "extra-envs": lane["variables"], "extra-envs-from-secrets": lane["secrets"]}}
 
 
-def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING):
+def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING, held=None):
     """The tests block and its warnings and notices, or a ConfigError with every error.
 
     Lanes and inputs are validated whether or not the stage runs, so a configuration never becomes
     valid by being run on a schedule. `events` are the events the stage runs on. `missing` is true
     when the stage ran, requires a test file and has none that runs or is held back from a fork.
+    `held` holds every file back with that reason: a module the change is not relevant to.
     """
     errors = []
     defaults = _globals(document["workflow_inputs"], errors)
@@ -332,7 +333,7 @@ def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING):
     environment_roots = {normalise_dir(values.render(row["project-dir"])) for row in rows}
     directories = {normalise_dir(path) for path in document["tests"]["directories_with_tf"]}
     unavailable = _secrets_unavailable(event, admission)
-    held_back = _held_back(admission)
+    held_back = _held_back(admission) or held
     matrix, not_run, used = [], [], set()
     for path in sorted(document["tests"]["files"]):
         if any(segment.startswith(".") for segment in path.split("/")) or globs.first_match(excludes, path):
@@ -369,8 +370,10 @@ def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING):
     if len(matrix) > MATRIX_CAP:
         raise ConfigError([f"{len(matrix)} test jobs exceed GitHub's cap of {MATRIX_CAP} jobs in one matrix; exclude "
                            "files with terraform-test-exclude-paths-yml!"])
-    # A misplaced file never runs; a file held back from a fork has run where secrets exist.
-    missing = defaults["required"] and not matrix and not any(entry["reason"] != "misplaced" for entry in not_run)
+    # A misplaced file never runs; a file held back from a fork has run where secrets exist; a change the module is
+    # not affected by misses nothing.
+    missing = (defaults["required"] and held is None and not matrix
+               and not any(entry["reason"] != "misplaced" for entry in not_run))
     block = {"matrix": {"include": matrix}, "count": len(matrix), "active": bool(matrix), "not_run": not_run,
              "provider_sets": sets, "missing": missing}
     if missing:

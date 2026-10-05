@@ -7,7 +7,8 @@ The reusable CI workflow for a Terraform **module** repository: one module at th
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
 4. reports on the pull request (a validation comment and one tests comment) and on the run page (a step summary from every job);
 5. ends in one check to require, `Terraform conclusion`;
-6. with [auto-merge](#auto-merge) on, merges a listed bot's green pull request: Dependabot's admitted bumps and release-please's release pull requests.
+6. skips validation and the tests on a pull request that changes only documentation, see [changes that touch only documentation](#changes-that-touch-only-documentation);
+7. with [auto-merge](#auto-merge) on, merges a listed bot's green pull request: Dependabot's admitted bumps and release-please's release pull requests.
 
 Repositories of environments that are planned and applied use the sibling [`terraform-ci-cd-default`](Workflow-terraform-ci-default.md) instead; the two share the test stage, so lanes, credentials and the test reports work the same in both. The design is [Module-ci.md](Module-ci.md), the test stage [Terraform-tests.md](Terraform-tests.md), and releases are [`terraform-module-release`](Workflow-terraform-module-release.md). The module template is [dsb-norge/tf-module-template](https://github.com/dsb-norge/tf-module-template).
 
@@ -101,6 +102,8 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy, added to the built-in one ([Dependabot-admission.md §6](Dependabot-admission.md)). |
 | `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green. See [auto-merge](#auto-merge). |
 | `pr-auto-merge-from-actors-yml` | string (YAML list) | `"[]"` | The bots whose pull requests may merge, by the pull request's author: bots only, and `dependabot[bot]` only with the admission on. |
+| `path-relevance-enabled` | boolean | `true` | Skip validation and the tests on a pull request or push that changes only ignored files. `false` runs everything. |
+| `paths-ignore-yml` | string (YAML list) | `""` | Glob patterns of files that never make the module affected. Empty means `["**/*.md"]`; `[]` ignores nothing. |
 
 A setting the workflow cannot use, such as an unknown lane key or a boolean that is not `true` or `false`, is refused by the `Create test matrix` job with an error annotation per problem, before any test runs.
 
@@ -142,7 +145,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | `create-matrix` (Create test matrix) | on every run | — | Validates the test inputs and lanes, lists the committed test files and decides which run, in which lane. Warns about a misplaced test file and about a missing one. A refused configuration fails here. |
 | `seed-pr-comments` (Seed PR comment heads) | on a pull request Dependabot opened | The admission comment of a refused pull request, titled "🚫 Dependabot pull request not admitted"; deleted on a later run that is not refused. | — |
 | `generate-docs` (Update documentation) | on every run | From the repository, and from Dependabot once the admission admitted the run: regenerates the README and the examples' READMEs, and commits and pushes them to the pull request's branch. | Elsewhere it checks the READMEs and fails when one needs regenerating. One line in the step summary, see [documentation](#documentation). |
-| `validate` (Validate module) | unless the docs job pushed a commit | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
+| `validate` (Validate module) | unless the docs job pushed a commit or the module is not affected by the change | The validation comment, titled "Terraform validation summary for module: `<repository>`", with rows for init, fmt, validate and lint and the count of init and validate warnings. It also deletes the per-file test comments of v0. | The same block in the step summary; a failed step `🧐 Validation outcome: …` for each of init, fmt, validate and lint that did not succeed. |
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
 | `conclusion` (Terraform conclusion) | on every run | — | One line, in the log, the step summary and an annotation. |
@@ -162,6 +165,7 @@ The conclusion judges the jobs in this order and prints one line, `conclusion: <
 | `conclusion: red — Dependabot pull request not admitted: 1 of 1 dependencies failed; see the admission comment; tests: 0` | with the admission switched on, it refused a Dependabot pull request: nothing ran |
 | `conclusion: red — the documentation check's result is failure; tests: 1` | a README needs regenerating, terraform-docs failed, or the App token could not be created |
 | `conclusion: green — documentation regenerated and pushed; the run it started decides; tests: 1` | the docs job pushed a commit; validation and tests were skipped on purpose, and the run on the new commit decides |
+| `conclusion: green — the module is not affected by this change; nothing to validate or test; tests: 0` | every changed file is ignored, by default every file is Markdown; see [changes that touch only documentation](#changes-that-touch-only-documentation) |
 | `conclusion: red — validation's result is failure; tests: 1` | init, fmt, validate or lint failed |
 | `conclusion: red — a module needs at least one test file, a unit suite (terraform-test-required: false opts out); tests: 0` | no test file to run, see [troubleshooting](#no-test-file) |
 | `conclusion: red — the tests' result is failure; tests: 3` | a test job failed and is not tolerated |
@@ -175,6 +179,7 @@ The workflow runs on `pull_request`, `push`, `workflow_dispatch` and `schedule`,
 | Event | Docs | Validation | Tests | Comments |
 |---|---|---|---|---|
 | Pull request from the repository | regenerated, committed and pushed | yes, unless the docs job pushed | every file, unless the docs job pushed | yes |
+| Pull request or push that changes only ignored files (Markdown by default) | regenerated and pushed, or checked, as above | no | none | the docs job's |
 | Dependabot pull request, admission on and admitted | regenerated, committed and pushed | yes, unless the docs job pushed | every file, unless the docs job pushed | yes |
 | Dependabot pull request, admission on and refused | checked; a stale README fails | no | none | the admission comment |
 | Dependabot pull request, admission off | checked; a stale README fails | yes | files in lanes without credentials | yes |
@@ -290,6 +295,22 @@ and the `PR auto merger` job runs only on an eligible one, once the conclusion i
 | release-please's, changing only the changelog and the manifest | the App's own push | yes |
 | release-please's, changing `versions.tf`, `README.md` or other files | the App's own push | no |
 | a person's | the person's | no |
+
+## Changes that touch only documentation
+
+A pull request whose changed files are all ignored, by default all Markdown (`**/*.md`: the README, `docs/`, `CHANGELOG.md`), cannot change what the module does. Its run validates nothing and runs no test, credentialed lanes included; the docs job still checks the README, or regenerates and commits it, and the conclusion is green:
+
+```text
+conclusion: green — the module is not affected by this change; nothing to validate or test; tests: 0
+```
+
+`Create test matrix` says so in a notice, `relevance diff (diff): the module is not affected: every changed file is ignored (**/*.md); nothing to validate or test`, and the tests are listed as not run with the reason `relevance: not affected`. One changed file that is not ignored, anywhere in the pull request, makes the whole run as usual. So do a dispatch, a schedule, a change under `.github/workflows/`, and a pull request whose files GitHub could not list: when in doubt, everything runs.
+
+- `paths-ignore-yml` replaces the ignored set, for example `["**/*.md", "**/*.txt"]`; `[]` ignores nothing.
+- `path-relevance-enabled: false` runs everything on every change.
+- A module that reads a Markdown file with `file()` or `templatefile()` sets `paths-ignore-yml: "[]"`, since a change to that file does change the module.
+
+A release pull request changes only `CHANGELOG.md`, so it is not affected, and [auto-merge](#auto-merge) treats its skipped validation as passed.
 
 ## Documentation
 

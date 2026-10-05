@@ -181,6 +181,61 @@ def decide_relevance(document, declared, rows, dropped):
     return block, entries
 
 
+# A module is one unit (docs/Module-ci.md §5.1): affected by any changed file that is not ignored.
+MODULE_IGNORE = "paths-ignore-yml"
+NOT_AFFECTED = "relevance: not affected"
+
+
+def _module_switch(document):
+    value = document["workflow_inputs"].get(SWITCH, True)
+    if value is not True and value is not False and value not in ("true", "false"):
+        raise ConfigError([f"The input '{SWITCH}' is {shown(value)}; it must be true or false!"])
+    return value is True or value == "true"
+
+
+def _module_ignored(document):
+    """The compiled ignore patterns; empty or absent means the implied `**/*.md`, `[]` none."""
+    result = document["yaml"]["inputs"].get(MODULE_IGNORE, {"ok": True, "value": None})
+    if not result["ok"]:
+        raise ConfigError([f"The specification for input '{MODULE_IGNORE}' is not valid yaml!"])
+    value = [IMPLIED_IGNORE] if result["value"] in (None, "") else result["value"]
+    if not isinstance(value, list):
+        raise ConfigError([f"The input '{MODULE_IGNORE}' is {shown(value)}; it must be a list of patterns!"])
+    errors, rules = [], {}
+    for pattern in value:
+        try:
+            rule = globs.compile_glob(pattern)
+        except globs.GlobError as error:
+            errors.append(f"The input '{MODULE_IGNORE}' has an invalid entry: {error}!")
+            continue
+        rules.setdefault(rule.pattern, rule)
+    if errors:
+        raise ConfigError(errors)
+    return rules.values()
+
+
+def decide_module_relevance(document):
+    """Whether the change is relevant to the module, or a ConfigError (docs/Module-ci.md §5.1)."""
+    enabled = _module_switch(document)
+    ignored = _module_ignored(document)
+    reason = fail_open_reason(document, enabled)
+    changed = document.get("changed_files")
+    first = None if reason is not None else next(
+        (path for path in changed["files"] if globs.first_match(ignored, path) is None), None)
+    return {"mode": "all" if reason is not None else "diff", "reason": reason or "diff",
+            "changed_count": changed["count"] if changed is not None else 0,
+            "affected": reason is not None or first is not None, "first_relevant": first,
+            "paths-ignore": [rule.pattern for rule in ignored]}
+
+
+def module_notice(block):
+    text = f"relevance {block['mode']} ({block['reason']}): the module is "
+    if not block["affected"]:
+        return (text + "not affected: every changed file is ignored (" + ", ".join(block["paths-ignore"])
+                + "); nothing to validate or test")
+    return text + (f"affected ({block['first_relevant']} is not ignored)" if block["first_relevant"] else "affected")
+
+
 def notice(block, entries):
     affected = sum(entry["verdict"] == "run" for entry in entries)
     total = len(entries)

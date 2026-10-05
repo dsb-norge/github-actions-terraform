@@ -182,9 +182,9 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
 - fetching the changed files (in `adapter.py`) calls the pull request or compare endpoints and
   reports `{available, truncated, error, api_head_sha, count, files}`, the file list inline because
   the core reads no files; the engine turns that into a relevance mode and reason
-  (Path-relevance.md §4.2-§4.3). Nothing is fetched when relevance is switched off, for an event
-  other than a push or a pull request, or for a forced or deleting push, whose files the core
-  would not read.
+  (Path-relevance.md §4.2-§4.3), in both modes. Nothing is fetched when relevance is switched
+  off, for an event other than a push or a pull request, or for a forced or deleting push, whose
+  files the core would not read.
 - gathering the test facts (in `adapter.py`, Terraform-tests.md D20) lists committed test files,
   the directories that hold `.tf` files, and the environments' lock files by `project-dir`, in the
   same step; the engine derives roots, lanes, environments and provider sets and validates them.
@@ -215,15 +215,19 @@ summary is `create-run-summary`'s, from `relevance.json` (P12 says what that cos
 ### 3.3 The module mode
 
 The module workflow runs the same command with `--mode module` ([Module-ci.md](Module-ci.md) §5).
-The adapter then builds a document without environments, locks or changed files, and marks it
-`"mode": "module"`. `decide` skips every environment rule and decides the test stage alone. It
+The adapter then builds a document without environments or locks, with the changed files when
+relevance applies, and marks it `"mode": "module"`. `decide` skips every environment rule and decides the test stage alone. It
 runs the same discovery, root rule, lanes and validation with no environment rows, so every test
 root floats its providers. It checks the event as rule 2 does, and tests run on `pull_request`,
 `push`, `workflow_dispatch` and `schedule`. With the module workflow's `terraform-test-required`,
 the tests block's `missing` flag is set and a warning names the fix when no test file runs or is
 held back from a fork. It judges the Dependabot admission and module auto-merge
-([Module-auto-merge.md](Module-auto-merge.md) §3). The output carries `tests`, `notices`,
-`warnings`, `trigger`, `admission`, `automerge`, `comments` and a record of one line per test file; `comments` holds the admission head alone
+([Module-auto-merge.md](Module-auto-merge.md) §3), and whether the change is relevant to the
+module as one unit (`relevance.decide_module_relevance`, Module-ci.md §5.1): when it is not,
+every test file is held back with the reason `relevance: not affected`. The output carries
+`tests`, `notices`, `warnings`, `trigger`, `relevance` (`mode`, `reason`, `changed_count`,
+`affected`, `first_relevant`, `paths-ignore`), `admission`, `automerge`, `comments` and a record of
+one line per test file; `comments` holds the admission head alone
 (`heads` and `gc`), which the module workflow's seed job posts or purges as the project workflow's
 does. The decision file holds those keys and the mode.
 

@@ -3802,7 +3802,8 @@ if job.get("permissions") != {}:
     problems.append(f"the job holds permissions of its own: {job.get('permissions')}")
 condition = [line.strip() for line in str(job.get("if", "")).strip().splitlines()]
 wanted = ["!cancelled()", "&& needs.conclusion.result == 'success'", "&& needs.create-matrix.result == 'success'",
-          "&& needs.generate-docs.result == 'success'", "&& needs.validate.result == 'success'",
+          "&& needs.generate-docs.result == 'success'", "&& (needs.validate.result == 'success'",
+          "|| (needs.validate.result == 'skipped' && needs.create-matrix.outputs.affected-count == '0'))",
           "&& needs.generate-docs.outputs.pushed != 'true'", "&& needs.create-matrix.outputs.automerge-eligible == 'true'",
           "&& inputs.pr-auto-merge-enabled == true", "&& github.event_name == 'pull_request'",
           "&& github.event.action != 'closed'", "&& github.event.action != 'converted_to_draft'",

@@ -35,6 +35,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | D9 | **A module needs at least one test file**: with none, the conclusion is red, `terraform-test-required: false` opts out. Everything from a unit suite up is supported: lanes, GitHub Environments, OIDC, several credentials. | A module's tests are its contract with its callers; a unit suite needs no credentials, so every module can have one. |
 | D10 | **The test bed is a module-shaped branch of the project test bed**, with the kept test identity; close to release a real module repository is moved by the migration guide. | No new repository to administer; the identity and its environment exist. |
 | D11 | **Scope: everything that makes sense to share**, and the module workflow's own gaps with it: the plugin cache, per-job permissions, parsed warnings, the docs. | The two workflows are held together by the structural tests from here on. |
+| D12 | **Path relevance for the module**: on a pull request or a push, the module is affected unless every changed file matches `paths-ignore-yml` (default `**/*.md`). Not affected, the run validates nothing and holds every test file back; the docs job runs as always, and the conclusion is green. `path-relevance-enabled: false` runs everything. Unlike the project workflow's relevance, it also holds back the tests (Path-relevance.md D11 keeps them there). | Decided by the maintainer: a README- or docs-only pull request ran validation and every test, credentialed integration lanes included, for nothing a change to Markdown can break. A module is one unit, so its relevance is one verdict; the project workflow keeps its tests because they test environments' code that path rules may not see. |
 
 ## 3. Caller-facing API
 
@@ -59,6 +60,8 @@ results. Module CI takes that stage over instead of keeping a second one.
 | `dependabot-admission-yml` | string | `""` | The admission's policy, added to its built-in one. |
 | `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green ([Module-auto-merge.md](Module-auto-merge.md)). |
 | `pr-auto-merge-from-actors-yml` | string | `"[]"` | The bots whose pull requests may merge, by the pull request's author. |
+| `path-relevance-enabled` | boolean | `true` | Skip validation and the tests on a change that touches only ignored files (§5.1); `false` runs everything. |
+| `paths-ignore-yml` | string (YAML list) | `""` | Globs of files that never make the module affected; empty means `["**/*.md"]`, `[]` ignores nothing. |
 
 Every input with a project-workflow namesake means the same there; the engine validates them with
 the same rules and messages ([Configuration-validation.md](Configuration-validation.md)).
@@ -137,7 +140,9 @@ directories with `.tf` files; no locks, since a module commits none). The docume
    a warning naming the fix; the adapter publishes it as `tests-required-missing` (§8);
 5. judges the Dependabot admission ([Dependabot-admission.md §11](Dependabot-admission.md)) and
    auto-merge ([Module-auto-merge.md §3](Module-auto-merge.md)), over the facts the adapter
-   gathered for them.
+   gathered for them;
+6. decides whether the change is relevant to the module (§5.1), and holds every test file back
+   when it is not.
 
 The output carries `tests`, `notices`, `warnings`, `trigger`, `admission`, `automerge`,
 `comments` and a record of one line per test file (`tests/unit-tests.tftest.hcl: run, lane unit`
@@ -146,6 +151,32 @@ or `…: not run, misplaced`). The adapter publishes `tests-matrix-json`, `tests
 and `admission-admitted`, auto-merge's `automerge-eligible` and `automerge-confirm-app`, and
 `relevance-file`; the file holds the output without matrices, as in the project mode, so
 `create-test-summary` reads its not-run rows from the same place.
+
+### 5.1 Path relevance
+
+On a `pull_request` or a `push`, with `path-relevance-enabled` on, the adapter fetches the changed
+files as the project mode does (the pull request's files; a push's compare), and the engine rules
+on one unit, the module:
+
+- **Affected** when a changed file matches none of `paths-ignore-yml`, by default `["**/*.md"]`:
+  every run as before.
+- **Not affected** when every changed file is ignored: every test file is held back with the
+  reason `relevance: not affected`, so no test job runs and none is missing; `affected-count` is
+  `0`. The validate job is skipped on it. The docs job runs as always: a README-only pull request
+  still gets its README checked, or regenerated and committed.
+- **Run everything** (mode `all`) where the project mode fails open (Path-relevance.md §4.2): the
+  switch off, a dispatch or a schedule, a forced or deleting push, a pull request whose head moved,
+  more files than the API lists, a failed request, or a change under `.github/workflows/`.
+
+The relevance is the pull request's, not the commit's: a pull request that changes a `.tf` file
+anywhere is affected on every run. The input `paths-ignore-yml` is validated as an environment's
+`paths-ignore` is (a list of globs; `auto` has no meaning here). The adapter publishes
+`relevance-mode`, `relevance-reason`, `changed-count`, `affected-count` and `unaffected-count`
+(`1` and `0`, or `0` and `1`), and a notice says the verdict, for example `relevance diff (diff):
+the module is not affected: every changed file is ignored (**/*.md); nothing to validate or test`.
+
+Auto-merge counts validation skipped this way as passed ([Module-auto-merge.md](Module-auto-merge.md)
+M8): a release pull request changes only `CHANGELOG.md`, which nothing validates.
 
 ## 6. Credentials
 
@@ -197,6 +228,7 @@ Judges named results and the engine's outputs, like the project workflow's
 | `create-matrix` not successful | red: the matrix could not be built |
 | docs job not successful | red |
 | docs job pushed a commit (validation skipped on purpose) | green: the run the push started decides |
+| the module is not affected (§5.1) | green: nothing to validate or test |
 | validation not successful, docs not pushed | red |
 | tests required, stage on, no test file | red: a module needs at least one test file |
 | tests active and the test jobs not successful | red |
@@ -224,11 +256,15 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | P7 | `.tflint.hcl` matched by the template's `.gitignore` (`**/.tflint.hcl`) | A copy that is not force-added is never committed, and lint fails: "could not find a TFLint config file". | The template keeps it force-added; a repository keeps it that way. |
 | P8 | The default terraform-docs config injected in check mode | Upstream stages the whole directory and counts every staged file, so the injected file would read as drift. | The injected config is listed in `.git/info/exclude`; with push it is committed as before. |
 | P9 | A repository without access to the App's organisation variable or secret | The expression reads empty and the token action fails with "The 'client-id' (or deprecated 'app-id') input must be set to a non-empty string", which names neither the variable nor where to grant it. | A check before the token step names each one missing; a failed token is explained after it as the installation or the key (§3.2, F24). |
+| P10 | A pull request that was affected and is no longer (its last non-Markdown change reverted). | Its validation head stays from the earlier run, while the conclusion says not affected. | Accepted: relevance is the pull request's, so this needs a revert inside one pull request; the run summary and the conclusion say the current verdict. |
+| P11 | A module that reads a Markdown file through `file()` or `templatefile()`. | A change to that file changes the module, but is ignored by default. | Such a module sets `paths-ignore-yml: "[]"` (Workflow-terraform-module-ci.md). |
 
 ## 11. Tests
 
 - Engine: module mode for every event, the required finding, lanes and exclusions without
-  environments, the record, the published outputs; under both gates.
+  environments, the record, the published outputs; the module's relevance (a Markdown-only change,
+  one file that is not ignored, the ignore list replaced and empty, every fail-open reason, invalid
+  inputs, no test file missed, the admission first); under both gates.
 - F20: `terraform-test` and `terraform-test-summary` of the two workflows have the same steps, the
   same name, runner, timeout, permissions, environment, strategy and concurrency; they differ only
   in `needs` and `if`: the module jobs wait for the docs job (the summary for validation too) and
@@ -256,6 +292,7 @@ tests adds a unit suite or sets `terraform-test-required: false` for the move.
 | Docs | `terraform-docs/` |
 | The workflows | `.github/workflows/terraform-module-ci.yaml`, `terraform-module-release.yaml` |
 | Auto-merge | `engine/dsb_tf_engine/automerge.py` (the rule), `automerge_facts.py` (the commits) |
+| Path relevance | `engine/dsb_tf_engine/relevance.py` (`decide_module_relevance`) |
 | Parity, conclusion and wiring tests | `evaluate-automerge-eligibility/run_all_tests.sh` (F20, F21, F24, F26, F27) |
 
 ## 13. Open questions

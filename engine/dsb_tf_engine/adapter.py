@@ -58,7 +58,7 @@ PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "
              "record", "trigger", "ordering", "admission")
 # A module's decision has its test stage and its admission head alone (docs/Module-ci.md §5).
 MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission",
-                    "comments", "automerge")
+                    "comments", "automerge", "relevance")
 
 # Neither endpoint signals truncation, so its caps are the signal (docs/Path-relevance.md §4.2):
 # the pull request files endpoint pages out at most 3000 files, a compare lists at most 300.
@@ -405,7 +405,7 @@ def read_inputs(path):
 
 def build_document(inputs, facts, tools, isdir, module=False):
     """The engine's input document (docs/Decision-engine.md §4) from the inputs and the run's facts;
-    a module's has no environments and no changed files (docs/Module-ci.md §5)."""
+    a module's has no environments, and its changed files decide its relevance (docs/Module-ci.md §5.1)."""
     yaml_inputs = parse_inputs(tools, inputs)
     # A parse that failed carries the value null, which yields no entries; a module has no such input.
     entries = yaml_inputs.get("environments-yml", {}).get("value")
@@ -427,8 +427,8 @@ def build_document(inputs, facts, tools, isdir, module=False):
     }
     if module:
         document["mode"] = "module"
-    # Switched off, relevance needs no facts, so it makes no requests; a module has none.
-    if not module and inputs.get(relevance.SWITCH) not in (False, "false"):
+    # Switched off, relevance needs no facts, so it makes no requests.
+    if inputs.get(relevance.SWITCH) not in (False, "false"):
         changed = fetch_changed_files(tools, facts["repository"], facts["default_branch"], event, facts["payload"])
         if changed is not None:
             document["changed_files"] = changed
@@ -575,6 +575,12 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
             # The merge job reads them (docs/Module-auto-merge.md §6).
             "automerge-eligible": "true" if output["automerge"].get("eligible") else "false",
             "automerge-confirm-app": "true" if output["automerge"].get("confirm_app") else "false",
+            # The module is one unit: affected or not (docs/Module-ci.md §5.1).
+            "relevance-mode": output["relevance"]["mode"],
+            "relevance-reason": output["relevance"]["reason"],
+            "changed-count": str(output["relevance"]["changed_count"]),
+            "affected-count": "1" if output["relevance"]["affected"] else "0",
+            "unaffected-count": "0" if output["relevance"]["affected"] else "1",
         }
         for name, value in outputs.items():
             workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
