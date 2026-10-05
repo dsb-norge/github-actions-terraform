@@ -56,6 +56,8 @@ pipeline end to end found these places where it was not:
 | D11 | The merger's retry reads GitHub's `mergeable` values as GitHub reports them (`MERGEABLE`, `CONFLICTING`, `UNKNOWN`), stops on `CONFLICTING`, and never retries a refusal for a moved head or base. | The old comparison with `NOT_MERGEABLE` never matched. |
 | D13 | A tolerated failure of a Terraform operation blocks auto-merge; a tolerated test does not. An affected environment is not eligible when any of its operation steps (`init`, `verify-lock`, `fmt`, `validate`, `lint`, `plan`, `apply`, `destroy-plan`, `destroy`) ended `failure` or `cancelled`, whether or not `allow-failing-terraform-operations` kept the job green. A test job tolerated by `allow-failing-terraform-tests` does not block eligibility, and the evaluator names each such test in its log and in a notice. | Decided by the maintainer: `allow-failing-terraform-operations` means "do not fail the check", never "merge without review", and the old evaluator enforced it for the plan but not for format, validate, lint or the lock check; `allow-failing-terraform-tests` is meant as the lever that lets a pull request auto-merge although a tolerated lane fails, and it stays visible. |
 | D12 | One set of `plan-max-count-*` limits applies to the sum of an environment's plan and destroy-plan counts, as today; the workflow's comment that promised separate destroy-plan limits is corrected. | The comment described limits that never existed. |
+| D14 | **The evaluator is the decision engine's**: a command `evaluate-automerge` whose rules are in the engine's pure core, beside module auto-merge's, and whose facts (the metadata files, the test jobs' metadata, `relevance.json`, the stage results) an adapter reads. `evaluate-automerge-eligibility` stays the workflow's interface, its inputs and its output `is-eligible` unchanged, and runs the engine. The behaviour of the bash evaluator is pinned first, as golden cases captured from it (each case's inputs, its result and exit code, and the reasons its tests asserted), and the engine replays them unchanged (§14). | Every decision is a rule in the core, under the coverage and mutation gates (Decision-engine.md D13); module auto-merge is there already, and the rules the two share (actors, the Dependabot majors) are then one code. |
+| D15 | **A Dependabot pull request merges only within each dependency's major**: when the run's actor is `dependabot[bot]`, every dependency the admission judged keeps its major, and below 1.0 its minor, as in the module workflow ([Module-auto-merge.md](Module-auto-merge.md) M13). The facts are the admission's, in `relevance.json`; a run without them (the admission off, refused, or a push run) is not eligible. | Decided by the maintainer: majors are people's decisions. Dependabot's own `ignore` of semver-major updates did not hold when it rewrote a version range (`~> 4.20` to `~> 5.7` in a module repository), and the plan limits pass a major whose plan shows no changes. |
 
 ## 3. The pipeline as kept
 
@@ -219,6 +221,20 @@ and a move, a `removed` block as a `forget` action, a deferred data-source read 
 
 The console text keeps feeding the comment's plan extract; the comment's "no changes" comes from
 the counts.
+
+### 5.3 The pull request: Dependabot's majors
+
+After every environment, once for the pull request (D15): when the run's actor is
+`dependabot[bot]` (without case), the admission's block in `relevance.json` must say it applied to
+this pull request run and admitted it, and every dependency it lists must keep its major, and
+below 1.0 its minor, from its version before to its version after (the same rule as module
+auto-merge's rule 7). A version that cannot be read counts as a new major. Otherwise the pull
+request is not eligible, with one of these reasons:
+
+- `Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major (below 1.0, its minor); a person decides that`
+- `Dependabot's pull request has no admission facts in the relevance file (is dependabot-admission-enabled off?), so its dependencies' majors are unknown`
+
+Another actor's pull request is not judged by it.
 
 ## 6. The merge
 
@@ -413,3 +429,30 @@ None; the decisions are the maintainer's (D3, D7, D9, D10, D13).
   its environment's limit of one ran while that merge landed, and was refused with `The base branch
   'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>) …`; its next
   run, after the branch was brought up to date, merged it.
+
+## 14. The evaluator in the engine
+
+`evaluate-automerge-eligibility` runs `python3 -I -B <action>/../engine/run.py evaluate-automerge`
+(D14). Its inputs are unchanged: `metadata-files-pattern`, `relevance-file`,
+`test-metadata-files-pattern` and `stage-results-json`, and so is its output, `is-eligible`.
+
+- **The adapter** (`automerge_evidence.py`) reads the facts and decides nothing: every metadata
+  file the pattern matches, as JSON or as unreadable; the test jobs' metadata the same way; the
+  relevance file, when it exists; the stage results; and the run's actor, `GITHUB_ACTOR`. A file
+  it cannot read is a fact, as before.
+- **The core** (`automerge_project.py`) judges them exactly as §5 describes, and returns the
+  verdict, one result per environment with its checks and reasons, and the tolerated tests to
+  name. A configuration error in a limits mapping is a fault (exit 1), as before.
+- **The adapter publishes** `is-eligible`, a log group per environment with every check's result
+  and each reason, the final summary, and one notice per tolerated test.
+
+The bash evaluator's behaviour is pinned as golden cases before the engine replaces it: a capture
+of the existing suite recorded each case's input files, actor, stage results, exit code and
+`is-eligible`, and the reasons its assertions named, one file per case under
+`engine/tests/evaluator_port/`. Two suites replay every case and must give the same `is-eligible`
+and exit code, and log every asserted reason (a reason the case says must be absent, absent):
+the engine's (`test_evaluator_port.py`, under the coverage and mutation gates), and the action's
+(`evaluate-automerge-eligibility/run_all_tests.sh`), which runs the action's own run block as the
+runner pastes it, the bash step before the port and the engine after it, so the goldens bridge the
+two unchanged.
+
