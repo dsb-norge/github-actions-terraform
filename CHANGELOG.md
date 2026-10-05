@@ -6,6 +6,19 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.3.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.2.0...v1.3.0) (2026-10-05)
+
+
+### Features
+
+* auto-merge a module repository's bot pull requests ([8fa727c](https://github.com/dsb-norge/github-actions-terraform/commit/8fa727ce465e621920a338dd993a45cae669a48a))
+* module auto-merge keeps Dependabot within each major ([ff8c03e](https://github.com/dsb-norge/github-actions-terraform/commit/ff8c03e3e0a643619371066c672f70b70c8669d6))
+
+
+### Bug Fixes
+
+* commit module docs to Dependabot's PRs only when admitted ([81c3a1d](https://github.com/dsb-norge/github-actions-terraform/commit/81c3a1d2f03819128aa22370d1b4cead54282749))
+
 ## [1.2.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.1.0...v1.2.0) (2026-10-04)
 
 
