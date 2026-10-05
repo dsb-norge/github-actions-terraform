@@ -6,6 +6,18 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.6.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.5.0...v1.6.0) (2026-10-05)
+
+
+### Features
+
+* an environment test lane can name its own credentials ([64f4fc9](https://github.com/dsb-norge/github-actions-terraform/commit/64f4fc915322dd2a13d9158b2c773b0359c8361e))
+
+
+### Bug Fixes
+
+* the lock check names what differs instead of always missing hashes ([cba7298](https://github.com/dsb-norge/github-actions-terraform/commit/cba7298c6bb995f29ebab871e4d05c9d5583db70))
+
 ## [1.5.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.4.0...v1.5.0) (2026-10-05)
 
 
