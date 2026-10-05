@@ -444,6 +444,14 @@ def build_document(inputs, facts, tools, isdir, module=False):
         except admission_facts.FactError as error:
             # D11: neither admitting nor refusing on a guess; "Re-run failed jobs" decides again.
             raise AdapterError(f"the Dependabot admission cannot be decided: {error}") from None
+    if module and "admission" not in document and _automerge_applies(document) \
+            and document["event"]["pull_request"].get("author", "").casefold() == admission.DEPENDABOT:
+        # Auto-merge's rule 7 reads Dependabot's dependency changes in the run the docs commit starts too, which the
+        # admission does not judge. Facts that cannot be gathered make the run not eligible, never failed (M11).
+        try:
+            document["admission"] = admission_facts.gather(tools)
+        except admission_facts.FactError:
+            pass
     return document
 
 

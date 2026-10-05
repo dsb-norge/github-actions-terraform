@@ -43,6 +43,7 @@ The project workflow's auto-merge cannot be reused as it stands, for three reaso
 | M10 | Only a pull request against the default branch, from the same repository (Auto-merge.md D9), judged by the engine (rule 1) and again in the merge job's condition. | A fork's run has no secrets, and its code is never merged unreviewed. In the rule, the notice says why such a pull request is not merged. |
 | M11 | A commit listing that fails, is cut short, or does not end with the evaluated head makes the run **not eligible**, with a notice; it never fails the run. | Auto-merge is the run's last, optional step: failing closed costs a person's click, failing the run would turn a green change red. (The admission fails the run instead, D11 there, because it gates whether code runs at all.) |
 | M12 | The rule is the decision engine's, in module mode; the adapter gathers the commits. The CI App's identity, which only the merge job's token knows, is confirmed there. | Every decision is a rule in the engine's pure core, under its coverage and mutation gates (Decision-engine.md D13); the App's slug is an output of its token step. |
+| M13 | **Dependabot's pull request merges only within each dependency's major**: a provider or a called module whose version changes major, or, below 1.0, minor, is merged by a person. | Decided by the maintainer: people choose the majors a module supports (Module-dependencies.md). Dependabot's `ignore` of majors does not hold when it rewrites a provider range: a module repository got `~> 4.20` → `~> 5.7` despite it, which the admission would have admitted once old enough and auto-merge would have released as a patch that drops azurerm 4. Below 1.0 semver lets any minor break, and the Azure Verified Modules are all 0.x. |
 
 The repositories also get a ruleset requiring `tf / Terraform conclusion` on the default branch,
 without required reviews, so that a person cannot merge a pull request the run refused, and the
@@ -79,6 +80,11 @@ hold, and the notice names the first that does not:
 6. **Another bot's pull request is a release**: when the author is not `dependabot[bot]`, the
    pull request's head branch is `release-please--branches--<default branch>`, and the author's
    commits change only `CHANGELOG.md` and `.release-please-manifest.json`.
+7. **Dependabot's pull request stays within each dependency's major** (M13): for every
+   dependency the change touches, as the admission reads it (a provider's newest version its
+   constraint allows, before and after; a module's selected version or ref), the major stays the
+   same, and below 1.0 the minor too. A version that cannot be read, facts that were not
+   gathered, and a change with no dependency the admission recognised are not eligible.
 
 Why a signature, and why GitHub's: a commit's author is whatever its maker says, so anyone with
 write access can author a commit as `dependabot[bot]`. Dependabot's commits are signed by GitHub
@@ -109,6 +115,7 @@ author; such an App is trusted that far already (R3).
 | Dependabot's, refused, then reopened or labelled by a person | the person's | no: rule 5 |
 | Dependabot's, refused, with a docs commit a person's run made before M4 | the one that docs commit started | no: rule 5 |
 | Dependabot's, a person pushed or pressed "Update branch" | the person's | no: rules 3 to 5 |
+| Dependabot's, a provider's major, or a 0.x module's minor | any | no: rule 7 |
 | release-please's | the App's own push | yes |
 | a person's | the person's | no: rule 1 |
 | from a fork, or against another branch | any | no: rule 1 |
@@ -128,6 +135,13 @@ request's commits and each commit's files:
 - From the event: the head SHA, the head branch and the commit count.
 
 Only when rule 1 holds: an unlisted author, a fork or another base is ruled out without a call.
+
+For Dependabot's pull request, rule 7 reads the admission's facts (Dependabot-admission.md §8):
+each dependency the change touches, with its version before and after. Dependabot's own run
+gathers them for the admission; in the run the docs commit starts, which the admission does not
+judge, the adapter gathers them for rule 7 alone. A fact it cannot gather there leaves them out,
+and the run is not eligible (M11), where the admission would fail Dependabot's own run (D11
+there).
 
 A failing call gives the fact `{"available": false, "reason": …}`; the engine then rules the run
 not eligible (M11). The step needs `pull-requests: read`, which `create-matrix` gains.
@@ -197,6 +211,7 @@ changelog.
 | P7 | A caller that triggers `push` on every branch gets a second `Terraform conclusion` on the same commit (Dependabot-admission.md P5). | A merge while the push run is still going is refused by the ruleset. | The module callers trigger `pull_request`, `schedule` and `workflow_dispatch` only. |
 | P8 | A module that reads its README through `file()` or `templatefile()`. | A docs commit changes what the module does. | Not detected; such a module should not list the bots. |
 | P9 | A docs commit made on a Dependabot pull request before M4, in a person's run, sits on a head nobody admitted. Seen on the test bed: a person reopened a refused bump, the run used the merge commit GitHub had not yet recomputed, and with it the docs job from before the fix, which committed; the App's run that followed, on the new workflow, ruled the pull request eligible and merged it. | A refused bump merges. | Rule 5: on Dependabot's pull request a docs commit counts only with the message of Dependabot's own, admitted run. |
+| P10 | Dependabot's `ignore` with `update-types: ["version-update:semver-major"]` did not hold for a provider range: a module repository got `~> 4.20` → `~> 5.7`. | A provider major merges and is released as a patch. | Rule 7; the module repositories' Dependabot updates modules only (Module-dependencies.md). |
 
 ## 9. Tests
 
@@ -204,15 +219,20 @@ changelog.
   person's signed commit with a forged author; a commit with no resolved author; a merge commit; a
   docs commit with a non-docs file, a rename, a deletion and no file; two trailing docs commits and
   a docs commit before an author's; a docs commit on Dependabot's pull request without the
-  admitted run's message, and one on a release without it; the configs; author case; a listing that fails, is capped, is
-  short of the event's count or ends elsewhere; a release on another branch or with another file;
+  admitted run's message, and one on a release without it; the configs; author case; a listing
+  that fails, is capped, is short of the event's count or ends elsewhere; a release on another
+  branch or with another file; a provider and a module within and past their major, a 0.x minor,
+  an unreadable version, missing and empty dependency facts;
   the switch off; a non-`pull_request` event, a closing one, a fork and another base; the
   validation messages; the notice and the step outputs. The mutation gate over the new code.
 - Adapter: the commit and file listings answered, paginated, failing and capped, and the calls made
-  only for an author on the list; the create-matrix suite runs the action's shim with a stub `gh`.
+  only for an author on the list; the admission's facts gathered in the App's run on Dependabot's
+  pull request, once in Dependabot's own, never for another bot, and a gathering that fails; the
+  create-matrix suite runs the action's shim with a stub `gh`.
 - Workflows: F27 holds the `automerge` job's needs, condition, permissions, steps, the App check
   (the docs job's), the App confirmation, run for the App, another bot and a missing slug, the
-  pins, and the engine's docs message equal to the docs job's on a Dependabot run; F24 counts a third token step; F26 checks the docs job's token keyed on the pull request's
+  pins, and the engine's docs message equal to the docs job's on a Dependabot run; F24 counts a
+  third token step; F26 checks the docs job's token keyed on the pull request's
   author.
 - On the test bed: an admitted Dependabot pull request with a docs commit merges; one refused and
   then reopened by a person does not; one a person pushed to does not; a release pull request
@@ -228,6 +248,10 @@ changelog.
 | R4 | No review is required on the default branch, so a person's unreviewed change there reaches the next release, which now merges by itself; a test that `allow-failing-terraform-tests` tolerates does not stop it either. | The release is what was already on the default branch; requiring reviews is the repository's choice. |
 
 ## 11. What implementation taught the spec
+
+- **Dependabot's configuration is not a gate.** The module repositories' Dependabot ignores
+  majors, and still proposed azurerm 5 by rewriting the range (P10). The rule now checks every
+  dependency's major itself (M13).
 
 - **A docs commit is only as good as the run that made it.** The first rule accepted any trailing
   docs commit once the run was the App's, relying on M4 for where docs commits come from. On the

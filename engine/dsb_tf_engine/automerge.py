@@ -152,6 +152,29 @@ def wants_facts(document, policy):
     return _applies(document, policy) and _scope_problem(document, policy) is None
 
 
+def _breaking(old, new):
+    """Whether a version change leaves what semver promises compatible: another major, or below 1.0 another
+    minor. A version that cannot be read is treated as breaking."""
+    before, after = admission.parse_version(old), admission.parse_version(new)
+    if before is None or after is None:
+        return True
+    return before[0] != after[0] or (before[0] == 0 and before[1] != after[1])
+
+
+def _dependency_problem(facts):
+    """Why Dependabot's pull request leaves a dependency's major, or None (rule 7)."""
+    if facts is None:
+        return "its dependency changes could not be read"
+    if not facts["dependencies"]:
+        return "it changes no dependency the admission recognised"
+    for dependency in facts["dependencies"]:
+        if _breaking(dependency["from"], dependency["to"]):
+            name = dependency["address"].removeprefix(admission.REGISTRY + "/")
+            return (f"it moves {dependency['kind']} {name} from {dependency['from']} to {dependency['to']}, past its "
+                    "major (below 1.0, its minor); a person decides that")
+    return None
+
+
 def judge(document, policy, admitted):
     """The verdict on this run: does it merge (docs/Module-auto-merge.md §3, §5)."""
     if not _applies(document, policy):
@@ -205,10 +228,12 @@ def judge(document, policy, admitted):
     elif author.casefold() == DEPENDABOT and not (admitted["applies"] and not admitted["push_run"]
                                                  and admitted["admitted"]):
         return refused("the Dependabot admission did not admit this run")
-    if author.casefold() != DEPENDABOT:
+    if author.casefold() == DEPENDABOT:
+        problem = _dependency_problem(document.get("admission"))
+    else:
         problem = _release_problem(document, facts, facts["commits"][:own])
-        if problem:
-            return refused(problem)
+    if problem:
+        return refused(problem)
     return {**verdict, "eligible": True}
 
 

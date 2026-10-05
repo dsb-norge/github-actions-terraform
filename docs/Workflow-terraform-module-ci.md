@@ -246,7 +246,7 @@ With `pr-auto-merge-enabled: true`, a pull request whose author is a bot on `pr-
 
 Together they release a bump with no person involved: Dependabot's `fix(deps)` bump merges, release-please updates its release pull request, and that merges too.
 
-What makes a pull request eligible is the decision engine's rule ([Module-auto-merge.md §3](Module-auto-merge.md)). In short: the pull request is from the repository, against the default branch, by a listed bot; every commit on it is that bot's, signed by GitHub, except the docs job's commits at the head; and the run is the bot's own, or the one the CI App's docs commit started. A person's commit on the pull request, GitHub's "Update branch", or a run a person started (by reopening or labelling the pull request) keeps it from merging, and a person merges it instead. The merge is the project workflow's: a rebase merge, made only while the pull request's head and its base are still what this run tested ([Auto-merge.md §6](Auto-merge.md)).
+What makes a pull request eligible is the decision engine's rule ([Module-auto-merge.md §3](Module-auto-merge.md)). In short: the pull request is from the repository, against the default branch, by a listed bot; every commit on it is that bot's, signed by GitHub, except the docs job's commits at the head; the run is the bot's own, or the one the CI App's docs commit started; and a Dependabot pull request keeps every dependency it changes within its major (below 1.0, its minor), since people choose majors ([Module-dependencies.md](Module-dependencies.md)). A person's commit on the pull request, GitHub's "Update branch", or a run a person started (by reopening or labelling the pull request) keeps it from merging, and a person merges it instead. The merge is the project workflow's: a rebase merge, made only while the pull request's head and its base are still what this run tested ([Auto-merge.md §6](Auto-merge.md)).
 
 ### Setting it up
 
@@ -286,6 +286,7 @@ and the `PR auto merger` job runs only on an eligible one, once the conclusion i
 | Dependabot's, refused, then reopened or labelled by a person | the person's | no |
 | Dependabot's, with a README commit from a run nobody judged | the one that commit starts | no |
 | Dependabot's, a person pushed to it or pressed "Update branch" | the person's | no |
+| Dependabot's, moving a provider's major or a 0.x module's minor | any | no |
 | release-please's, changing only the changelog and the manifest | the App's own push | yes |
 | release-please's, changing `versions.tf`, `README.md` or other files | the App's own push | no |
 | a person's | the person's | no |
@@ -483,6 +484,8 @@ See [requirements](#requirements).
 | `the run was started by <login>, neither the author (<bot>) nor the CI App's docs commit` | A person reopened, labelled or edited the pull request; merge it yourself, or have the bot update it (`@dependabot rebase`). |
 | `commit <sha> by <login> is neither the author's (<bot>), signed by GitHub, nor a docs commit (…)` | Someone pushed to the bot's branch, or pressed "Update branch". Merge it yourself, or have the bot recreate it (`@dependabot recreate`). |
 | `the Dependabot admission did not admit this run` | The admission comment says why. |
+| `it moves <dependency> from <version> to <version>, past its major (below 1.0, its minor); a person decides that` | Review and merge it yourself, see [Module-dependencies.md §4](Module-dependencies.md#4-when-and-what-to-do). |
+| `its dependency changes could not be read` | The registry or GitHub did not answer while the run read the change; re-run the workflow. |
 | `docs commit <sha> was not made in an admitted Dependabot run: …` | The README was committed in a run nobody judged, such as a person's. Have Dependabot recreate the pull request (`@dependabot recreate`), or merge it yourself. |
 | `another bot's pull request merges only as a release, …` or `release commit <sha> changes <file>, …` | A release pull request that touches more than the changelog and the manifest is merged by a person. |
 | `its commits could not be listed (…)` | The GitHub API failed; re-run the workflow. |
