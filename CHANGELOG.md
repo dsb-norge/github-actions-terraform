@@ -6,6 +6,14 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.4.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.3.0...v1.4.0) (2026-10-05)
+
+
+### Features
+
+* a run summary for module runs ([78ecaf5](https://github.com/dsb-norge/github-actions-terraform/commit/78ecaf5ff1b537aa42a837bc94af670abb7f8a77))
+* skip module validation and tests on documentation-only changes ([df23613](https://github.com/dsb-norge/github-actions-terraform/commit/df23613bf71543cbe8d4ba2a1c08375752c4e575))
+
 ## [1.3.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.2.0...v1.3.0) (2026-10-05)
 
 
