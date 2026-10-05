@@ -9,6 +9,8 @@ path through something that is not an object reads as absent.
 import json
 import re
 
+from . import automerge
+
 LIMIT_FIELDS = ("plan-max-count-add", "plan-max-count-change", "plan-max-count-destroy", "plan-max-count-import",
                 "plan-max-count-move", "plan-max-count-remove")
 COUNT_TYPES = ("add", "change", "destroy", "import", "move", "remove")
@@ -21,6 +23,11 @@ OPERATION_STEP_IDS = ("init", "verify-lock", "fmt", "validate", "lint", "plan", 
 PLAN_STEPS = (("plan", "parse-plan", "plan", "apply"), ("destroy_plan", "parse-destroy-plan", "destroy-plan", "destroy"))
 INTEGER = re.compile(r"-?[0-9]+")
 INELIGIBLE = "environment is ineligible for PR auto merge"
+
+
+DEPENDABOT_NO_FACTS = ("Dependabot's pull request has no admission facts in the relevance file (is "
+                       "dependabot-admission-enabled off?), so its dependencies' majors are unknown")
+DEPENDENCY_FIELDS = ("kind", "address", "from", "to")
 
 
 class ConfigurationError(Exception):
@@ -570,6 +577,30 @@ class _Run:
         return len(environments), affected
 
 
+def dependabot_problem(actor, relevance):
+    """D15 (docs/Auto-merge.md §5.3): None when the actor is not Dependabot, else why its pull request
+    may not merge, or '' when every dependency the admission judged keeps its major."""
+    if actor.casefold() != automerge.DEPENDABOT:
+        return None
+    content = relevance["content"] if relevance and relevance["exists"] else None
+    block = _path(content, "admission")
+    if not isinstance(block, dict) or block.get("applies") is not True or block.get("push_run") is not False:
+        problem = DEPENDABOT_NO_FACTS
+    elif block.get("admitted") is not True:
+        problem = "Dependabot's pull request was not admitted by the Dependabot admission"
+    elif not isinstance(block.get("dependencies"), list) or not all(
+            isinstance(item, dict) and all(isinstance(item.get(field), str) for field in DEPENDENCY_FIELDS)
+            for item in block["dependencies"]):
+        problem = "Dependabot's pull request's dependency changes cannot be read from the relevance file"
+    elif not block["dependencies"]:
+        problem = "Dependabot's pull request changes no dependency the admission recognised"
+    else:
+        move = automerge.leaves_major(block["dependencies"])
+        problem = (f"Dependabot's pull request moves {move}, past its major (below 1.0, its minor); a person decides "
+                   "that") if move else ""
+    return problem
+
+
 def evaluate(facts):
     """{"eligible": bool or None, "log": Log, "notices": [...], "fatal": [...] or None} (docs/Auto-merge.md §14).
 
@@ -625,6 +656,14 @@ def evaluate(facts):
         return {"eligible": None, "log": log, "notices": [], "fatal": [*error.args[0],
                                                                        "Configuration validation failed"]}
 
+    dependabot = dependabot_problem(facts["actor"], facts["relevance"])
+    if dependabot is not None:
+        with log.group("Pull Request"):
+            if dependabot:
+                log.warn(dependabot)
+            log.line(f"Dependabot's majors: {'FAIL' if dependabot else 'PASS'}")
+    eligible = run.eligible and not dependabot
+
     marks = {"ELIGIBLE": "✅ {}", "INELIGIBLE": "❌ {}", "INVALID": "⚠️  {} (invalid file)",
              "UNKNOWN": "❓ {} (not in the relevance file)"}
     with log.group("Final Summary"):
@@ -637,8 +676,14 @@ def evaluate(facts):
         log.line("Per-environment results:")
         for kind, name in run.results:
             log.line("  " + marks[kind].format(name))
-        log.line("✅ FINAL RESULT: All environments eligible - PR CAN be automerged" if run.eligible
-                 else "❌ FINAL RESULT: Not all environments eligible - PR CANNOT be automerged")
+        if dependabot is not None:
+            log.line(f"Pull request: {'❌' if dependabot else '✅'} Dependabot's majors")
+        if eligible:
+            log.line("✅ FINAL RESULT: All environments eligible - PR CAN be automerged")
+        elif run.eligible:
+            log.line("❌ FINAL RESULT: Every environment eligible, the pull request is not - PR CANNOT be automerged")
+        else:
+            log.line("❌ FINAL RESULT: Not all environments eligible - PR CANNOT be automerged")
         log.line(f"Tolerated failing or erroring tests: {len(tolerated)}")
-    return {"eligible": run.eligible, "log": log, "notices": notices(run.eligible), "fatal": None}
+    return {"eligible": eligible, "log": log, "notices": notices(eligible), "fatal": None}
 

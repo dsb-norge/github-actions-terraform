@@ -706,7 +706,8 @@ behaviour of the bash evaluator it replaced. The action's suite,
 `evaluate-automerge-eligibility/run_all_tests.sh`, replays the same cases through the action's run
 block as the runner pastes it, and covers the block's shape, stage results holding shell syntax,
 caller values in the log and in an annotation, a value starting with `-`, a relevance file outside
-the workspace, and a caller's `json.py` and `PYTHONPATH` failing to replace the standard library.
+the workspace, a Dependabot major in that file's admission block (Auto-merge.md D15), and a
+caller's `json.py` and `PYTHONPATH` failing to replace the standard library.
 
 **What tests cannot cover**: the action on a real runner. The run block is two commands, checked by
 its structural test, the workflow's structural tests and the preview-ref run on
