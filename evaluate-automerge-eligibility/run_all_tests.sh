@@ -3369,9 +3369,12 @@ for key, value in expected.items():
     if env.get(key) != value:
         problems.append(f"the conclusion's env {key} must be {value}")
 run = (conclusion.get('steps') or [{}])[0].get('run', '')
-for needle in ('GITHUB_STEP_SUMMARY', '::notice title=Terraform conclusion::', '::error title=Terraform conclusion::', 'exit 1'):
+for needle in ('GITHUB_OUTPUT', '::notice title=Terraform conclusion::', '::error title=Terraform conclusion::', 'exit 1'):
     if needle not in run:
         problems.append(f"the conclusion must write {needle!r}")
+# The run summary's headline is the conclusion on the run page (docs/Module-ci.md §7.1).
+if 'GITHUB_STEP_SUMMARY' in run:
+    problems.append("the conclusion must leave the run page to the run summary, not write its own summary")
 if 'contains(needs.' in str(conclusion):
     problems.append("the conclusion must read named results, not contains(needs.*.result, …)")
 create = jobs.get('create-matrix', {})

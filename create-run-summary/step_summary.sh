@@ -497,15 +497,19 @@ function usable_module_relevance_file {
 #   $1 the module results file, $2 the usable relevance file or empty
 function render_module_summary {
   local results="${1}" relevance="${2}"
-  local conclusion line
+  # The headline is the conclusion: its verdict and why, without the "conclusion: <verdict> — " the
+  # headline already says and the test count the tests row says.
+  local conclusion line why
   conclusion=$(needs_value "${results}" conclusion result)
   line=$(needs_value "${results}" conclusion line)
+  why="${line#conclusion: * — }"
+  why="${why%; tests: *}"
+  [ "${why}" = "${line}" ] && why=""
   case "${conclusion}" in
-    success) printf '### ✅ Module CI: green\n\n' ;;
-    failure) printf '### ❌ Module CI: red\n\n' ; FAILED_COUNT=1 ;;
+    success) printf '### ✅ Module CI: green%s\n\n' "${why:+ — ${why}}" ;;
+    failure) printf '### ❌ Module CI: red%s\n\n' "${why:+ — ${why}}" ; FAILED_COUNT=1 ;;
     *) printf '### ❔ Module CI: the conclusion did not run (%s)\n\n' "${conclusion:-unknown}" ;;
   esac
-  [ -n "${line}" ] && printf '`%s`\n\n' "${line}"
 
   local relevance_line="" merge_line=""
   if [ -n "${relevance}" ]; then
@@ -540,14 +544,25 @@ function render_module_summary {
     fi
     printf '| ✔ Validation | ⏭️ %s |\n' "${why}"
   else
-    local step label
-    for step in init:'⚙️ Init' fmt:'🖌 Format' validate:'✔ Validate' lint:'🧹 TFLint'; do
-      label="${step#*:}"
-      printf '| %s | %s |\n' "${label}" "$(outcome_cell "$(needs_value "${results}" validate "${step%%:*}")")"
+    # One row: what failed, or that every step passed; the validate job's own summary has each step.
+    local step outcome failed=() passed=0 cell warnings
+    for step in init:Init fmt:Format validate:Validate lint:TFLint; do
+      outcome=$(needs_value "${results}" validate "${step%%:*}")
+      case "${outcome}" in
+        success) passed=$((passed + 1)) ;;
+        failure | cancelled) failed+=("${step#*:}") ;;
+      esac
     done
-    local warnings
+    if [ "${#failed[@]}" -gt 0 ]; then
+      cell="❌ $(IFS=,; printf '%s' "${failed[*]}" | sed 's/,/, /g') failed"
+    elif [ "${passed}" -eq 4 ]; then
+      cell='✅ init, fmt, validate and lint passed'
+    else
+      cell=$(outcome_cell "${validate_result}")
+    fi
     warnings=$(needs_value "${results}" validate warning-count)
-    [[ "${warnings}" =~ ^[1-9][0-9]*$ ]] && printf '| ⚠️ Warnings | %s from init and validate |\n' "${warnings}"
+    [[ "${warnings}" =~ ^[1-9][0-9]*$ ]] && cell+=" · ⚠️ ${warnings} warnings"
+    printf '| ✔ Validation | %s |\n' "${cell}"
   fi
 
   local tests_result tests_cell

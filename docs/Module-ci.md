@@ -31,7 +31,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | D5 | **Terraform 1.13 or later** for the test jobs, as in the project workflow. | One floor, one authoring rule (Terraform-tests.md D11). |
 | D6 | **terraform-docs pushes only on a pull request from the repository**, not from a fork, and on Dependabot's only when the admission admitted the run ([Dependabot-admission.md](Dependabot-admission.md) D22); everywhere else a README that needs regenerating fails the docs check. The action is converted to the modern layout and keeps the upstream Docker action. | A dispatch or a push must never commit to the branch it runs on, `main` included. The Docker action's pinned terraform-docs keeps every README's table spacing. |
 | D7 | **App tokens come from `actions/create-github-app-token@v3`**, in module CI and module release. | The organisation's own token action needs Deno from v3, which the hosted runners do not carry; the project workflow already uses the upstream action. |
-| D8 | **Reporting follows the project workflow**: a validation head and a tests head on a pull request, a step summary from every job, and a conclusion line in the log, the step summary and an annotation. The per-file test comments of v0 are deleted once. | One reporting model for both kinds of repository ([Workflow-pr-comments.md](Workflow-pr-comments.md)); the actions exist. |
+| D8 | **Reporting follows the project workflow**: a validation head and a tests head on a pull request, a step summary from every job, and a conclusion line in the log and an annotation, on the run page in the run summary's headline (§7.1). The per-file test comments of v0 are deleted once. | One reporting model for both kinds of repository ([Workflow-pr-comments.md](Workflow-pr-comments.md)); the actions exist. |
 | D9 | **A module needs at least one test file**: with none, the conclusion is red, `terraform-test-required: false` opts out. Everything from a unit suite up is supported: lanes, GitHub Environments, OIDC, several credentials. | A module's tests are its contract with its callers; a unit suite needs no credentials, so every module can have one. |
 | D10 | **The test bed is a module-shaped branch of the project test bed**, with the kept test identity; close to release a real module repository is moved by the migration guide. | No new repository to administer; the identity and its environment exist. |
 | D11 | **Scope: everything that makes sense to share**, and the module workflow's own gaps with it: the plugin cache, per-job permissions, parsed warnings, the docs. | The two workflows are held together by the structural tests from here on. |
@@ -216,7 +216,7 @@ Lanes are the project workflow's, key for key ([Terraform-tests.md §3.2, §3.6]
 | Validation head `<!-- tf:head:module -->` | `create-validation-summary` with `subject: module`: the title "Terraform validation summary for module: `<repository>`", init, fmt, validate, lint and the warnings count; no lock and no plan rows (`absent`) | — |
 | Tests head `<!-- tf:head:tests:<caller> -->` | `create-test-summary`, one comment for every file | — |
 | Legacy `<!-- tf:head:test:<file> -->` comments | deleted by the validate job | — |
-| Step summaries | validation block, each test job's block, the tests block, the conclusion line | the same |
+| Step summaries | validation block, each test job's block, the tests block, and the run summary, whose headline is the conclusion (§7.1) | the same |
 | Annotations | one per failed gate, the tests headline, the conclusion | the same |
 
 The docs job writes one line to its step summary: regenerated and pushed, up to date, needs
@@ -230,10 +230,12 @@ results, which the job builds from its `needs`: the conclusion's result and line
 result and status, the validate job's result and its four steps' outcomes and warnings count, the
 tests summary job's result and counts, and the auto-merge job's result. It writes:
 
-- a headline with the conclusion, and the conclusion's line;
+- a headline: the conclusion's verdict and why, for example `❌ Module CI: red — validation's
+  result is failure`;
 - the relevance line (§5.1);
-- a table with a row for the docs, each validation step and the tests (passed, failed, tolerated,
-  not run);
+- a table with one row each for the docs, validation (the steps that failed, or that all passed,
+  and the warnings; or why it was skipped) and the tests (passed, failed, tolerated, not run, or
+  held back);
 - when the admission refused the pull request, the admission's section, as in the project
   workflow (Dependabot-admission.md §7);
 - when auto-merge applies, its verdict, and whether the pull request was merged.
@@ -257,8 +259,10 @@ Judges named results and the engine's outputs, like the project workflow's
 | tests active and the test jobs not successful | red |
 | tests inactive and the test jobs skipped | fine |
 
-One line, for example `conclusion: green — validation succeeded; tests: 4`, to the log, the step
-summary and a `::notice` or `::error`.
+One line, for example `conclusion: green — validation succeeded; tests: 4`, to the log and a
+`::notice` or `::error`, and as the job output `line`, which the run summary's headline shows. The
+conclusion writes no summary block of its own: on the run page the run summary is the answer, and
+the jobs' blocks below it are the detail (§7.1).
 
 ## 9. Moving a module repository from v0
 

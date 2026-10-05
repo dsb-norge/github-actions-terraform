@@ -1005,8 +1005,8 @@ jobs:
           fi
           line="conclusion: ${verdict} — ${why}; tests: ${TESTS_COUNT:-0}"
           echo "${line}"
-          echo "${line}" >>"${GITHUB_STEP_SUMMARY}"
-          # The run summary's headline (docs/Module-ci.md §7.1); written before a red verdict exits.
+          # The run summary's headline carries it to the run page (docs/Module-ci.md §7.1), so it is not
+          # written to this job's summary too; written before a red verdict exits.
           echo "line=${line}" >>"${GITHUB_OUTPUT}"
           if [ "${verdict}" = green ]; then
             echo "::notice title=Terraform conclusion::${line}"

@@ -1189,25 +1189,19 @@ module_relevance "relevance diff (diff): the module is affected (main.tf is not 
   "auto-merge: eligible: dependabot[bot]'s pull request, 2 commits (1 the author's, 1 docs)"
 MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-count": "1"}},
   "generate-docs": {"result": "success", "outputs": {"status": "up-to-date", "pushed": "false"}},
-  "validate": {"result": "success", "outputs": {"init": "success", "fmt": "success", "validate": "success", "lint": "failure", "warning-count": "2"}},
+  "validate": {"result": "success", "outputs": {"init": "success", "fmt": "success", "validate": "success", "lint": "success", "warning-count": "2"}},
   "terraform-test-summary": {"result": "success", "outputs": {"passed-count": "3", "failed-count": "0", "tolerated-count": "1", "not-run-count": "2"}},
   "conclusion": {"result": "success", "outputs": {"line": "conclusion: green — validation succeeded; tests: 4"}},
   "automerge": {"result": "success", "outputs": {}}}' run_step
 cat >"${RUNNER_TEMP}/expected.md" <<'EXPECTED'
-### ✅ Module CI: green
-
-`conclusion: green — validation succeeded; tests: 4`
+### ✅ Module CI: green — validation succeeded
 
 _relevance diff (diff): the module is affected (main.tf is not ignored)_
 
 | Step | Result |
 |---|---|
 | 📝 Docs | ✅ up to date |
-| ⚙️ Init | ✅ success |
-| 🖌 Format | ✅ success |
-| ✔ Validate | ✅ success |
-| 🧹 TFLint | ❌ failure |
-| ⚠️ Warnings | 2 from init and validate |
+| ✔ Validation | ✅ init, fmt, validate and lint passed · ⚠️ 2 warnings |
 | 🧪 Tests | ✅ 3 passed · ⚠️ 1 tolerated · 2 not run |
 
 **auto-merge: eligible: dependabot[bot]'s pull request, 2 commits (1 the author's, 1 docs) — merged ✅**
@@ -1233,7 +1227,8 @@ assert "M2: exits 0" test "${LAST_EXIT}" -eq 0
 assert "M2: validation skipped as not affected" grep -qxF '| ✔ Validation | ⏭️ skipped: the module is not affected by this change |' "${GITHUB_STEP_SUMMARY}"
 assert "M2: tests held back as not affected" grep -qxF '| 🧪 Tests | ⏭️ held back: the module is not affected by this change |' "${GITHUB_STEP_SUMMARY}"
 assert "M2: a failed merge says so" grep -qF '— the merge did not go through; see the PR auto merger job ❌**' "${GITHUB_STEP_SUMMARY}"
-assert "M2: no validation step rows" bash -c "! grep -qF '⚙️ Init' '${GITHUB_STEP_SUMMARY}'"
+assert "M2: the headline says why, without the verdict twice" grep -qxF '### ✅ Module CI: green — the module is not affected by this change; nothing to validate or test' "${GITHUB_STEP_SUMMARY}"
+assert "M2: no line of the conclusion besides the headline" bash -c "! grep -qF 'conclusion:' '${GITHUB_STEP_SUMMARY}'"
 unset input_mode input_relevance_file
 teardown
 
@@ -1248,7 +1243,7 @@ MODULE_RESULTS='{"create-matrix": {"result": "success", "outputs": {"affected-co
   "conclusion": {"result": "failure", "outputs": {"line": "conclusion: red — Dependabot pull request not admitted: 1 of 1 dependencies failed; see the admission comment; tests: 0"}},
   "automerge": {"result": "skipped"}}' run_step
 assert "M3: exits 0" test "${LAST_EXIT}" -eq 0
-assert "M3: red headline" grep -qxF '### ❌ Module CI: red' "${GITHUB_STEP_SUMMARY}"
+assert "M3: red headline with the reason" grep -qxF '### ❌ Module CI: red — Dependabot pull request not admitted: 1 of 1 dependencies failed; see the admission comment' "${GITHUB_STEP_SUMMARY}"
 assert "M3: failed-count 1" test "$(get_output failed-count)" = "1"
 assert "M3: the docs row says what to do" grep -qxF '| 📝 Docs | ❌ the README needs regenerating |' "${GITHUB_STEP_SUMMARY}"
 assert "M3: the admission section, with its table row" bash -c "grep -qxF '### 🚫 Dependabot pull request not admitted' '${GITHUB_STEP_SUMMARY}' && grep -qxF '| module \`cloudposse/label/null\` | 0.24.1 → 0.25.0 | ❌ \`cloudposse\` is not on the allow list |' '${GITHUB_STEP_SUMMARY}'"
@@ -1275,7 +1270,7 @@ export input_mode=module input_relevance_file="${RUNNER_TEMP}/missing.json"
 MODULE_RESULTS='not json' run_step
 assert "M5: exits 0 with nothing readable" test "${LAST_EXIT}" -eq 0
 assert "M5: the conclusion did not run" grep -qxF '### ❔ Module CI: the conclusion did not run (unknown)' "${GITHUB_STEP_SUMMARY}"
-assert "M5: every row is a dash" bash -c "[ \"\$(grep -c '| —' '${GITHUB_STEP_SUMMARY}')\" = 6 ]"
+assert "M5: every row is a dash" bash -c "[ \"\$(grep -c '| —' '${GITHUB_STEP_SUMMARY}')\" = 3 ]"
 assert "M5: warns about the missing decision" grep -qF "no module decision at '${RUNNER_TEMP}/missing.json'" "${OUT_FILE}"
 unset input_mode input_relevance_file
 teardown
@@ -1301,6 +1296,20 @@ unset MODULE_RESULTS
 assert "M7: results larger than one environment string do not reach envp" test "${LAST_EXIT}" -eq 0
 assert "M7: and render" grep -qxF '### ✅ Module CI: green' "${GITHUB_STEP_SUMMARY}"
 unset input_mode big
+teardown
+
+setup
+export input_mode=module
+MODULE_RESULTS=$(cat <<'JSON'
+{"validate": {"result": "failure", "outputs": {"init": "success", "fmt": "failure", "validate": "success", "lint": "failure"}},
+ "conclusion": {"result": "failure", "outputs": {"line": "conclusion: red — validation's result is failure; tests: 1"}}}
+JSON
+)
+run_step
+unset MODULE_RESULTS
+assert "M8: validation names every step that failed" grep -qxF '| ✔ Validation | ❌ Format, TFLint failed |' "${GITHUB_STEP_SUMMARY}"
+assert "M8: the headline" grep -qxF "### ❌ Module CI: red — validation's result is failure" "${GITHUB_STEP_SUMMARY}"
+unset input_mode
 teardown
 
 # ----------------------------------------------------------------------
