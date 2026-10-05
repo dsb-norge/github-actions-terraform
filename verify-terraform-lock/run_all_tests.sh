@@ -71,11 +71,38 @@ install_stub_modifies() {
   mkdir -p "${stub_dir}"
   cat >"${stub_dir}/terraform" <<'EOF'
 #!/bin/env bash
-echo "# added by stub" >> .terraform.lock.hcl
+printf '    "h1:added-by-stub=",\n' >> .terraform.lock.hcl
 exit 0
 EOF
   chmod +x "${stub_dir}/terraform"
   export TF_BIN="${stub_dir}/terraform"
+}
+
+# Install a stub terraform binary that applies the sed expression $1 to the lock file in CWD, simulating
+# a re-lock that changes something other than the hashes.
+install_stub_rewrites() {
+  local stub_dir="${RUNNER_TEMP}/stub-bin"
+  mkdir -p "${stub_dir}"
+  cat >"${stub_dir}/terraform" <<EOF
+#!/bin/env bash
+sed -i -E '${1}' .terraform.lock.hcl
+exit 0
+EOF
+  chmod +x "${stub_dir}/terraform"
+  export TF_BIN="${stub_dir}/terraform"
+}
+
+# A lock file of one provider with its constraints and a hash, in place of the sample.
+write_provider_lock() {
+  cat >"${WORK_DIR}/.terraform.lock.hcl" <<'EOF'
+provider "registry.terraform.io/hashicorp/azurerm" {
+  version     = "4.81.0"
+  constraints = ">= 3.0.0, < 5.0.0"
+  hashes = [
+    "h1:aaaa=",
+  ]
+}
+EOF
 }
 
 # Install a stub terraform binary that exits with failure.
@@ -161,6 +188,34 @@ assert "Modified lock writes failure summary" \
   grep -q "missing platform hashes" "${GITHUB_STEP_SUMMARY}"
 assert "Modified lock summary includes fix command" \
   grep -q "terraform providers lock" "${GITHUB_STEP_SUMMARY}"
+assert "A missing hash is named as one" \
+  grep -qF "::error title=Lock file incomplete::.terraform.lock.hcl in '${WORK_DIR}' is missing hashes for one or more required platforms" "${_test_output}"
+
+# Test 2b: only the constraints line changed (a module's new version) → named as outdated constraints
+setup_workdir
+write_provider_lock
+install_stub_rewrites 's/constraints = ">= 3.0.0, < 5.0.0"/constraints = ">= 3.0.0, >= 4.0.0, < 5.0.0"/'
+run_step
+assert "Outdated constraints fail with exit 1 and is-complete=false" \
+  test "${LAST_EXIT}" -eq 1 -a "$(get_output is-complete)" = "false"
+assert "Outdated constraints are named as such, not as missing hashes" \
+  grep -qF "::error title=Lock file out of date::.terraform.lock.hcl in '${WORK_DIR}' records provider constraints the configuration no longer has; its hashes are complete" "${_test_output}"
+assert "Outdated constraints never say a hash is missing" \
+  bash -c '! grep -q "missing hashes\|missing platform hashes" "${1}" "${2}"' _ "${_test_output}" "${GITHUB_STEP_SUMMARY}"
+assert "Outdated constraints get their own summary heading, commit message and the diff" \
+  bash -c 'grep -qF "### ❌ Terraform lock file records outdated provider constraints" "${1}" \
+    && grep -qF "git commit -m '"'"'fix: record the providers'"'"' constraints in the lock file'"'"'" "${1}" \
+    && grep -qF "+  constraints = \">= 3.0.0, >= 4.0.0, < 5.0.0\"" "${1}"' _ "${GITHUB_STEP_SUMMARY}"
+
+# Test 2c: anything else the re-lock changes is named as a difference
+setup_workdir
+write_provider_lock
+install_stub_rewrites 's/version     = "4.81.0"/version     = "4.82.0"/'
+run_step
+assert "Another difference fails and is named as a difference from a fresh lock" \
+  bash -c 'test "${1}" -eq 1 \
+    && grep -qF "::error title=Lock file differs::.terraform.lock.hcl in '"'"'${2}'"'"' differs from what '"'"'terraform providers lock'"'"' writes for the required platforms" "${3}" \
+    && grep -qF "### ❌ Terraform lock file differs from a fresh lock" "${4}"' _ "${LAST_EXIT}" "${WORK_DIR}" "${_test_output}" "${GITHUB_STEP_SUMMARY}"
 
 # Test 3: Missing .terraform.lock.hcl
 setup_workdir

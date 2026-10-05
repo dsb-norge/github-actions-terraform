@@ -129,6 +129,21 @@ function comparable_lock {
     sed -E 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*)[[:space:]]+=/\1 =/'
 }
 
+# What the re-lock changed, comparing the committed lock $1 with the lock $2 it wrote: 'hashes' when it
+# added a hash, 'constraints' when the two differ only in their constraints lines and the padding before
+# an '=', 'other' for anything else. A module's new version changes the constraints the configuration
+# records, and reporting that as missing hashes sent people looking for a platform that was there.
+function lock_difference {
+  # diff exits 1 on any difference, which pipefail would report as the pipeline's failure.
+  if { diff "${1}" "${2}" || true; } | grep -qE '^>[[:space:]]*"(h1|zh):'; then
+    echo "hashes"
+  elif cmp -s <(comparable_lock "${1}") <(comparable_lock "${2}"); then
+    echo "constraints"
+  else
+    echo "other"
+  fi
+}
+
 # Write the success block to $GITHUB_STEP_SUMMARY (if set).
 function write_success_summary {
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return 0
@@ -147,10 +162,12 @@ function write_success_summary {
 # Args:
 #   $1 - path to the saved copy of the original lock file
 #   $2 - path to the (now updated) committed lock file
+#   $3 - what differs, as lock_difference names it
 function write_failure_summary {
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return 0
   local committed="${1}"
   local updated="${2}"
+  local difference="${3}"
 
   local fix_cmd="terraform providers lock"
   local p
@@ -159,22 +176,38 @@ function write_failure_summary {
   -platform=${p}"
   done
 
+  local heading why commit_message
+  case "${difference}" in
+    hashes)
+      heading="Terraform lock file is missing platform hashes"
+      why="This usually happens when someone runs \`terraform init\` on a single platform (e.g. their Mac or Windows machine) and commits the resulting lock file. Other platforms — including the Linux CI runner — will then fail provider checksum verification."
+      commit_message="fix: lock providers for all required platforms" ;;
+    constraints)
+      heading="Terraform lock file records outdated provider constraints"
+      why="The configuration's provider constraints changed, by a module's new version or a \`required_providers\` block, and the committed lock file still records the old ones. Its hashes are complete; locking again records the new constraints."
+      commit_message="fix: record the providers' constraints in the lock file" ;;
+    *)
+      heading="Terraform lock file differs from a fresh lock"
+      why="\`terraform providers lock\` wrote a different file for the required platforms; the diff below shows what differs."
+      commit_message="fix: lock providers for all required platforms" ;;
+  esac
+
   {
-    echo "### ❌ Terraform lock file is missing platform hashes"
+    echo "### ❌ ${heading}"
     echo ""
     echo "**Directory:** \`${input_working_directory}\`"
     echo ""
     echo "**Required platforms:**"
     for p in "${REQUIRED_PLATFORMS[@]}"; do echo "- \`${p}\`"; done
     echo ""
-    echo "This usually happens when someone runs \`terraform init\` on a single platform (e.g. their Mac or Windows machine) and commits the resulting lock file. Other platforms — including the Linux CI runner — will then fail provider checksum verification."
+    echo "${why}"
     echo ""
     echo "**Fix locally:**"
     echo ""
     echo '```bash'
     echo "cd ${input_working_directory}"
     echo "${fix_cmd}"
-    echo "git add .terraform.lock.hcl && git commit -m 'fix: lock providers for all required platforms'"
+    echo "git add .terraform.lock.hcl && git commit -m '${commit_message}'"
     echo '```'
     echo ""
     echo "<details><summary>Diff (committed vs expected)</summary>"
@@ -293,10 +326,21 @@ function main {
     return 0
   fi
 
-  echo "::error title=Lock file incomplete::.terraform.lock.hcl in '${input_working_directory}' is missing hashes for one or more required platforms"
-  log-error "lock file is missing hashes for one or more required platforms"
+  local difference
+  difference="$(lock_difference "${committed}" "${expected}")"
+  case "${difference}" in
+    hashes)
+      echo "::error title=Lock file incomplete::.terraform.lock.hcl in '${input_working_directory}' is missing hashes for one or more required platforms"
+      log-error "lock file is missing hashes for one or more required platforms" ;;
+    constraints)
+      echo "::error title=Lock file out of date::.terraform.lock.hcl in '${input_working_directory}' records provider constraints the configuration no longer has; its hashes are complete"
+      log-error "lock file records provider constraints the configuration no longer has; its hashes are complete" ;;
+    *)
+      echo "::error title=Lock file differs::.terraform.lock.hcl in '${input_working_directory}' differs from what 'terraform providers lock' writes for the required platforms"
+      log-error "lock file differs from what 'terraform providers lock' writes for the required platforms" ;;
+  esac
   log-multiline "Diff (committed vs expected)" "$(diff -u "${committed}" "${expected}" || true)"
-  write_failure_summary "${committed}" "${expected}"
+  write_failure_summary "${committed}" "${expected}" "${difference}"
   set-output "is-complete" "false"
   rm -rf "${committed_snapshot}" "${lock_only_dir}"
   return 1
