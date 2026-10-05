@@ -13,8 +13,9 @@ listed, and on a listed one that no longer exists, so the list cannot go stale.
 
 Each mutant runs the tests of the module it mutates first, then every other fast module, then the
 two slow ones, stopping at the first failure: most mutants die within a second. A mutant still
-running after six times the unmutated suite's duration (at least a minute) counts as killed: it
-hangs, or slows the suite past anything a real run could be.
+running after three times the unmutated suite's duration (at least a minute) counts as killed: it
+hangs, or slows the suite past anything a real run could be. Each run names the mutants that hung
+and the slowest one that did not, the numbers the timeout and the shard count are tuned by.
 
 Usage:
   mutation.py                    run every mutant, print survivors, exit 1 if the gate fails
@@ -53,7 +54,7 @@ SLOW_LAST = ("test_generated", "test_determinism")
 # A module's own tests, where the name does not say it.
 OWN_TESTS = {"__main__.py": "test_cli", "__init__.py": "test_model", "automerge_facts.py": "test_automerge"}
 # A hung mutant counts as killed after this many baseline durations, and never before the floor.
-TIMEOUT_FACTOR, TIMEOUT_FLOOR, BASELINE_TIMEOUT = 6, 60, 300
+TIMEOUT_FACTOR, TIMEOUT_FLOOR, BASELINE_TIMEOUT = 3, 60, 300
 
 COMPARE_SWAPS = {
     ast.Eq: [ast.NotEq], ast.NotEq: [ast.Eq], ast.Lt: [ast.LtE, ast.GtE], ast.LtE: [ast.Lt, ast.Gt],
@@ -251,12 +252,20 @@ def _run(selected, label):
     workers = max(1, os.cpu_count() or 1)
     print(f"mutation: {len(selected)} mutants of dsb_tf_engine{label}, {workers} workers, "
           f"baseline {seconds:.1f}s, timeout {timeout:.0f}s", flush=True)
-    survivors = []
+    survivors, hung, slowest = [], [], 0.0
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-        for key, name, line, killed, _seconds in pool.map(
+        for key, name, line, killed, seconds in pool.map(
                 _run_mutant, [(key, name, line, index, timeout) for key, name, line, index in selected]):
+            if seconds >= timeout:
+                hung.append(key)
+            else:
+                slowest = max(slowest, seconds)
             if not killed:
                 survivors.append((key, name, line))
+    print(f"mutation: {len(hung)} hung past {timeout:.0f}s and count as killed; the slowest of the rest took "
+          f"{slowest:.1f}s", flush=True)
+    for key in hung:
+        print(f"  HUNG {key}")
     return survivors
 
 

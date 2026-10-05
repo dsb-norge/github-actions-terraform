@@ -661,7 +661,7 @@ install fails the gate, because the gate is part of the contract (P4). The packa
 **Mutation** (D12): `tests/mutation.py` rewrites the package's syntax tree one fault at a time,
 never touching docstrings, and runs the suite against each mutant in its own copy of `engine/`, in
 parallel, the mutated module's own tests first and the two slow modules last, stopping at the first
-failure; a mutant still running after six baseline durations (at least a minute) counts as killed.
+failure; a mutant still running after three baseline durations (at least a minute) counts as killed.
 Operators: comparisons flipped (`==`/`!=`, `<`/`<=`/`>=`, `is`/`is not`, `in`/`not in`), `and`/`or`
 swapped, `not` dropped, booleans inverted, integers nudged, strings emptied, one element dropped
 from a constant tuple or list, `if`, conditional-expression, `while` and comprehension conditions
