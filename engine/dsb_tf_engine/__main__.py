@@ -7,8 +7,13 @@
                                           document from the workflow's inputs and the runner's
                                           environment, decides and publishes the matrix; a module
                                           decides its test stage alone (docs/Module-ci.md §5)
+  evaluate-automerge --metadata-files-pattern <glob> --relevance-file <file>
+                     --test-metadata-files-pattern <glob> --stage-results-file <file>
+                                          the evaluate-automerge-eligibility step: judges every
+                                          environment of a project run and publishes is-eligible
+                                          (docs/Auto-merge.md §14)
 
-Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for both: 0 success,
+Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for all three: 0 success,
 2 the caller's configuration is invalid, 1 anything else.
 """
 
@@ -17,7 +22,7 @@ import json
 import os
 import sys
 
-from . import adapter, decide, model
+from . import adapter, automerge_evidence, decide, model
 
 EXIT_OK, EXIT_CRASH, EXIT_INVALID = 0, 1, 2
 
@@ -45,6 +50,12 @@ def _parse(argv):
     matrix_parser.add_argument("--inputs-file", required=True, help="path of the file holding toJSON(inputs)")
     matrix_parser.add_argument("--mode", required=True, choices=("project", "module"),
                                help="the calling workflow's kind of repository")
+    merge_parser = commands.add_parser("evaluate-automerge", help="the evaluate-automerge-eligibility step, on a runner")
+    merge_parser.add_argument("--metadata-files-pattern", required=True, help="glob of the environment jobs' metadata")
+    merge_parser.add_argument("--relevance-file", required=True, help="path of relevance.json; empty for none")
+    merge_parser.add_argument("--test-metadata-files-pattern", required=True,
+                              help="glob of the test jobs' metadata; empty for none")
+    merge_parser.add_argument("--stage-results-file", required=True, help="path of the file holding stage-results-json")
     return parser.parse_args(argv)
 
 
@@ -54,6 +65,9 @@ def main(argv=None):
     if args.command == "create-matrix":
         return adapter.run(args.inputs_file, os.environ, sys.stdout, adapter.Tools(), os.path.isdir,
                            args.mode == "module")
+    if args.command == "evaluate-automerge":
+        return automerge_evidence.run(args.metadata_files_pattern, args.relevance_file,
+                                      args.test_metadata_files_pattern, args.stage_results_file, os.environ, sys.stdout)
     try:
         with open(args.input, encoding="utf-8") as handle:
             document = json.load(handle)

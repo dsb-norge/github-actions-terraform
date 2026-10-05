@@ -13,7 +13,7 @@ from unittest import mock
 
 import support
 from dsb_tf_engine import __main__ as cli
-from dsb_tf_engine import adapter
+from dsb_tf_engine import adapter, automerge_evidence
 
 ENGINE_DIR = os.path.dirname(support.TESTS_DIR)
 RUN_PY = os.path.join(ENGINE_DIR, "run.py")
@@ -109,6 +109,40 @@ class CreateMatrixCommandTest(unittest.TestCase):
             cli.main(["create-matrix", "--mode", "project"])
         self.assertEqual(cli.EXIT_CRASH, raised.exception.code)
         self.assertIn("the following arguments are required: --inputs-file", stderr.getvalue())
+
+
+class EvaluateAutomergeCommandTest(unittest.TestCase):
+    ARGV = ["evaluate-automerge", "--metadata-files-pattern=m-*.json", "--relevance-file=/tmp/r.json",
+            "--test-metadata-files-pattern=", "--stage-results-file=/tmp/stages"]
+
+    def test_the_command_runs_the_evaluator_with_the_runners_environment(self):
+        calls = []
+        with mock.patch.object(automerge_evidence, "run", lambda *args: calls.append(args) or 5):
+            self.assertEqual(5, cli.main(self.ARGV))
+        metadata, relevance, tests, stages, environ, stream = calls[0]
+        self.assertEqual(("m-*.json", "/tmp/r.json", "", "/tmp/stages"), (metadata, relevance, tests, stages))
+        self.assertIs(os.environ, environ)
+        self.assertIs(sys.stdout, stream)
+
+    def test_every_argument_is_required(self):
+        for index in range(1, len(self.ARGV)):
+            argv = self.ARGV[:index] + self.ARGV[index + 1:]
+            with self.subTest(missing=self.ARGV[index]):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
+                    cli.main(argv)
+                self.assertEqual(cli.EXIT_CRASH, raised.exception.code)
+                self.assertIn(f"the following arguments are required: {self.ARGV[index].split('=')[0]}",
+                              stderr.getvalue())
+
+    def test_the_help_describes_the_command(self):
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn("the evaluate-automerge-eligibility step, on a runner", stdout.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["evaluate-automerge", "--help"])
+        for fragment in ("glob of the environment jobs' metadata", "path of relevance.json; empty for none",
+                         "glob of the test jobs' metadata; empty for none", "path of the file holding stage-results-json"):
+            self.assertIn(fragment, " ".join(stdout.getvalue().split()))
 
 
 if __name__ == "__main__":

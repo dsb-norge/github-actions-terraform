@@ -53,6 +53,10 @@ class LogTest(unittest.TestCase):
         self.assertEqual(["body", lines[3], "::endgroup::"], lines[2:])
         self.assertEqual(f"::{lines[1][len('::stop-commands::'):]}::", lines[3])
 
+    def test_a_group_name_is_one_line_its_newline_and_percent_escaped(self):
+        self.log.group("env\n::warning::x %", "body")
+        self.assertEqual("::group::my: title: env%0A::warning::x %25", self.lines()[0])
+
     def test_an_error_is_one_line_with_escaped_title_and_message(self):
         self.log.error("a\nb%")
         self.assertEqual(["::error title=my%3A title::a%0Ab%25"], self.lines())

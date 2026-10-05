@@ -99,7 +99,7 @@ These are not cosmetic and are in scope because the same wiring fixes them.
 
 ### 5.1 `destroy-plan` auto-merge limits are silently unenforced
 
-[evaluate-automerge-eligibility/helpers_additional.sh:196-201](../evaluate-automerge-eligibility/helpers_additional.sh) reads:
+The evaluator's bash helper (`evaluate-automerge-eligibility/helpers_additional.sh`, since replaced by the engine's [`automerge_project.py`](../engine/dsb_tf_engine/automerge_project.py)) read:
 
 ```bash
 input_destroy_plan_count_add=$(get_step_output "${file}" "parse-destroy-plan" "count-add")
@@ -284,7 +284,7 @@ Six new steps in the matrix job:
 
 The three parse steps are guarded with `if: always() && steps.<source>.outcome != 'cancelled' && steps.<source>.outcome != 'skipped'`, the three warnings steps with `if: always() && steps.<source>.outputs.console-output-file != ''`, and all six carry `continue-on-error: true`. The `always()` is **not** in the existing `parse-plan`, and that is not an inconsistency: plan runs with `continue-on-error: true`, so a failed plan never fails the job. apply and destroy run with `continue-on-error: ${{ fromJSON(allow-failing-terraform-operations) }}` — default false — so a failed apply fails the job on the spot, and a following step whose `if:` lacks `always()` is skipped even when it evaluates true (P31).
 
-> **P7 — the step id `parse-destroy-plan` is load-bearing.** [evaluate-automerge-eligibility/helpers_additional.sh](../evaluate-automerge-eligibility/helpers_additional.sh) looks it up by literal string in the captured steps context. Renaming the step silently re-breaks §5.1; F2 is the only test that notices.
+> **P7 — the step id `parse-destroy-plan` is load-bearing.** The auto-merge evaluator ([`automerge_project.py`](../engine/dsb_tf_engine/automerge_project.py), `PLAN_STEPS`) looks it up by literal string in the captured steps context. Renaming the step silently re-breaks §5.1; F2 is the only test that notices.
 
 ### 7.4 `create-validation-summary` — new inputs, rows and outputs (L3 / L4 / L6 / L8)
 

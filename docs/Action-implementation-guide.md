@@ -2,7 +2,7 @@
 
 Guidelines for implementing new composite GitHub Actions and converting one that has inline bash in `action.yml`.
 
-Follow this guide if there are no overweighing reasons not to. When an action departs from it, its `action.yml` and its spec say why. The one departure is `create-tf-vars-matrix`: its logic is the decision engine's create-matrix adapter, in Python, so that it sits under the engine's 100 percent coverage and mutation gates ([Decision-engine.md](Decision-engine.md) D13); its `action.yml` run block writes the inputs to a file and runs the engine, and its `run_all_tests.sh` runs that block end to end.
+Follow this guide if there are no overweighing reasons not to. When an action departs from it, its `action.yml` and its spec say why. There are two departures, `create-tf-vars-matrix` and `evaluate-automerge-eligibility`: their logic is the decision engine's, its `create-matrix` and `evaluate-automerge` commands in Python, so that it sits under the engine's 100 percent coverage and mutation gates ([Decision-engine.md](Decision-engine.md) D13); each `action.yml` run block writes its JSON input to a file and runs the engine, and each `run_all_tests.sh` runs that block end to end over the engine's golden cases.
 
 ## Goals
 
@@ -371,7 +371,7 @@ export -n input_body
 
 The step `id` should match the `<name>` portion of `step_<name>.sh`. For example:
 - Step id: `capture` → `step_capture.sh`
-- Step id: `evaluate` → `step_evaluate.sh`
+- Step id: `annotate` → `step_annotate.sh`
 - Step id: `auto-merge-pr` → `step_auto_merge_pr.sh` (hyphens become underscores in filename)
 
 ---

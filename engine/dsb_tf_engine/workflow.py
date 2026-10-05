@@ -33,8 +33,8 @@ class Log:
         self.stream.write(text + "\n")
 
     def group(self, name, text):
-        """A collapsed log group holding `text` shown verbatim."""
-        self.line(f"::group::{self.title}: {name}")
+        """A collapsed log group holding `text` shown verbatim; a newline in the name cannot start a command."""
+        self.line(f"::group::{escape_data(f'{self.title}: {name}')}")
         self.verbatim(text)
         self.line("::endgroup::")
 

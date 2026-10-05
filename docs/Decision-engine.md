@@ -73,9 +73,11 @@ engine/
 │   ├── admission.py          # core: rule 3a, the Dependabot admission (Dependabot-admission.md)
 │   ├── hashicorp.py          # core: HashiCorp's provider signing keys, for the admission
 │   ├── automerge.py          # core: module auto-merge's rule (Module-auto-merge.md §3)
-│   ├── __main__.py           # adapter side: the command line, decide and create-matrix
+│   ├── automerge_project.py  # core: project auto-merge's rules (Auto-merge.md §5, §14)
+│   ├── __main__.py           # adapter side: the command line, decide, create-matrix and evaluate-automerge
 │   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
 │   ├── admission_facts.py    # adapter side: the admission's facts: the change, the registry, GitHub
+│   ├── automerge_evidence.py # adapter side: evaluate-automerge: the run's evidence read, the verdict published
 │   ├── automerge_facts.py    # adapter side: a module pull request's commits and their files
 │   └── workflow.py           # adapter side: GitHub Actions I/O, groups, annotations, outputs
 ├── run_all_tests.sh          # the canonical suite entry (§8), at the depth discovery expects
@@ -85,6 +87,7 @@ engine/
     ├── mutation.py           # the mutation gate (D12); mutation_equivalents.json beside it
     ├── test_*.py             # unittest modules: port, generated and random cases, units, adapter
     ├── port/cases/<name>/    # case.json, expected.json (the bash builder's output), input.json
+    ├── evaluator_port/       # <case>.json: the bash auto-merge evaluator's verdicts (Auto-merge.md §14)
     ├── support.py            # the port cases and a minimal valid document
     └── invariants.py         # the checks of §7, importable by every test
 ```
@@ -197,6 +200,10 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
 - listing a module pull request's commits and each commit's files (`automerge_facts.py`,
   Module-auto-merge.md §4), only where module auto-merge's rule reads them: the switch on, a pull
   request from the repository against the default branch, by a listed author.
+- reading a project run's auto-merge evidence (`automerge_evidence.py`, Auto-merge.md §14) for
+  its own command, `evaluate-automerge`: every environment job's metadata file, the test jobs'
+  metadata, `relevance.json` and the stage results, each file a fact whether or not it can be read
+  or parsed. `automerge_project.py` judges them and the adapter publishes `is-eligible`.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -207,6 +214,7 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 |---|---|---|---|
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
 | `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing`, the admission's and auto-merge's outputs and the decision file (§3.3) | the `create-tf-vars-matrix` action |
+| `evaluate-automerge` | `--metadata-files-pattern`, `--relevance-file`, `--test-metadata-files-pattern` (globs and a path, matched in the working directory, empty for none), `--stage-results-file` holding `stage-results-json`, and `GITHUB_ACTOR` | `is-eligible` in `$GITHUB_OUTPUT`, the log, a notice per tolerated failing test | the `evaluate-automerge-eligibility` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
 partial document before the adapters run, and a `render-summary` of an output document. The run
@@ -234,7 +242,10 @@ does. The decision file holds those keys and the mode.
 Exit codes: 0 success, 2 validation error, 1 anything that is not the caller's configuration: a
 malformed input document, an unreadable file, a broken `yq`, an unanswerable API, a usage error
 (P18) or a crash. `decide` writes its messages to stderr and the output document to `--output`,
-and nothing to stdout; `create-matrix` writes the step's log to stdout.
+and nothing to stdout; `create-matrix` writes the step's log to stdout. `evaluate-automerge`
+exits 0 with `is-eligible` published, ineligible included, and 1 without it for a limits mapping it
+cannot judge or a stage-results file it cannot read, as the bash evaluator did; it writes its log to
+stdout.
 
 ## 4. The input document
 
@@ -687,6 +698,15 @@ line and shell syntax, caller values in the log, sentinels proving that neither 
 secret-shaped variables reach the adapter's environment or its documents (I10), and a caller's
 `json.py` and `PYTHONPATH` failing to replace the standard library. CI also runs the engine suite
 on Python 3.12 and the newest 3.x (Testing-in-ci.md).
+
+**The auto-merge evaluator** is tested the same way. `test_automerge_project.py` holds the rules
+against literal logs and verdicts, `test_automerge_evidence.py` the adapter's reading and
+publishing, and `test_evaluator_port.py` replays every golden case of Auto-merge.md §14, the
+behaviour of the bash evaluator it replaced. The action's suite,
+`evaluate-automerge-eligibility/run_all_tests.sh`, replays the same cases through the action's run
+block as the runner pastes it, and covers the block's shape, stage results holding shell syntax,
+caller values in the log and in an annotation, a value starting with `-`, a relevance file outside
+the workspace, and a caller's `json.py` and `PYTHONPATH` failing to replace the standard library.
 
 **What tests cannot cover**: the action on a real runner. The run block is two commands, checked by
 its structural test, the workflow's structural tests and the preview-ref run on
