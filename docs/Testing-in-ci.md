@@ -534,7 +534,10 @@ showed why: two of 1,069 hung, and took 23 percent of the sample's time at the o
 full local run (12 workers, 8,547 mutants, 8.5 minutes) 15 hung; the slowest that finished is the
 listed equivalent, which runs the whole suite, at 2.1 baselines under that load. Each run's log
 names the mutants that hung and the slowest of the rest (`HUNG <key>`), so the next tuning starts
-from data.
+from data. The first run with twelve took 6.9 minutes in all, against 7.5 for eight shards and
+fewer mutants the run before: the shards took 147 to 345 seconds (baselines 18 to 29), the 15 hung
+mutants fell 0 to 5 to a shard, and the shard holding five was the slowest. The listed equivalent
+took 1.6 baselines, under the timeout of three.
 
 **What made it fast**, measured on the full gate (4,038 mutants at the time), before and after, on 12 local
 cores: 22 minutes became 3.6, and CI's three full runs of about 66 to 78 minutes each became one
