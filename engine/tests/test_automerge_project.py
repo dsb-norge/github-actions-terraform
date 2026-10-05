@@ -20,20 +20,20 @@ def meta(name, goals=("init", "format", "validate", "lint", "plan"), counts=None
                                          "counts-source": source, "plan-complete": complete}}}
     steps_.update(steps or {})
     vars_ = {"pr-auto-merge-enabled": "true", "pr-auto-merge-limits": LIMITS,
-             "pr-auto-merge-from-actors": ["dependabot[bot]"], "goals-granted": list(goals)}
+             "pr-auto-merge-from-actors": ["example-bot[bot]"], "goals-granted": list(goals)}
     vars_.update(variables)
     return {"file": file or f"matrix-job-meta-{name}.json", "readable": True, "json": True,
             "content": {"metadata": {"environment": name}, "matrix_context": {"vars": vars_}, "steps": steps_}}
 
 def entry(name, verdict, **extra):
     return {"environment": name, "github-environment": name, "verdict": verdict, "pr-auto-merge-enabled": "true",
-            "pr-auto-merge-limits": LIMITS, "pr-auto-merge-from-actors": ["dependabot[bot]"], **extra}
+            "pr-auto-merge-limits": LIMITS, "pr-auto-merge-from-actors": ["example-bot[bot]"], **extra}
 
 def relevance(environments, exists=True, **content):
     return {"file": "relevance.json", "exists": exists, "readable": exists, "json": exists,
             "content": {"environments": environments, **content} if exists else None}
 
-def facts(metadata, relevance_=None, tests=None, stages="", actor="dependabot[bot]",
+def facts(metadata, relevance_=None, tests=None, stages="", actor="example-bot[bot]",
           tests_pattern="terraform-test-meta-*.json"):
     return {"actor": actor, "metadata_pattern": "matrix-job-meta-*.json", "tests_pattern": tests_pattern,
             "metadata": metadata, "tests": tests or [], "relevance": relevance_, "stage_results": stages}
@@ -96,14 +96,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                               '  Found 1 metadata file(s):',
                               '    - matrix-job-meta-prod.json',
                               "[Environment 'prod']",
-                              '  Actor: dependabot[bot]; auto-merge enabled: true',
+                              '  Actor: example-bot[bot]; auto-merge enabled: true',
                               '  Limits: '
                               '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                              'actors: ["dependabot[bot]"]',
+                              'actors: ["example-bot[bot]"]',
                               '  Configuration validation: PASS',
                               "[Checks of 'prod']",
                               '  PR automerge enabled: PASS',
-                              "  Actor 'dependabot[bot]' found in allowed list",
+                              "  Actor 'example-bot[bot]' found in allowed list",
                               '  Actor authorization: PASS',
                               '  Goals granted: ["init","format","validate","lint","plan"]; failed or cancelled '
                               'operations: <none>',
@@ -163,14 +163,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                              '  WARN: Skipping invalid metadata file: matrix-job-meta-broken.json',
                              '    matrix-job-meta-staging-ran.json -> staging-ran',
                              "[Environment 'prod']",
-                             '  Actor: dependabot[bot]; auto-merge enabled: true',
+                             '  Actor: example-bot[bot]; auto-merge enabled: true',
                              '  Limits: '
                              '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                             'actors: ["dependabot[bot]"]',
+                             'actors: ["example-bot[bot]"]',
                              '  Configuration validation: PASS',
                              "[Checks of 'prod']",
                              '  PR automerge enabled: PASS',
-                             "  Actor 'dependabot[bot]' found in allowed list",
+                             "  Actor 'example-bot[bot]' found in allowed list",
                              '  Actor authorization: PASS',
                              '  Goals granted: ["init","format","validate","lint","plan"]; failed or cancelled '
                              'operations: <none>',
@@ -192,14 +192,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                              '  Final eligibility: true',
                              "✅ Environment 'prod' is eligible for automerge",
                              "[Environment 'staging']",
-                             '  Actor: dependabot[bot]; auto-merge enabled: true',
+                             '  Actor: example-bot[bot]; auto-merge enabled: true',
                              '  Limits: '
                              '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                             'actors: ["dependabot[bot]"]',
+                             'actors: ["example-bot[bot]"]',
                              '  Configuration validation: PASS',
                              "[Checks of 'staging']",
                              '  PR automerge enabled: PASS',
-                             "  Actor 'dependabot[bot]' found in allowed list",
+                             "  Actor 'example-bot[bot]' found in allowed list",
                              '  Actor authorization: PASS',
                              '  Environment is not affected by this change and no job ran for it',
                              '    Plan creation: NOT AFFECTED',
@@ -212,14 +212,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                              '  Final eligibility: true',
                              "✅ Environment 'staging' is eligible for automerge",
                              "[Environment 'nightly']",
-                             '  Actor: dependabot[bot]; auto-merge enabled: true',
+                             '  Actor: example-bot[bot]; auto-merge enabled: true',
                              '  Limits: '
                              '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                             'actors: ["dependabot[bot]"]',
+                             'actors: ["example-bot[bot]"]',
                              '  Configuration validation: PASS',
                              "[Checks of 'nightly']",
                              '  PR automerge enabled: PASS',
-                             "  Actor 'dependabot[bot]' found in allowed list",
+                             "  Actor 'example-bot[bot]' found in allowed list",
                              '  Actor authorization: PASS',
                              "  WARN: The change touches 'nightly', which takes no part in pull requests, so it was "
                              'never planned, environment is ineligible for PR auto merge',
@@ -245,14 +245,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                              "WARN: Environment 'staging-ran' has a metadata file although the relevance file marks "
                              'it unaffected, judging it on its metadata',
                              "[Environment 'staging-ran']",
-                             '  Actor: dependabot[bot]; auto-merge enabled: true',
+                             '  Actor: example-bot[bot]; auto-merge enabled: true',
                              '  Limits: '
                              '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                             'actors: ["dependabot[bot]"]',
+                             'actors: ["example-bot[bot]"]',
                              '  Configuration validation: PASS',
                              "[Checks of 'staging-ran']",
                              '  PR automerge enabled: PASS',
-                             "  Actor 'dependabot[bot]' found in allowed list",
+                             "  Actor 'example-bot[bot]' found in allowed list",
                              '  Actor authorization: PASS',
                              '  Goals granted: ["init","format","validate","lint","plan"]; failed or cancelled '
                              'operations: <none>',
@@ -305,14 +305,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                                                     '  Found 1 metadata file(s):',
                                                     '    - matrix-job-meta-prod.json',
                                                     "[Environment 'prod']",
-                                                    '  Actor: dependabot[bot]; auto-merge enabled: true',
+                                                    '  Actor: example-bot[bot]; auto-merge enabled: true',
                                                     '  Limits: '
                                                     '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                                                    'actors: ["dependabot[bot]"]',
+                                                    'actors: ["example-bot[bot]"]',
                                                     '  Configuration validation: PASS',
                                                     "[Checks of 'prod']",
                                                     '  PR automerge enabled: PASS',
-                                                    "  Actor 'dependabot[bot]' found in allowed list",
+                                                    "  Actor 'example-bot[bot]' found in allowed list",
                                                     '  Actor authorization: PASS',
                                                     '  Goals granted: ["p","l","a","n"]; failed or cancelled '
                                                     'operations: fmt (failure)',
@@ -357,14 +357,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                                        '  Found 1 metadata file(s):',
                                        '    - matrix-job-meta-prod.json',
                                        "[Environment 'prod']",
-                                       '  Actor: dependabot[bot]; auto-merge enabled: true',
+                                       '  Actor: example-bot[bot]; auto-merge enabled: true',
                                        '  Limits: '
                                        '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                                       'actors: ["dependabot[bot]"]',
+                                       'actors: ["example-bot[bot]"]',
                                        '  Configuration validation: PASS',
                                        "[Checks of 'prod']",
                                        '  PR automerge enabled: PASS',
-                                       "  Actor 'dependabot[bot]' found in allowed list",
+                                       "  Actor 'example-bot[bot]' found in allowed list",
                                        '  Actor authorization: PASS',
                                        '  Goals granted: ["plan","destroy-plan"]; failed or cancelled operations: '
                                        '<none>',
@@ -405,14 +405,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                                          '  Found 1 metadata file(s):',
                                          '    - matrix-job-meta-prod.json',
                                          "[Environment 'prod']",
-                                         '  Actor: dependabot[bot]; auto-merge enabled: true',
+                                         '  Actor: example-bot[bot]; auto-merge enabled: true',
                                          '  Limits: '
                                          '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                                         'actors: ["dependabot[bot]"]',
+                                         'actors: ["example-bot[bot]"]',
                                          '  Configuration validation: PASS',
                                          "[Checks of 'prod']",
                                          '  PR automerge enabled: PASS',
-                                         "  Actor 'dependabot[bot]' found in allowed list",
+                                         "  Actor 'example-bot[bot]' found in allowed list",
                                          '  Actor authorization: PASS',
                                          '  Goals granted: ["plan","apply"]; failed or cancelled operations: apply '
                                          '(failure)',
@@ -470,10 +470,10 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                                                     '  Found 1 metadata file(s):',
                                                     '    - matrix-job-meta-prod.json',
                                                     "[Environment 'prod']",
-                                                    '  Actor: dependabot[bot]; auto-merge enabled: true',
+                                                    '  Actor: example-bot[bot]; auto-merge enabled: true',
                                                     '  Limits: '
                                                     '{"plan-max-count-add":"x","plan-max-count-change":true,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                                                    'actors: ["dependabot[bot]"]']},
+                                                    'actors: ["example-bot[bot]"]']},
  'tests': {'eligible': True,
            'notices': ['auto-merge eligible despite the tolerated failing test tests/int-x.tftest.hcl (lane '
                        'integration)'],
@@ -493,14 +493,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                    '  Found 1 metadata file(s):',
                    '    - matrix-job-meta-prod.json',
                    "[Environment 'prod']",
-                   '  Actor: dependabot[bot]; auto-merge enabled: true',
+                   '  Actor: example-bot[bot]; auto-merge enabled: true',
                    '  Limits: '
                    '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                   'actors: ["dependabot[bot]"]',
+                   'actors: ["example-bot[bot]"]',
                    '  Configuration validation: PASS',
                    "[Checks of 'prod']",
                    '  PR automerge enabled: PASS',
-                   "  Actor 'dependabot[bot]' found in allowed list",
+                   "  Actor 'example-bot[bot]' found in allowed list",
                    '  Actor authorization: PASS',
                    '  Goals granted: ["init","format","validate","lint","plan"]; failed or cancelled operations: '
                    '<none>',
@@ -544,14 +544,14 @@ EXPECTED = {'a_limit_exceeded': {'eligible': False,
                                        '  Found 1 metadata file(s):',
                                        '    - matrix-job-meta-prod.json',
                                        "[Environment 'prod']",
-                                       '  Actor: dependabot[bot]; auto-merge enabled: true',
+                                       '  Actor: example-bot[bot]; auto-merge enabled: true',
                                        '  Limits: '
                                        '{"plan-max-count-add":0,"plan-max-count-change":0,"plan-max-count-destroy":0,"plan-max-count-import":0,"plan-max-count-move":-1,"plan-max-count-remove":0}; '
-                                       'actors: ["dependabot[bot]"]',
+                                       'actors: ["example-bot[bot]"]',
                                        '  Configuration validation: PASS',
                                        "[Checks of 'prod']",
                                        '  PR automerge enabled: PASS',
-                                       "  Actor 'dependabot[bot]' found in allowed list",
+                                       "  Actor 'example-bot[bot]' found in allowed list",
                                        '  Actor authorization: PASS',
                                        '  Goals granted: ["init","format","validate","lint","plan"]; failed or '
                                        'cancelled operations: <none>',
@@ -855,14 +855,14 @@ class ReaderTest(unittest.TestCase):
 
     def test_actors_that_admit_nobody(self):
         cases = [(None, "is null, not a list of logins"), (False, "is false, not a list of logins"),
-                 ("dependabot[bot]", 'is "dependabot[bot]", not a list of logins'), ([], "names nobody"),
-                 ([7, ""], "names nobody"), (["octocat"], "Actor 'dependabot[bot]' is not authorized for PR automerge")]
+                 ("example-bot[bot]", 'is "example-bot[bot]", not a list of logins'), ([], "names nobody"),
+                 ([7, ""], "names nobody"), (["octocat"], "Actor 'example-bot[bot]' is not authorized for PR automerge")]
         for actors, reason in cases:
             with self.subTest(actors=actors):
                 verdict = ap.evaluate(facts([meta("prod", **{"pr-auto-merge-from-actors": actors})]))
                 self.assertFalse(verdict["eligible"])
                 self.assertTrue(any(reason in line for line in render(verdict)))
-        self.assertTrue(ap.evaluate(facts([meta("prod", **{"pr-auto-merge-from-actors": ["Dependabot[BOT]"]})]))["eligible"])
+        self.assertTrue(ap.evaluate(facts([meta("prod", **{"pr-auto-merge-from-actors": ["Example-Bot[BOT]"]})]))["eligible"])
 
     def test_disabled_and_a_destroy_on_the_pull_request(self):
         verdict = ap.evaluate(facts([meta("prod", goals=("destroy-plan", "destroy"), **{"pr-auto-merge-enabled": False},
