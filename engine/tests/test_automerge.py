@@ -51,7 +51,8 @@ def document(commits=None, author=DEPENDABOT, actor=None, actors=(DEPENDABOT, AP
         return doc
     doc["event"]["base_ref"] = base_ref
     doc["event"]["pull_request"].update({"author": author, "head_sha": HEAD})
-    if admission and doc["event"]["actor"] == DEPENDABOT:
+    # Dependabot's pull request carries the admission's facts in the App's run too, for rule 7.
+    if admission and author.casefold() == DEPENDABOT:
         doc["admission"] = admission_facts or support.admission_facts(locks={})
     commits = [commit()] if commits is None else commits
     if facts:
@@ -312,6 +313,71 @@ class RunTest(unittest.TestCase):
     def test_another_bot_needs_no_admission(self):
         doc = document([release()], author=APP, head_ref=RELEASE_BRANCH, admission=False, actors=[APP])
         self.assertTrue(automerge.judge(doc, {"enabled": True, "actors": [APP]}, {"applies": False})["eligible"])
+
+
+class MajorTest(unittest.TestCase):
+    """Rule 7: Dependabot's pull request stays within each dependency's major."""
+
+    def facts(self, *dependencies):
+        return support.admission_facts(list(dependencies), locks={})
+
+    def test_within_the_major(self):
+        for dependency in (support.provider_dependency(old="4.41.0", new="4.81.0"),
+                           support.module_dependency(old="0.4.3", new="0.4.4"),
+                           support.module_dependency(old="0.4.3", new="0.4.5"),
+                           support.module_dependency(old="1.2.0", new="1.9.0"),
+                           support.module_dependency(old="v1.3.0", new="v1.4.0", source_kind="github")):
+            with self.subTest(dependency=(dependency["from"], dependency["to"])):
+                self.assertTrue(verdict([commit("a" * 40), docs(HEAD)], actor=APP,
+                                        admission_facts=self.facts(dependency))["eligible"])
+
+    def test_past_the_major(self):
+        cases = [(support.provider_dependency(old="4.81.0", new="5.8.0"),
+                  "it moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major (below 1.0, its minor); a "
+                  "person decides that"),
+                 (support.module_dependency(address="Azure/avm-res-network-virtualnetwork/azurerm", old="0.17.1",
+                                            new="0.22.2"),
+                  "it moves module Azure/avm-res-network-virtualnetwork/azurerm from 0.17.1 to 0.22.2, past its major "
+                  "(below 1.0, its minor); a person decides that"),
+                 (support.module_dependency(old="1.9.0", new="2.0.0"),
+                  "it moves module Azure/naming/azurerm from 1.9.0 to 2.0.0, past its major (below 1.0, its minor); a "
+                  "person decides that"),
+                 (support.module_dependency(old="0.4.0", new="0.5.4"),
+                  "it moves module Azure/naming/azurerm from 0.4.0 to 0.5.4, past its major (below 1.0, its minor); a "
+                  "person decides that"),
+                 (support.module_dependency(old="0.4.3", new="1.0.0"),
+                  "it moves module Azure/naming/azurerm from 0.4.3 to 1.0.0, past its major (below 1.0, its minor); a "
+                  "person decides that")]
+        for dependency, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(expected, reason([commit("a" * 40), docs(HEAD)], actor=APP,
+                                                  admission_facts=self.facts(dependency)))
+                self.assertEqual(expected, reason(admission_facts=self.facts(dependency)))
+
+    def test_a_version_that_cannot_be_read_is_past_the_major(self):
+        for old, new in (("main", "v1.4.0"), ("v1.3.0", "0123abc")):
+            with self.subTest(old=old, new=new):
+                dependency = support.module_dependency(old=old, new=new, source_kind="github")
+                self.assertIn("past its major", reason([commit("a" * 40), docs(HEAD)], actor=APP,
+                                                       admission_facts=self.facts(dependency)))
+
+    def test_every_dependency_counts(self):
+        facts = self.facts(support.module_dependency(old="0.4.3", new="0.4.4"),
+                           support.provider_dependency(old="4.81.0", new="5.8.0"))
+        self.assertIn("provider hashicorp/azurerm from 4.81.0 to 5.8.0",
+                      reason([commit("a" * 40), docs(HEAD)], actor=APP, admission_facts=facts))
+
+    def test_facts_that_were_not_gathered_or_list_nothing(self):
+        doc = document([commit("a" * 40), docs(HEAD)], actor=APP)
+        del doc["admission"]
+        self.assertEqual("its dependency changes could not be read", decide.decide(doc)["automerge"]["reason"])
+        self.assertEqual("it changes no dependency the admission recognised",
+                         reason([commit("a" * 40), docs(HEAD)], actor=APP, admission_facts=self.facts()))
+
+    def test_a_release_is_not_judged_by_it(self):
+        doc = document([release()], author=APP, head_ref=RELEASE_BRANCH, admission=False, actors=[APP])
+        doc["admission"] = self.facts(support.provider_dependency(old="4.81.0", new="5.8.0"))
+        self.assertTrue(decide.decide(doc)["automerge"]["eligible"])
 
 
 class ReleaseTest(unittest.TestCase):
@@ -708,6 +774,59 @@ class AdapterTest(unittest.TestCase):
     def test_an_invalid_setting_gathers_nothing(self):
         self.assertIs(False, adapter._automerge_applies(document(actors=["octocat"])))
         self.assertIs(True, adapter._automerge_applies(document()))
+
+    DEPENDABOT_PAYLOAD = {**PULL_PAYLOAD, "pull_request": {**PULL_PAYLOAD["pull_request"], "commits": 2,
+                                                           "user": {"login": DEPENDABOT},
+                                                           "head": {"sha": HEAD, "ref": "dependabot/x",
+                                                                    "repo": {"fork": False}}}}
+    DEPENDABOT_API = {COMMITS.format(1): [listed("a" * 40), listed(author="github-actions[bot]",
+                                                                    committer="github-actions[bot]", verified=False,
+                                                                    message=SKIP)],
+                      FILES.format("a" * 40, 1): files_answer("versions.tf"), FILES.format(HEAD, 1): files_answer("README.md")}
+
+    def run_app(self, gather, actor=APP):
+        from unittest import mock
+        inputs = {**MERGE_INPUTS, "dependabot-admission-enabled": True,
+                  "pr-auto-merge-from-actors-yml": json.dumps([DEPENDABOT, APP])}
+        calls = []
+
+        def gathered(tools):
+            calls.append(tools)
+            return gather()
+
+        with mock.patch.object(adapter.admission_facts, "gather", gathered):
+            runner, _ = self.run_module(inputs=inputs, payload=self.DEPENDABOT_PAYLOAD, actor=actor,
+                                        api=self.DEPENDABOT_API)
+        return runner, calls
+
+    def test_the_app_run_on_dependabots_pull_request_reads_its_dependencies(self):
+        runner, calls = self.run_app(lambda: support.admission_facts(locks={}))
+        self.assertEqual((1, "true", "true"), (len(calls), runner.outputs()["automerge-eligible"],
+                                               runner.outputs()["automerge-confirm-app"]))
+        runner, _ = self.run_app(lambda: support.admission_facts(
+            [support.provider_dependency(old="4.81.0", new="5.8.0")], locks={}))
+        self.assertEqual("false", runner.outputs()["automerge-eligible"])
+        self.assertIn("auto-merge: not eligible: it moves provider hashicorp/azurerm from 4.81.0 to 5.8.0",
+                      runner.log.getvalue())
+
+    def test_dependabots_own_run_gathers_them_once(self):
+        runner, calls = self.run_app(lambda: support.admission_facts(locks={}), actor=DEPENDABOT)
+        self.assertEqual(1, len(calls))
+        self.assertIn("admission: admitted (1 dependency)", runner.log.getvalue())
+
+    def test_dependencies_that_cannot_be_read_are_not_eligible(self):
+        def failing():
+            raise adapter.admission_facts.FactError("the versions of provider hashicorp/azurerm: HTTP 503")
+        runner, calls = self.run_app(failing)
+        self.assertEqual((1, "false"), (len(calls), runner.outputs()["automerge-eligible"]))
+        self.assertIn("auto-merge: not eligible: its dependency changes could not be read", runner.log.getvalue())
+
+    def test_another_bots_run_reads_no_dependencies(self):
+        from unittest import mock
+        calls = []
+        with mock.patch.object(adapter.admission_facts, "gather", lambda tools: calls.append(tools)):
+            runner, _ = self.run_module()
+        self.assertEqual(([], "true"), (calls, runner.outputs()["automerge-eligible"]))
 
     def test_a_failed_listing_is_a_notice_not_a_failure(self):
         runner, _ = self.run_module(api={})

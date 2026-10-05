@@ -191,7 +191,9 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
   The module CI workflow gathers the same test facts through the same adapter in mode `module`
   (§3.3); `create-tftest-matrix` is retired.
 - gathering the admission's facts (`admission_facts.py`, Dependabot-admission.md §8) for a
-  Dependabot pull request the admission applies to.
+  Dependabot pull request the admission applies to, and, for module auto-merge's rule 7, in the
+  run the docs commit starts on Dependabot's pull request, where a failure leaves them out
+  instead of failing the step (Module-auto-merge.md §4).
 - listing a module pull request's commits and each commit's files (`automerge_facts.py`,
   Module-auto-merge.md §4), only where module auto-merge's rule reads them: the switch on, a pull
   request from the repository against the default branch, by a listed author.
