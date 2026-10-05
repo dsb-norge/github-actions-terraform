@@ -65,6 +65,7 @@ trade-offs written out; the rationale is kept short.
 | D19 | Test jobs cache provider plugins and modules exactly as the environment job does, and authenticate module downloads. | Thirty inits per pull request; every download is an opportunity for a transient failure. |
 | D20 | **Discovery is the decision engine's**: the create-matrix adapter lists the committed test files, the directories holding `.tf` files and the environments' lock files in the same step that builds the environment matrix, and the engine's `tests.py` derives roots, lanes, environments, provider sets and rows. The module workflow runs the same discovery in the engine's module mode ([Module-ci.md](Module-ci.md) D1). | Every rule sits under the engine's coverage and mutation gates, the environments' lock files are already known there, and one step decides the whole run ([Decision-engine.md](Decision-engine.md) D7, D13). |
 | D21 | **One test job**, with `environment: { name: <row's github-environment>, deployment: false }`: a name that evaluates to `''` means no environment. | Verified on the test bed: an empty name gives no environment, no environment secrets and a `ref:` token subject, in a called workflow too, and creates nothing; two jobs with one step list were only needed if it did not. |
+| D22 | **An environment lane names its credentials**: `required-credentials`, a non-empty list of environment variable names, is what its credential check verifies (§3.6). Without it the check verifies `ARM_TENANT_ID` and `ARM_CLIENT_ID`, as before. Only an environment lane may set it. | A lane whose tests log in to something other than Azure, a GitHub App's private key for the `integrations/github` provider say, can then keep that key as a secret of its own environment, read by that lane alone, instead of a repository secret that any workflow in the repository can read. A list, not a switch that skips the check, keeps the check's purpose: a missing credential is named before init fails. |
 
 ## 3. Caller-facing API
 
@@ -118,6 +119,12 @@ terraform-test-lanes-yml: |
     extra-envs-from-secrets-yml:
       ARM_TENANT_ID: REPO_TESTS_LEGACY_TENANT_ID
       ARM_CLIENT_ID: REPO_TESTS_LEGACY_CLIENT_ID
+  - name: github
+    match:
+      - "**/integration-github-*.tftest.hcl"
+    github-environment: auto          # → tftest-github: a GitHub App's key, no Azure login
+    required-credentials:
+      - TF_VAR_github_auth_app_private_key
 ```
 
 | Key | Required | Meaning |
@@ -133,6 +140,7 @@ terraform-test-lanes-yml: |
 | `providers-from` | no | List of environment names. Restricts the provider sets this lane's files run against to those environments' lock files. Default: every distinct set (§5.3). |
 | `cache-terraform-modules` | no | Overrides the global input for this lane's jobs. |
 | `github-environment` | no | `auto` resolves to `tftest-<lane>`; an explicit value must match `^tftest-[a-z0-9-]{1,40}$`. The lane's jobs then run inside that GitHub Environment: its secrets, its OIDC subject, no deployment record. §3.6. |
+| `required-credentials` | no | Environment lanes only; on a lane without `github-environment` it is a validation error. The environment variables the lane's credential check requires (§3.6, D22): a non-empty list of names, each matching `^[A-Za-z_][A-Za-z0-9_]*$`. Default `[ARM_TENANT_ID, ARM_CLIENT_ID]`. |
 
 Any other key is a validation error (P4). Per-lane keys reuse the global input names on purpose:
 the "same key overrides" idiom from `environments-yml` applies unchanged.
@@ -240,10 +248,24 @@ ignores the one nobody declares (P44). A mixed-case variable name cannot be reco
 maps the secret explicitly, `extra-envs-from-secrets-yml: { TF_VAR_tenantId: TF_VAR_TENANTID }`.
 The maps override a copy as they override the original. `ARM_*` names are upper case already.
 
-**Credential check.** Before init, an environment lane verifies that `ARM_TENANT_ID` and
-`ARM_CLIENT_ID` are set. When they are not, the job fails with reason `no-credentials` and prints
-the bring-up commands below with the environment name filled in; the summary shows the same. That
-is what the first run on a fresh repository looks like, by design.
+**Credential check.** Before init, an environment lane verifies that every variable its
+`required-credentials` names is set: by default `ARM_TENANT_ID` and `ARM_CLIENT_ID` (D22). A name is
+satisfied by an environment secret exported under it (an `ARM_*` or `TF_VAR_*` secret, or a
+`TF_VAR_*` secret's lower-cased copy, above) or by the lane's `extra-envs-yml` or
+`extra-envs-from-secrets-yml`. When one is not set, the job fails with reason `no-credentials` and
+prints, for each missing name, the command that sets it as a secret of the lane's environment, with
+the environment name filled in. A name the prefix export cannot provide, one that starts with
+neither `ARM_` nor `TF_VAR_`, is named with the other way in instead: a value in `extra-envs-yml`,
+or a secret mapped to it in `extra-envs-from-secrets-yml`. The summary shows the same. That is what
+the first run on a fresh repository looks like, by design. A Dependabot run reads no environment
+secret, so there the message says that instead ([Dependabot-admission.md](Dependabot-admission.md)
+D20, P19).
+
+A lane whose tests need no Azure names its own credential. One that logs in to GitHub with an App's
+private key lists `TF_VAR_github_auth_app_private_key` in `required-credentials` and sets
+`TF_VAR_GITHUB_AUTH_APP_PRIVATE_KEY` as a secret of its environment; its lower-cased copy is the
+variable the check finds and Terraform reads. No `ARM_*` secret is needed, and the Azure login is
+skipped (§3.3).
 
 **Bring-up.** Environments are created by admins, or by any workflow that references one: GitHub
 documents that running a workflow which references an environment that does not exist creates it,
@@ -259,7 +281,8 @@ nothing. So:
 1. Add the lane with `github-environment: auto` and open a pull request. The first run creates
    `tftest-<lane>`, and the lane's jobs fail with `no-credentials`. Set
    `allow-failing-terraform-tests: true` on the lane if the pull request must stay green meanwhile.
-2. A collaborator with write access sets the secrets (the environment must exist first):
+2. A collaborator with write access sets the secrets the lane's credential check names, by default
+   the Azure ones below (the environment must exist first):
 
    ```bash
    gh secret set ARM_TENANT_ID       --repo <owner>/<repo> --env tftest-<lane> --body '<tenant-id>'
@@ -453,7 +476,8 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
     "cache-terraform-modules": "true",
     "fork-safe": true,
     "extra-envs": {},
-    "extra-envs-from-secrets": {}
+    "extra-envs-from-secrets": {},
+    "required-credentials": []
   }
 }
 ```
@@ -474,6 +498,10 @@ The matrix is `{"include": [row, …]}` with `slug` at top level so GitHub's def
   whose name contains `secret`, `credential`, `token`, `auth` or `password`, so a field so named
   would vanish from the metadata (P7). The same filter drops `extra-envs-from-secrets` from the
   artifact, which is fine.
+- `required-credentials` lists the variable names the lane's credential check requires (§3.6,
+  D22): the lane's list, or `ARM_TENANT_ID` and `ARM_CLIENT_ID`, for an environment lane, and empty
+  for any other. Names only. Only the check reads it, from the matrix, so the metadata filter that
+  drops it (P7) costs nothing.
 - `allow-failing-terraform-tests` is a JSON boolean because the workflow passes it to `fromJSON()`
   in `continue-on-error`; `fromJSON('')` is a hard error, so the builder always emits one.
 
@@ -608,7 +636,7 @@ groups need readable titles.
 |---|---|---|
 | 1 | `⬇ Checkout` | `actions/checkout@v7`, as in the environment job. |
 | 2 | `🎰 Export lane environment variables` | `export-env-vars@v1` with `extra-envs: toJSON(matrix.test.extra-envs)`, `extra-envs-from-secrets: toJSON(matrix.test.extra-envs-from-secrets)`, `secrets-json: toJSON(secrets)`, and `export-secrets-with-prefixes-json: '["ARM_","TF_VAR_"]'` and `lower-case-copies-for-prefixes-json: '["TF_VAR_"]'` when `matrix.test.github-environment != ''`, else `'[]'` for both (§3.6, §9.8). `ARM_USE_OIDC` is seeded as `true` for environment lanes before the lane's own `extra-envs`, by the engine in the row's `extra-envs`. |
-| 3 | `🔐 Verify lane credentials` (id `verify-credentials`) | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when `ARM_TENANT_ID` or `ARM_CLIENT_ID` is empty, printing the bring-up commands of §3.6 with the environment name filled in. A failure skips init; the test step still runs and reports `no-credentials`. `continue-on-error: true`. |
+| 3 | `🔐 Verify lane credentials` (id `verify-credentials`) | Environment lanes only (`if: matrix.test.github-environment != ''`). Fails when a variable the row's `required-credentials` names (by default `ARM_TENANT_ID` and `ARM_CLIENT_ID`) is empty, printing the bring-up commands of §3.6 for the missing ones with the environment name filled in. A failure skips init; the test step still runs and reports `no-credentials`. `continue-on-error: true`. |
 | 4 | `🔑 Login to Azure` | `azure/login@v3`, `if:` the credential check did not fail and the three ARM variables are set (§3.3). `continue-on-error: true`: the providers log in on their own, and a failed login shows in the test. |
 | 5 | `📥 Setup Terraform` | `hashicorp/setup-terraform@v4`, `terraform_version: matrix.test.terraform-version`, **`terraform_wrapper: false`** (the wrapper mangles the `-json` stream and the exit code). |
 | 6 | `📋 Provide provider versions` (id `copy-lock`) | For a non-environment root with a provider set, copies `matrix.test.provider-set-lock` into the root as `.terraform.lock.hcl` (§5.3), and names the runner's platform (`runner.os` and `runner.arch` as `linux_amd64`, `linux_arm64`, …) and the directory where the effective lock is committed: the environment's for a copied lock, else the root. |
