@@ -228,13 +228,22 @@ After every environment, once for the pull request (D15): when the run's actor i
 `dependabot[bot]` (without case), the admission's block in `relevance.json` must say it applied to
 this pull request run and admitted it, and every dependency it lists must keep its major, and
 below 1.0 its minor, from its version before to its version after (the same rule as module
-auto-merge's rule 7). A version that cannot be read counts as a new major. Otherwise the pull
-request is not eligible, with one of these reasons:
+auto-merge's rule 7, one function in `automerge.py`). A version that cannot be read counts as a
+new major. Otherwise the pull request is not eligible, with one of these reasons:
 
 - `Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major (below 1.0, its minor); a person decides that`
-- `Dependabot's pull request has no admission facts in the relevance file (is dependabot-admission-enabled off?), so its dependencies' majors are unknown`
+- `Dependabot's pull request has no admission facts in the relevance file (is dependabot-admission-enabled off?), so its dependencies' majors are unknown`:
+  no relevance file, no admission block, one that did not apply, or a push run's.
+- `Dependabot's pull request was not admitted by the Dependabot admission`
+- `Dependabot's pull request's dependency changes cannot be read from the relevance file`: the
+  block's `dependencies` is not a list of objects with a text `kind`, `address`, `from` and `to`.
+- `Dependabot's pull request changes no dependency the admission recognised`
 
-Another actor's pull request is not judged by it.
+The log shows the check as a group of its own, `Pull Request`, after the environments, and the
+final summary as `Pull request: ✅ Dependabot's majors` or `❌`. When every environment is eligible
+and this check is not, the summary's last line says `Every environment eligible, the pull request
+is not`. Another actor's pull request is not judged by it, and the rule compares the actor without
+case, as the actor list does.
 
 ## 6. The merge
 

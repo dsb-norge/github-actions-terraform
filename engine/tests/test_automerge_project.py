@@ -911,3 +911,105 @@ class ReaderTest(unittest.TestCase):
         none = ap.evaluate(facts([], tests=[test_job("int-x", "fail", True)]))
         self.assertEqual(["The tolerated failing test tests/int-x.tftest.hcl (lane integration) does not block auto-merge; "
                           "the pull request is not eligible for other reasons"], none["notices"])
+
+
+class DependabotTest(unittest.TestCase):
+    """D15: Dependabot's pull request merges only within each dependency's major (docs/Auto-merge.md §5.3)."""
+
+    PROVIDER = ("provider", "registry.terraform.io/hashicorp/azurerm")
+    MODULE = ("module", "registry.terraform.io/Azure/avm-res-network-vnet/azurerm")
+
+    def admission(self, *moves, **block):
+        return {"applies": True, "admitted": True, "push_run": False, "refused_count": 0, "problems": [],
+                "dependencies": [{"kind": kind, "address": address, "from": old, "to": new, "files": ["main.tf"],
+                                  "admitted": True, "checks": []} for (kind, address), old, new in moves], **block}
+
+    def judge(self, admission, actor="dependabot[bot]", tests=None, enabled="true"):
+        actors = {"pr-auto-merge-from-actors": ["dependabot[bot]", "example-bot[bot]"]}
+        content = {} if admission is None else {"admission": admission}
+        return ap.evaluate(facts([meta("prod", **actors, **{"pr-auto-merge-enabled": enabled})],
+                                 relevance([entry("prod", "run", **actors)], **content), actor=actor, tests=tests))
+
+    def test_within_every_major_it_merges(self):
+        verdict = self.judge(self.admission((self.PROVIDER, "4.80.0", "4.81.0"), (self.MODULE, "0.3.1", "0.3.4")))
+        log = render(verdict)
+        self.assertTrue(verdict["eligible"])
+        start = log.index("[Pull Request]")
+        self.assertEqual(["[Pull Request]", "  Dependabot's majors: PASS", "[Final Summary]"], log[start:start + 3])
+        self.assertEqual(["    ✅ prod", "  Pull request: ✅ Dependabot's majors",
+                          "  ✅ FINAL RESULT: All environments eligible - PR CAN be automerged"], log[-4:-1])
+
+    def test_a_major_or_a_minor_below_one_waits_for_a_person(self):
+        cases = [((self.PROVIDER, "4.81.0", "5.8.0"),),
+                 ((self.PROVIDER, "4.81.0", "4.82.0"), (self.MODULE, "0.3.1", "0.4.0")),
+                 ((self.PROVIDER, "4.81.0", "next"),)]
+        reasons = ["Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major "
+                   "(below 1.0, its minor); a person decides that",
+                   "Dependabot's pull request moves module Azure/avm-res-network-vnet/azurerm from 0.3.1 to 0.4.0, past "
+                   "its major (below 1.0, its minor); a person decides that",
+                   "Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to next, past its major "
+                   "(below 1.0, its minor); a person decides that"]
+        for moves, reason in zip(cases, reasons):
+            with self.subTest(moves=moves):
+                verdict = self.judge(self.admission(*moves))
+                log = render(verdict)
+                self.assertFalse(verdict["eligible"])
+                start = log.index("[Pull Request]")
+                self.assertEqual(["[Pull Request]", f"  WARN: {reason}", "  Dependabot's majors: FAIL"],
+                                 log[start:start + 3])
+                self.assertEqual(["    ✅ prod", "  Pull request: ❌ Dependabot's majors",
+                                  "  ❌ FINAL RESULT: Every environment eligible, the pull request is not - PR CANNOT be "
+                                  "automerged"], log[-4:-1])
+
+    def test_without_the_admissions_facts_it_does_not_merge(self):
+        no_facts = ("Dependabot's pull request has no admission facts in the relevance file (is "
+                    "dependabot-admission-enabled off?), so its dependencies' majors are unknown")
+        for admission in (None, {"applies": False}, self.admission(push_run=True), {**self.admission(), "push_run": None},
+                          [self.admission()]):
+            with self.subTest(admission=admission):
+                verdict = self.judge(admission)
+                self.assertFalse(verdict["eligible"])
+                self.assertIn(f"  WARN: {no_facts}", render(verdict))
+        for missing in (None, relevance([], exists=False),
+                        {"file": "r.json", "exists": True, "readable": True, "json": True, "content": [1]}):
+            with self.subTest(relevance=missing):
+                self.assertEqual(no_facts, ap.dependabot_problem("dependabot[bot]", missing))
+
+    def test_what_the_admission_did_not_admit_or_cannot_say(self):
+        unreadable = "Dependabot's pull request's dependency changes cannot be read from the relevance file"
+        cases = [({**self.admission(), "admitted": False},
+                  "Dependabot's pull request was not admitted by the Dependabot admission"),
+                 ({**self.admission(), "admitted": "true"},
+                  "Dependabot's pull request was not admitted by the Dependabot admission"),
+                 ({**self.admission(), "dependencies": {"a": 1}}, unreadable),
+                 ({**self.admission(), "dependencies": [7]}, unreadable),
+                 ({**self.admission(), "dependencies": [{"kind": "provider", "address": "a", "from": "1.0.0"}]}, unreadable),
+                 ({**self.admission(), "dependencies": [{"kind": "provider", "address": "a", "from": 1, "to": "2"}]},
+                  unreadable),
+                 ({**self.admission(), "dependencies": [{"address": "a", "from": "1.0.0", "to": "2.0.0"}]}, unreadable),
+                 ({**self.admission(), "dependencies": [{"kind": "provider", "address": 7, "from": "1.0.0", "to": "2.0.0"}]},
+                  unreadable),
+                 (self.admission(), "Dependabot's pull request changes no dependency the admission recognised")]
+        for admission, reason in cases:
+            with self.subTest(admission=admission):
+                self.assertEqual(reason, ap.dependabot_problem("dependabot[bot]",
+                                                               relevance([entry("prod", "run")], admission=admission)))
+
+    def test_only_dependabots_pull_request_is_judged(self):
+        major = self.admission((self.PROVIDER, "4.81.0", "5.8.0"))
+        self.assertFalse(self.judge(major, actor="Dependabot[Bot]")["eligible"])
+        other = self.judge(major, actor="example-bot[bot]")
+        self.assertTrue(other["eligible"])
+        self.assertNotIn("[Pull Request]", render(other))
+        self.assertFalse(any(line.startswith("  Pull request:") for line in render(other)))
+        self.assertIsNone(ap.dependabot_problem("example-bot[bot]", None))
+
+    def test_an_ineligible_environment_stays_the_reason(self):
+        verdict = self.judge(self.admission((self.PROVIDER, "4.80.0", "4.81.0")), enabled="false")
+        self.assertFalse(verdict["eligible"])
+        self.assertEqual("  ❌ FINAL RESULT: Not all environments eligible - PR CANNOT be automerged", render(verdict)[-2])
+
+    def test_a_tolerated_test_is_named_as_not_the_reason(self):
+        verdict = self.judge(self.admission((self.PROVIDER, "4.81.0", "5.0.0")), tests=[test_job("int-x", "fail", True)])
+        self.assertEqual(["The tolerated failing test tests/int-x.tftest.hcl (lane integration) does not block "
+                          "auto-merge; the pull request is not eligible for other reasons"], verdict["notices"])

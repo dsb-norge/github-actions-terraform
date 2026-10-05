@@ -12,8 +12,8 @@
 #     bash evaluator this action ran before the engine: the same exit code and is-eligible, and
 #     every reason the case asserts.
 #  2. The run block's shape, stage results holding shell syntax, caller values in the log, a value
-#     starting with '-', a relevance file outside the workspace, and the caller's checkout
-#     staying off Python's import path.
+#     starting with '-', a relevance file outside the workspace, a Dependabot major in the
+#     relevance file's admission (D15), and the caller's checkout staying off Python's import path.
 #
 # To run the evaluator by hand, in a directory holding the metadata files:
 #   GITHUB_ACTOR='dependabot[bot]' GITHUB_OUTPUT=<file> python3 -I -B <repo>/engine/run.py evaluate-automerge \
@@ -246,6 +246,22 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output is-eligible)" == "true" ]] \
   pass
 else
   fail "exit ${STEP_EXIT}, is-eligible '$(step_output is-eligible)', or the relevance file was not read"
+fi
+
+begin "dependabot: a major in the admission's facts, read from the relevance file, keeps the pull request open"
+admission='{"applies": true, "admitted": true, "push_run": false, "dependencies": [{"kind": "provider",
+  "address": "registry.terraform.io/hashicorp/azurerm", "from": "4.81.0", "to": "5.8.0"}]}'
+make_sandbox "$(case_with "${with_relevance}" ".actor = \"dependabot[bot]\"
+  | .files[\"relevance-input.json\"].json.admission = ${admission}
+  | (.files[] | .json? | objects | .. | objects | select(has(\"pr-auto-merge-from-actors\"))
+     | .[\"pr-auto-merge-from-actors\"]) |= [\"dependabot[bot]\"]")"
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output is-eligible)" == "false" ]] \
+  && grep -qF "WARN: Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major" "${OUT_FILE}" \
+  && grep -qF "Pull request: ❌ Dependabot's majors" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, is-eligible '$(step_output is-eligible)', or the major was not named"
 fi
 
 begin "isolation: the caller's checkout and PYTHON* variables cannot replace the standard library"

@@ -486,6 +486,10 @@ on:
             With 'pr-auto-merge-enabled' true, the list in effect for every environment with auto-merge enabled must
             name someone: an empty list is a validation error, never "everyone".
 
+          A pull request run by dependabot[bot] also needs the Dependabot admission's facts ('dependabot-admission-enabled',
+          on by default): it merges only when every dependency the admission judged stays within its major, and below
+          1.0 within its minor. A major is a person's decision (docs/Auto-merge.md D15).
+
           NOTE: This applies to all environments; an environment's own 'pr-auto-merge-from-actors-yml' replaces it.
         required: false
         default: "[]" # nobody; name the accounts when 'pr-auto-merge-enabled' is true
