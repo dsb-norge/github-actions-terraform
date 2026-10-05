@@ -945,7 +945,7 @@ Pinned against the legacy action's output **before** conversion (P23). The actio
 | # | Level | Case | Assertion |
 |---|---|---|---|
 | F1 | must | row-set sync | the per-env renderer's row set equals the per-group renderer's row set (P9), in `aggregate-validation-summaries/run_all_tests.sh`; enforces the §5.1 invariant of [Workflow-pr-comments.md](Workflow-pr-comments.md) |
-| F2 | must | `parse-destroy-plan` step id | assert in `evaluate-automerge-eligibility/run_all_tests.sh` that the reusable workflow contains a step with that exact id (P7). It is the only thing standing between §5.1 and a silent re-break |
+| F2 | must | `parse-destroy-plan` step id | assert in `structural-tests/run_all_tests.sh` that the reusable workflow contains a step with that exact id (P7). It is the only thing standing between §5.1 and a silent re-break |
 | F3 | must | workflow YAML parses | `python3 -c "import yaml; yaml.safe_load(...)"` on the reusable workflow |
 | F4 | must | matrix fixtures | the engine's port cases carry the new input; existing cases still pass (P21) |
 | F5 | must | gate ordering | assert the three new `🧐` steps appear **after** `upsert-head-apply` in the workflow's step list (P1). A structural grep, not a behavioural test — but P1 is the defect most likely to be reintroduced by a later refactor |

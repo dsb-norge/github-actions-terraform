@@ -82,7 +82,7 @@ After a bump, a test-bed run's logs are checked for deprecation warnings
 - **Every document is in the index.** [README.md](README.md) in this folder lists each document once,
   under its kind (user guide, migration, spec, contributor guide), with what it covers.
   A new document gets its row in the change that adds it; F22 in
-  `evaluate-automerge-eligibility/run_all_tests.sh` fails on a document the index misses or a row
+  `structural-tests/run_all_tests.sh` fails on a document the index misses or a row
   whose document is gone.
 - **A spec describes the system as built.** While its feature is unbuilt it carries a status line
   saying so and an open-questions section. When implementation and the test-bed run have closed

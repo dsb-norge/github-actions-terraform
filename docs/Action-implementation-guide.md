@@ -159,7 +159,7 @@ _main_exit_code=$?
 exit ${_main_exit_code}
 ```
 
-> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell. A "sourced or executed" branch that `return`s when sourced is not needed and not wanted: F23 in `evaluate-automerge-eligibility/run_all_tests.sh` fails on a step script that does not end with an `exit` line or that returns at the top level.
+> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell. A "sourced or executed" branch that `return`s when sourced is not needed and not wanted: F23 in `structural-tests/run_all_tests.sh` fails on a step script that does not end with an `exit` line or that returns at the top level.
 
 ### Key conventions
 
@@ -295,7 +295,7 @@ whatever it holds. Every `${{ inputs.* }}`, `${{ matrix.* }}` and `${{ steps.<id
 step needs therefore goes through `env:`, or, when it is large or free text, through the heredoc
 capture below; `${{ github.action_path }}` and a step's fixed-word outcome are the only
 expressions left in script text. The structural test F16 in
-`evaluate-automerge-eligibility/run_all_tests.sh` fails on any `inputs.*`, `matrix.*` or step-output
+`structural-tests/run_all_tests.sh` fails on any `inputs.*`, `matrix.*` or step-output
 expression in a `run:` block outside a heredoc capture, in every action and workflow.
 
 **No non-breaking spaces.** U+00A0 looks like a space and is not one: inside `${{ … }}` it is part
@@ -361,7 +361,7 @@ export -n input_body
 - A raw `${{ inputs.<name> }}` is captured only for a JSON-contract input: its name ends in
   `-json` (or it is one of the few older ones listed in the test), and every caller passes
   `${{ toJSON(...) }}` or a JSON literal. Anything else is captured as `toJSON` of the input.
-- The structural test F9 in `evaluate-automerge-eligibility/run_all_tests.sh` holds this for every
+- The structural test F9 in `structural-tests/run_all_tests.sh` holds this for every
   action and workflow in the repository: a quoted delimiter ending in `_JSON`, never `EOF`, used
   once, and a raw capture only of a JSON-contract input. The `<ACTION>_<INPUT>` part is convention.
 
