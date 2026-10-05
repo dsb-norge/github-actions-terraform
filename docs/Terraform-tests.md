@@ -1227,6 +1227,15 @@ really differs.
 every required platform, and otherwise the packages are downloaded; a warm cache makes the check
 offline. The default mode, which the environment job uses, is unchanged.
 
+A failure names what differs, in the annotation, the log and the step summary, beside the diff:
+`Lock file incomplete` when the re-lock added a hash, the platform case the check exists for;
+`Lock file out of date` when the two locks differ only in their `constraints` lines and the
+padding before an `=`, which a module's new version or a `required_providers` change causes in
+the default mode (its hashes are complete); `Lock file differs` for anything else. Every failure
+used to say missing hashes, and a constraints-only difference sent people looking for a platform
+that was there. In lock-only mode the comparison ignores the constraints, so only the first and
+the last can occur.
+
 ## 10. Pitfalls
 
 Indexed so implementation commits and future specs can cite them.
