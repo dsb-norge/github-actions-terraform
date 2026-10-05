@@ -195,18 +195,7 @@ A Dependabot bump usually changes the README too, since terraform-docs lists the
 
 For a module repository whose dependencies Dependabot keeps current:
 
-1. **`.github/dependabot.yml`** on the default branch. The module's own directory is enough; add `/examples/*` when the examples pin versions of their own.
-
-   ```yaml
-   version: 2
-   updates:
-     - package-ecosystem: "terraform"
-       directories: ["/"]
-       schedule:
-         interval: "weekly"
-       commit-message:
-         prefix: "chore(deps)"
-   ```
+1. **`.github/dependabot.yml`** on the default branch: the configuration in [Module-dependencies.md §6](Module-dependencies.md#6-the-dependabot-configuration), which updates the modules the module calls and no provider, never to a new major, as `fix(deps)` commits. Why, and what a developer does when, is the rest of that guide.
 
    Write each `required_providers` entry in the block form, `source` and `version` on lines of their own: Dependabot does not update an entry written on one line ([project workflow](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission)).
 
