@@ -5,7 +5,7 @@ The reusable CI workflow for a Terraform **module** repository: one module at th
 1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository it commits the regenerated README, on Dependabot's only once the admission admitted it, and anywhere else a README that needs regenerating fails the check;
 2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint;
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
-4. reports on the pull request (a validation comment and one tests comment) and on the run page (a step summary from every job);
+4. reports on the pull request (a validation comment and one tests comment) and on the run page (one run summary for the whole run, and a step summary from every job);
 5. ends in one check to require, `Terraform conclusion`;
 6. skips validation and the tests on a pull request that changes only documentation, see [changes that touch only documentation](#changes-that-touch-only-documentation);
 7. with [auto-merge](#auto-merge) on, merges a listed bot's green pull request: Dependabot's admitted bumps and release-please's release pull requests.
@@ -119,6 +119,7 @@ flowchart LR
   summary["terraform-test-summary: one comment for all tests"]
   conclusion["conclusion: the Terraform conclusion check"]
   automerge["automerge: merge a listed bot's pull request"]
+  runsummary["run-summary: one block for the run"]
   matrix --> seed
   matrix --> docs
   docs --> validate
@@ -136,6 +137,8 @@ flowchart LR
   docs --> automerge
   validate --> automerge
   conclusion --> automerge
+  conclusion --> runsummary
+  automerge --> runsummary
 ```
 
 An arrow is a `needs:` of the job it points to. Validation and the tests run side by side: a failing test is worth seeing next to a failing lint. Both wait for the docs job, because a docs commit starts a run of its own and leaves this run's tree out of date. The docs job waits for `create-matrix`, whose admission verdict decides whether it may push to a Dependabot pull request, and runs whatever that job's result.
@@ -149,6 +152,7 @@ An arrow is a `needs:` of the job it points to. Validation and the tests run sid
 | `terraform-test` (Terraform test (`<file>`)) | once per test file, when there is a file to run and the docs job pushed nothing | — | Each job's own block in its step summary, and the artifact `terraform-test-log-<slug>` with the test's output. |
 | `terraform-test-summary` (Terraform tests summary) | while the test stage is on, on a run with test files and on every pull request, unless the docs job pushed a commit; after validation, so the validation comment comes first | One comment for every test file, failed ones first, with a link to each job. Deleted when the last test file is. | One block for all test files, and a headline annotation. |
 | `conclusion` (Terraform conclusion) | on every run | — | One line, in the log, the step summary and an annotation. |
+| `run-summary` (Run summary) | on every run, last | — | One block for the whole run, see [the run summary](#the-run-summary). |
 | `automerge` (PR auto merger) | with auto-merge on, on a pull request the run ruled eligible, once the conclusion is green and the docs job pushed nothing | Merges the pull request with the CI App's token, a rebase merge, and deletes its branch. | `Create test matrix` gives the verdict as a notice, see [auto-merge](#auto-merge). |
 
 The comments are not posted on a pull request from a fork, with `add-pr-comment: false`, or on a closed or draft-converted pull request; the step summaries are written on every run. The tests summary job is not among the conclusion's `needs`, so reporting can never turn the check red.
@@ -311,6 +315,18 @@ conclusion: green — the module is not affected by this change; nothing to vali
 - A module that reads a Markdown file with `file()` or `templatefile()` sets `paths-ignore-yml: "[]"`, since a change to that file does change the module.
 
 A release pull request changes only `CHANGELOG.md`, so it is not affected, and [auto-merge](#auto-merge) treats its skipped validation as passed.
+
+## The run summary
+
+The `Run summary` job writes one block for the whole run to the run page, on every event, push, dispatch and schedule included, which get no pull-request comment:
+
+- a headline with the conclusion, green or red, and the conclusion's line;
+- the relevance line;
+- a table: the docs, each validation step (or why validation was skipped) and the warnings, and the tests (passed, failed, tolerated, not run);
+- auto-merge's verdict, and whether the pull request was merged, when auto-merge applies;
+- the admission's table when it refused a Dependabot pull request.
+
+It never fails the run, and the conclusion does not wait for it.
 
 ## Documentation
 

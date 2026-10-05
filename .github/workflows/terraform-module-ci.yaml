@@ -382,6 +382,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # the validation head, and the legacy per-file test comments removed
+    # The run summary's validation rows (docs/Module-ci.md §7.1).
+    outputs:
+      init: ${{ steps.init.outcome }}
+      fmt: ${{ steps.fmt.outcome }}
+      validate: ${{ steps.validate.outcome }}
+      lint: ${{ steps.lint.outcome }}
+      warning-count: ${{ steps.warnings.outputs.warning-count }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
@@ -865,6 +872,12 @@ jobs:
       && (needs.create-matrix.outputs.tests-count != '0' || github.event_name == 'pull_request')
       && needs.generate-docs.outputs.pushed != 'true'
     runs-on: ${{ inputs.runs-on }} # global setting
+    # The module run summary's test row (docs/Module-ci.md §7.1); unused by the project workflow, held equal by F20.
+    outputs:
+      passed-count: ${{ steps.summary.outputs.passed-count }}
+      failed-count: ${{ steps.summary.outputs.failed-count }}
+      tolerated-count: ${{ steps.summary.outputs.tolerated-count }}
+      not-run-count: ${{ steps.summary.outputs.not-run-count }}
     permissions:
       pull-requests: write # the tests head
       actions: read        # the Jobs API, for the job links
@@ -939,6 +952,8 @@ jobs:
     needs: [create-matrix, generate-docs, validate, terraform-test]
     runs-on: ${{ inputs.runs-on }}
     permissions: {}
+    outputs:
+      line: ${{ steps.verdict.outputs.line }}
     steps:
       - name: "🛑 Verify everything that should have run, ran and passed"
         env:
@@ -953,6 +968,7 @@ jobs:
           ADMISSION_REFUSED: ${{ needs.create-matrix.outputs.admission-refused }}
           ADMISSION_REASON: ${{ needs.create-matrix.outputs.admission-reason }}
           AFFECTED_COUNT: ${{ needs.create-matrix.outputs.affected-count }}
+        id: verdict
         run: |
           # Judge the run from the named results and the engine's outputs (docs/Module-ci.md §8)
           set -euo pipefail
@@ -990,6 +1006,8 @@ jobs:
           line="conclusion: ${verdict} — ${why}; tests: ${TESTS_COUNT:-0}"
           echo "${line}"
           echo "${line}" >>"${GITHUB_STEP_SUMMARY}"
+          # The run summary's headline (docs/Module-ci.md §7.1); written before a red verdict exits.
+          echo "line=${line}" >>"${GITHUB_OUTPUT}"
           if [ "${verdict}" = green ]; then
             echo "::notice title=Terraform conclusion::${line}"
           else
@@ -1098,3 +1116,27 @@ jobs:
           head-sha: ${{ github.event.pull_request.head.sha }}
           merge-sha: ${{ github.sha }}
 
+  # One block for the whole run on the run page, on every event (docs/Module-ci.md §7.1). After everything else and
+  # never in the conclusion's needs: a reporting job must never redden a run.
+  run-summary:
+    if: always()
+    name: "Run summary"
+    needs: [create-matrix, generate-docs, validate, terraform-test-summary, conclusion, automerge]
+    runs-on: ${{ inputs.runs-on }}
+    permissions: {} # it never touches the pull request
+    steps:
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v8
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+        # A download by name throws when the artifact is missing (P8); the summary then has no relevance line,
+        # admission section or auto-merge verdict.
+        continue-on-error: true
+      - name: "📋 Write the run summary"
+        uses: dsb-norge/github-actions-terraform/create-run-summary@v1
+        with:
+          mode: module
+          relevance-file: ${{ runner.temp }}/relevance/relevance.json
+          module-results-json: ${{ toJSON(needs) }}
+        continue-on-error: true # never fail the workflow over run-page reporting

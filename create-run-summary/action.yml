@@ -58,14 +58,31 @@ inputs:
       exactly as without it. See docs/Environment-ordering.md §7.2.
     required: false
     default: ""
+  mode:
+    description: |
+      'project' (the default) for the project workflow's rollup of environments; 'module' for the
+      module workflow's one block (docs/Module-ci.md §7.1): the conclusion, the relevance line, the
+      docs, validation and test rows, the admission's section when it refused, and auto-merge's
+      verdict and result. In module mode metadata-files-pattern and stage-results-json are not read.
+    required: false
+    default: "project"
+  module-results-json:
+    description: |
+      Module mode: the run's jobs, as toJSON(needs) of a job that needs create-matrix, generate-docs,
+      validate, terraform-test-summary, conclusion and automerge: each job's result and outputs. A
+      job that is missing or did not run renders as "—". Empty or not an object: every row is "—".
+    required: false
+    default: ""
 outputs:
   environment-count:
     description: |
       Number of environments rendered; with relevance-file, the number of
-      environments in it, affected or not.
+      environments in it, affected or not. Module mode: 0.
     value: ${{ steps.summary.outputs.environment-count }}
   failed-count:
-    description: Number of environments whose worst outcome was a failure.
+    description: |
+      Number of environments whose worst outcome was a failure. Module mode: 1 when the
+      conclusion failed, else 0.
     value: ${{ steps.summary.outputs.failed-count }}
 runs:
   using: "composite"
@@ -75,6 +92,7 @@ runs:
       env:
         input_metadata_files_pattern: ${{ inputs.metadata-files-pattern }}
         input_relevance_file: ${{ inputs.relevance-file }}
+        input_mode: ${{ inputs.mode }}
       run: |
         # Write the run-level rollup of every environment to the job summary
 
@@ -83,6 +101,10 @@ runs:
         input_stage_results_json=$(cat <<'CREATE_RUN_SUMMARY_STAGE_RESULTS_JSON'
         ${{ inputs.stage-results-json }}
         CREATE_RUN_SUMMARY_STAGE_RESULTS_JSON
+        )
+        input_module_results_json=$(cat <<'CREATE_RUN_SUMMARY_MODULE_RESULTS_JSON'
+        ${{ inputs.module-results-json }}
+        CREATE_RUN_SUMMARY_MODULE_RESULTS_JSON
         )
 
         set -o allexport
