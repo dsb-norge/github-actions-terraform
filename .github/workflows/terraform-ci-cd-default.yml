@@ -352,6 +352,8 @@ on:
           is the fallback) and what they run with ('extra-envs-yml', 'extra-envs-from-secrets-yml',
           'github-environment: auto' for a GitHub Environment 'tftest-<lane>', 'runs-on', 'terraform-version',
           'timeout-minutes', 'allow-failing-terraform-tests', 'providers-from', 'cache-terraform-modules').
+          An environment lane's credential check requires ARM_TENANT_ID and ARM_CLIENT_ID unless the lane's
+          'required-credentials' lists the variables it needs instead, a GitHub App's key say.
           The workflow's own 'extra-envs-*' inputs never reach a test job. See docs/Terraform-tests.md §3.2.
         required: false
         default: ""
@@ -2186,22 +2188,36 @@ jobs:
           LANE_ENVIRONMENT: ${{ matrix.test.github-environment }}
           REPOSITORY: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
+          # Names only: by default ARM_TENANT_ID and ARM_CLIENT_ID (docs/Terraform-tests.md D22).
+          REQUIRED_CREDENTIALS_JSON: ${{ toJSON(matrix.test.required-credentials) }}
         run: |
           # Name a missing credential, with the commands that set it, instead of letting init fail obscurely
-          if [ -n "${ARM_TENANT_ID:-}" ] && [ -n "${ARM_CLIENT_ID:-}" ]; then
-            echo "The lane's environment '${LANE_ENVIRONMENT}' provides ARM_TENANT_ID and ARM_CLIENT_ID."
+          # "A", "A <word> B", "A, B <word> C"
+          list() { local word="$1" out="$2"; shift 2; while [ "$#" -gt 1 ]; do out+=", $1"; shift; done; [ "$#" -eq 0 ] || out+=" ${word} $1"; printf '%s' "${out}"; }
+          mapfile -t required < <(jq -r '.[]' <<<"${REQUIRED_CREDENTIALS_JSON}")
+          missing=()
+          # The engine admits only variable names here, so the indirect expansion reads a variable, nothing else.
+          for name in "${required[@]}"; do [ -n "${!name:-}" ] || missing+=("${name}"); done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "The lane's environment '${LANE_ENVIRONMENT}' provides $(list and "${required[@]}")."
             exit 0
           fi
           # A Dependabot run reads no environment secret, set or not (docs/Dependabot-admission.md D20, P19).
           if [ "${ACTOR}" = "dependabot[bot]" ]; then
-            echo "::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment '${LANE_ENVIRONMENT}' gives it no ARM_TENANT_ID or ARM_CLIENT_ID."
+            echo "::error title=Terraform test::Environment secrets do not reach a Dependabot run, so the lane's environment '${LANE_ENVIRONMENT}' gives it no $(list or "${missing[@]}")."
             echo "Give the lane its IDs as plain values in its extra-envs-yml; they are not secret (docs/Dependabot-admission.md D20)."
+            echo "A secret, such as a private key, cannot reach a Dependabot run at all."
             exit 1
           fi
-          echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no ARM_TENANT_ID or ARM_CLIENT_ID secret yet."
+          echo "::error title=Terraform test::The environment '${LANE_ENVIRONMENT}' has no $(list or "${missing[@]}") secret yet."
           echo "Set them, then re-run (docs/Terraform-tests.md §3.6):"
-          echo "  gh secret set ARM_TENANT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
-          echo "  gh secret set ARM_CLIENT_ID --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'"
+          for name in "${missing[@]}"; do
+            case "${name}" in
+              ARM_* | TF_VAR_*) echo "  gh secret set ${name} --env '${LANE_ENVIRONMENT}' --repo '${REPOSITORY}'" ;;
+              # Only ARM_* and TF_VAR_* environment secrets are exported under their names (D15).
+              *) echo "  ${name}: an environment secret reaches the job under its name only when it starts with ARM_ or TF_VAR_; set ${name} in the lane's extra-envs-yml, or map a secret to it in extra-envs-from-secrets-yml" ;;
+            esac
+          done
           exit 1
         continue-on-error: true # reported by the test step and gated below
 

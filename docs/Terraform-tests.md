@@ -1309,6 +1309,13 @@ Indexed so implementation commits and future specs can cite them.
 - Workflow structural tests: the test job's lock check runs lock-only, between the plugin cache
   restore and init (F12). No structural test holds the module-cache steps and gates to the
   environment job's, or the provider cache key to the test root's lock; they match by review.
+  F29 runs the credential check's run block from both workflows: the default pair present, both
+  absent and one empty, a lane's own credential present, three names absent (one outside the
+  exported prefixes), and a Dependabot run; for the default lane its output is the check's before
+  D22, line for line.
+- Engine (`test_tests.py`): every lane's row carries `required-credentials`, the Azure pair for an
+  environment lane, the lane's list when it names one, and nothing for a lane without an
+  environment; each validation error of the key, literally.
 - `create-test-summary`: goldens of §9.3 byte-for-byte; the budget trim order; headline counts;
   sort order; missing links omitted; zero rows renders the "no test files" body; a metadata file
   with an unknown schema version is skipped with a warning.

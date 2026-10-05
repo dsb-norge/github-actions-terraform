@@ -16,12 +16,15 @@ from .environments import ConfigError, shown
 
 LANE_KEYS = ("name", "match", "extra-envs-yml", "extra-envs-from-secrets-yml", "runs-on", "terraform-version",
              "timeout-minutes", "allow-failing-terraform-tests", "providers-from", "cache-terraform-modules",
-             "github-environment")
+             "github-environment", "required-credentials")
 LANE_NAME = re.compile(r"[a-z0-9-]{1,40}")
 LANE_NAME_RULE = "1 to 40 of the characters a-z 0-9 -"
 # Lowercase only: GitHub compares environment names without case, but puts the stored name into the
 # token subject, and the lanes' federated credential matches case-sensitively.
 LANE_ENVIRONMENT = re.compile(r"tftest-[a-z0-9-]{1,40}")
+# What an environment lane's credential check requires unless it names its own (D22), and the shape of a name.
+DEFAULT_CREDENTIALS = ("ARM_TENANT_ID", "ARM_CLIENT_ID")
+VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DEFAULT_LANE = "default"
 MATRIX_CAP = 256
 SLUG_CAP = 100
@@ -191,7 +194,21 @@ def _lane(index, entry, defaults, environment_names, errors):
     if lane["environment"]:
         # Federated credentials are the only authentication an environment lane supports (D16).
         lane["variables"] = {"ARM_USE_OIDC": "true", **lane["variables"]}
+    lane["credentials"] = _credentials(label, entry, lane["environment"], errors)
     return lane
+
+
+def _credentials(label, entry, environment, errors):
+    """The variables an environment lane's credential check requires, none for any other lane (D22)."""
+    value = entry.get("required-credentials", list(DEFAULT_CREDENTIALS))
+    if "required-credentials" in entry and "github-environment" not in entry:
+        errors.append(f"The test lane '{label}' sets 'required-credentials' without 'github-environment'; only an "
+                      "environment lane checks its credentials!")
+    elif not (isinstance(value, list) and value
+              and all(isinstance(name, str) and VARIABLE_NAME.fullmatch(name) for name in value)):
+        errors.append(f"The test lane '{label}' sets 'required-credentials' to {shown(value)}; it must be a non-empty "
+                      "list of environment variable names!")
+    return value if environment else []
 
 
 def _lanes(document, defaults, rows, errors):
@@ -218,7 +235,8 @@ def _lanes(document, defaults, rows, errors):
     lanes.append({"name": DEFAULT_LANE, "patterns": None, "variables": {}, "secrets": {},
                   "runs-on": defaults["runs_on"], "terraform-version": defaults["version"],
                   "timeout": defaults["timeout"], "allow-failing-terraform-tests": defaults["allow"],
-                  "cache-terraform-modules": defaults["cache"], "providers_from": None, "environment": ""})
+                  "cache-terraform-modules": defaults["cache"], "providers_from": None, "environment": "",
+                  "credentials": []})
     return lanes
 
 
@@ -304,7 +322,8 @@ def _row(slug, path, root, rel, kind, lane, provider_set, name):
         "provider-set-environments": provider_set["environments"] if provider_set else [],
         "cache-terraform-modules": "true" if lane["cache-terraform-modules"] else "false",
         "fork-safe": not (lane["environment"] or lane["secrets"]),
-        "extra-envs": lane["variables"], "extra-envs-from-secrets": lane["secrets"]}}
+        "extra-envs": lane["variables"], "extra-envs-from-secrets": lane["secrets"],
+        "required-credentials": lane["credentials"]}}
 
 
 def decide_tests(document, rows, events=TEST_EVENTS, admission=NOT_APPLYING, held=None):
