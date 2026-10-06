@@ -6,6 +6,13 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.7.1](https://github.com/dsb-norge/github-actions-terraform/compare/v1.7.0...v1.7.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* the admission judges a registry module named with a subdirectory ([9977a54](https://github.com/dsb-norge/github-actions-terraform/commit/9977a54afd3e3f50d58142dd3c97f6ae1c5b2dad))
+
 ## [1.7.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.6.1...v1.7.0) (2026-10-06)
 
 
