@@ -338,6 +338,8 @@ A pull request Dependabot opens runs code nobody has looked at: a new provider r
 
 Because `init` reads the lock only, it cannot add the runners' `linux_amd64` checksums to the lock either; a lock made on another platform passes `init` and fails `validate` on Dependabot's runs alone. `verify-lock-file`, on by default, keeps those checksums in the lock.
 
+A module's new version can change the provider constraints the lock records, and Dependabot rewrites a lock only for a provider it bumps. The lock check names that `Lock file out of date` and warns without failing: Terraform does not read those lines, and the versions and hashes are checked as strictly as ever. Record the new constraints with `terraform providers lock` the next time someone works in the environment.
+
 An admitted run is decided as a person's run would be: the environments plan with their identity, and the test lanes run, credentialed ones included. A Dependabot run cannot read Actions or environment secrets, so the identities' IDs must be plain values, which they may be, since an identity is protected by the OIDC subject it trusts, not by its client ID:
 
 ```yaml
