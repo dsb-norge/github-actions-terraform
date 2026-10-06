@@ -66,6 +66,7 @@ trade-offs written out; the rationale is kept short.
 | D20 | **Discovery is the decision engine's**: the create-matrix adapter lists the committed test files, the directories holding `.tf` files and the environments' lock files in the same step that builds the environment matrix, and the engine's `tests.py` derives roots, lanes, environments, provider sets and rows. The module workflow runs the same discovery in the engine's module mode ([Module-ci.md](Module-ci.md) D1). | Every rule sits under the engine's coverage and mutation gates, the environments' lock files are already known there, and one step decides the whole run ([Decision-engine.md](Decision-engine.md) D7, D13). |
 | D21 | **One test job**, with `environment: { name: <row's github-environment>, deployment: false }`: a name that evaluates to `''` means no environment. | Verified on the test bed: an empty name gives no environment, no environment secrets and a `ref:` token subject, in a called workflow too, and creates nothing; two jobs with one step list were only needed if it did not. |
 | D22 | **An environment lane names its credentials**: `required-credentials`, a non-empty list of environment variable names, is what its credential check verifies (§3.6). Without it the check verifies `ARM_TENANT_ID` and `ARM_CLIENT_ID`, as before. Only an environment lane may set it. | A lane whose tests log in to something other than Azure, a GitHub App's private key for the `integrations/github` provider say, can then keep that key as a secret of its own environment, read by that lane alone, instead of a repository secret that any workflow in the repository can read. A list, not a switch that skips the check, keeps the check's purpose: a missing credential is named before init fails. |
+| D23 | **A lock whose `constraints` lines alone are stale warns; it does not fail** (`verify-terraform-lock`, §9.10). The versions and hashes stay strict. | Terraform does not read those lines: `init` neither checks nor rewrites them, a read-only `init` accepts them, and a version is selected against the configuration's constraints, so `init` already fails when the locked version no longer meets them. A stale line hides nothing. Failing on it held every pull request whose module bump changes a provider constraint, and Dependabot never rewrites a lock for a module, so its bump could not pass until a person committed the line ([Dependabot-admission.md](Dependabot-admission.md) P29). |
 
 ## 3. Caller-facing API
 
@@ -1227,14 +1228,16 @@ really differs.
 every required platform, and otherwise the packages are downloaded; a warm cache makes the check
 offline. The default mode, which the environment job uses, is unchanged.
 
-A failure names what differs, in the annotation, the log and the step summary, beside the diff:
-`Lock file incomplete` when the re-lock added a hash, the platform case the check exists for;
-`Lock file out of date` when the two locks differ only in their `constraints` lines and the
+A difference is named in the annotation, the log and the step summary, beside the diff. Two fail
+the step: `Lock file incomplete` when the re-lock added a hash, the platform case the check exists
+for, and `Lock file differs` for anything else. The third is a warning, and the step succeeds:
+`Lock file out of date`, when the two locks differ only in their `constraints` lines and the
 padding before an `=`, which a module's new version or a `required_providers` change causes in
-the default mode (its hashes are complete); `Lock file differs` for anything else. Every failure
-used to say missing hashes, and a constraints-only difference sent people looking for a platform
-that was there. In lock-only mode the comparison ignores the constraints, so only the first and
-the last can occur.
+the default mode. The hashes are then complete, and `is-complete` is `true` (D23). The step
+summary's block is headed ⚠️ instead of ❌ and keeps the command that records the new constraints.
+Every failure used to say missing hashes, and a constraints-only difference sent people looking
+for a platform that was there. In lock-only mode the comparison ignores the constraints, so only
+the two failures can occur.
 
 ## 10. Pitfalls
 
