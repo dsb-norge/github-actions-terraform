@@ -625,7 +625,7 @@ run_test "Pins: the base check reads the merge commit's first parent and the bas
 reset_defaults
 export GH_MOCK_BASE_TIPS="${_moved_base_sha}"
 run_test "Pins: the base moved - refused before any merge call" 1 \
-  "::error title=Auto-merge refused::The base branch 'main' moved after this run planned the pull request (planned on ${_base_sha:0:7}, now ${_moved_base_sha:0:7}), so the merged result was never planned. The next run, after the pull request is brought up to date, decides." \
+  "::error title=Auto-merge refused::The base branch 'main' moved after this run checked the pull request (checked on ${_base_sha:0:7}, now ${_moved_base_sha:0:7}), so the merged result was never checked. The next run, after the pull request is brought up to date, decides." \
   "!calls:pr merge"
 
 reset_defaults
@@ -645,7 +645,7 @@ run_test "Pins: the base moves between attempts - the next attempt refuses and s
 reset_defaults
 export GH_MOCK_COMMIT_LOOKUP="fail"
 run_test "Pins: the planned base cannot be read - not merged" 1 \
-  "::error title=Auto-merge refused::Could not read the base this run planned the pull request on (the first parent of the merge commit ${_merge_sha:0:7}), so the pull request was not merged." \
+  "::error title=Auto-merge refused::Could not read the base this run checked the pull request on (the first parent of the merge commit ${_merge_sha:0:7}), so the pull request was not merged." \
   "!calls:pr merge"
 
 reset_defaults
@@ -659,7 +659,7 @@ export GH_MOCK_MODE="failure"
 export GH_MOCK_MERGE_ERROR="${_head_moved_error}"
 export GH_MOCK_HEAD_NOW="${_moved_head_sha}"
 run_test "Pins: the head moved - GitHub refuses, the message names both heads" 1 \
-  "::error title=Auto-merge refused::The pull request's head moved after this run planned it (planned ${_head_sha:0:7}, now ${_moved_head_sha:0:7}), so it was not merged; the run for the new head decides." \
+  "::error title=Auto-merge refused::The pull request's head moved after this run checked it (checked ${_head_sha:0:7}, now ${_moved_head_sha:0:7}), so it was not merged; the run for the new head decides." \
   "calls:^pr view 123 --repo test-org/test-repo --json headRefOid --jq .headRefOid$"
 
 reset_defaults
@@ -676,7 +676,7 @@ export GH_MOCK_MERGE_ERROR="${_head_moved_error}"
 export GH_MOCK_HEAD_NOW=""
 export input_github_event_context_json="${_event_pending}"
 run_test "Pins: GitHub says the head moved and the head cannot be read - refused as moved" 1 \
-  "The pull request's head moved after this run planned it (planned ${_head_sha:0:7}, now unknown)" "!Merge attempt 2/5"
+  "The pull request's head moved after this run checked it (checked ${_head_sha:0:7}, now unknown)" "!Merge attempt 2/5"
 
 reset_defaults
 export GH_MOCK_MODE="failure"
