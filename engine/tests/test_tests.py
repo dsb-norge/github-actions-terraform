@@ -516,6 +516,14 @@ class ProviderSetTest(unittest.TestCase):
         self.assertEqual([["staging"]], [r["test"]["provider-set-environments"] for r in got])
         self.assertEqual("modules-net--unit-net", got[0]["slug"])
 
+    def test_an_empty_providers_from_runs_each_file_once_without_a_set(self):
+        # A root that needs no provider runs once, never once per set (docs/Terraform-tests.md §3.2).
+        lanes = [{"name": "plain", "providers-from": []}]
+        got = rows([self.FILE], lanes=lanes, locks={"envs/prod": LOCK_A, "envs/staging": LOCK_B})
+        self.assertEqual([("modules-net--unit-net", "Terraform test (modules/net/tests/unit-net.tftest.hcl)", "", "", [])],
+                         [(r["slug"], r["test"]["name"], r["test"]["provider-set"], r["test"]["provider-set-lock"],
+                           r["test"]["provider-set-environments"]) for r in got])
+
     def test_an_environment_without_a_lock_is_reported_and_contributes_no_set(self):
         output = decided([self.FILE], locks={"envs/prod": LOCK_A, "envs/staging": None})
         self.assertEqual([["prod"]], [s["environments"] for s in output["tests"]["provider_sets"]])

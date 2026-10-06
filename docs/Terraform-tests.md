@@ -137,7 +137,7 @@ terraform-test-lanes-yml: |
 | `terraform-version` | no | Overrides `terraform-version`. |
 | `timeout-minutes` | no | Overrides `terraform-test-timeout-minutes`. |
 | `allow-failing-terraform-tests` | no | Overrides the global input. |
-| `providers-from` | no | List of environment names. Restricts the provider sets this lane's files run against to those environments' lock files. Default: every distinct set (§5.3). |
+| `providers-from` | no | List of environment names. Restricts the provider sets this lane's files run against to those environments' lock files. Default: every distinct set (§5.3). An empty list, `providers-from: []`, runs each of the lane's files once without a provider set, and so without a lock file: for a root that needs no provider, which would otherwise run once per set. |
 | `cache-terraform-modules` | no | Overrides the global input for this lane's jobs. |
 | `github-environment` | no | `auto` resolves to `tftest-<lane>`; an explicit value must match `^tftest-[a-z0-9-]{1,40}$`. The lane's jobs then run inside that GitHub Environment: its secrets, its OIDC subject, no deployment record. §3.6. |
 | `required-credentials` | no | Environment lanes only; on a lane without `github-environment` it is a validation error. The environment variables the lane's credential check requires (§3.6, D22): a non-empty list of names, each matching `^[A-Za-z_][A-Za-z0-9_]*$`. Default `[ARM_TENANT_ID, ARM_CLIENT_ID]`. |
