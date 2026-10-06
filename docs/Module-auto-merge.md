@@ -85,8 +85,9 @@ hold, and the notice names the first that does not:
    constraint allows, before and after; a module's selected version or ref), the major stays the
    same, and below 1.0 the minor too. A version that cannot be read, facts that were not
    gathered, and a change with no dependency the admission recognised are not eligible. The
-   project workflow's auto-merge applies the same rule, through the same function
-   (`automerge.leaves_major`, [Auto-merge.md](Auto-merge.md) D15).
+   project workflow's auto-merge applies the rule through the same function
+   (`automerge.leaves_major`) but for the 0.x minor, which its plan limits judge there instead
+   ([Auto-merge.md](Auto-merge.md) D15).
 
 Why a signature, and why GitHub's: a commit's author is whatever its maker says, so anyone with
 write access can author a commit as `dependabot[bot]`. Dependabot's commits are signed by GitHub

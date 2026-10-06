@@ -489,8 +489,9 @@ on:
             name someone: an empty list is a validation error, never "everyone".
 
           A pull request run by dependabot[bot] also needs the Dependabot admission's facts ('dependabot-admission-enabled',
-          on by default): it merges only when every dependency the admission judged stays within its major, and below
-          1.0 within its minor. A major is a person's decision (docs/Auto-merge.md D15).
+          on by default): it merges only when every dependency the admission judged stays within its major (0.x to
+          1.0 is a new major; a 0.x minor is not, the plan limits judge it). A major is a person's decision
+          (docs/Auto-merge.md D15).
 
           NOTE: This applies to all environments; an environment's own 'pr-auto-merge-from-actors-yml' replaces it.
         required: false
