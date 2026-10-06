@@ -311,7 +311,8 @@ on:
         description: |
           Whether to verify that the committed '.terraform.lock.hcl' contains h1: hashes for all required platforms.
           The check runs after 'terraform init' on pull_request events; push/dispatch/schedule runs on the default branch
-          skip it since verification has already happened at PR time.
+          skip it since verification has already happened at PR time. A lock whose 'constraints' lines alone are stale,
+          after a module's new version, gets a warning, not a failure.
 
           Set this to 'false' to disable lock file verification. For per environment control specify this directly in the environment specification.
         required: false

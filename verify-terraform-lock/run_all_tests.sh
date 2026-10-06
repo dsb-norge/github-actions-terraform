@@ -191,19 +191,23 @@ assert "Modified lock summary includes fix command" \
 assert "A missing hash is named as one" \
   grep -qF "::error title=Lock file incomplete::.terraform.lock.hcl in '${WORK_DIR}' is missing hashes for one or more required platforms" "${_test_output}"
 
-# Test 2b: only the constraints line changed (a module's new version) → named as outdated constraints
+# Test 2b: only the constraints line changed (a module's new version) → a warning, and the check passes
 setup_workdir
 write_provider_lock
 install_stub_rewrites 's/constraints = ">= 3.0.0, < 5.0.0"/constraints = ">= 3.0.0, >= 4.0.0, < 5.0.0"/'
 run_step
-assert "Outdated constraints fail with exit 1 and is-complete=false" \
-  test "${LAST_EXIT}" -eq 1 -a "$(get_output is-complete)" = "false"
-assert "Outdated constraints are named as such, not as missing hashes" \
-  grep -qF "::error title=Lock file out of date::.terraform.lock.hcl in '${WORK_DIR}' records provider constraints the configuration no longer has; its hashes are complete" "${_test_output}"
+assert "Outdated constraints pass with exit 0 and is-complete=true" \
+  test "${LAST_EXIT}" -eq 0 -a "$(get_output is-complete)" = "true"
+assert "Outdated constraints are a warning named as such" \
+  grep -qF "::warning title=Lock file out of date::.terraform.lock.hcl in '${WORK_DIR}' records provider constraints the configuration no longer has; its hashes are complete, so the check passes" "${_test_output}"
+assert "Outdated constraints raise no error annotation and no OK notice" \
+  bash -c '! grep -q "^::error\|^::notice" "${1}"' _ "${_test_output}"
 assert "Outdated constraints never say a hash is missing" \
   bash -c '! grep -q "missing hashes\|missing platform hashes" "${1}" "${2}"' _ "${_test_output}" "${GITHUB_STEP_SUMMARY}"
-assert "Outdated constraints get their own summary heading, commit message and the diff" \
-  bash -c 'grep -qF "### ❌ Terraform lock file records outdated provider constraints" "${1}" \
+assert "Outdated constraints get a warning heading, the commit message and the diff" \
+  bash -c 'grep -qF "### ⚠️ Terraform lock file records outdated provider constraints" "${1}" \
+    && ! grep -qF "### ❌" "${1}" \
+    && grep -qF "so this is a warning: the check passes" "${1}" \
     && grep -qF "git commit -m '"'"'fix: record the providers'"'"' constraints in the lock file'"'"'" "${1}" \
     && grep -qF "+  constraints = \">= 3.0.0, >= 4.0.0, < 5.0.0\"" "${1}"' _ "${GITHUB_STEP_SUMMARY}"
 
