@@ -26,9 +26,10 @@ LOCK_ATTRIBUTE = re.compile(r'^\s*(version|constraints)\s*=\s*"([^"]*)"', re.M)
 LOCK_HASH = re.compile(r'"((?:h1|zh):[^"]+)"')
 CURL = ("curl", "--fail", "--silent", "--show-error", "--location", "--max-time", "20", "--retry", "1")
 CLASSES = {"official": "signed by HashiCorp", "partner": "signed by a HashiCorp partner", "self": "self-signed"}
-# A registry module source, optionally with the registry's host.
+# A registry module source, optionally with the registry's host, and with an optional subdirectory: a module
+# inside the package, which is the package's version, so it is judged as the package.
 REGISTRY_SOURCE = re.compile(r"(?:registry\.terraform\.io/)?([A-Za-z0-9][A-Za-z0-9_-]*)/([A-Za-z0-9][A-Za-z0-9_-]*)/"
-                             r"([a-z0-9]+)")
+                             r"([a-z0-9]+)(?://[^?]*)?")
 # A GitHub source in the forms Terraform accepts, with an optional subdirectory and query.
 GITHUB_SOURCE = re.compile(r"(?:git::https://github\.com/|git::ssh://git@github\.com/|git@github\.com:|github\.com/)"
                            r"([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9_.-]+?)(?:\.git)?(?://[^?]*)?(?:\?(.*))?")

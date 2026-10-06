@@ -191,6 +191,10 @@ class LinesTest(unittest.TestCase):
                  "git@github.com:o/r.git": ("github", "o", "r", ""),
                  "Azure/naming/azurerm": ("registry", "Azure", "naming", ""),
                  "registry.terraform.io/Azure/naming/azurerm": ("registry", "Azure", "naming", ""),
+                 "Azure/avm-res-network-firewallpolicy/azurerm//modules/rule_collection_groups":
+                     ("registry", "Azure", "avm-res-network-firewallpolicy", ""),
+                 "registry.terraform.io/Azure/naming/azurerm//modules/x": ("registry", "Azure", "naming", ""),
+                 "Azure/naming/azurerm//modules/x?ref=v1": ("other", "", "", ""),
                  "./modules/x": ("other", "", "", ""),
                  "s3::https://bucket/x.zip": ("other", "", "", ""),
                  "app.terraform.io/o/x/aws": ("other", "", "", "")}
@@ -431,6 +435,17 @@ class GatherTest(unittest.TestCase):
         gathered = facts.gather(Tools(answers), now=1)
         self.assertEqual([["a/.terraform.lock.hcl", "b/.terraform.lock.hcl"]],
                          [d["files"] for d in gathered["dependencies"]])
+
+    def test_a_registry_module_with_a_subdirectory_is_its_package(self):
+        old = 'module "rules" {\n  source  = "Azure/naming/azurerm//modules/rules"\n  version = "0.4.3"\n}\n'
+        answers = {LS: "", DIFF: raw(("100644", "100644", "M", "main/rules.tf")),
+                   show("HEAD^1", "main/rules.tf"): old, show("HEAD", "main/rules.tf"): old.replace("0.4.3", "0.4.4"),
+                   curl("modules/Azure/naming/azurerm/0.4.4"): {"published_at": "2026-09-11T14:13:20Z"}}
+        gathered = facts.gather(Tools(answers), now=support.NOW)
+        self.assertEqual([{"kind": "module", "address": "Azure/naming/azurerm//modules/rules", "from": "0.4.3",
+                           "to": "0.4.4", "files": ["main/rules.tf"], "source_kind": "registry",
+                           "namespace": "Azure", "name": "naming",
+                           "facts": {"published": support.NOW - 10 * support.DAY}}], gathered["dependencies"])
 
     def test_a_provider_on_another_host_asks_nothing(self):
         old, new = ('provider "registry.example.com/o/x" {\n  version = "1.0.0"\n  hashes = []\n}\n',
