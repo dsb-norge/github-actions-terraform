@@ -4,7 +4,8 @@
 #
 # Merges a pull request using admin privileges when eligibility conditions are met,
 # pinned to what the run evaluated (docs/Auto-merge.md §6): the base the plans saw
-# must still be the base branch's tip, and GitHub must find the head the run planned.
+# must still be the base branch's tip, and GitHub must find the head the run checked: a project run
+# plans it, a module run validates and tests it, so the messages say 'checked'.
 # Uses GitHub event context data to determine PR state instead of additional API calls.
 #
 # Required environment variables:
@@ -144,22 +145,22 @@ function check_base_unchanged() {
 
   planned_base=$(gh api "repos/${repo_ref}/commits/${merge_sha}" --jq '.parents[0].sha' 2>/dev/null) || planned_base=""
   if ! is_commit_sha "${planned_base}"; then
-    refuse "Could not read the base this run planned the pull request on (the first parent of the merge commit ${merge_sha:0:7}), so the pull request was not merged."
+    refuse "Could not read the base this run checked the pull request on (the first parent of the merge commit ${merge_sha:0:7}), so the pull request was not merged."
     return ${MERGE_REFUSED}
   fi
 
   base_tip=$(gh api "repos/${repo_ref}/branches/${base_ref}" --jq '.commit.sha' 2>/dev/null) || base_tip=""
   if ! is_commit_sha "${base_tip}"; then
-    refuse "Could not read the tip of the base branch '${base_ref}', so whether it moved after this run planned the pull request is unknown; the pull request was not merged."
+    refuse "Could not read the tip of the base branch '${base_ref}', so whether it moved after this run checked the pull request is unknown; the pull request was not merged."
     return ${MERGE_REFUSED}
   fi
 
   if [[ "${planned_base}" != "${base_tip}" ]]; then
-    refuse "The base branch '${base_ref}' moved after this run planned the pull request (planned on ${planned_base:0:7}, now ${base_tip:0:7}), so the merged result was never planned. The next run, after the pull request is brought up to date, decides."
+    refuse "The base branch '${base_ref}' moved after this run checked the pull request (checked on ${planned_base:0:7}, now ${base_tip:0:7}), so the merged result was never checked. The next run, after the pull request is brought up to date, decides."
     return ${MERGE_REFUSED}
   fi
 
-  log-info "Base branch '${base_ref}' is still at ${base_tip:0:7}, the base this run planned on"
+  log-info "Base branch '${base_ref}' is still at ${base_tip:0:7}, the base this run checked on"
   return ${MERGE_OK}
 }
 
@@ -196,7 +197,7 @@ function attempt_merge() {
   if [[ -n "${head_now}" && "${head_now}" != "${head_sha}" ]] ||
     { [[ -z "${head_now}" ]] && grep -qi 'head branch was modified' <<<"${merge_output}"; }; then
     local now="${head_now:0:7}"
-    refuse "The pull request's head moved after this run planned it (planned ${head_sha:0:7}, now ${now:-unknown}), so it was not merged; the run for the new head decides."
+    refuse "The pull request's head moved after this run checked it (checked ${head_sha:0:7}, now ${now:-unknown}), so it was not merged; the run for the new head decides."
     return ${MERGE_REFUSED}
   fi
 
@@ -305,7 +306,7 @@ function main() {
 
   # The merge is pinned to what the run planned; without the pins there is nothing to pin it to
   if [[ -z "${head_sha}" ]]; then
-    log-error "Missing required input: head-sha, the pull request's head SHA this run planned; not merging"
+    log-error "Missing required input: head-sha, the pull request's head SHA this run checked; not merging"
     return 1
   fi
   if ! is_commit_sha "${head_sha}"; then

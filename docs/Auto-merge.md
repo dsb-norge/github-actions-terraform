@@ -272,9 +272,9 @@ Before every merge attempt it reads the merge commit's first parent
 `head-sha` or `merge-sha` that is not a full hexadecimal SHA fails the step before any `gh` call,
 and an event without `base.ref` fails it before any merge attempt. Each attempt then:
 
-- base tip differs from the merge commit's first parent: not merged, `The base branch 'main' moved after this run planned the pull request (planned on <sha7>, now <sha7>), so the merged result was never planned. The next run, after the pull request is brought up to date, decides.`
+- base tip differs from the merge commit's first parent: not merged, `The base branch 'main' moved after this run checked the pull request (checked on <sha7>, now <sha7>), so the merged result was never checked. The next run, after the pull request is brought up to date, decides.`
 - otherwise `gh pr merge --admin --rebase --delete-branch --match-head-commit <head-sha>`; GitHub
-  refuses a moved head: `The pull request's head moved after this run planned it (planned <sha7>, now <sha7>), so it was not merged; the run for the new head decides.` (the current head read with `gh pr view --json headRefOid` after the failed merge; when it cannot be read,
+  refuses a moved head: `The pull request's head moved after this run checked it (checked <sha7>, now <sha7>), so it was not merged; the run for the new head decides.` (the current head read with `gh pr view --json headRefOid` after the failed merge; when it cannot be read,
   GitHub's `Head branch was modified` wording is the sign, and the head is `now unknown`).
 
 Every refusal is an `::error title=Auto-merge refused::` annotation; an input the step cannot use,
