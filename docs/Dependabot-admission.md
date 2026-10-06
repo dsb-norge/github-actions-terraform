@@ -143,8 +143,9 @@ From the shape, the dependencies the pull request changes:
   and each `required_providers` entry whose `version` changed in a directory without a lock file;
 - a **module**: each `module` block whose `version` changed (a registry source
   `<namespace>/<name>/<provider>`) or whose GitHub source's `ref` changed
-  (`github.com/<owner>/<repo>` or `git::https://github.com/<owner>/<repo>.git`, either with an
-  optional `//<subdirectory>`).
+  (`github.com/<owner>/<repo>` or `git::https://github.com/<owner>/<repo>.git`). Either kind may
+  name a module inside the package with `//<subdirectory>`; the subdirectory comes with the
+  package's version, so the package is what is judged.
 
 A grouped pull request changes several dependencies in several directories. Each distinct
 dependency, old version and new version is checked once, and the report lists every file it appears
@@ -558,6 +559,7 @@ it does today, and a refused run runs nothing.
 | P25 | terraform-docs lists the providers' constraints and the modules' versions in the README, as the module template configures it, and a Dependabot run never got a docs commit. | Every Dependabot bump in a module repository failed the docs check, admitted or not (seen on the test bed). | D22. |
 | P26 | The module docs job's App token was keyed on the run's actor alone, `github.actor != 'dependabot[bot]'`. | A person's run on a Dependabot pull request (reopened, labelled, edited) is not Dependabot's, so the token was minted and the README committed on a change the admission never judged, and the App's run that followed was judged by nobody either; module auto-merge would accept that docs commit. | The token is also keyed on the pull request's author: on Dependabot's pull request it is minted only when the run was admitted ([Module-auto-merge.md](Module-auto-merge.md) M4). |
 | P27 | The Dependabot runner type is **Labeled runner** (repository or organization setting) with no runner of that label, or a runner group the repository has no access to. | Every update job stays queued for a day and is cancelled, so Dependabot never opens a pull request, and nothing reports it: the admission never has anything to judge (seen in several calling repositories). | The runner type set to **Standard GitHub runner**, which the update job needs nothing beyond; [Migration-v0-to-v1.md](Migration-v0-to-v1.md) §2.13. |
+| P28 | A registry module named with a subdirectory, `<namespace>/<name>/<provider>//<subdirectory>`, was not recognised as a registry source. | Its every bump was refused as "neither a registry.terraform.io module nor a GitHub source", so no such pull request could be admitted (seen in a calling repository, on a firewall policy module's rule collection groups). | The registry source takes an optional subdirectory, as the GitHub sources did; the package is judged (§4.2). |
 
 ## 17. Tests
 
