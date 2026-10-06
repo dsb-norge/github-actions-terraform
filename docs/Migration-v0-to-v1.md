@@ -44,7 +44,7 @@ Answer these from the repository before changing anything; each answer points at
   and `schedule`? (§2.12)
 - [ ] Does Dependabot open pull requests in the repository, and do the Azure IDs reach the calling
   workflow as secrets? Which providers and modules come from outside `hashicorp`, `microsoft`, `Azure`
-  and `dsb-norge`? (§2.13)
+  and `dsb-norge`? Do Dependabot's update jobs get a runner at all? (§2.13)
 - [ ] Does a calling workflow set `concurrency` with `cancel-in-progress: true`? (§3.2)
 - [ ] Is the workflow called from more than one workflow file for the same pull requests? (§3.4)
 
@@ -265,6 +265,18 @@ Do the same for every test lane that needs credentials: an admitted run runs tho
 lane whose IDs are still environment secrets fails there. A secret a test needs beyond the IDs becomes
 a Dependabot secret. Allow other publishers with `dependabot-admission-yml` (`allow: [elastic]`);
 `dependabot-admission-enabled: false` runs Dependabot's pull requests as before.
+
+Check that Dependabot's update jobs run at all, before you count on its pull requests. Each update
+appears in the repository's Actions as a run named after its directories, `terraform in /envs/… -
+Update #…`. One that stays queued for a day and is then cancelled, every day, never opens a pull
+request, and nothing else says so. The cause is the Dependabot **runner type** (repository or
+organization settings, Advanced Security, Dependabot): **Labeled runner** sends the update jobs to
+self-hosted runners with that label (`dependabot` by default), and none exists, or the repository is
+not in the runner group's access. Choose **Standard GitHub runner** unless Dependabot must reach a
+private registry: the update job only reads the repository and public registries and opens pull
+requests, and the pull requests' CI runs on the calling workflow's own runners either way. A
+labeled runner also needs Docker. The setting has no REST API; the organization's applies to every
+repository that does not override it.
 
 ## 3. Should do / check
 
