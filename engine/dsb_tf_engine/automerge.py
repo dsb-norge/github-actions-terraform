@@ -152,21 +152,21 @@ def wants_facts(document, policy):
     return _applies(document, policy) and _scope_problem(document, policy) is None
 
 
-def _breaking(old, new):
-    """Whether a version change leaves what semver promises compatible: another major, or below 1.0 another
-    minor. A version that cannot be read is treated as breaking."""
+def _breaking(old, new, minor_below_one):
+    """Whether a version change leaves its major: another major, or with `minor_below_one` below 1.0 another
+    minor, which semver promises nothing about. A version that cannot be read is treated as breaking."""
     before, after = admission.parse_version(old), admission.parse_version(new)
     if before is None or after is None:
         return True
-    return before[0] != after[0] or (before[0] == 0 and before[1] != after[1])
+    return before[0] != after[0] or (minor_below_one and before[0] == 0 and before[1] != after[1])
 
 
-def leaves_major(dependencies):
-    """How the first dependency that leaves its major (below 1.0, its minor) moves, e.g. 'provider
-    hashicorp/azurerm from 4.81.0 to 5.8.0', or None: module auto-merge's rule 7 and the project
-    evaluator's D15 (docs/Auto-merge.md §5.3)."""
+def leaves_major(dependencies, minor_below_one=True):
+    """How the first dependency that leaves its major moves, e.g. 'provider hashicorp/azurerm from 4.81.0 to
+    5.8.0', or None. Module auto-merge's rule 7 counts a 0.x minor as a major; the project evaluator's D15
+    does not, its plan limits judge one (docs/Auto-merge.md §5.3)."""
     for dependency in dependencies:
-        if _breaking(dependency["from"], dependency["to"]):
+        if _breaking(dependency["from"], dependency["to"], minor_below_one):
             name = dependency["address"].removeprefix(admission.REGISTRY + "/")
             return f"{dependency['kind']} {name} from {dependency['from']} to {dependency['to']}"
     return None

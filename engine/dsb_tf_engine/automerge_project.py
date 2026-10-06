@@ -595,9 +595,8 @@ def dependabot_problem(actor, relevance):
     elif not block["dependencies"]:
         problem = "Dependabot's pull request changes no dependency the admission recognised"
     else:
-        move = automerge.leaves_major(block["dependencies"])
-        problem = (f"Dependabot's pull request moves {move}, past its major (below 1.0, its minor); a person decides "
-                   "that") if move else ""
+        move = automerge.leaves_major(block["dependencies"], minor_below_one=False)
+        problem = f"Dependabot's pull request moves {move}, past its major; a person decides that" if move else ""
     return problem
 
 

@@ -939,16 +939,16 @@ class DependabotTest(unittest.TestCase):
         self.assertEqual(["    ✅ prod", "  Pull request: ✅ Dependabot's majors",
                           "  ✅ FINAL RESULT: All environments eligible - PR CAN be automerged"], log[-4:-1])
 
-    def test_a_major_or_a_minor_below_one_waits_for_a_person(self):
+    def test_a_major_waits_for_a_person(self):
         cases = [((self.PROVIDER, "4.81.0", "5.8.0"),),
-                 ((self.PROVIDER, "4.81.0", "4.82.0"), (self.MODULE, "0.3.1", "0.4.0")),
+                 ((self.PROVIDER, "4.81.0", "4.82.0"), (self.MODULE, "0.9.2", "1.0.0")),
                  ((self.PROVIDER, "4.81.0", "next"),)]
-        reasons = ["Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major "
-                   "(below 1.0, its minor); a person decides that",
-                   "Dependabot's pull request moves module Azure/avm-res-network-vnet/azurerm from 0.3.1 to 0.4.0, past "
-                   "its major (below 1.0, its minor); a person decides that",
-                   "Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to next, past its major "
-                   "(below 1.0, its minor); a person decides that"]
+        reasons = ["Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to 5.8.0, past its major; a "
+                   "person decides that",
+                   "Dependabot's pull request moves module Azure/avm-res-network-vnet/azurerm from 0.9.2 to 1.0.0, past "
+                   "its major; a person decides that",
+                   "Dependabot's pull request moves provider hashicorp/azurerm from 4.81.0 to next, past its major; a "
+                   "person decides that"]
         for moves, reason in zip(cases, reasons):
             with self.subTest(moves=moves):
                 verdict = self.judge(self.admission(*moves))
@@ -960,6 +960,12 @@ class DependabotTest(unittest.TestCase):
                 self.assertEqual(["    ✅ prod", "  Pull request: ❌ Dependabot's majors",
                                   "  ❌ FINAL RESULT: Every environment eligible, the pull request is not - PR CANNOT be "
                                   "automerged"], log[-4:-1])
+
+    def test_a_minor_below_one_is_the_plans_to_judge(self):
+        # Unlike module auto-merge's rule 7: a project plans every environment (docs/Auto-merge.md D15).
+        verdict = self.judge(self.admission((self.MODULE, "0.17.1", "0.22.2"), (self.PROVIDER, "0.3.0", "0.4.0")))
+        self.assertTrue(verdict["eligible"])
+        self.assertIn("  Dependabot's majors: PASS", render(verdict))
 
     def test_without_the_admissions_facts_it_does_not_merge(self):
         no_facts = ("Dependabot's pull request has no admission facts in the relevance file (is "
