@@ -13,7 +13,9 @@
 #      working directory; this updates the file in-place if any platform
 #      hashes were missing
 #   3. Compares the result to the saved copy
-#   4. Fails with a clear remediation message if they differ
+#   4. Fails with a clear remediation message if they differ, except when
+#      only the 'constraints' lines differ: that warns and passes, since
+#      Terraform does not read those lines and the hashes are complete
 #
 # Note that we deliberately let 'terraform providers lock' overwrite the
 # committed file:
@@ -158,12 +160,12 @@ function write_success_summary {
   } >>"${GITHUB_STEP_SUMMARY}"
 }
 
-# Write the failure block to $GITHUB_STEP_SUMMARY (if set).
+# Write the difference block to $GITHUB_STEP_SUMMARY (if set): a failure, or for outdated constraints a warning.
 # Args:
 #   $1 - path to the saved copy of the original lock file
 #   $2 - path to the (now updated) committed lock file
 #   $3 - what differs, as lock_difference names it
-function write_failure_summary {
+function write_difference_summary {
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] && return 0
   local committed="${1}"
   local updated="${2}"
@@ -176,15 +178,16 @@ function write_failure_summary {
   -platform=${p}"
   done
 
-  local heading why commit_message
+  local icon="❌" heading why commit_message
   case "${difference}" in
     hashes)
       heading="Terraform lock file is missing platform hashes"
       why="This usually happens when someone runs \`terraform init\` on a single platform (e.g. their Mac or Windows machine) and commits the resulting lock file. Other platforms — including the Linux CI runner — will then fail provider checksum verification."
       commit_message="fix: lock providers for all required platforms" ;;
     constraints)
+      icon="⚠️"
       heading="Terraform lock file records outdated provider constraints"
-      why="The configuration's provider constraints changed, by a module's new version or a \`required_providers\` block, and the committed lock file still records the old ones. Its hashes are complete; locking again records the new constraints."
+      why="The configuration's provider constraints changed, by a module's new version or a \`required_providers\` block, and the committed lock file still records the old ones. Its hashes are complete, and Terraform does not read those lines, so this is a warning: the check passes. Locking again records the new constraints."
       commit_message="fix: record the providers' constraints in the lock file" ;;
     *)
       heading="Terraform lock file differs from a fresh lock"
@@ -193,7 +196,7 @@ function write_failure_summary {
   esac
 
   {
-    echo "### ❌ ${heading}"
+    echo "### ${icon} ${heading}"
     echo ""
     echo "**Directory:** \`${input_working_directory}\`"
     echo ""
@@ -326,24 +329,29 @@ function main {
     return 0
   fi
 
-  local difference
+  # Stale constraints lines warn and pass: Terraform does not read them (init neither checks nor rewrites them,
+  # and fails by itself when a locked version leaves the configuration's constraints), and Dependabot never
+  # rewrites a lock for a module bump, so failing held every such pull request for a person's commit.
+  local difference outcome=1 is_complete="false"
   difference="$(lock_difference "${committed}" "${expected}")"
   case "${difference}" in
     hashes)
       echo "::error title=Lock file incomplete::.terraform.lock.hcl in '${input_working_directory}' is missing hashes for one or more required platforms"
       log-error "lock file is missing hashes for one or more required platforms" ;;
     constraints)
-      echo "::error title=Lock file out of date::.terraform.lock.hcl in '${input_working_directory}' records provider constraints the configuration no longer has; its hashes are complete"
-      log-error "lock file records provider constraints the configuration no longer has; its hashes are complete" ;;
+      echo "::warning title=Lock file out of date::.terraform.lock.hcl in '${input_working_directory}' records provider constraints the configuration no longer has; its hashes are complete, so the check passes"
+      log-warn "lock file records provider constraints the configuration no longer has; its hashes are complete, so the check passes"
+      outcome=0
+      is_complete="true" ;;
     *)
       echo "::error title=Lock file differs::.terraform.lock.hcl in '${input_working_directory}' differs from what 'terraform providers lock' writes for the required platforms"
       log-error "lock file differs from what 'terraform providers lock' writes for the required platforms" ;;
   esac
   log-multiline "Diff (committed vs expected)" "$(diff -u "${committed}" "${expected}" || true)"
-  write_failure_summary "${committed}" "${expected}" "${difference}"
-  set-output "is-complete" "false"
+  write_difference_summary "${committed}" "${expected}" "${difference}"
+  set-output "is-complete" "${is_complete}"
   rm -rf "${committed_snapshot}" "${lock_only_dir}"
-  return 1
+  return "${outcome}"
 }
 
 # Run main function

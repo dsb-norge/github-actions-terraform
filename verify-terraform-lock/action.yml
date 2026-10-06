@@ -17,7 +17,10 @@ description: |
   2. Runs 'terraform providers lock' for the required platforms
      (reuses '.terraform/' from the prior init step)
   3. Compares the result against the original
-  4. Fails with a clear remediation message if anything would change
+  4. Fails with a clear remediation message if anything would change,
+     except when only the 'constraints' lines differ: Terraform does not
+     read them, so that is a warning ('Lock file out of date') and the
+     step succeeds
 
   The original lock file is always restored before the action exits,
   so subsequent steps see the committed file unchanged.
