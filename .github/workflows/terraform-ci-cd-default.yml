@@ -1883,6 +1883,20 @@ jobs:
           status-destroy: ${{ steps.destroy.outcome }}
           destroy-count-destroy: ${{ steps.parse-destroy-apply.outputs.count-destroy }}
           destroy-time: ${{ steps.destroy.outputs.apply-time }}
+          # A scheduled plan-only run's plan with changes: drift, or a default branch
+          # that is not applied (docs/Drift-detection.md §3).
+          event-name: ${{ github.event_name }}
+          apply-granted: ${{ contains(matrix.vars.goals-granted, 'apply') }}
+          status-plan: ${{ steps.plan.outcome }}
+          plan-count-total: ${{ steps.parse-plan.outputs.count-total }}
+          plan-count-add: ${{ steps.parse-plan.outputs.count-add }}
+          plan-count-change: ${{ steps.parse-plan.outputs.count-change }}
+          plan-count-destroy: ${{ steps.parse-plan.outputs.count-destroy }}
+          plan-count-import: ${{ steps.parse-plan.outputs.count-import }}
+          plan-count-move: ${{ steps.parse-plan.outputs.count-move }}
+          plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
+          plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
+          plan-complete: ${{ steps.parse-plan.outputs.plan-complete }}
         continue-on-error: true # never fail the job over run-page reporting
 
       # Outcome gates for the mutating steps (docs/Apply-and-destroy-reporting.md

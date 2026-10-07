@@ -11,6 +11,9 @@
 #   2. Emits one ::notice (success) or ::error (anything else) workflow
 #      command for the apply step, and one for the destroy step, when the
 #      step ran. Nothing for a step that did not run.
+#   3. Emits one ::warning when a scheduled run that does not apply planned
+#      changes, or could not read them (docs/Drift-detection.md §3): drift,
+#      or a default branch that is not applied. The run stays green.
 #
 # Never fails the job: reporting must not redden a deploy. Every problem
 # is a log-warn and a fallback.
@@ -24,6 +27,11 @@
 #   input_apply_count_{add,change,destroy}, input_apply_time
 #   input_status_destroy      - Destroy outcome; empty = did not run
 #   input_destroy_count_destroy, input_destroy_time
+#   input_event_name          - github.event_name; the plan warning is for 'schedule' only
+#   input_apply_granted       - 'true' when the run granted apply; a reconcile is not warned about
+#   input_status_plan         - Plan outcome; the warning needs 'success'
+#   input_plan_count_{total,add,change,destroy,import,move,remove}
+#   input_plan_has_output_only_changes, input_plan_complete
 #
 # Standard GitHub environment variables used:
 #   GITHUB_STEP_SUMMARY - the job summary file; unset → summary skipped, annotations still emitted
@@ -57,6 +65,44 @@ function annotate_operation {
     echo "::notice title=$(escape-annotation-property "${verb} succeeded")::${env_msg} — ${counts}${when}"
   else
     echo "::error title=$(escape-annotation-property "${verb} failed")::${env_msg} — ${verb,,} did not complete (outcome '${outcome}'); infrastructure may be partially ${partial}"
+  fi
+}
+
+# The scheduled plan of an environment the run does not apply. Silent on every
+# other run: a pull request's plan is reviewed, a push's plan is applied, and a
+# scheduled reconcile applies what it plans.
+function annotate_scheduled_plan {
+  [ "${input_event_name:-}" = 'schedule' ] || return 0
+  [ "${input_apply_granted:-false}" = 'true' ] && return 0
+  [ "${input_status_plan:-}" = 'success' ] || return 0
+
+  local env_msg
+  env_msg="$(escape-annotation-message "${input_environment_name}")"
+  # '?' is the only unreadable value: 'false' is a targeted or deferred plan,
+  # whose counts are valid.
+  if [ "${input_plan_complete:-}" = '?' ] || [ "${input_plan_count_total:-}" = '?' ]; then
+    echo "::warning title=$(escape-annotation-property "Plan not read")::${env_msg} — the scheduled plan's changes could not be read; see the plan in the job log"
+    return 0
+  fi
+
+  local total="${input_plan_count_total:-0}"
+  [[ "${total}" =~ ^[0-9]+$ ]] || total=0
+  if [ "${total}" -gt 0 ]; then
+    # The non-zero counts only: a scheduled plan usually changes one or two
+    # kinds of thing, and six counts of which four are zero bury them.
+    local detail="" kind value
+    for kind in add change destroy import move remove; do
+      value="input_plan_count_${kind}"
+      value="${!value:-}"
+      if [[ "${value}" =~ ^[0-9]+$ ]] && [ "${value}" -gt 0 ]; then
+        detail="${detail:+${detail}, }${value} to ${kind}"
+      fi
+    done
+    [ -n "${detail}" ] && detail=" (${detail})"
+    local noun="changes"; [ "${total}" -eq 1 ] && noun="change"
+    echo "::warning title=$(escape-annotation-property "Plan has changes")::${env_msg} — the scheduled plan has ${total} ${noun}${detail}: drift, or a default branch that is not applied"
+  elif [ "${input_plan_has_output_only_changes:-false}" = 'true' ]; then
+    echo "::warning title=$(escape-annotation-property "Plan has changes")::${env_msg} — the scheduled plan changes only outputs: drift, or a default branch that is not applied"
   fi
 }
 
@@ -110,6 +156,7 @@ function main {
     "${apply_counts}" "${input_apply_time:-}" "applied"
   annotate_operation "Destroy" "${input_status_destroy:-}" \
     "${d_destroy} destroyed" "${input_destroy_time:-}" "destroyed"
+  annotate_scheduled_plan
 
   write_step_summary
 
