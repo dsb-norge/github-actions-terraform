@@ -29,7 +29,8 @@
     "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
     "runs-on": "ubuntu-latest",
     "dependabot-admission-enabled": true,
-    "dependabot-admission-yml": ""
+    "dependabot-admission-yml": "",
+    "notifications-yml": ""
   },
   "ref_name": "main",
   "default_branch": "main",
@@ -139,7 +140,8 @@
               "apply",
               "destroy-plan",
               "destroy"
-            ]
+            ],
+            "notifications": null
           }
         },
         {
@@ -231,7 +233,8 @@
               "lint",
               "plan",
               "apply"
-            ]
+            ],
+            "notifications": null
           }
         },
         {
@@ -323,7 +326,8 @@
               "format",
               "validate",
               "lint"
-            ]
+            ],
+            "notifications": null
           }
         }
       ]

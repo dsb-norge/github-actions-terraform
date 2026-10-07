@@ -213,7 +213,7 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | Command | Input | Output | Used by |
 |---|---|---|---|
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
-| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, and the runner's environment | the per-stage matrices, the counts and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing`, the admission's and auto-merge's outputs and the decision file (§3.3) | the `create-tf-vars-matrix` action |
+| `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, `--notify-target-file` holding `notify-target-json` (optional, empty for none), and the runner's environment | the per-stage matrices, the counts, `notify-active`, `notify-target-json` and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing`, the admission's and auto-merge's outputs and the decision file (§3.3) | the `create-tf-vars-matrix` action |
 | `evaluate-automerge` | `--metadata-files-pattern`, `--relevance-file`, `--test-metadata-files-pattern` (globs and a path, matched in the working directory, empty for none), `--stage-results-file` holding `stage-results-json`, and `GITHUB_ACTOR` | `is-eligible` in `$GITHUB_OUTPUT`, the log, a notice per tolerated failing test | the `evaluate-automerge-eligibility` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
@@ -346,6 +346,10 @@ The features extend it; the full document, as they specify it:
   status, previous name), with `files_truncated`. A listing that failed is `available: false` with its reason, which the
   rule turns into "not eligible", never a fault. An absent section on a run the rule judges is "not
   gathered", not eligible either.
+- `notify_target` is the Teams notification target the workflow read from its variables
+  ([Notifications.md](Notifications.md) §6.1): exactly the strings `bot_url`, `bot_audience` and
+  `alias`, an unset variable `""`. Absent means none was handed over, which the engine reads as no
+  target; a module's document never carries it.
 - `caller.workflow_name` (`GITHUB_WORKFLOW`) scopes the tests head per calling workflow, and
   `event.actor` (`GITHUB_ACTOR`) is how Dependabot runs are recognised; both are present only when
   the runner sets them.
@@ -474,6 +478,7 @@ The other specs name the same data under their own output names. The mapping is 
 | Path-relevance.md §6.5, Dispatch-and-triggers.md §5 | the run notice | `notices[]`: the `trigger` lines first, then one per decision kind, in the relevance spec's format |
 | Dispatch-and-triggers.md §5 | the dispatch record line, the empty-schedule notice | `trigger.lines`, in `relevance.json` for the run summary |
 | Module-auto-merge.md §5 | the verdict, `automerge-eligible`, `automerge-confirm-app` | `automerge`: `{"applies": false}`, or `applies`, `author`, `actor`, `eligible`, `reason`, `confirm_app`, `commits[]` (each with `sha`, `author`, `kind`); in the module mode's output and `relevance.json`, and its notice in `notices[]` |
+| Notifications.md §7 | `notify-active`, `notify-target-json` | `notify`: `active`, `reason`, `target` (the checked target, or null); in `relevance.json`; its warnings in `warnings[]`. Project mode only |
 | Dependabot-admission.md §5, §9 | the verdict, `admission-refused`, `admission-reason`, `admission-admitted` | `admission`: `{"applies": false}`, or `applies`, `admitted`, `push_run`, `dependencies[]` (each with its `checks[]`), `problems[]`, `refused_count`, `total`; in `relevance.json` in both modes. The three step outputs are derived from it (`admission-admitted` is `true` only when the run was judged and admitted, which the module workflow's docs push requires); the `admission` head (`comments.heads[]` with `kind` `admission`, state `final`) and an environment head's `not-admitted` state come from it too |
 
 ## 6. The decision procedure

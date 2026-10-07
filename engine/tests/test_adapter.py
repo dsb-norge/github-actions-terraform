@@ -757,7 +757,7 @@ class RunTest(unittest.TestCase):
                           "stage-1-count", "stage-2-count", "stage-3-count", "affected-count", "unaffected-count",
                           "relevance-mode", "relevance-reason", "changed-count", "relevance-file", "tests-matrix-json",
                           "tests-count", "tests-active", "admission-refused", "admission-reason",
-                          "admission-admitted"],
+                          "admission-admitted", "notify-active", "notify-target-json"],
                          list(outputs))
         self.assertEqual(("false", "", "false"), (outputs["admission-refused"], outputs["admission-reason"],
                                                   outputs["admission-admitted"]))
@@ -776,7 +776,14 @@ class RunTest(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             published = json.load(handle)
         self.assertEqual({"schema_version", "relevance", "counts", "environments", "tests", "comments", "notices",
-                          "warnings", "record", "trigger", "ordering", "admission"}, set(published))
+                          "warnings", "record", "trigger", "ordering", "admission", "notify"}, set(published))
+        self.assertEqual({"active": False, "reason": "no target: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and "
+                                                     "TF_NOTIFY_ALIAS are not set", "target": None,
+                          "senders": {name: {"github-environment": name, "extra-envs": {},
+                                             "extra-envs-from-secrets": {}} for name in ("env-a", "b")},
+                          "runs-on": "ubuntu-latest"},
+                         published["notify"])
+        self.assertEqual(("false", "{}"), (outputs["notify-active"], outputs["notify-target-json"]))
         self.assertEqual((["env-a", "b"], ["run", "skip"],
                           {"affected": 1, "unaffected": 1, "by_stage": {"1": 1, "2": 0, "3": 0}}),
                          ([e["environment"] for e in published["environments"]],
@@ -981,6 +988,92 @@ LOCK = '# This file is maintained automatically by "terraform init".\n# Manual e
 TESTS_ON = {**DEFAULT_INPUTS, "terraform-test-enabled": True}
 TEST_PATTERNS = ("*.tftest.hcl", "*.tftest.json")
 TF_PATTERNS = ("*.tf", "*.tf.json")
+
+
+class NotifyTargetTest(unittest.TestCase):
+    TARGET = {"bot-url": "https://relay.example.net/api", "bot-audience": "api://relay", "alias": "tf-alerts"}
+    NO_TARGET = "no target: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are not set"
+    FAULT = ("::error title=create-tf-vars-matrix::the action's input 'notify-target-json' is not a JSON object of "
+             "the strings bot-url, bot-audience and alias")
+
+    def run_with(self, text, environ=None):
+        runner = Runner(self, environ=environ)
+        path = os.path.join(runner.work.name, "target.json")
+        if text is not None:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        runner.tools = FakeTools(api={COMPARE: {"files": [{"filename": "envs/env-a/main.tf"}]}})
+        return adapter.run(runner.inputs_file, runner.environ, runner.log, runner.tools, lambda path: True, False,
+                           path), runner
+
+    def document(self, runner):
+        return json.loads(_groups(runner.log.getvalue())["decision engine input document"])
+
+    def test_a_complete_target_on_a_push_to_the_default_branch_is_published(self):
+        code, runner = self.run_with(json.dumps(self.TARGET) + "\n")
+        self.assertEqual(0, code)
+        outputs = runner.outputs()
+        self.assertEqual(("true", '{"alias":"tf-alerts","bot-audience":"api://relay",'
+                                  '"bot-url":"https://relay.example.net/api"}'),
+                         (outputs["notify-active"], outputs["notify-target-json"]))
+        self.assertEqual({"bot_url": "https://relay.example.net/api", "bot_audience": "api://relay",
+                          "alias": "tf-alerts"}, self.document(runner)["notify_target"])
+        self.assertEqual("on", _groups(runner.log.getvalue())["notifications"])
+
+    def test_a_valid_target_is_published_on_a_run_that_does_not_notify(self):
+        code, runner = self.run_with(json.dumps(self.TARGET), environ={"GITHUB_REF_NAME": "feature"})
+        self.assertEqual(0, code)
+        outputs = runner.outputs()
+        self.assertEqual("false", outputs["notify-active"])
+        self.assertEqual(self.TARGET, json.loads(outputs["notify-target-json"]))
+        self.assertEqual("only a push, a schedule or a dispatch on the default branch notifies",
+                         _groups(runner.log.getvalue())["notifications"])
+
+    def test_unset_variables_are_no_target(self):
+        for text in ('{"bot-url": "", "bot-audience": "", "alias": ""}',
+                     '{"bot-url": null, "bot-audience": null, "alias": null}'):
+            with self.subTest(text=text):
+                code, runner = self.run_with(text)
+                self.assertEqual(0, code)
+                self.assertEqual(("false", "{}"), (runner.outputs()["notify-active"],
+                                                   runner.outputs()["notify-target-json"]))
+                self.assertEqual({"bot_url": "", "bot_audience": "", "alias": ""}, self.document(runner)["notify_target"])
+                self.assertEqual(self.NO_TARGET, _groups(runner.log.getvalue())["notifications"])
+
+    def test_an_empty_file_or_none_is_no_target_at_all(self):
+        for text in ("", "\n  \n"):
+            with self.subTest(text=text):
+                code, runner = self.run_with(text)
+                self.assertEqual(0, code)
+                self.assertNotIn("notify_target", self.document(runner))
+                self.assertEqual(("false", "{}"), (runner.outputs()["notify-active"],
+                                                   runner.outputs()["notify-target-json"]))
+        runner = Runner(self)
+        self.assertEqual(0, runner.run())
+        self.assertNotIn("notify_target", json.loads(_groups(runner.log.getvalue())["decision engine input document"]))
+
+    def test_a_partial_target_is_a_warning(self):
+        code, runner = self.run_with('{"bot-url": "https://relay.example.net/api", "bot-audience": "", "alias": ""}')
+        self.assertEqual(0, code)
+        self.assertIn("::warning title=create-tf-vars-matrix::notifications are off: TF_NOTIFY_BOT_URL, "
+                      "TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are set together or not at all; missing: "
+                      "TF_NOTIFY_BOT_AUDIENCE, TF_NOTIFY_ALIAS\n", runner.log.getvalue())
+        self.assertEqual("the target is incomplete", _groups(runner.log.getvalue())["notifications"])
+
+    def test_anything_but_the_three_strings_is_a_fault(self):
+        for text in ("[]", "not json", '{"bot-url": 1, "bot-audience": "", "alias": ""}', '{"bot-url": "", "alias": ""}',
+                     '{"bot-url": "", "bot-audience": "", "alias": "", "x": ""}'):
+            with self.subTest(text=text):
+                code, runner = self.run_with(text)
+                self.assertEqual(1, code)
+                self.assertIn(self.FAULT + "\n", runner.log.getvalue())
+                self.assertEqual("", runner.output())
+
+    def test_a_file_that_cannot_be_read_is_a_fault(self):
+        code, runner = self.run_with(None)
+        self.assertEqual(1, code)
+        self.assertIn("::error title=create-tf-vars-matrix::the action's input 'notify-target-json' cannot be read: ",
+                      runner.log.getvalue())
 
 
 class TestFactsTest(unittest.TestCase):

@@ -75,16 +75,22 @@ make_sandbox() {
   CASE_REF_NAME="$(jq -r '.ref_name' "${case_file}")"
 }
 
-# The run block of action.yml with its expressions substituted, as the runner pastes them.
+# The run block of action.yml with its expressions substituted, as the runner pastes them. The
+# notification target is ${SANDBOX}/notify-target.json when a test writes one, else the input's default, "".
 render_run_block() {
-  python3 - "${_this_script_dir}" "${SANDBOX}/inputs.json" <<'PY'
-import subprocess, sys
-action_dir, inputs_file = sys.argv[1], sys.argv[2]
+  python3 - "${_this_script_dir}" "${SANDBOX}/inputs.json" "${SANDBOX}/notify-target.json" <<'PY'
+import os, subprocess, sys
+action_dir, inputs_file, target_file = sys.argv[1], sys.argv[2], sys.argv[3]
 block = subprocess.run(["yq", ".runs.steps[0].run", f"{action_dir}/action.yml"],
                        capture_output=True, text=True, check=True).stdout
 with open(inputs_file, encoding="utf-8") as handle:
     inputs = handle.read().rstrip("\n")
-print(block.replace("${{ inputs.inputs-json }}", inputs).replace("${{ github.action_path }}", action_dir), end="")
+target = ""
+if os.path.exists(target_file):
+    with open(target_file, encoding="utf-8") as handle:
+        target = handle.read().rstrip("\n")
+print(block.replace("${{ inputs.inputs-json }}", inputs).replace("${{ inputs.notify-target-json }}", target)
+      .replace("${{ github.action_path }}", action_dir), end="")
 PY
 }
 
@@ -195,18 +201,56 @@ done
 
 baseline="${_cases_dir}/defaults/case.json"
 
-begin "run block: a description comment first, inputs to a file through a quoted, unique heredoc, python3 -I"
+begin "run block: a description comment first, inputs to files through quoted, unique heredocs, python3 -I"
 run_block="$(yq '.runs.steps[0].run' "${_this_script_dir}/action.yml")"
 if [[ "$(head -n 1 <<<"${run_block}")" == "# "* ]] \
   && grep -qx "cat >\"\${inputs_file}\" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'" <<<"${run_block}" \
   && grep -qx 'CREATE_TF_VARS_MATRIX_INPUTS_JSON' <<<"${run_block}" \
+  && grep -qx "cat >\"\${notify_target_file}\" <<'CREATE_TF_VARS_MATRIX_NOTIFY_TARGET_JSON'" <<<"${run_block}" \
+  && grep -qx 'CREATE_TF_VARS_MATRIX_NOTIFY_TARGET_JSON' <<<"${run_block}" \
   && grep -q '^python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}" \\$' <<<"${run_block}" \
-  && grep -qx '  --mode "${MODE}"' <<<"${run_block}" \
-  && [[ "$(grep -c '\${{' <<<"${run_block}")" == "2" ]] \
+  && grep -qx '  --mode "${MODE}" --notify-target-file "${notify_target_file}"' <<<"${run_block}" \
+  && [[ "$(grep -c '\${{' <<<"${run_block}")" == "3" ]] \
   && ! grep -qE '^(export|input_)' <<<"${run_block}"; then
   pass
 else
   fail "the run block no longer has its hardened shape"
+fi
+
+begin "notify target: a complete target on the default branch is published, and the run notifies"
+make_sandbox "${baseline}"
+printf '%s\n' '{"bot-url": "https://relay.example.net/api", "bot-audience": "api://relay", "alias": "tf-alerts"}' \
+  >"${SANDBOX}/notify-target.json"
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output notify-active)" == "true" ]] \
+  && [[ "$(step_output notify-target-json)" == '{"alias":"tf-alerts","bot-audience":"api://relay","bot-url":"https://relay.example.net/api"}' ]] \
+  && [[ "$(logged_document | jq -c '.notify_target')" == '{"alias":"tf-alerts","bot_audience":"api://relay","bot_url":"https://relay.example.net/api"}' ]]; then
+  pass
+else
+  fail "notify-active '$(step_output notify-active)', notify-target-json '$(step_output notify-target-json)'"
+fi
+
+begin "notify target: unset variables, as the workflow renders them, are no target and no warning"
+make_sandbox "${baseline}"
+printf '%s\n' '{"bot-url": "", "bot-audience": "", "alias": ""}' >"${SANDBOX}/notify-target.json"
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output notify-active)" == "false" ]] \
+  && [[ "$(step_output notify-target-json)" == "{}" ]] && ! grep -q '^::warning' "${OUT_FILE}"; then
+  pass
+else
+  fail "notify-active '$(step_output notify-active)', notify-target-json '$(step_output notify-target-json)'"
+fi
+
+begin "notify target: a partial one is a warning and no notifications"
+make_sandbox "${baseline}"
+printf '%s\n' '{"bot-url": "https://relay.example.net/api", "bot-audience": "", "alias": "tf-alerts"}' \
+  >"${SANDBOX}/notify-target.json"
+run_step
+if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output notify-active)" == "false" ]] \
+  && grep -qxF '::warning title=create-tf-vars-matrix::notifications are off: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are set together or not at all; missing: TF_NOTIFY_BOT_AUDIENCE' "${OUT_FILE}"; then
+  pass
+else
+  fail "notify-active '$(step_output notify-active)', or the warning is missing"
 fi
 
 begin "variables: values reach the row as written, and a null means not set"

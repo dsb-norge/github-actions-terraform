@@ -1,7 +1,7 @@
 """The `decide` command: the input document in, the output document out."""
 
-from . import (SCHEMA_VERSION, admission, automerge, comments, environments, model, ordering, record, relevance, tests,
-               triggers, values)
+from . import (SCHEMA_VERSION, admission, automerge, comments, environments, model, notifications, ordering, record,
+               relevance, tests, triggers, values)
 
 
 def _failed(errors):
@@ -24,7 +24,7 @@ def _matrix(rows):
 
 
 def _decided(document, block, rows, entries, staged, tests_block, warnings, notices, trigger, admitted,
-             relevance_notice):
+             relevance_notice, notify):
     order_block, stages, order_notices = staged
     affected = [row for row, entry in zip(rows, entries) if entry["verdict"] == "run"]
     by_stage = {stage: [rows[index] for index in sorted(stages) if str(stages[index]) == stage]
@@ -46,6 +46,7 @@ def _decided(document, block, rows, entries, staged, tests_block, warnings, noti
         "trigger": {"event": document["event"]["name"], "lines": trigger},
         "comments": comments.manifest(document, block, entries, tests_block, admitted),
         "record": record.lines(entries),
+        "notify": notify,
     }
 
 
@@ -153,6 +154,8 @@ def decide(document):
         warnings = environments.setting_warnings(document, rows) + triggers.setting_warnings(declared, events) + warnings
     except environments.ConfigError as error:
         return _failed(error.messages)
+    notify, notify_warnings = notifications.decide(document, rows)
+    warnings += notify_warnings
     scheduled = triggers.schedule_goals(document, declared)
     for index, entry in enumerate(entries):
         entry["trigger-events"] = events[index]
@@ -164,4 +167,4 @@ def decide(document):
             entry["goals"] = granted[index]
             entry["reasons"].append(f"goals: {', '.join(granted[index]) or 'none'}")
     return _decided(document, block, rows, entries, staged, tests_block, warnings, notices,
-                    triggers.lines(document, declared, entries), admitted, relevance_notice)
+                    triggers.lines(document, declared, entries), admitted, relevance_notice, notify)

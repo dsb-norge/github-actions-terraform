@@ -91,7 +91,7 @@ An entry may hold exactly these keys:
 | `depends-on` | [Environment-ordering.md](Environment-ordering.md) §3; one name written alone is that one name |
 | `allow-failing-terraform-operations` | a per-environment setting only; there is no workflow input of that name |
 | `goals-yml`, `terraform-init-additional-dirs-yml`, `pr-auto-merge-from-actors-yml` | replace the global input for this environment |
-| `extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`, `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml` | merged over the global input, key by key |
+| `extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`, `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml`, `notifications-yml` | merged over the global input, key by key; `notifications-yml` without `enabled` and `runs-on` ([Notifications.md](Notifications.md) §6.3) |
 | `add-pr-comment`, `apply-extract-include-outputs`, `cache-terraform-modules`, `format-check-in-root-dir`, `pr-auto-merge-enabled`, `pr-comment-group`, `runs-on`, `terraform-version`, `tflint-version`, `verify-lock-file` | override the workflow input of the same name for this environment |
 
 The last row is an explicit list in the engine (`PER_ENVIRONMENT_INPUTS`), and a test holds every
@@ -107,7 +107,7 @@ Refused, each with its own message:
 
 | Written | Message |
 |---|---|
-| an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `terraform-init-additional-dirs` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
+| an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `terraform-init-additional-dirs`, `notifications` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
 | a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml`, `depends-on-yml` | `The environment 'prod' sets 'trigger-events-yml', which is not a setting: per environment it is 'trigger-events', a list written directly in the entry.` |
 | a suffixed single-value setting: `schedule-goal-yml` | `The environment 'prod' sets 'schedule-goal-yml', which is not a setting: per environment it is 'schedule-goal', a value written directly in the entry.` |
 | a workflow-only input | `The environment 'prod' sets 'pr-auto-merge-app-id', which is a workflow input only: it applies to every environment at once. Set it in the calling workflow's 'with:'.` (the existing message for `path-relevance-enabled`, with its `paths: ['**']` advice, is kept) |
@@ -305,6 +305,13 @@ mistake is reported, in this order:
 
 An empty policy is the built-in one; a string written alone in a list is its one item; each part of an
 entry matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
+
+### 3.10 Notification settings
+
+`notifications-yml`, globally and per environment, is validated as
+[Notifications.md](Notifications.md) §6.4 says, with every problem of the global value reported once
+before the environments' own. The notification target, three GitHub variables, is never an error:
+a target that is incomplete or malformed is a warning and turns notifications off.
 
 ## 4. Message style
 

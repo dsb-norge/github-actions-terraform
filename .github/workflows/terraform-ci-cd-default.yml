@@ -568,6 +568,29 @@ on:
           NOTE: This setting applies to all environments, there is no per environment setting for this.
         required: false
         default: ""
+      notifications-yml:
+        type: string
+        description: |
+          Teams notifications when the default branch is left unapplied (docs/Notifications.md). They are on
+          when the repository or organisation variables TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and
+          TF_NOTIFY_ALIAS name a notification relay; this setting changes how, and may switch them off.
+          Empty means the defaults.
+
+          Data: a mapping, every key optional:
+            enabled: false      # no notifications for this repository
+            runs-on: <label>    # the runner of the jobs that post (default ubuntu-latest)
+            deliver-as: <env>   # the environment whose GitHub environment and identity post for every one
+            defaults:           # every kind of notification ...
+              alias: <alias>    #   to another alias of the same relay
+              off: true         #   or none at all
+            kinds:              # ... or one kind: apply-failed, apply-cancelled, held-back
+              held-back:
+                off: true
+
+          An environment may carry 'notifications-yml' with every key but 'enabled' and 'runs-on'; it is merged
+          over this value key by key, a list replacing the global one.
+        required: false
+        default: ""
       runs-on:
         type: string
         description: |

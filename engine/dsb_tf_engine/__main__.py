@@ -2,11 +2,13 @@
 
   decide --input <file> --output <file>   the pure decision: document in, document out; writes
                                           nothing to stdout
-  create-matrix --inputs-file <file> --mode project|module
+  create-matrix --inputs-file <file> --mode project|module [--notify-target-file <file>]
                                           the create-tf-vars-matrix step: the adapter builds the
                                           document from the workflow's inputs and the runner's
                                           environment, decides and publishes the matrix; a module
-                                          decides its test stage alone (docs/Module-ci.md §5)
+                                          decides its test stage alone (docs/Module-ci.md §5); the
+                                          notification target is checked when given
+                                          (docs/Notifications.md §7)
   evaluate-automerge --metadata-files-pattern <glob> --relevance-file <file>
                      --test-metadata-files-pattern <glob> --stage-results-file <file>
                                           the evaluate-automerge-eligibility step: judges every
@@ -50,6 +52,7 @@ def _parse(argv):
     matrix_parser.add_argument("--inputs-file", required=True, help="path of the file holding toJSON(inputs)")
     matrix_parser.add_argument("--mode", required=True, choices=("project", "module"),
                                help="the calling workflow's kind of repository")
+    matrix_parser.add_argument("--notify-target-file", default="", help="the notify-target-json file; empty for none")
     merge_parser = commands.add_parser("evaluate-automerge", help="the evaluate-automerge-eligibility step, on a runner")
     merge_parser.add_argument("--metadata-files-pattern", required=True, help="glob of the environment jobs' metadata")
     merge_parser.add_argument("--relevance-file", required=True, help="path of relevance.json; empty for none")
@@ -64,7 +67,7 @@ def main(argv=None):
     args = _parse(argv)
     if args.command == "create-matrix":
         return adapter.run(args.inputs_file, os.environ, sys.stdout, adapter.Tools(), os.path.isdir,
-                           args.mode == "module")
+                           args.mode == "module", args.notify_target_file)
     if args.command == "evaluate-automerge":
         return automerge_evidence.run(args.metadata_files_pattern, args.relevance_file,
                                       args.test_metadata_files_pattern, args.stage_results_file, os.environ, sys.stdout)

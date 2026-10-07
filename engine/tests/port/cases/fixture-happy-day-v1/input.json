@@ -44,6 +44,7 @@
     "extra-envs-yml": "ARM_USE_OIDC: true\nARM_USE_AZUREAD: true\nANOTHER_ENV: \"1 2 3\"",
     "format-check-in-root-dir": "true",
     "goals-yml": "[all]",
+    "notifications-yml": "",
     "path-relevance-enabled": true,
     "pr-auto-merge-enabled": "true",
     "pr-auto-merge-from-actors-yml": "- \"global-actor\"\n",
@@ -230,6 +231,10 @@
         "value": [
           "all"
         ]
+      },
+      "notifications-yml": {
+        "ok": true,
+        "value": null
       },
       "pr-auto-merge-from-actors-yml": {
         "ok": true,
