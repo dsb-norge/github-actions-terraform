@@ -99,20 +99,20 @@ and slot, with the last fingerprint and counts of consecutive failed and unreada
 
 | Slot | Last state | This scheduled run | Action |
 |---|---|---|---|
-| `drift` | none or resolved | drift, fingerprint F | a new card |
+| `drift` | none or resolved | drift, fingerprint F | a new message |
 | `drift` | open with F | drift with F | nothing; reminders weekly, mentioning nobody |
-| `drift` | open with F | drift with F′ | update the card, reply "changed", remember F′ |
-| `drift` | open | pending or clean | update the card to resolved, reply "resolved" |
-| `apply` | none or resolved | pending, fingerprint F | a new `pending-change` card |
+| `drift` | open with F | drift with F′ | update the first message, reply "changed", remember F′ |
+| `drift` | open | pending or clean | update the first message to resolved, reply "resolved" |
+| `apply` | none or resolved | pending, fingerprint F | a new `pending-change` message |
 | `apply` | open (any kind) | pending | nothing new; the reminders of [Notifications.md](Notifications.md) §10 carry it |
 | `apply` | open (any kind) | drift or clean, with no changes of its own | resolved, as [Notifications.md](Notifications.md) §4 says for a clean plan |
-| `schedule` | none or resolved | failed, the second in a row | a new `scheduled-failed` card |
-| `schedule` | none or resolved | unknown, the third in a row | a new `drift-check-failing` card |
+| `schedule` | none or resolved | failed, the second in a row | a new `scheduled-failed` message |
+| `schedule` | none or resolved | unknown, the third in a row | a new `drift-check-failing` message |
 | `schedule` | open | a successful, readable plan | resolved |
-| any | state lost | the finding again | a new card: a duplicate, never a missed finding |
+| any | state lost | the finding again | a new message: a duplicate, never a missed finding |
 
 A drift plan that also has changes of its own (drift and unapplied code together) keeps or opens the
-`drift` incident and the `apply` incident. The card lists the class, the counts and up to twenty
+`drift` incident and the `apply` incident. The message lists the class, the counts and up to twenty
 drifted addresses, and links the run, whose summary has the plan.
 
 ## 6. Configuration
@@ -130,7 +130,7 @@ environment that is never applied from CI is `pending` by design and may set
 | P1 | `terraform plan -detailed-exitcode` returns 2 for output-only changes, unapplied `moved` and `import` blocks, and in several releases for no change at all. | "Drift" every night that nobody can find. | D3: the JSON decides. |
 | P2 | `resource_drift` lists changes to attributes the configuration ignores, and values a provider normalises. | A permanent drift finding nothing will ever change. | D3 counts only drift a planned action would revert. |
 | P3 | GitHub delays scheduled runs at the top of the hour and drops some under load. | A missing night. | Cron off the hour; a missing run is absence, out of scope here ([Notifications.md](Notifications.md) §15). |
-| P4 | A provider schema upgrade can show as drift. | A one-time finding after a provider bump. | Accepted: one card, resolved on the next apply. |
+| P4 | A provider schema upgrade can show as drift. | A one-time finding after a provider bump. | Accepted: one message, resolved on the next apply. |
 
 ## 8. Tests
 
