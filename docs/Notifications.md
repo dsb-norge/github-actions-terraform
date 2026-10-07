@@ -8,8 +8,8 @@ later mentions, the people whose change it was.
 
 Status: **built, but for reminders (§10), mentions and direct messages (D11), the identity App
 that resolves people for them (D21), and threads (§9), which wait for the relay (§13) or come with
-drift detection; not yet run on a test bed.** Teams-side behaviour this spec relies on was verified
-against a deployed instance of the relay (§19); the open questions are in §20.
+drift detection; run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
 ## 1. Why
@@ -648,9 +648,21 @@ A minor release.
   and inputs, and that no job needs it; F32, in `terraform-notify.yml` every job's `if`,
   `continue-on-error`, timeout and permissions, `deliver`'s `environment` with `deployment: false`,
   matrix, runner and identity export, and `record`'s queueing lock.
-- **Test bed:** a test-bed repository with the three variables pointing at a test relay instance,
-  a sending identity holding `Notifications.Send`, a protected environment using `deliver-as`, and a
-  failing apply, a cancelled apply, a held-back stage, a recovery and a dispatch that resolves.
+- **Test bed:** a test-bed repository on the default workflow's preview ref, its three variables
+  pointing at the relay's test instance. One environment fails its apply while a switch is on,
+  another depends on it, and a third, named by `deliver-as`, sends for both: its identity holds
+  `Notifications.Send` and nothing else, and its client ID is an environment secret. Four runs on
+  the default branch did what §9 says, and the relay accepted every post (202):
+  1. a push whose apply failed and whose second stage was held back: two `open` messages, and the
+     first state saved;
+  2. the same failure pushed again: two `reply` messages, from the state the first run saved;
+  3. a dispatch while it still failed: nothing sent, the state moved on;
+  4. the recovery: two `resolve` messages.
+
+  That settles three questions on a real run: environment secrets reach the nested deliver job, the
+  nested job signs in with its environment's subject, and `GITHUB_TOKEN` reads an environment's
+  protection rules. A cancelled apply and a protected sender were not run there; both are unit
+  tested.
 
 Teams behaviour verified against the relay's test instance, posting as its bot through the Bot
 Framework API: mentions by object ID and by UPN render and notify in cards and text replies, and
@@ -659,20 +671,19 @@ in-place updates work; a direct message through the team roster works.
 
 ## 20. Open questions
 
-- Do environment secrets reach the nested `deliver` job with `secrets: inherit` on the `notify` job
-  ([Terraform-tests.md](Terraform-tests.md) P26)? Needs a test-bed run.
-- Can `GITHUB_TOKEN` read an environment's `protection_rules` (§7)? GitHub documents the call for
-  anyone with read access. Needs a test-bed run.
 - Does an organisation's OIDC subject template that includes `job_workflow_ref` give the nested
-  deliver job a subject the sending identity does not trust? Needs a test-bed run per organisation.
+  deliver job a subject the sending identity does not trust? The test bed's repository uses GitHub's
+  default template, where the subject is `repo:<owner>/<repo>:environment:<name>`; an organisation
+  with its own template needs a run.
 - Does any Conditional Access policy restrict the sending identities' sign-ins from GitHub-hosted
-  runners? Needs a test-bed run per landing zone.
+  runners? None did for the test instance's landing zone; each other landing zone needs a run.
 - Does an installation token with Members read only see `samlIdentityProvider` for an organisation
   with SAML at organisation level, as GitHub's schema says? Needs one query with the App.
 - The relay capabilities of §13: specified for the relay's maintainers separately.
 
 The preview refs need no change: the rewrite covers every internal `uses:` in every workflow file, a
-nested one included ([Preview-refs.md](Preview-refs.md) §4.1); the first preview run confirms it.
+nested one included ([Preview-refs.md](Preview-refs.md) §4.1). The test bed ran on the preview ref, the
+nested workflow and its actions included.
 
 ## 21. Implementation order
 
