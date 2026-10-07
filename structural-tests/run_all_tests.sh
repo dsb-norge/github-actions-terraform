@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F30 and the documentation cites them by
+# document missing from the index. They are numbered F2-F32 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -390,13 +390,17 @@ for delimiter, paths in delimiters.items():
     if len(paths) > 1:
         problems.append(f"delimiter {delimiter} is used {len(paths)} times: {', '.join(paths)}")
 
+# A toJSON(...) standing for a whole value is JSON whatever it renders. Stood in for by a line break
+# and null, it parses where a value may stand and fails inside a string, where its quotes would end it.
+WHOLE_VALUE = re.compile(r"\$\{\{\s*toJSON\([^{}]+\)\s*\}\}")
+
 def json_value(value):
     if isinstance(value, str):
         text = value.strip()
         if re.fullmatch(r"\$\{\{\s*toJSON\(.+\)\s*\}\}", text):
             return True
         try:
-            json.loads(text)
+            json.loads(WHOLE_VALUE.sub("\nnull", text))
             return True
         except ValueError:
             return False
@@ -658,7 +662,8 @@ problems = []
 create = jobs["create-matrix"]
 names = ["matrix-json", "affected-count", "matrix-stage-1-json", "matrix-stage-2-json", "matrix-stage-3-json",
          "stage-1-count", "stage-2-count", "stage-3-count", "unaffected-count", "relevance-mode", "relevance-reason",
-         "changed-count", "tests-matrix-json", "tests-count", "tests-active", "admission-refused", "admission-reason"]
+         "changed-count", "tests-matrix-json", "tests-count", "tests-active", "admission-refused", "admission-reason",
+         "notify-active", "notify-target-json"]
 if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
@@ -2215,6 +2220,154 @@ if [[ "${_f30_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f30_out}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F31 — the notify job is wired as docs/Notifications.md §8 says, and never gates the run.
+#
+# create-matrix hands the engine the three TF_NOTIFY_* variables and publishes whether the run
+# notifies; the notify job calls terraform-notify.yml only then, with every stage's result, and
+# no job needs it: a notification must never change the run's conclusion (D15). F31_WORKFLOW
+# points the check at another workflow file.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F31 - the notify job is wired as the spec says and gates nothing${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f31_out=$(cd "${_this_script_dir}/.." && F31_WORKFLOW="${F31_WORKFLOW:-.github/workflows/terraform-ci-cd-default.yml}" python3 - <<'PYEOF2'
+import os, sys, yaml
+
+TARGET = ('{"bot-url": ${{ toJSON(vars.TF_NOTIFY_BOT_URL) }}, "bot-audience": ${{ toJSON(vars.TF_NOTIFY_BOT_AUDIENCE) }}, '
+          '"alias": ${{ toJSON(vars.TF_NOTIFY_ALIAS) }}}')
+STAGES = ('{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", '
+          '"3": "${{ needs.terraform-ci-cd-3.result }}"}')
+problems = []
+with open(os.environ["F31_WORKFLOW"], encoding="utf-8") as fh:
+    jobs = yaml.safe_load(fh)["jobs"]
+matrix = jobs["create-matrix"]
+step = [s for s in matrix["steps"] if s.get("id") == "create-matrix"]
+if len(step) != 1 or (step[0].get("with") or {}).get("notify-target-json") != TARGET:
+    problems.append("create-matrix: the create-matrix step's notify-target-json is not the three variables")
+for name in ("notify-active", "notify-target-json"):
+    if matrix.get("outputs", {}).get(name) != f"${{{{ steps.create-matrix.outputs.{name} }}}}":
+        problems.append(f"create-matrix: the job output {name} is not the step's")
+notify = jobs.get("notify")
+if notify is None:
+    problems.append("there is no notify job")
+else:
+    expected = {
+        "uses": "dsb-norge/github-actions-terraform/.github/workflows/terraform-notify.yml@v1",
+        "needs": ["create-matrix", "terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3"],
+        "if": "always() && needs.create-matrix.outputs.notify-active == 'true'",
+        "secrets": "inherit",
+        "permissions": {"actions": "read", "contents": "read", "pull-requests": "read", "id-token": "write"},
+        "with": {"matrix-json": "${{ needs.create-matrix.outputs.matrix-json }}", "stage-results-json": STAGES,
+                 "notify-target-json": "${{ needs.create-matrix.outputs.notify-target-json }}",
+                 "runs-on": "${{ inputs.runs-on }}"},
+    }
+    for key, value in expected.items():
+        if notify.get(key) != value:
+            problems.append(f"notify: {key} is {notify.get(key)!r}, expected {value!r}")
+for name, job in jobs.items():
+    needs = job.get("needs") or []
+    if "notify" in ([needs] if isinstance(needs, str) else needs):
+        problems.append(f"{name} needs notify; a notification must never gate the run")
+print("checked the create-matrix target, the notify job and every job's needs")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF2
+) && _f31_rc=0 || _f31_rc=$?
+if [[ "${_f31_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f31_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f31_out}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F32 — terraform-notify.yml's three jobs are guarded as docs/Notifications.md §8 says.
+#
+# Every job runs whatever came before it, cannot fail the caller and ends in bounded time
+# (D15); the deliver job runs in its sender's GitHub environment without a deployment and
+# only when there is something to deliver (P9); the record job merges under one lock that
+# queues instead of cancelling (D19); and the deliver job exports the sender's identity and
+# nothing else (D20). F32_WORKFLOW points the check at another file.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F32 - terraform-notify.yml's jobs are guarded as the spec says${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f32_out=$(cd "${_this_script_dir}/.." && F32_WORKFLOW="${F32_WORKFLOW:-.github/workflows/terraform-notify.yml}" python3 - <<'PYEOF2'
+import os, sys, yaml
+
+problems = []
+path = os.environ["F32_WORKFLOW"]
+if not os.path.exists(path):
+    print(f"checked nothing: {path} does not exist")
+    print(f"PROBLEM {path} does not exist")
+    sys.exit(1)
+with open(path, encoding="utf-8") as fh:
+    workflow = yaml.safe_load(fh)
+jobs = workflow["jobs"]
+if set(jobs) != {"decide", "deliver", "record"}:
+    problems.append(f"the jobs are {sorted(jobs)}, expected decide, deliver and record")
+IFS = {
+    "decide": "always()",
+    # deliver-count is set only by a decide job that finished; empty, nothing downstream has its files.
+    "deliver": "always() && needs.decide.outputs.deliver-count != '' && needs.decide.outputs.deliver-count != '0'",
+    "record": "always() && needs.decide.outputs.deliver-count != ''",
+}
+PERMISSIONS = {
+    "decide": {"actions": "read", "contents": "read", "pull-requests": "read"},
+    "deliver": {"id-token": "write"},
+    "record": {},
+}
+for name, job in jobs.items():
+    if job.get("if") != IFS.get(name):
+        problems.append(f"{name}: if is {job.get('if')!r}, expected {IFS.get(name)!r}")
+    if job.get("continue-on-error") is not True:
+        problems.append(f"{name}: continue-on-error is not true")
+    if not isinstance(job.get("timeout-minutes"), int) or not 1 <= job["timeout-minutes"] <= 15:
+        problems.append(f"{name}: timeout-minutes is {job.get('timeout-minutes')!r}, expected 1 to 15")
+    if job.get("permissions") != PERMISSIONS.get(name):
+        problems.append(f"{name}: permissions are {job.get('permissions')!r}, expected {PERMISSIONS.get(name)!r}")
+deliver = jobs.get("deliver", {})
+if deliver.get("environment") != {"name": "${{ matrix.github-environment }}", "deployment": False}:
+    problems.append(f"deliver: environment is {deliver.get('environment')!r}, expected the row's, without a deployment")
+if deliver.get("strategy", {}).get("matrix") != "${{ fromJSON(needs.decide.outputs.deliver-matrix-json) }}":
+    problems.append("deliver: the matrix is not decide's deliver-matrix-json")
+if deliver.get("strategy", {}).get("fail-fast") is not False:
+    problems.append("deliver: fail-fast is not false")
+if deliver.get("runs-on") != "${{ matrix.runs-on }}":
+    problems.append("deliver: runs-on is not the row's")
+exports = [s for s in deliver.get("steps", []) if str(s.get("uses", "")).startswith("dsb-norge/github-actions-terraform/export-env-vars@")]
+if len(exports) != 1 or exports[0].get("with") != {"extra-envs": "${{ toJSON(matrix.extra-envs) }}",
+                                                    "extra-envs-from-secrets": "${{ toJSON(matrix.extra-envs-from-secrets) }}",
+                                                    "secrets-json": "${{ toJSON(secrets) }}"}:
+    problems.append("deliver: the identity is not exported from the row's two maps alone")
+record = jobs.get("record", {})
+if record.get("concurrency") != {"group": "tf-notify-state", "cancel-in-progress": False, "queue": "max"}:
+    problems.append(f"record: concurrency is {record.get('concurrency')!r}, expected one queueing lock")
+if record.get("needs") != ["decide", "deliver"] or deliver.get("needs") != "decide":
+    problems.append("the needs are not decide <- deliver <- record")
+print("checked the three jobs of terraform-notify.yml")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF2
+) && _f32_rc=0 || _f32_rc=$?
+if [[ "${_f32_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f32_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f32_out}"
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

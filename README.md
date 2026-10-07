@@ -54,6 +54,7 @@ Which environments a pull request or push runs is its path relevance:
 .
 └── .github/workflows                     --> directory for reusable workflows
     ├── terraform-ci-cd-default.yml       --> default ci/cd workflow for DSB's terraform projects
+    ├── terraform-notify.yml              --> Teams notifications for a run of the default workflow, called by it
     ├── terraform-module-release.yaml     --> tag and release module. Creates release plan PR.
     └── terraform-module-ci.yaml          --> default ci workflow for module testing
 ```
