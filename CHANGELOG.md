@@ -6,6 +6,14 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.9.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.8.0...v1.9.0) (2026-10-07)
+
+
+### Features
+
+* mark a scheduled plan with changes in the run summary ([6913060](https://github.com/dsb-norge/github-actions-terraform/commit/691306050769655c9047ed28c1f35e29316b2aef))
+* warn when a scheduled plan-only run plans changes ([af28702](https://github.com/dsb-norge/github-actions-terraform/commit/af287023790fb39d16f92fc0ba74a1cec341e6eb))
+
 ## [1.8.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.7.1...v1.8.0) (2026-10-06)
 
 
