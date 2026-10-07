@@ -624,6 +624,13 @@ environments-yml: environment 'sandbox': 'schedule-goal: apply' needs the goal '
 environments-yml: environment 'prod': 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'aply'
 ```
 
+When the nightly plan of `prod` has changes, the run stays green and says so: a warning annotation, ⚠️ in front of `prod`'s plan cell in the run summary, and a line under the table ([Drift-detection.md](Drift-detection.md) §3):
+
+```text
+::warning title=Plan has changes::prod — the scheduled plan has 3 changes (2 to add, 1 to change): drift, or a default branch that is not applied
+⚠️ **The scheduled plan has changes:** `prod`. Drift, or a default branch that is not applied.
+```
+
 A `schedule-goal` on an environment whose `trigger-events` lack `schedule` changes nothing, and the run warns: `The environment 'prod' sets schedule-goal: default, but its trigger-events do not hold schedule, so it has no effect.`
 
 `schedule` itself goes in the `trigger-events` of the environment the schedule is for; in the input `trigger-events-yml` it would reach every environment, including one added later, so there it is refused:
