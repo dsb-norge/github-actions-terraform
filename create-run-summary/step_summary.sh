@@ -62,6 +62,9 @@ function render_summary {
   declare -A applied_by_env=()
   declare -A destroyed_by_env=()
   declare -A tolerated_by_env=()
+  # Scheduled plan-only runs whose plan has changes, or cannot be read
+  # (docs/Drift-detection.md §3); named in one line under the table.
+  local -a scheduled_changes=() scheduled_unread=()
   local file env rid
   for file in "${files[@]}"; do
     if ! jq -e '.' "${file}" >/dev/null 2>&1; then
@@ -101,6 +104,10 @@ function render_summary {
     if [ -n "${STAGE_RESULTS_FILE:-}" ] && tolerated_failure "${file}"; then
       tolerated_by_env["${env}"]="true"
     fi
+    case "$(scheduled_plan_state "${file}")" in
+      changes) scheduled_changes+=("${env}") ;;
+      unread)  scheduled_unread+=("${env}") ;;
+    esac
 
     local time_cell
     time_cell=$(sum_durations \
@@ -150,10 +157,29 @@ function render_summary {
     printf '%s\n' "${row_by_env[${env}]}"
   done < <(printf '%s\n' "${!row_by_env[@]}" | sort)
   print_footer
+  print_scheduled_plan_lines
 }
 
 function print_footer {
   printf '\n_Plan / Apply / Destroy: `💫` added `🛠️` changed `💥` destroyed; apply and destroy cells are applied/planned, `?` when the operation did not complete. Time is the sum of the env'"'"'s terraform invocations._\n'
+}
+
+# The environments whose scheduled plan has changes, or could not be read, in
+# one line each (docs/Drift-detection.md §3). Uses render_summary's
+# scheduled_changes and scheduled_unread (bash dynamic scope). Nothing on any
+# other run.
+function print_scheduled_plan_lines {
+  local names env
+  if [ "${#scheduled_changes[@]}" -gt 0 ]; then
+    names=""
+    while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_changes[@]}" | sort)
+    printf '\n⚠️ **The scheduled plan has changes:** %s. Drift, or a default branch that is not applied.\n' "${names}"
+  fi
+  if [ "${#scheduled_unread[@]}" -gt 0 ]; then
+    names=""
+    while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_unread[@]}" | sort)
+    printf '\n⚠️ **The scheduled plan could not be read:** %s. See the plan in the job log.\n' "${names}"
+  fi
 }
 
 # The path of the relevance file when it can be used, else empty. A missing
@@ -331,6 +357,7 @@ function render_with_relevance {
   rm -f "${rows_file}"
   render_ordering_line "${file}"
   print_footer
+  print_scheduled_plan_lines
   # A tooltip does not show on a phone, where this page is often read.
   if [ "${n_not_admitted}" -gt 0 ]; then
     printf '\n_Rows of 🚫: the Dependabot admission refused this pull request, so nothing ran._\n'
