@@ -9,8 +9,8 @@ import unittest
 import support
 
 PACKAGE_DIR = os.path.join(os.path.dirname(support.TESTS_DIR), "dsb_tf_engine")
-CORE = ("__init__.py", "admission.py", "automerge.py", "automerge_project.py", "hashicorp.py", "decide.py", "environments.py", "globs.py", "model.py", "notifications.py", "ordering.py", "record.py", "relevance.py", "values.py", "comments.py", "tests.py", "triggers.py")
-ADAPTER_SIDE = ("__main__.py", "adapter.py", "admission_facts.py", "automerge_evidence.py", "automerge_facts.py", "workflow.py")
+CORE = ("__init__.py", "admission.py", "automerge.py", "automerge_project.py", "hashicorp.py", "decide.py", "environments.py", "globs.py", "model.py", "notifications.py", "notify_decide.py", "notify_state.py", "ordering.py", "record.py", "relevance.py", "values.py", "comments.py", "tests.py", "triggers.py")
+ADAPTER_SIDE = ("__main__.py", "adapter.py", "admission_facts.py", "automerge_evidence.py", "automerge_facts.py", "notify_evidence.py", "workflow.py")
 CORE_MAY_IMPORT = {"hashlib", "json", "re", "dsb_tf_engine"}
 
 

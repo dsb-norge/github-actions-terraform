@@ -13,7 +13,7 @@ from unittest import mock
 
 import support
 from dsb_tf_engine import __main__ as cli
-from dsb_tf_engine import adapter, automerge_evidence
+from dsb_tf_engine import adapter, automerge_evidence, notify_evidence
 
 ENGINE_DIR = os.path.dirname(support.TESTS_DIR)
 RUN_PY = os.path.join(ENGINE_DIR, "run.py")
@@ -150,6 +150,63 @@ class EvaluateAutomergeCommandTest(unittest.TestCase):
                          "glob of the test jobs' metadata; empty for none", "path of the file holding stage-results-json"):
             self.assertIn(fragment, " ".join(stdout.getvalue().split()))
 
+
+
+class NotificationCommandsTest(unittest.TestCase):
+    DECIDE = ["decide-notifications", "--metadata-files-pattern=m-*.json", "--matrix-file=/tmp/matrix.json",
+              "--relevance-file=/tmp/r.json", "--stage-results-file=/tmp/stages", "--state-file=/tmp/state.json",
+              "--out-dir=/tmp/out"]
+    RECORD = ["record-notifications", "--state-file=/tmp/state.json", "--observations-file=/tmp/o.json",
+              "--results-files-pattern=r-*.json", "--out-file=/tmp/new.json"]
+
+    def test_decide_runs_the_adapter_with_the_runners_environment_and_tools(self):
+        calls = []
+        with mock.patch.object(notify_evidence, "run_decide", lambda *args: calls.append(args) or 3):
+            self.assertEqual(3, cli.main(self.DECIDE))
+        *paths, environ, stream, tools = calls[0]
+        self.assertEqual(["m-*.json", "/tmp/matrix.json", "/tmp/r.json", "/tmp/stages", "/tmp/state.json", "/tmp/out"],
+                         paths)
+        self.assertIs(os.environ, environ)
+        self.assertIs(sys.stdout, stream)
+        self.assertIsInstance(tools, adapter.Tools)
+
+    def test_record_runs_the_adapter(self):
+        calls = []
+        with mock.patch.object(notify_evidence, "run_record", lambda *args: calls.append(args) or 4):
+            self.assertEqual(4, cli.main(self.RECORD))
+        *paths, environ, stream, clock = calls[0]
+        self.assertEqual(["/tmp/state.json", "/tmp/o.json", "r-*.json", "/tmp/new.json"], paths)
+        self.assertIs(os.environ, environ)
+        self.assertIs(sys.stdout, stream)
+        self.assertEqual("UTC", clock().tzname())
+
+    def test_every_argument_is_required(self):
+        for argv in (self.DECIDE, self.RECORD):
+            for index in range(1, len(argv)):
+                with self.subTest(missing=argv[index]):
+                    with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
+                        cli.main(argv[:index] + argv[index + 1:])
+                    self.assertEqual(cli.EXIT_CRASH, raised.exception.code)
+                    self.assertIn(f"the following arguments are required: {argv[index].split('=')[0]}",
+                                  stderr.getvalue())
+
+    def test_the_help_describes_the_commands(self):
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        for fragment in ("the decide job of terraform-notify.yml, on a runner",
+                         "the record job of terraform-notify.yml, on a runner"):
+            self.assertIn(fragment, " ".join(stdout.getvalue().split()))
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["decide-notifications", "--help"])
+        for fragment in ("glob of the environment jobs' metadata", "path of create-matrix's matrix-json",
+                         "path of relevance.json", "path of the file holding stage-results-json",
+                         "path of the restored incident state; need not exist", "directory to write the events to"):
+            self.assertIn(fragment, " ".join(stdout.getvalue().split()))
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["record-notifications", "--help"])
+        for fragment in ("path of the newest incident state; need not exist", "path of decide's observations.json",
+                         "glob of the deliver jobs' answers", "path to write the new state to"):
+            self.assertIn(fragment, " ".join(stdout.getvalue().split()))
 
 
 if __name__ == "__main__":

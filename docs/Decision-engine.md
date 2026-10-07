@@ -204,6 +204,11 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
   its own command, `evaluate-automerge`: every environment job's metadata file, the test jobs'
   metadata, `relevance.json` and the stage results, each file a fact whether or not it can be read
   or parsed. `automerge_project.py` judges them and the adapter publishes `is-eligible`.
+- reading a run's notification evidence (`notify_evidence.py`, Notifications.md §7) for its own two
+  commands: the metadata, the matrix, `relevance.json`, the stage results and the stored incident
+  state, and, only when the core says the run needs them, the push's pull requests and the senders'
+  protection rules from GitHub. `notify_decide.py` decides what to send and `notify_state.py` merges
+  the state; both are core.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -215,6 +220,8 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | `decide` | the full input document | the full output document | the adapter, in-process; tests and debugging through the command line |
 | `create-matrix` | `--inputs-file` holding `toJSON(inputs)`, `--mode project` or `--mode module`, `--notify-target-file` holding `notify-target-json` (optional, empty for none), and the runner's environment | the per-stage matrices, the counts, `notify-active`, `notify-target-json` and `relevance.json` in `$GITHUB_OUTPUT`, the log; in mode `module` the test matrix and its counts, `tests-required-missing`, the admission's and auto-merge's outputs and the decision file (§3.3) | the `create-tf-vars-matrix` action |
 | `evaluate-automerge` | `--metadata-files-pattern`, `--relevance-file`, `--test-metadata-files-pattern` (globs and a path, matched in the working directory, empty for none), `--stage-results-file` holding `stage-results-json`, and `GITHUB_ACTOR` | `is-eligible` in `$GITHUB_OUTPUT`, the log, a notice per tolerated failing test | the `evaluate-automerge-eligibility` action |
+| `decide-notifications` | `--metadata-files-pattern`, `--matrix-file`, `--relevance-file`, `--stage-results-file`, `--state-file` (need not exist), `--out-dir`, the runner's event and run, and `GH_TOKEN` | the events, their messages, `observations.json` and `summary.md` under `--out-dir`, `deliver-matrix-json` and `deliver-count` in `$GITHUB_OUTPUT`, the summary appended to the step summary ([Notifications.md](Notifications.md) §7) | the `decide-notifications` action |
+| `record-notifications` | `--state-file` (need not exist), `--observations-file`, `--results-files-pattern`, `--out-file` | the merged state in `--out-file`, `changed` in `$GITHUB_OUTPUT`, undelivered messages in the step summary ([Notifications.md](Notifications.md) §9) | the `record-notifications` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
 partial document before the adapters run, and a `render-summary` of an output document. The run
@@ -245,7 +252,9 @@ malformed input document, an unreadable file, a broken `yq`, an unanswerable API
 and nothing to stdout; `create-matrix` writes the step's log to stdout. `evaluate-automerge`
 exits 0 with `is-eligible` published, ineligible included, and 1 without it for a limits mapping it
 cannot judge or a stage-results file it cannot read, as the bash evaluator did; it writes its log to
-stdout.
+stdout. `decide-notifications` and `record-notifications` exit 0 with their outputs published, and 1
+only for a file they cannot do without (the relevance file and the matrix, the observations); every
+other missing or unreadable input is a warning and a fact.
 
 ## 4. The input document
 
