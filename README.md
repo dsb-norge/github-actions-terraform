@@ -18,6 +18,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── create-test-summary             --> one structured summary of the terraform test stage, for both workflows (PR comment and run summary)
 ├── create-tf-vars-matrix           --> creates the environment matrix and decides which environments a change is relevant to; in mode module, a module's test matrix (runs the engine's create-matrix adapter)
 ├── create-validation-summary       --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
+├── decide-notifications            --> decides what a run tells Teams: the events, their messages and one deliver row each (runs the engine)
 ├── evaluate-automerge-eligibility  --> decides whether a pull request may be auto-merged, from the plans' changes, the limits and the actor
 ├── export-env-vars                 --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
 ├── lint-with-tflint                --> run linting of terraform code with TFLint
@@ -27,6 +28,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── post-teams-notification         --> posts one markdown text message to a Teams notification relay, with bounded retries; never fails the job
 ├── pr-comment                      --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
 ├── pr-comments-reconcile           --> bulk seed + GC PR/issue comments by HTML marker
+├── record-notifications            --> merges a run's notifications and the relay's answers into the incident state (runs the engine)
 ├── resolve-goal-envs               --> resolves the environment variables of every terraform goal (global and per-goal maps, secrets expanded)
 ├── setup-terraform-plugin-cache    --> setup and configure plugin cache on runners
 ├── setup-tflint                    --> install TFLint and make available to subsequent action steps

@@ -14,17 +14,26 @@
                                           the evaluate-automerge-eligibility step: judges every
                                           environment of a project run and publishes is-eligible
                                           (docs/Auto-merge.md §14)
+  decide-notifications --metadata-files-pattern <glob> --matrix-file <file> --relevance-file <file>
+                       --stage-results-file <file> --state-file <file> --out-dir <dir>
+                                          the decide job of terraform-notify.yml: what the run tells
+                                          Teams, and one deliver row per message (docs/Notifications.md §7)
+  record-notifications --state-file <file> --observations-file <file> --results-files-pattern <glob>
+                       --out-file <file>
+                                          the record job: the run's observations and the relay's
+                                          answers merged into the incident state (docs/Notifications.md §9)
 
-Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for all three: 0 success,
+Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for all of them: 0 success,
 2 the caller's configuration is invalid, 1 anything else.
 """
 
 import argparse
+import datetime
 import json
 import os
 import sys
 
-from . import adapter, automerge_evidence, decide, model
+from . import adapter, automerge_evidence, decide, model, notify_evidence
 
 EXIT_OK, EXIT_CRASH, EXIT_INVALID = 0, 1, 2
 
@@ -59,7 +68,23 @@ def _parse(argv):
     merge_parser.add_argument("--test-metadata-files-pattern", required=True,
                               help="glob of the test jobs' metadata; empty for none")
     merge_parser.add_argument("--stage-results-file", required=True, help="path of the file holding stage-results-json")
+    notify_parser = commands.add_parser("decide-notifications", help="the decide job of terraform-notify.yml, on a runner")
+    notify_parser.add_argument("--metadata-files-pattern", required=True, help="glob of the environment jobs' metadata")
+    notify_parser.add_argument("--matrix-file", required=True, help="path of create-matrix's matrix-json")
+    notify_parser.add_argument("--relevance-file", required=True, help="path of relevance.json")
+    notify_parser.add_argument("--stage-results-file", required=True, help="path of the file holding stage-results-json")
+    notify_parser.add_argument("--state-file", required=True, help="path of the restored incident state; need not exist")
+    notify_parser.add_argument("--out-dir", required=True, help="directory to write the events to")
+    record_parser = commands.add_parser("record-notifications", help="the record job of terraform-notify.yml, on a runner")
+    record_parser.add_argument("--state-file", required=True, help="path of the newest incident state; need not exist")
+    record_parser.add_argument("--observations-file", required=True, help="path of decide's observations.json")
+    record_parser.add_argument("--results-files-pattern", required=True, help="glob of the deliver jobs' answers")
+    record_parser.add_argument("--out-file", required=True, help="path to write the new state to")
     return parser.parse_args(argv)
+
+
+def _utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 def main(argv=None):
@@ -68,6 +93,13 @@ def main(argv=None):
     if args.command == "create-matrix":
         return adapter.run(args.inputs_file, os.environ, sys.stdout, adapter.Tools(), os.path.isdir,
                            args.mode == "module", args.notify_target_file)
+    if args.command == "decide-notifications":
+        return notify_evidence.run_decide(args.metadata_files_pattern, args.matrix_file, args.relevance_file,
+                                          args.stage_results_file, args.state_file, args.out_dir, os.environ,
+                                          sys.stdout, adapter.Tools())
+    if args.command == "record-notifications":
+        return notify_evidence.run_record(args.state_file, args.observations_file, args.results_files_pattern,
+                                          args.out_file, os.environ, sys.stdout, _utc_now)
     if args.command == "evaluate-automerge":
         return automerge_evidence.run(args.metadata_files_pattern, args.relevance_file,
                                       args.test_metadata_files_pattern, args.stage_results_file, os.environ, sys.stdout)

@@ -1,0 +1,45 @@
+name: "Record notifications"
+description: |
+  The record job of terraform-notify.yml (docs/Notifications.md §9): merges the decide job's
+  observations and the deliver jobs' answers into the newest incident state, writes it to out-file
+  and says whether it changed, so the job saves a new cache entry only then. A delivery the relay did
+  not accept is listed in the job summary.
+
+  The decision engine's command `record-notifications` (`engine/`, docs/Decision-engine.md §3.2).
+  Needs Python 3.12 or later on the runner. Fails only when the observations cannot be read.
+author: "Peder Schmedling"
+inputs:
+  state-file:
+    description: Path of the newest incident state, restored under the job's lock; need not exist.
+    required: true
+  observations-file:
+    description: Path of the decide job's observations.json.
+    required: true
+  results-files-pattern:
+    description: Glob of the deliver jobs' answer files.
+    required: true
+  out-file:
+    description: Path to write the new state to; its directory is made.
+    required: true
+outputs:
+  changed:
+    description: "'true' when the new state differs from the stored one."
+    value: ${{ steps.record.outputs.changed }}
+runs:
+  using: "composite"
+  steps:
+    - id: record
+      shell: bash
+      env:
+        STATE_FILE: ${{ inputs.state-file }}
+        OBSERVATIONS_FILE: ${{ inputs.observations-file }}
+        RESULTS_FILES_PATTERN: ${{ inputs.results-files-pattern }}
+        OUT_FILE: ${{ inputs.out-file }}
+      run: |
+        # Merge the run's observations and the relay's answers into the incident state
+        #
+        # A value is joined to its option with '=', so one starting with '-' is never read as an
+        # option. Isolated mode (-I): docs/Decision-engine.md P21.
+        python3 -I -B "${{ github.action_path }}/../engine/run.py" record-notifications \
+          --state-file="${STATE_FILE}" --observations-file="${OBSERVATIONS_FILE}" \
+          --results-files-pattern="${RESULTS_FILES_PATTERN}" --out-file="${OUT_FILE}"

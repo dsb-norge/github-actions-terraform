@@ -1,0 +1,71 @@
+name: "Decide notifications"
+description: |
+  The decide job of terraform-notify.yml (docs/Notifications.md §7, §8): from the environment jobs'
+  metadata, the matrix, relevance.json, the stage results and the restored incident state, works out
+  what the run tells Teams. Writes one event and its markdown message per notification under
+  out-dir/events, out-dir/observations.json for the record job and out-dir/summary.md, appends the
+  summary to the job summary, and publishes one deliver row per message.
+
+  The decision engine's command `decide-notifications` (`engine/`, docs/Decision-engine.md §3.2):
+  its adapter reads the files and asks GitHub for the push's pull requests and the senders'
+  protection rules; its core decides. Needs Python 3.12 or later on the runner and GH_TOKEN with
+  pull-requests and actions read. Fails only on a file it cannot do without.
+author: "Peder Schmedling"
+inputs:
+  metadata-files-pattern:
+    description: Glob of the environment jobs' metadata files, matched in the working directory.
+    required: false
+    default: "matrix-job-meta-*.json"
+  matrix-json:
+    description: create-matrix's matrix-json, every stage's rows.
+    required: true
+  relevance-file:
+    description: Path of relevance.json, the `relevance` artifact.
+    required: true
+  stage-results-json:
+    description: 'The stage jobs'' results, {"1": <result>, "2": ..., "3": ...}.'
+    required: true
+  state-file:
+    description: Path of the restored incident state; need not exist.
+    required: true
+  out-dir:
+    description: Directory to write the events, the observations and the summary to.
+    required: true
+outputs:
+  deliver-matrix-json:
+    description: '{"include": [...]}: one row per message to post, for the deliver jobs'' matrix.'
+    value: ${{ steps.decide.outputs.deliver-matrix-json }}
+  deliver-count:
+    description: The number of deliver rows, as a string.
+    value: ${{ steps.decide.outputs.deliver-count }}
+runs:
+  using: "composite"
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        METADATA_FILES_PATTERN: ${{ inputs.metadata-files-pattern }}
+        RELEVANCE_FILE: ${{ inputs.relevance-file }}
+        STATE_FILE: ${{ inputs.state-file }}
+        OUT_DIR: ${{ inputs.out-dir }}
+      run: |
+        # Decide what the run tells Teams
+        #
+        # The JSON inputs reach the engine through files, never a variable or argv. GitHub pastes
+        # the expressions into this script before bash parses it; the quoted heredocs keep bash
+        # from expanding anything in them, and JSON cannot contain a delimiter line because it
+        # escapes a string's newlines. Isolated mode (-I): docs/Decision-engine.md P21.
+        matrix_file="$(mktemp)"
+        cat >"${matrix_file}" <<'DECIDE_NOTIFICATIONS_MATRIX_JSON'
+        ${{ inputs.matrix-json }}
+        DECIDE_NOTIFICATIONS_MATRIX_JSON
+        stage_results_file="$(mktemp)"
+        cat >"${stage_results_file}" <<'DECIDE_NOTIFICATIONS_STAGE_RESULTS_JSON'
+        ${{ inputs.stage-results-json }}
+        DECIDE_NOTIFICATIONS_STAGE_RESULTS_JSON
+        # A value is joined to its option with '=', so one starting with '-' is never read as an option.
+        python3 -I -B "${{ github.action_path }}/../engine/run.py" decide-notifications \
+          --metadata-files-pattern="${METADATA_FILES_PATTERN}" --matrix-file="${matrix_file}" \
+          --relevance-file="${RELEVANCE_FILE}" --stage-results-file="${stage_results_file}" \
+          --state-file="${STATE_FILE}" --out-dir="${OUT_DIR}"
