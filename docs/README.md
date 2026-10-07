@@ -69,6 +69,8 @@ Reporting:
 | [Workflow-pr-comments.md](Workflow-pr-comments.md) | Every pull-request comment the default workflow writes: markers, lifecycle and body shapes. |
 | [Apply-and-destroy-reporting.md](Apply-and-destroy-reporting.md) | How apply, destroy plan and destroy results reach the comments, annotations and step summaries. |
 | [Plan-warnings.md](Plan-warnings.md) | Terraform `Warning:` diagnostics in comments and annotations. |
+| [Notifications.md](Notifications.md) | Microsoft Teams notifications when the default branch needs a person: event kinds, who is named, configuration per landing zone, incident threads and reminders. |
+| [Drift-detection.md](Drift-detection.md) | The scheduled plan read as drift or an unapplied default branch: the stopgap warning, the classification, the fingerprint and the transitions. |
 
 ## Contributor guides
 
