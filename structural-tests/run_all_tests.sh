@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F29 and the documentation cites them by
+# document missing from the index. They are numbered F2-F30 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -2139,6 +2139,82 @@ if [[ "${_f29_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f29_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F30 — the annotate step hands the scheduled-plan warning every fact it reads.
+#
+# annotate-terraform-outcome warns when a scheduled plan-only run planned changes
+# (docs/Drift-detection.md §3), from the event, whether apply was granted, the plan's
+# outcome and parse-terraform-plan's counts. Its suite feeds those inputs itself, so a
+# wiring the workflow drops, misspells or points at an output parse-terraform-plan does
+# not have would leave the warning silent with every action test green. The check reads
+# the environment steps (one step list for every stage job) and parse-terraform-plan's
+# outputs; F30_WORKFLOW points it at another workflow file.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F30 - the annotate step hands the scheduled-plan warning its facts${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f30_out=$(cd "${_this_script_dir}/.." && F30_WORKFLOW="${F30_WORKFLOW:-.github/workflows/terraform-ci-cd-default.yml}" python3 - <<'PYEOF'
+import os, sys, yaml
+
+WANT = {
+    "event-name": "${{ github.event_name }}",
+    "apply-granted": "${{ contains(matrix.vars.goals-granted, 'apply') }}",
+    "status-plan": "${{ steps.plan.outcome }}",
+    "plan-count-total": "${{ steps.parse-plan.outputs.count-total }}",
+    "plan-count-add": "${{ steps.parse-plan.outputs.count-add }}",
+    "plan-count-change": "${{ steps.parse-plan.outputs.count-change }}",
+    "plan-count-destroy": "${{ steps.parse-plan.outputs.count-destroy }}",
+    "plan-count-import": "${{ steps.parse-plan.outputs.count-import }}",
+    "plan-count-move": "${{ steps.parse-plan.outputs.count-move }}",
+    "plan-count-remove": "${{ steps.parse-plan.outputs.count-remove }}",
+    "plan-has-output-only-changes": "${{ steps.parse-plan.outputs.has-output-only-changes }}",
+    "plan-complete": "${{ steps.parse-plan.outputs.plan-complete }}",
+}
+problems = []
+path = os.environ["F30_WORKFLOW"]
+with open(path, encoding="utf-8") as fh:
+    jobs = yaml.safe_load(fh)["jobs"]
+with open("parse-terraform-plan/action.yml", encoding="utf-8") as fh:
+    plan_outputs = set(yaml.safe_load(fh)["outputs"])
+for job in ("terraform-ci-cd", "terraform-ci-cd-2", "terraform-ci-cd-3"):
+    steps = jobs[job]["steps"]
+    found = [step for step in steps if step.get("id") == "annotate"]
+    if len(found) != 1:
+        problems.append(f"{job}: {len(found)} steps with id annotate, expected 1")
+        continue
+    step = found[0]
+    if step.get("if") != "always()":
+        problems.append(f"{job}: the annotate step's if is {step.get('if')!r}, not always()")
+    given = step.get("with") or {}
+    for key, value in WANT.items():
+        if given.get(key) != value:
+            problems.append(f"{job}: annotate's {key} is {given.get(key)!r}, expected {value!r}")
+    ids = {s.get("id") for s in steps}
+    for needed in ("plan", "parse-plan"):
+        if needed not in ids:
+            problems.append(f"{job}: no step with id {needed}")
+for value in WANT.values():
+    if "steps.parse-plan.outputs." in value:
+        name = value.split("steps.parse-plan.outputs.")[1].rstrip(" }")
+        if name not in plan_outputs:
+            problems.append(f"parse-terraform-plan has no output {name}")
+print(f"checked the annotate step of the three stage jobs, {len(WANT)} inputs each")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF
+) && _f30_rc=0 || _f30_rc=$?
+if [[ "${_f30_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f30_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f30_out}"
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

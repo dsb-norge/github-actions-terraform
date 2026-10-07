@@ -141,6 +141,8 @@ environment that is never applied from CI is `pending` by design and may set
 - **`annotate-terraform-outcome` and `create-run-summary`:** the stopgap's annotation and marker on
   plan-only scheduled runs only, unchanged output on every other run (the existing exact-output
   assertions).
+- **Structural:** F30 holds the annotate step's wiring in the three stage jobs to the event, the
+  granted goals, the plan's outcome and `parse-terraform-plan`'s outputs, each of which must exist.
 - **Engine:** the transitions of §5 as table cases.
 - **Test bed:** a scheduled plan with a resource changed by hand, then the same finding twice, then
   the change reverted; an attribute under `ignore_changes` changed by hand, which stays clean.
