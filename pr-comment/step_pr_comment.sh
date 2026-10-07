@@ -55,6 +55,16 @@ COMMENTS_FILE=""
 # Newline-delimited "created_at|id" entries matching the marker substring.
 MATCHING_ENTRIES=""
 
+# A POST GitHub fails transiently is tried again: a lost comment is a plan nobody sees, and a few
+# seconds' wait costs nothing. Attempts in all, and the wait before each retry, in seconds.
+POST_ATTEMPTS=3
+POST_RETRY_DELAYS=(2 4)
+
+# The tests define their own, to record the waits instead of waiting them.
+if ! declare -F _pr_comment_sleep >/dev/null; then
+  function _pr_comment_sleep { sleep "${1}"; }
+fi
+
 # ============================================================================
 # Validation
 # ============================================================================
@@ -244,18 +254,65 @@ function do_upsert {
   end-group
 }
 
+# Whether a failure may not happen again: a 5xx, a 429, a broken answer or none. Any other 4xx would
+# answer the same.
+function _retriable {
+  ! grep -qE '\(HTTP 4[0-9]{2}\)' "${1}" || grep -qF '(HTTP 429)' "${1}"
+}
+
+# The oldest comment holding the marker, from a fresh listing; nothing when there is none or the
+# listing fails.
+function _find_marker_comment {
+  local raw_file
+  raw_file=$(mktemp)
+  if _gh_list_pr_comments "${input_repo}" "${input_issue_number}" >"${raw_file}" 2>/dev/null; then
+    jq -rs --arg m "${input_marker}" \
+      '(add // []) | map(select((.body // "") | contains($m))) | sort_by(.created_at) | .[0].id // empty' \
+      "${raw_file}" 2>/dev/null || true
+  fi
+  rm -f "${raw_file}"
+}
+
+# POST the body, retrying a transient failure. GitHub may have created the comment and failed only its
+# answer, so before each retry the thread is listed again: a comment holding the marker is updated
+# instead, and a retry never leaves two.
 function _post_fresh {
   local body_file="${1}"
-  local new_id
-  if new_id=$(_gh_post_comment "${input_repo}" "${input_issue_number}" "${body_file}" 2>&1); then
-    log-info "Posted: comment id=${new_id}"
-    OUTPUT_COMMENT_ID="${new_id}"
-    OUTPUT_ACTION="created"
-  else
-    log-warn "Failed to post: ${new_id}"
-    OUTPUT_COMMENT_ID=""
-    OUTPUT_ACTION="post-failed"
-  fi
+  local out_file attempt=1 found=""
+  out_file=$(mktemp)
+  while true; do
+    if [ -n "${found}" ]; then
+      if _gh_patch_comment "${input_repo}" "${found}" "${body_file}" >"${out_file}" 2>&1; then
+        log-info "Updated: comment id=${found}"
+        OUTPUT_COMMENT_ID="${found}"
+        OUTPUT_ACTION="updated"
+        break
+      fi
+      log-warn "Failed to update comment id=${found}: $(head -c 500 "${out_file}")"
+    else
+      if _gh_post_comment "${input_repo}" "${input_issue_number}" "${body_file}" >"${out_file}" 2>&1; then
+        OUTPUT_COMMENT_ID="$(cat "${out_file}")"
+        log-info "Posted: comment id=${OUTPUT_COMMENT_ID}"
+        OUTPUT_ACTION="created"
+        break
+      fi
+      log-warn "Failed to post: $(head -c 500 "${out_file}")"
+    fi
+    if [ "${attempt}" -ge "${POST_ATTEMPTS}" ] || ! _retriable "${out_file}"; then
+      OUTPUT_COMMENT_ID=""
+      OUTPUT_ACTION="post-failed"
+      break
+    fi
+    _pr_comment_sleep "${POST_RETRY_DELAYS[attempt - 1]}"
+    attempt=$((attempt + 1))
+    found="$(_find_marker_comment)"
+    if [ -n "${found}" ]; then
+      log-info "Attempt ${attempt} of ${POST_ATTEMPTS}: updating comment id=${found}"
+    else
+      log-info "Attempt ${attempt} of ${POST_ATTEMPTS}: posting again"
+    fi
+  done
+  rm -f "${out_file}"
 }
 
 # ============================================================================

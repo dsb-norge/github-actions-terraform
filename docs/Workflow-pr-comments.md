@@ -314,6 +314,13 @@ If listing PR comments fails (network blip, rate limit, etc.), both [`pr-comment
 - `delete` → no-op (we can't safely identify victims).
 - Reconcile's GC pass → skipped entirely.
 
+A write that fails is tried again when the failure may not repeat. When `pr-comment`'s POST gets a 5xx,
+a 429, a broken answer or none, it waits 2 seconds, then 4, and tries twice more. Before each retry it lists
+the thread again, because GitHub may have created the comment and failed only its answer: a comment that
+already holds the marker is PATCHed instead, so a retry never leaves two. Any other 4xx answers the same
+again and is not retried. After the last attempt the step records `post-failed` and the run goes on, so a
+comment never fails a plan. A plan tag lost this way stays lost until the job runs again.
+
 Duplicates from degraded runs self-heal on the next clean run: the matrix's per-env delete-first step wipes all plan tags for that env (any leftover duplicates included) before posting the new one. For heads, the upsert path sorts marker matches by `created_at` ASC, keeps the oldest, and deletes the rest in the same call.
 
 ## 10. Action references

@@ -11,7 +11,10 @@ description: |
   Modes:
     - upsert: find by marker; PATCH if exists, POST if not. Self-heals
       duplicates (multiple comments with the same marker → keep oldest by
-      created_at, DELETE the rest).
+      created_at, DELETE the rest). A POST that fails transiently (5xx, 429,
+      a broken answer or none) is tried twice more, 2 and 4 seconds apart,
+      after listing the thread again: a comment the failed POST created
+      after all is updated instead of posted twice.
     - delete: DELETE every comment whose body contains the marker.
 
   No event/fork/PR-context guards — those live in the caller workflow.
@@ -101,7 +104,7 @@ outputs:
     description: |
       One of: `created`, `updated`, `deleted`, `not-found`, `post-failed`.
         - `not-found` — delete found no matching comment.
-        - `post-failed` — upsert tried to POST but the API call errored.
+        - `post-failed` — upsert's POST failed, after its retries.
     value: ${{ steps.pr-comment.outputs.action }}
 
 runs:
