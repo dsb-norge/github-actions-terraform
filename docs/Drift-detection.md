@@ -6,8 +6,9 @@ of each environment that tells infrastructure changed outside Terraform apart fr
 that is not applied, marks either on the run, and, through [Notifications.md](Notifications.md),
 reaches the environment's Teams channel once per change rather than once per night.
 
-Status: **the scheduled plan is built** ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4);
-**the rest is specified, not built.** The open questions are in §9.
+Status: **the scheduled plan** ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4) **and the
+stopgap (§3) are built; the rest is specified, not built.** The open questions are in §9; §11 records
+what building the stopgap changed.
 
 ## 1. Why
 
@@ -43,21 +44,34 @@ only in the run summary.
 
 On a scheduled run whose `goals-granted` hold no `apply`, when the environment's plan step succeeded
 and the plan has changes (`parse-plan`'s `count-total` above zero, or `has-output-only-changes`
-true):
+true), the run says so in two places and stays green.
 
-- [`annotate-terraform-outcome`](../annotate-terraform-outcome/action.yml), which today annotates
-  applies and destroys, emits
-  `::warning title=Plan has changes::<environment>: the scheduled plan has <total> changes (<add> to add, <change> to change, <destroy> to destroy, <import> to import, <move> to move, <remove> to remove). Drift, or a default branch that is not applied.`,
-  or `… the scheduled plan changes only outputs. …` when that is all it does. The action gains the
-  event, the granted goals, the plan's outcome and its counts as inputs.
-- [`create-run-summary`](../create-run-summary/action.yml) prefixes that environment's plan cell
-  with ⚠, with one line under the table naming the environments. The "Worst outcome" cell stays as
-  it is: nothing failed.
+[`annotate-terraform-outcome`](../annotate-terraform-outcome/action.yml), which also annotates applies
+and destroys, emits one warning per environment, naming the non-zero counts only:
 
-When the counts cannot be read (`plan-complete` is `?`), the annotation says so instead; `false`,
-a targeted or deferred plan, has valid counts. Once the classification of §4 lands, both say
-"drift" or "default branch not applied" instead of "has changes". No workflow input, no workflow
-output and no conclusion changes.
+```text
+::warning title=Plan has changes::prod — the scheduled plan has 3 changes (2 to add, 1 to change): drift, or a default branch that is not applied
+::warning title=Plan has changes::prod — the scheduled plan changes only outputs: drift, or a default branch that is not applied
+::warning title=Plan not read::prod — the scheduled plan's changes could not be read; see the plan in the job log
+```
+
+The last is for counts that cannot be read (`plan-complete` is `?`); `false`, a targeted or deferred
+plan, has valid counts. The workflow hands the action the event, whether `apply` was granted
+(`contains(matrix.vars.goals-granted, 'apply')`), the plan's outcome and `parse-plan`'s counts.
+
+[`create-run-summary`](../create-run-summary/action.yml) reads the same facts from each environment's
+metadata, puts ⚠️ in front of that environment's plan cell, and names the environments under the
+table:
+
+```text
+⚠️ **The scheduled plan has changes:** `prod`, `staging`. Drift, or a default branch that is not applied.
+⚠️ **The scheduled plan could not be read:** `test`. See the plan in the job log.
+```
+
+The "Worst outcome" cell stays as it is: nothing failed. A pull request, a push, a dispatch and a
+scheduled reconcile render exactly as before. Once the classification of §4 lands, both say "drift"
+or "default branch not applied" instead of "has changes". No workflow input, no workflow output and
+no conclusion changes.
 
 ## 4. Classification
 
@@ -138,6 +152,15 @@ environment that is never applied from CI is `pending` by design and may set
 
 ## 10. Implementation order
 
-1. The stopgap (§3).
+1. The stopgap (§3). Built.
 2. The classification (§4), which sharpens the stopgap's wording.
 3. The kinds and transitions (§4, §5) with the state of [Notifications.md](Notifications.md) §9.
+
+## 11. What implementation taught the spec
+
+- The warning names only the non-zero counts. Six counts of which four are zero buried the one or
+  two kinds of change a scheduled plan usually has.
+- The warning follows the other annotations' shape, `<environment> — <what happened>`, and counts
+  that cannot be read get a title of their own, `Plan not read`, so the two never read alike.
+- The run summary needed no new input: the event and the granted goals are already in each
+  environment's metadata (`workflow.event_name`, `matrix_context.vars.goals-granted`).
