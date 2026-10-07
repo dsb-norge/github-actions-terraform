@@ -58,7 +58,7 @@ Emits two job outputs:
 - `tests-matrix` — JSON array of action names with tests, fed straight into the `test` matrix.
 - `no-tests-list` — JSON array of action names without tests, consumed by `summary`.
 
-A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. There are two such suites, neither of them an action, and both gate the pull request like every action's: the decision engine in [`engine/`](../engine) ([Decision-engine.md](Decision-engine.md) §8), and the structural tests in [`structural-tests/`](../structural-tests), the invariants that hold across the workflows, the actions and the documentation (F2-F29).
+A second pass adds every top-level directory that holds `run_all_tests.sh` but no `action.yml` or `action.yaml`, under the directory's name, by the same exclusion rule. There are two such suites, neither of them an action, and both gate the pull request like every action's: the decision engine in [`engine/`](../engine) ([Decision-engine.md](Decision-engine.md) §8), and the structural tests in [`structural-tests/`](../structural-tests), the invariants that hold across the workflows, the actions and the documentation (F2-F30).
 
 Dynamic discovery means newly-added test suites are picked up automatically; no workflow edit is needed when a legacy action gets modernized.
 
@@ -256,7 +256,7 @@ Path filters: intentionally omitted. "Did this workflow run at all" being load-b
 | `<action>/run_all_tests.sh` | The actual test suites — owned by each action, not by this workflow. |
 | `engine/run_all_tests.sh` | The decision engine's suite, discovered by the second pass (§2.1) and run again on the supported Pythons by `engine-python` (§2); it needs `pipx`, or an importable `coverage`, for its coverage gate ([Decision-engine.md](Decision-engine.md) §8). In CI it runs with `ENGINE_MUTATION=shards`, which leaves its mutation gate to §14; locally it runs both gates. |
 | `engine/tests/mutation.py` | The engine's mutation gate: `--shard K/N --out <file>` runs one shard, `--merge <files>` judges them (§14). |
-| `structural-tests/run_all_tests.sh` | The structural tests F2-F29: the invariants across the workflows, the actions, the engine and the documentation that no action's suite owns. Discovered by the second pass (§2.1). A new one takes the next number. |
+| `structural-tests/run_all_tests.sh` | The structural tests F2-F30: the invariants across the workflows, the actions, the engine and the documentation that no action's suite owns. Discovered by the second pass (§2.1). A new one takes the next number. |
 
 The `.github/scripts/` files follow the script conventions from [Action-implementation-guide.md](Action-implementation-guide.md): `#!/bin/env bash`, `set -o nounset`, a `main` function (the test suite has none), and an explicit `exit ${_main_exit_code}` at the end. They do *not* live inside composite actions — the first two serve this workflow, the rewrite pair `pr-preview.yml`.
 
