@@ -1,0 +1,211 @@
+name: "Terraform notifications"
+
+# Teams notifications for a run of terraform-ci-cd-default.yml (docs/Notifications.md §8). The decide
+# job works out what the run tells Teams; one deliver job per message posts it from the sending
+# environment's GitHub environment, as that environment's identity; the record job keeps the incident
+# state. Every job runs whatever came before it, cannot fail the calling run and ends in bounded time:
+# a notification never changes a run's conclusion (D15).
+
+on:
+  workflow_call:
+    inputs:
+      matrix-json:
+        type: string
+        required: true
+        description: create-matrix's matrix-json, every stage's rows.
+      stage-results-json:
+        type: string
+        required: true
+        description: 'The stage jobs'' results, {"1": <result>, "2": ..., "3": ...}.'
+      notify-target-json:
+        type: string
+        required: true
+        description: create-matrix's notify-target-json, the checked relay target.
+      runs-on:
+        type: string
+        required: false
+        default: "ubuntu-latest"
+        description: The runner of the decide and record jobs; the deliver jobs' is notifications-yml's runs-on.
+
+jobs:
+  decide:
+    name: "📣 Decide"
+    if: always()
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      actions: read        # the senders' GitHub environments
+      contents: read       # the push's commits
+      pull-requests: read  # the pull requests they merged
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      deliver-matrix-json: ${{ steps.decide.outputs.deliver-matrix-json }}
+      deliver-count: ${{ steps.decide.outputs.deliver-count }}
+    steps:
+      - name: "📥 Download matrix job metadata"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: matrix-job-meta-*
+          merge-multiple: true
+        # No artifacts (no environment job ran) is a valid input: the stage results decide.
+        continue-on-error: true
+      - name: "📥 Download the relevance decision"
+        uses: actions/download-artifact@v8
+        with:
+          name: relevance
+          path: ${{ runner.temp }}/relevance
+      # The path is part of a cache entry's version, so every job names it alike, relative to the workspace.
+      - name: "📥 Restore the incident state"
+        uses: actions/cache/restore@v6
+        with:
+          path: .tf-notify-state
+          # Never this run's own key: the prefix restores the newest state of any run (§9).
+          key: tf-notify-state-none
+          restore-keys: tf-notify-state-
+      - name: "📣 Decide what to tell Teams"
+        id: decide
+        uses: dsb-norge/github-actions-terraform/decide-notifications@v1
+        with:
+          # Read and written again: what a heredoc captures is JSON by construction (structural test F9).
+          matrix-json: ${{ toJSON(fromJSON(inputs.matrix-json)) }}
+          relevance-file: ${{ runner.temp }}/relevance/relevance.json
+          stage-results-json: ${{ toJSON(fromJSON(inputs.stage-results-json)) }}
+          state-file: .tf-notify-state/state.json
+          out-dir: ${{ runner.temp }}/notify
+      - name: "📦 Upload the events"
+        uses: actions/upload-artifact@v7
+        with:
+          name: notify-events
+          path: ${{ runner.temp }}/notify
+          if-no-files-found: error
+
+  deliver:
+    name: "📣 Deliver ${{ matrix.id }} as ${{ matrix.sender }}"
+    needs: decide
+    # deliver-count is set only by a decide job that finished; empty, there are no events to post.
+    if: always() && needs.decide.outputs.deliver-count != '' && needs.decide.outputs.deliver-count != '0'
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 10
+    continue-on-error: true
+    # The sender's environment, so its identity's federated credential matches; no deployment is recorded.
+    # A sender with protection rules is never a row (D16).
+    environment:
+      name: ${{ matrix.github-environment }}
+      deployment: false
+    permissions:
+      id-token: write  # the sender's sign-in
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.decide.outputs.deliver-matrix-json) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download the events"
+        uses: actions/download-artifact@v8
+        with:
+          name: notify-events
+          path: ${{ runner.temp }}/notify
+      # The sender's ARM_TENANT_ID and ARM_CLIENT_ID and nothing else: the row holds no other
+      # variable, and the secrets bag yields only the secrets those two name (D20).
+      - name: "🎰 Export the sender's identity"
+        uses: dsb-norge/github-actions-terraform/export-env-vars@v1
+        with:
+          extra-envs: ${{ toJSON(matrix.extra-envs) }}
+          extra-envs-from-secrets: ${{ toJSON(matrix.extra-envs-from-secrets) }}
+          secrets-json: ${{ toJSON(secrets) }}
+      # Immediately before posting: the GitHub assertion behind the sign-in lives about five minutes (P5).
+      - name: "🔑 Login to Azure"
+        uses: azure/login@v3
+        with:
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          allow-no-subscriptions: true
+      - name: "📣 Post to Teams"
+        id: post
+        uses: dsb-norge/github-actions-terraform/post-teams-notification@v1
+        with:
+          bot-url: ${{ fromJSON(inputs.notify-target-json).bot-url }}
+          bot-audience: ${{ fromJSON(inputs.notify-target-json).bot-audience }}
+          alias: ${{ matrix.alias }}
+          message-file: ${{ runner.temp }}/notify/events/${{ matrix.id }}.md
+          reply-to: ${{ matrix.reply-to }}
+          update: ${{ matrix.update }}
+          idempotency-key: ${{ matrix.idempotency-key }}
+      - name: "📝 Write the relay's answer"
+        if: always()
+        env:
+          EVENT_ID: ${{ matrix.id }}
+          ACCEPTED: ${{ steps.post.outputs.accepted }}
+          MESSAGE_ID: ${{ steps.post.outputs.message-id }}
+          HTTP_STATUS: ${{ steps.post.outputs.http-status }}
+        run: |
+          # Write the relay's answer for the record job; no answer at all reads as not accepted
+          mkdir -p "${RUNNER_TEMP}/notify-result"
+          jq -n --arg id "${EVENT_ID}" --arg accepted "${ACCEPTED:-false}" --arg message_id "${MESSAGE_ID}" \
+            --arg http_status "${HTTP_STATUS:-000}" \
+            '{id: $id, accepted: $accepted, message_id: $message_id, http_status: $http_status}' \
+            >"${RUNNER_TEMP}/notify-result/notify-result-${EVENT_ID}.json"
+      - name: "📦 Upload the relay's answer"
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: notify-result-${{ matrix.id }}
+          path: ${{ runner.temp }}/notify-result
+
+  record:
+    name: "📣 Record"
+    needs: [decide, deliver]
+    if: always() && needs.decide.outputs.deliver-count != ''
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 10
+    continue-on-error: true
+    # One merge at a time, queued rather than cancelled, so no run's observations are lost (D19).
+    concurrency:
+      group: tf-notify-state
+      cancel-in-progress: false
+      queue: max
+    permissions: {}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: "📥 Download the events"
+        uses: actions/download-artifact@v8
+        with:
+          name: notify-events
+          path: ${{ runner.temp }}/notify
+      - name: "📥 Download the relay's answers"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: notify-result-*
+          path: ${{ runner.temp }}/notify-results
+          merge-multiple: true
+        # No answers (nothing was delivered) is a valid input.
+        continue-on-error: true
+      # Under the lock, so the state merged into is the newest any run saved.
+      - name: "📥 Restore the incident state"
+        uses: actions/cache/restore@v6
+        with:
+          path: .tf-notify-state
+          key: tf-notify-state-none
+          restore-keys: tf-notify-state-
+      - name: "📝 Record the incidents"
+        id: record
+        uses: dsb-norge/github-actions-terraform/record-notifications@v1
+        with:
+          state-file: .tf-notify-state/state.json
+          observations-file: ${{ runner.temp }}/notify/observations.json
+          results-files-pattern: ${{ runner.temp }}/notify-results/notify-result-*.json
+          out-file: .tf-notify-state/state.json
+      # A cache entry cannot be overwritten; each attempt that changes the state saves its own, and the
+      # prefix restores the newest.
+      - name: "📦 Save the incident state"
+        if: steps.record.outputs.changed == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .tf-notify-state
+          key: tf-notify-state-${{ github.run_id }}-${{ github.run_attempt }}

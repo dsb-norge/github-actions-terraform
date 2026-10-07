@@ -636,6 +636,9 @@ jobs:
       # The Dependabot admission's verdict, for the conclusion (docs/Dependabot-admission.md §5.2).
       admission-refused: ${{ steps.create-matrix.outputs.admission-refused }}
       admission-reason: ${{ steps.create-matrix.outputs.admission-reason }}
+      # Whether the run notifies Teams, and the checked target (docs/Notifications.md §7).
+      notify-active: ${{ steps.create-matrix.outputs.notify-active }}
+      notify-target-json: ${{ steps.create-matrix.outputs.notify-target-json }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
@@ -650,6 +653,10 @@ jobs:
         uses: dsb-norge/github-actions-terraform/create-tf-vars-matrix@v1
         with:
           inputs-json: ${{ toJSON(inputs) }}
+          # The notification target, from the repository's or organisation's variables, never an input:
+          # a pull request cannot point it elsewhere (docs/Notifications.md §6.1). An unset one is "".
+          notify-target-json: >-
+            {"bot-url": ${{ toJSON(vars.TF_NOTIFY_BOT_URL) }}, "bot-audience": ${{ toJSON(vars.TF_NOTIFY_BOT_AUDIENCE) }}, "alias": ${{ toJSON(vars.TF_NOTIFY_ALIAS) }}}
       - name: "📦 Upload the relevance decision"
         uses: actions/upload-artifact@v7
         with:
@@ -2169,6 +2176,26 @@ jobs:
           # Held-back rows and the ordering footer (docs/Environment-ordering.md §7.2).
           stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
         continue-on-error: true # never fail the workflow over run-page reporting
+
+  # Teams notifications when the default branch is left unapplied (docs/Notifications.md §8). always(), not
+  # !cancelled(): a cancelled run is exactly when apply-cancelled must go out. Nothing needs this job, and
+  # every job inside it continues on error: a notification never changes the run's conclusion (D15).
+  notify:
+    needs: [create-matrix, terraform-ci-cd, terraform-ci-cd-2, terraform-ci-cd-3]
+    if: always() && needs.create-matrix.outputs.notify-active == 'true'
+    uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-notify.yml@v1
+    # The deliver jobs read the sender's identity secrets, in the sender's GitHub environment.
+    secrets: inherit
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      id-token: write
+    with:
+      matrix-json: ${{ needs.create-matrix.outputs.matrix-json }}
+      stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
+      notify-target-json: ${{ needs.create-matrix.outputs.notify-target-json }}
+      runs-on: ${{ inputs.runs-on }}
 
   # One job per test file (and provider set), in parallel with the environments; nothing waits for
   # them (docs/Terraform-tests.md §5). The row's github-environment is the job's environment: an empty

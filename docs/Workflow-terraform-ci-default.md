@@ -399,6 +399,37 @@ A Dependabot push to its branch, on a caller that triggers on every branch, runs
 
 Dependabot updates a provider only where `required_providers` gives it the block form, `source` and `version` on lines of their own. Written on one line, `random = { source = "hashicorp/random", version = "3.5.1" }`, the update fails in Dependabot's job with "Content didn't change!" and no pull request is opened.
 
+#### Teams notifications
+
+When an environment on the default branch is left unapplied with nobody watching, a message goes to Microsoft Teams ([Notifications.md](Notifications.md)): its apply failed, or a step before it failed, it was cancelled, or an earlier stage held it back. A push that fails again posts again; the next apply, or a clean scheduled or dispatched plan, posts that it is applied. A dispatch never opens one. The message names the authors and the merger of the pull requests the push merged:
+
+```markdown
+❌ **Apply failed** in `prod` · `example-org/example-repo`
+
+The `apply` step failed, so the default branch is not applied in `prod`.
+
+Change: [#7](https://github.com/example-org/example-repo/pull/7) `Add a storage account` by jdoe, merged by asmith.
+
+[Open the run](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+**On when the relay is configured.** Three repository or organisation variables name the relay instance and its channel: `TF_NOTIFY_BOT_URL` (`https://…/api`), `TF_NOTIFY_BOT_AUDIENCE` (`api://…`) and `TF_NOTIFY_ALIAS`. They are set per landing zone, not in the calling workflow. Without them nothing changes; with only some of them, or one that is malformed, every run warns and nothing is sent. With them, a push, a schedule or a dispatch on the default branch adds a `notify` job: it decides, posts each message from its own job, and records what is open. It never changes the run's conclusion.
+
+**Each environment posts as itself.** The message about `prod` is posted from `prod`'s GitHub Environment, signed in as its own `ARM_TENANT_ID` and `ARM_CLIENT_ID`, which need the relay's `Notifications.Send` role. An environment behind required reviewers or a wait timer cannot post, because its job would wait for an approval; the summary says so. Name one that can in `deliver-as`:
+
+```yaml
+    with:
+      notifications-yml: |
+        deliver-as: dev                # dev posts for every environment
+        kinds:
+          held-back:
+            alias: tf-held-back        # another channel of the same relay
+          apply-cancelled:
+            off: true                  # no message for a cancelled apply
+```
+
+`enabled: false` switches notifications off for the repository. An environment may carry its own `notifications-yml`, with every key but `enabled` and `runs-on`, merged over the input's. The settings and their mistakes: [Notifications.md](Notifications.md) §6.
+
 #### Worked examples
 
 Each example is the part of the calling workflow's `with:` that matters, what runs on each event, and why. Find the one closest to your configuration. The tables and messages come from running the workflow's own code on the configuration shown: its decision engine, which is the `Create job matrix` job, and, where an example says what a later step decides (the auto-merge evaluator, the conclusion, the export of variables), that step. Every message is quoted as the workflow prints it.

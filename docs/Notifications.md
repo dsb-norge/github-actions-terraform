@@ -6,8 +6,10 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **specified; the relay client (§11) is built.** Teams-side behaviour this spec relies on was verified against a
-deployed instance of the relay (§19); the open questions are in §20.
+Status: **built, but for reminders (§10), mentions and direct messages (D11), the identity App
+that resolves people for them (D21), and threads (§9), which wait for the relay (§13) or come with
+drift detection; not yet run on a test bed.** Teams-side behaviour this spec relies on was verified
+against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
 ## 1. Why
@@ -119,8 +121,9 @@ request for merge, squash and rebase merges alike but not who merged it, so
 | a schedule | nobody new; an open incident keeps the people it opened with |
 
 `mention` in §6.2 chooses which of those are mentioned once the relay can; the message always names
-them. For each person to mention or message, the adapter reads the organisation's SAML identity of
-the login with the identity App's token (D21):
+them, by login, in plain text. For each person to mention or message, the adapter will read the
+organisation's SAML identity of the login with the identity App's token (D21), which is built with
+mentions (§13):
 
 ```graphql
 organization(login: $org) { samlIdentityProvider { externalIdentities(login: $login, first: 1) {
@@ -177,10 +180,8 @@ notifications-yml: |
   kinds:
     held-back:
       direct: [author]
-    drift:
-      alias: tf-drift       # another channel on the same relay instance
-    pending-change:
-      off: true
+    apply-cancelled:
+      alias: tf-cancelled   # another channel on the same relay instance
 ```
 
 | Key | Default | Meaning |
@@ -195,111 +196,191 @@ notifications-yml: |
 | `remind` | `true` | `false` turns reminders off |
 | `off` | `false` | `true` sends nothing for the kind |
 
+The kinds are `apply-failed`, `apply-cancelled` and `held-back`; [Drift-detection.md](Drift-detection.md)
+adds its own when it is built. A list may be one value written alone (`mention: author`), and
+`true` and `false` may be written as text.
+
 ### 6.3 Per environment
 
 An `environments-yml` entry may carry `notifications-yml` with every key but `enabled` and
 `runs-on`, the name every merged setting has per environment
 ([Configuration-validation.md](Configuration-validation.md) §3.1). It merges over the global value
-key by key, so `kinds.drift.alias` per environment changes that and nothing else. In the engine,
+key by key, as every merged setting does: `kinds.held-back.alias` per environment changes that and
+nothing else, and a list (`mention`, `direct`) replaces the global one. In the engine,
 `notifications-yml` is a `MERGE_FIELDS` setting with its own validation; like every one, its
-resolved value is written into each environment's matrix row (`matrix.vars.notifications-yml`),
-where the decide job reads it, held-back environments included. Every port golden gains the field.
+resolved value is written into each environment's matrix row without the suffix, as
+`notifications` (`matrix.vars.notifications`, null when neither sets anything), where the decide
+job reads it, held-back environments included.
 
 ### 6.4 Validation
 
 `create-matrix` validates `notifications-yml` before any environment runs
-([Configuration-validation.md](Configuration-validation.md)); a mistake fails the run on every event,
-so it is found on the pull request that makes it.
+([Configuration-validation.md](Configuration-validation.md) §3.10); a mistake fails the run on every
+event, so it is found on the pull request that makes it. Every problem is reported, the global
+value's once and first, then each environment's, whose messages begin
+`environments-yml: environment 'prod': notifications-yml` instead of `notifications-yml`.
 
 | Mistake | Message |
 |---|---|
-| an unknown key | `notifications-yml: unknown key 'alias'; known keys: defaults, deliver-as, enabled, kinds, runs-on` |
-| an unknown kind | `notifications-yml: kinds: unknown kind 'apply-fail'; kinds: apply-cancelled, apply-failed, held-back, …` |
-| an unknown person | `notifications-yml: kinds.drift.mention takes author and merger, not 'owner'` |
-| `deliver-as` naming no environment | `notifications-yml: deliver-as names 'dve', which is not an environment of environments-yml` |
+| not a mapping | `notifications-yml is 'off'; it must be a mapping of settings (docs/Notifications.md §6.2)` |
+| an unknown key | `notifications-yml: unknown key 'kind' (did you mean 'kinds'?); known keys: defaults, deliver-as, enabled, kinds, runs-on` |
+| `enabled`, `off` or `remind` not true or false | `notifications-yml: 'enabled' is 'yes'; it must be true or false`, `notifications-yml: defaults.off is 'yes'; it must be true or false` |
+| `runs-on` not a label | `notifications-yml: 'runs-on' is 3; it must be a runner label` |
+| `deliver-as` naming no environment | `notifications-yml: 'deliver-as' names 'dve', which is not an environment of environments-yml` |
+| `kinds` not a mapping | `notifications-yml: 'kinds' is 'held-back'; it must be a mapping from a kind to its settings` |
+| an unknown kind | `notifications-yml: kinds: unknown kind 'apply-fail' (did you mean 'apply-failed'?); kinds: apply-cancelled, apply-failed, held-back` |
+| `defaults` or a kind not a mapping | `notifications-yml: kinds.held-back is 'off'; it must be a mapping of alias, direct, mention, off, remind` |
+| an unknown routing key | `notifications-yml: defaults: unknown key 'mentions' (did you mean 'mention'?); known keys: alias, direct, mention, off, remind` |
+| an alias the relay could not have made | `notifications-yml: defaults.alias is 'TF Alerts'; an alias is 2 to 50 of a-z 0-9 -, starting and ending with a letter or a digit` |
+| an unknown person | `notifications-yml: kinds.held-back.mention takes author and merger, not 'owner'`; not a list at all: `… is 5; it must be a list of author and merger` |
 | `enabled` or `runs-on` per environment | `environments-yml: environment 'prod': notifications-yml: 'enabled' is workflow-wide; set it in the notifications-yml input` |
 
-The variables are checked as warnings, never errors (D5): a partial set (`notifications are off:
-TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are set together or not at all;
-missing: TF_NOTIFY_ALIAS`), a URL not starting `https://` or not ending `/api`, an audience not
-starting `api://`. A kind that cannot fire in the repository (a drift kind with no environment on a
-schedule) is one warning per kind. Key names avoid what the metadata capture drops from the matrix
-and `github` contexts, without regard to case: any key containing `auth`, `token`, `secret`,
-`credential` or `password`, ending in `_key`, or named `key`.
+The variables are checked as warnings, never errors (D5), on every event, so a pull request shows
+them too, and not at all in a repository that set `enabled: false`:
+
+| Mistake | Warning |
+|---|---|
+| a partial set | `notifications are off: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are set together or not at all; missing: TF_NOTIFY_ALIAS` |
+| a URL | `notifications are off: TF_NOTIFY_BOT_URL is 'http://…/api'; it must start with https:// and end with /api` (a trailing `/` is accepted) |
+| an audience | `notifications are off: TF_NOTIFY_BOT_AUDIENCE is '…'; it must start with api://` |
+| an alias | `notifications are off: TF_NOTIFY_ALIAS is 'TF Alerts'; an alias is 2 to 50 of a-z 0-9 -, starting and ending with a letter or a digit` |
+
+Key names avoid what the metadata capture drops from the matrix and `github` contexts, without
+regard to case: any key containing `auth`, `token`, `secret`, `credential` or `password`, ending in
+`_key`, or named `key`.
 
 ## 7. The engine
 
-`create-matrix` gains the `notify-target-json` input, the validation of §6.4, the resolved
-`notifications-yml` in every row, and two outputs: `notify-active`, `"true"` when the event is
-`push`, `schedule` or `workflow_dispatch` on the default branch, the three variables are set and
-valid and `enabled` is not `false`; and `notify-target-json`, the checked target.
+`create-tf-vars-matrix` gains the input `notify-target-json`, the three variables as
+`{"bot-url", "bot-audience", "alias"}` (an unset one `""` or `null`, empty for no target at all),
+which reaches the engine as a file (`--notify-target-file`) and the input document as
+`notify_target` (`bot_url`, `bot_audience`, `alias`). The engine validates §6.4, writes the resolved
+`notifications-yml` into every row, and decides the output document's `notify` block, which
+`relevance.json` carries too:
 
-A new command, `decide-notifications`, runs after the environments, as `evaluate-automerge` does
-([Decision-engine.md](Decision-engine.md) §3.2):
+```json
+{"active": true, "reason": "on",
+ "target": {"bot-url": "https://…/api", "bot-audience": "api://…", "alias": "…"},
+ "senders": {"prod": {"github-environment": "production",
+                      "extra-envs": {"ARM_TENANT_ID": "…"},
+                      "extra-envs-from-secrets": {"ARM_CLIENT_ID": "PROD_CLIENT_ID"}}}}
+```
+
+`active` is true for a `push`, `schedule` or `workflow_dispatch` on the default branch (a branch of
+that name, never a tag) with a valid target and `enabled` not `false`. Otherwise `reason` says why:
+`no target: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are not set`,
+`the target is incomplete`, `the target is invalid`,
+`switched off: notifications-yml sets enabled: false`, or
+`only a push, a schedule or a dispatch on the default branch notifies`. `target` is the checked
+target whenever it is valid, also on a run that does not notify, and null otherwise. The step logs
+the reason in a group of its own, `notifications`, and publishes two outputs: `notify-active`
+(`"true"` or `"false"`) and `notify-target-json` (the target, or `{}`). A module decides no
+notifications.
+
+`senders` lists every environment of `environments-yml`, whether or not the run ran it, because
+`deliver-as` may name one it did not: its `github-environment`, and the `ARM_TENANT_ID` and
+`ARM_CLIENT_ID` entries of its resolved job-wide `extra-envs` and `extra-envs-from-secrets` (values
+and secret names, never secret values). A deliver job hands exactly these to `export-env-vars` with
+the secrets, so the identity resolves as the environment's own job resolves it (§12).
+
+A command, `decide-notifications`, runs after the environments, as `evaluate-automerge` does
+([Decision-engine.md](Decision-engine.md) §3.2), through the action
+[`decide-notifications`](../decide-notifications/action.yml):
 
 | Input | From |
 |---|---|
 | `--metadata-files-pattern` | a glob over the downloaded `matrix-job-meta-*.json` files |
 | `--matrix-file` | `create-matrix`'s `matrix-json`: every relevant environment's row, held-back ones included |
-| `--relevance-file` | the `relevance` artifact |
+| `--relevance-file` | the `relevance` artifact: the environments' stages, and `notify` (§7) with the target, the senders and the deliver jobs' runner |
 | `--stage-results-file` | `stage-results-json`, as the auto-merge job builds it |
-| `--state-file` | the state restored from the cache (§9); absent means none |
+| `--state-file` | the state restored from the cache (§9); a file that does not exist means none |
 | `--out-dir` | where it writes its files |
-| the runner's environment | the event, the default branch, the run's ID, number and attempt, `GITHUB_TOKEN` for §5 |
+| the runner's environment | the event and its payload (the push's `before`, `after`, `forced` and sender, the default branch), the run's ID, number and attempt, the server URL, and `GH_TOKEN` for §5 |
 
-The adapter gathers the pull requests and identities of §5 and the protection rules of each sending
-environment (`GET /repos/{owner}/{repo}/environments/{name}`); each is a fact, and a failure to
-gather one is reported, never fatal. The pure core decides; it writes:
+The core first says which costly facts the run needs, and the adapter gathers only those: the
+people of the push (§5) when a push opens or repeats an incident, and the protection rules of each
+sender it posts as (`GET /repos/{owner}/{repo}/environments/{name}`: a rule other than a branch
+policy holds a job; an environment that does not exist holds nothing). A run with nothing to send
+asks GitHub nothing. Each fact that cannot be gathered is a fact: people that cannot be read make
+the message say so, and a sender whose rules cannot be read is not used. A metadata file that
+cannot be used, stage results that cannot be read and a stored state of another shape are
+warnings; only the relevance file and the matrix are needed, and without them the step fails.
+
+The result of an environment in the `apply` slot, from its metadata:
+
+| The environment | Result |
+|---|---|
+| due to apply, its `apply` step `success` | applied |
+| due to apply, its `apply` step `failure` or `cancelled` | failed or cancelled, at `apply` |
+| due to apply, `apply` did not run | failed or cancelled at the first of `init`, `verify-lock`, `fmt`, `validate`, `lint`, `plan` that failed or was cancelled; failed when none says why |
+| not due to apply, on a schedule or dispatch, its plan `success` and read whole: no change, no output-only change | clean |
+| due to apply, no metadata, its stage `skipped` after an earlier stage failed or was cancelled | held back |
+| due to apply, no metadata, its stage `failure` or `cancelled` | failed or cancelled, the job unreported |
+| anything else | nothing; without metadata, unknown, and nothing is said |
+
+The core writes:
 
 | File or output | Holds |
 |---|---|
 | `events/<id>.json` | one event per message to post (below) |
-| `events/<id>.md` | its rendered markdown text |
-| `observations.json` | what this run saw, per environment and slot, for the record job |
-| `summary.md` | sent, skipped and why, for the step summary |
-| `deliver-matrix-json` | one row per sending environment: its `github-environment`, its tenant and client ID settings, and its event IDs |
+| `events/<id>.md` | its rendered markdown text (§11) |
+| `observations.json` | `run_number` and, per environment and slot, what this run saw and did, for the record job |
+| `summary.md` | sent, not sent and why; also appended to the step summary |
+| `deliver-matrix-json` | `{"include": [...]}`, one row per message: `id`, `sender`, its `github-environment`, the deliver job's `runs-on`, `alias`, `reply-to`, `update`, `idempotency-key`, and the sender's `extra-envs` and `extra-envs-from-secrets` (§7's `senders`) |
 | `deliver-count` | the number of rows |
 
 ```json
 {"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed",
- "action": "open", "reply_to": null, "update": null,
- "mentions": [{"object_id": "…", "name": "…"}], "direct": [],
- "alias": "…", "idempotency_key": "<repository>/<run id>/<run attempt>/prod/apply/open",
- "message": "e1.md"}
+ "action": "open", "alias": "tf-alerts", "reply_to": null, "update": null, "sender": "prod",
+ "idempotency_key": "9f2c…", "message": "e1.md"}
 ```
 
-`action` is `open`, `reply`, `resolve` or `remind`. The rules are pure, under the engine's coverage
-and mutation gates; this takes the engine past deciding before the run, as `evaluate-automerge`
-already did.
+`action` is `open`, `reply`, `resolve` or `removed` (§9). The idempotency key is the SHA-256, in
+lowercase hex, of `<repository>/<run id>/<run attempt>/<environment>/<slot>/<action>`: one key per
+message of a run attempt, so re-running only a deliver job posts nothing twice, and hashed because
+the relay's store refuses `/` in a key and an environment name may be 255 characters. Mentions and
+direct messages join the event when the relay supports them (§13). The rules are pure, under the
+engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); the adapter is
+`notify_evidence.py`.
 
 ## 8. The workflow
 
 `terraform-notify.yml` is `on: workflow_call` with the inputs `matrix-json`, `stage-results-json`,
-`notify-target-json` and `runs-on`, and three jobs. Every job has `if: always()` (plus its guard),
-job-level `continue-on-error: true` and a short `timeout-minutes`.
+`notify-target-json` and `runs-on`, and three jobs. Every job has job-level
+`continue-on-error: true` and `timeout-minutes: 10`; structural test F32 holds each of them.
 
-**`decide`**, on `runs-on`, `permissions: { actions: read, contents: read, pull-requests: read }`:
-mints the identity App's installation token when §6.1's settings are present (with
-`actions/create-github-app-token`, `permission-members: read`), downloads the artifacts as the
-auto-merge job does, restores the state (§9), runs
-`decide-notifications`, uploads the events as the `notify-events` artifact and writes `summary.md`
-to the step summary.
+**`decide`**, `if: always()`, on `runs-on`,
+`permissions: { actions: read, contents: read, pull-requests: read }`: downloads the metadata and
+the relevance artifact as the auto-merge job does, restores the state (§9), runs
+`decide-notifications` (the two JSON inputs read and written again with `toJSON(fromJSON(…))`, so
+what its run block captures is JSON by construction, F9), and uploads `--out-dir` as the
+`notify-events` artifact.
 
-**`deliver`**, `if: needs.decide.outputs.deliver-count != '0'`, a matrix over the decide job's rows,
-on the `runs-on` of §6.2, `environment: { name: <row's github-environment>, deployment: false }`,
+**`deliver`**, `if: always() && needs.decide.outputs.deliver-count != '' && … != '0'` (the count is
+set only by a decide job that finished, and an empty matrix fails, P9), a matrix over the decide
+job's rows with `fail-fast: false`, one job per message, on the row's `runs-on`,
+`environment: { name: <row's github-environment>, deployment: false }`,
 `permissions: { id-token: write }`:
 
-1. Export `ARM_TENANT_ID` and `ARM_CLIENT_ID` from the row's settings with
-   [`export-env-vars`](../export-env-vars/action.yml), and nothing else.
-2. Log in with `azure/login` and `allow-no-subscriptions: true`, immediately before posting: the
+1. Download `notify-events`.
+2. Export the row's `extra-envs` and `extra-envs-from-secrets` with
+   [`export-env-vars`](../export-env-vars/action.yml) and the secrets: the sender's
+   `ARM_TENANT_ID` and `ARM_CLIENT_ID`, resolved as its own job resolves them, and nothing else.
+3. Log in with `azure/login` and `allow-no-subscriptions: true`, immediately before posting: the
    GitHub assertion behind the login lives about five minutes (P5).
-3. Post each of the row's events with `post-teams-notification` (§11), and upload the results
-   (`message-id`, `http-status`, `accepted` per event) as `notify-results-<row>`.
+4. Post `events/<id>.md` with `post-teams-notification` (§11), to the row's alias, with its
+   `reply-to`, `update` and idempotency key.
+5. Write the relay's answer, `{id, accepted, message_id, http_status}`, and upload it as
+   `notify-result-<id>`, whatever happened before.
 
-**`record`**, `needs: [decide, deliver]`, on `runs-on`, no permissions beyond reading artifacts,
-`concurrency: { group: tf-notify-state, cancel-in-progress: false, queue: max }`: merges the
-observations and the delivery results into the newest state and saves it (§9), and appends delivery
-failures to the step summary.
+**`record`**, `needs: [decide, deliver]`, `if: always() && needs.decide.outputs.deliver-count != ''`,
+on `runs-on`, `permissions: {}`,
+`concurrency: { group: tf-notify-state, cancel-in-progress: false, queue: max }` (a group otherwise
+holds one waiting job and cancels the one before it): downloads the events and the answers, restores
+the newest state under the lock, runs `record-notifications` through the action
+[`record-notifications`](../record-notifications/action.yml), which merges the observations and the
+answers into it (§9) and lists every delivery that was not accepted in the step summary, and saves the
+state when it changed.
 
 The default workflow calls it as one job:
 
@@ -309,64 +390,83 @@ The default workflow calls it as one job:
     if: always() && needs.create-matrix.outputs.notify-active == 'true'
     uses: dsb-norge/github-actions-terraform/.github/workflows/terraform-notify.yml@v1
     secrets: inherit
+    permissions: { actions: read, contents: read, pull-requests: read, id-token: write }
     with:
       matrix-json: ${{ needs.create-matrix.outputs.matrix-json }}
-      stage-results-json: …       # built as the auto-merge job builds it
+      stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": …, "3": …}'
       notify-target-json: ${{ needs.create-matrix.outputs.notify-target-json }}
       runs-on: ${{ inputs.runs-on }}
 ```
 
+and `create-matrix` hands the engine the target from the variables:
+
+```yaml
+          notify-target-json: >-
+            {"bot-url": ${{ toJSON(vars.TF_NOTIFY_BOT_URL) }}, "bot-audience": ${{ toJSON(vars.TF_NOTIFY_BOT_AUDIENCE) }}, "alias": ${{ toJSON(vars.TF_NOTIFY_ALIAS) }}}
+```
+
 `always()` and not `!cancelled()`: a cancelled run is exactly when `apply-cancelled` must go out.
 `notify` waits for the stages only; it needs the tests and the conclusion once the run-level kinds
-of D17 arrive. A new structural test holds `notify`'s `needs` and `if`, keeps it out of
-`conclusion.needs`, and holds the three jobs' `if`, `continue-on-error` and `deployment: false`.
+of D17 arrive. Structural test F31 holds `create-matrix`'s target and outputs, `notify`'s `needs`,
+`if`, permissions and inputs, and that no job needs `notify`.
 
 ## 9. Incident state
 
 One JSON document per repository, in the Actions cache under
 `tf-notify-state-<run id>-<run attempt>`, restored by the prefix `tf-notify-state-`, which returns
-the newest entry. Entries are immutable; a new one is saved only when the state changed.
+the newest entry. Entries are immutable; a new one is saved only when the state changed. The path,
+`.tf-notify-state` in the workspace, is the same in every job: it is part of an entry's version, and
+an entry saved from another path is never restored.
 
 ```json
 {"schema_version": 1,
  "incidents": {"prod/apply": {"kind": "apply-failed", "status": "open", "message_id": "msg-…",
-   "opened_at": "…", "opened_run": 412, "seen_run": 415, "people": ["jdoe", "asmith"],
-   "reminder_level": 0, "reminded_at": null}}}
+   "alias": "tf-alerts", "sender": "prod", "opened_at": "2026-10-07T12:00:00Z", "opened_run": 412,
+   "seen_run": 415, "people": ["jdoe", "asmith"], "resolved_at": null}}}
 ```
 
-Keys are `<environment>/<slot>`, the environment lowercased. `seen_run` is the run number of the
-newest observation; the record job ignores an observation from an older run, so a re-run of an old
-commit, or an earlier run finishing last, cannot reopen what a newer run resolved. A resolved
-incident stays as a tombstone (`status: resolved`) for 30 days, then is dropped; deleting a cache
-entry would need `actions: write`, beyond the callers' grant.
+Keys are `<environment>/<slot>`, the environment lowercased. `status` is `open`, `pending` (the
+relay did not accept the first message) or `resolved`. `alias` and `sender` are where the first
+message went and who sent it: every later message of the incident goes there, as them, whatever the
+routing says by then, because the relay refuses a reply to a message of another alias. `seen_run`
+is the run number of the newest observation; the record job ignores an observation from an older
+run, so a re-run of an old commit, or an earlier run finishing last, cannot reopen what a newer run
+resolved. A resolved incident stays as a tombstone for 30 days, then is dropped; deleting a cache
+entry would need `actions: write`, beyond the callers' grant. A stored document of another
+`schema_version` is started over, never misread.
 
 The decide job reads the newest state without the lock. Two overlapping runs can both see no open
 incident and both post a new message: a duplicate thread, never a lost one, because the record job
-merges under the lock and keeps the older `message_id`. An incident whose post the relay did not
-accept stays `pending` and is posted fresh by the next run that sees it.
+merges under the lock and keeps the older `message_id`.
 
 | Last state | This run | Action |
 |---|---|---|
-| none or resolved | apply failed, cancelled or held back | post a new message; record its `messageId` |
-| open | the same, again | reply in the thread with the new run |
-| open | resolved (§4) | update the first message to resolved, reply "Recovered", tombstone it |
+| none, resolved or pending | apply failed, cancelled or held back, on a push or a schedule | `open`: a new message; the incident is open once the relay accepts it, else pending |
+| open | the same again, on a push | `reply`: a message in the thread, naming the push's people |
+| open | the same again, on a schedule | nothing; the schedule's are the reminders (§10) |
+| any | apply failed, cancelled or held back, on a dispatch | nothing (D8) |
+| open | applied, or a clean plan on a schedule or dispatch | `resolve`: a message in the thread; a tombstone |
+| pending | applied, or a clean plan | a tombstone, without a message: the incident never reached Teams |
+| open or pending, for an environment no longer in `environments-yml` | any run | `removed`: "No longer watched", as the incident's sender; a tombstone. When the sender is gone too, the tombstone alone, said in the summary |
 | open | not run | nothing |
-| open, for an environment no longer in `environments-yml` | any run | update the first message to resolved, reply "removed from the configuration", tombstone it |
-| pending | the same, again | post a new message |
+| a kind with `off: true` | | opens nothing |
 
 A state entry unused for seven days, or pushed out by the repository's 10 GB cache limit, is gone.
 The next failure then opens a new thread, and the old message is never marked resolved: the cost of
 keeping no state outside the cache.
 
-**First release without threads.** Until the relay can reply to and update a message by its
-`messageId` (§13), `reply` and `resolve` are new posts in the channel, quoting the time of the
-incident's first message, and nothing is updated in place. Everything else, the state included, is as above.
+**Without threads, as the relay is today.** Every `reply`, `resolve` and `removed` carries the first
+message's `messageId` as `reply-to`; until the relay supports it (§13) it ignores the field and posts
+in the channel. So every message stands alone: it names the environment and the repository, and a
+reply or resolution says since when the environment has not been applied. No `update` is sent
+before the relay supports it, because today it would be a second post; the incident's first message
+is then updated to resolved as well.
 
 ## 10. Reminders
 
-On a scheduled run, each open incident in the `apply` slot whose next reminder is due gets a reply
-in its thread. Age counts in working days, Monday to Friday; the reply goes out with the first
-scheduled run after the reminder is due.
+Not built yet. On a scheduled run, each open incident in the `apply` slot whose next reminder is due
+gets a reply in its thread. Age counts in working days, Monday to Friday; the reply goes out with the
+first scheduled run after the reminder is due. The state gains `reminder_level` and `reminded_at`.
 
 | `reminder_level` | Due after | Reply mentions |
 |---|---|---|
@@ -418,18 +518,36 @@ role. A `messageId` that is not a plain ID is not passed on.
 
 Mentions and direct messages (D11) join as inputs once the relay supports them (§13).
 
-The decide job renders the message (D23): a bold first line with the kind and the environment, the
-facts (the step that failed, plan counts, the stage held back on), the people (§5), and markdown
-links to the run and the pull request built from their numbers, never from text. Text from a pull
-request or a commit (titles, branch names, logins) has `\` `` ` `` `*` `_` `[` `]` `(` `)` `#` `+`
-`-` `.` `!` `|` `<` `>` and `~` escaped and newlines replaced by spaces, so it can carry neither a
-link nor a mention. A message stays under the relay's 28 KB request limit by shortening lists.
+The decide job renders the message (D23), paragraphs of markdown text:
+
+```markdown
+❌ **Apply failed** in `prod` · `example-org/example-repo`
+
+The `apply` step failed, so the default branch is not applied in `prod`.
+
+Change: [#7](https://github.com/example-org/example-repo/pull/7) `Add a storage account` by jdoe, merged by asmith.
+
+[Open the run](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+A first line that says what and where (`❌ Apply failed`, `🚫 Apply cancelled`, `⏸️ Held back`,
+the same `again` for a reply, `✅ Applied`, `✅ No longer watched`), why (the step that failed or was
+cancelled, the stage that held it back, or that the job did not report), who (§5; on a schedule
+"Found by the scheduled run."; "Who made the change could not be read." when the people are not
+known), and the run. Links are built from numbers, never from text. Names, the repository and steps
+are written as code; a login is letters, digits and hyphens. A pull request's title, the one piece of
+free text, is a code span with every `` ` `` made `'`, `<` and `>` made `‹` and `›` and whitespace
+collapsed, cut to 100 characters: inside a code span nothing is markup, and nothing in it can end the
+span, so a title can carry neither a link nor a mention, without relying on backslash escapes. At
+most ten pull requests are listed, then "and N more", so a message stays far under the relay's 28 KB
+request limit.
 
 ## 12. Identity and network
 
 - The sending environment's identity is its job-wide `ARM_TENANT_ID` and `ARM_CLIENT_ID`: the values
-  its matrix row's `extra-envs-yml` holds, or the secrets its `extra-envs-from-secrets-yml` names,
-  read in the sender's GitHub Environment. Per-goal values are not read. An environment whose sender
+  its resolved `extra-envs-yml` holds, or the secrets its `extra-envs-from-secrets-yml` names, read in
+  the sender's GitHub Environment, as `create-matrix` lists them in `notify.senders` (§7). Per-goal
+  values are not read. An environment whose sender
   has neither gets a warning in the summary instead of a delivery.
 - Each sending identity holds the relay API's `Notifications.Send` application role, granted when
   its landing zone is onboarded (§14). The relay's API accepts tokens from its own tenant only; an
@@ -512,18 +630,24 @@ A minor release.
 
 ## 19. Tests
 
-- **Engine:** the rules of §4, §5, §9 and §10 as table cases, at 100 percent coverage and through
-  the mutation gate: every row of §4's table, stale observations, pending posts, removed
-  environments, overlapping runs; validation messages as literal strings; the evidence adapter
-  against recorded artifacts, including missing and unreadable ones; the escaping of §11.
+- **Engine:** the rules of §4, §5 and §9 as table cases, at 100 percent coverage and through the
+  mutation gate (`test_notifications`, `test_notify_decide`, `test_notify_state`): every result of
+  §7, every transition of §9, stale observations, pending posts, removed environments and their
+  senders, overlapping runs, routing and `deliver-as`, protected and identity-less senders, every
+  message as a literal; validation messages as literal strings; the adapter (`test_notify_evidence`)
+  against files on disk and a stub `gh`, including missing and unreadable ones, the first-parent
+  walk, bots by name and by type, and every failure of a GitHub call as a fact.
+- **Actions:** `decide-notifications` and `record-notifications` run their action's run block end to
+  end, with shell syntax in the pasted JSON and a caller's `json.py` in the working directory.
 - **Action:** `post-teams-notification` against a fake relay (a local HTTP server answering a
   scripted list of responses and recording every request) and a stub `az`: the request's shape, 202
   with and without a `messageId`, 4xx with and without a problem detail, 429 with `Retry-After`, 5xx
   and no answer until the retries run out, the budget, no token, the token never printed, `dry-run`,
   and every input that is not posted.
-- **Structural:** `notify`'s `needs` and `if`, its absence from `conclusion.needs`, and in
-  `terraform-notify.yml` every job's `if`, `continue-on-error` and timeout, `deliver`'s
-  `environment` with `deployment: false`, and `record`'s concurrency group.
+- **Structural:** F31, `create-matrix`'s target and outputs, `notify`'s `needs`, `if`, permissions
+  and inputs, and that no job needs it; F32, in `terraform-notify.yml` every job's `if`,
+  `continue-on-error`, timeout and permissions, `deliver`'s `environment` with `deployment: false`,
+  matrix, runner and identity export, and `record`'s queueing lock.
 - **Test bed:** a test-bed repository with the three variables pointing at a test relay instance,
   a sending identity holding `Notifications.Send`, a protected environment using `deliver-as`, and a
   failing apply, a cancelled apply, a held-back stage, a recovery and a dispatch that resolves.
@@ -539,8 +663,6 @@ in-place updates work; a direct message through the team roster works.
   ([Terraform-tests.md](Terraform-tests.md) P26)? Needs a test-bed run.
 - Can `GITHUB_TOKEN` read an environment's `protection_rules` (§7)? GitHub documents the call for
   anyone with read access. Needs a test-bed run.
-- Does Teams honour backslash escapes in a bot's markdown text message (§11)? Needs a post to the
-  relay's test instance; where it does not, the renderer replaces those characters instead.
 - Does an organisation's OIDC subject template that includes `job_workflow_ref` give the nested
   deliver job a subject the sending identity does not trust? Needs a test-bed run per organisation.
 - Does any Conditional Access policy restrict the sending identities' sign-ins from GitHub-hosted
@@ -554,9 +676,9 @@ nested one included ([Preview-refs.md](Preview-refs.md) §4.1); the first previe
 
 ## 21. Implementation order
 
-1. The relay client action and its fake relay.
+1. The relay client action and its fake relay. Built.
 2. The engine: validation, `notify-active`, `decide-notifications` with the kinds of §4 and the
-   state of §9.
-3. `terraform-notify.yml` and the default workflow's `notify` job; the test bed.
+   state of §9. Built.
+3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
 4. Reminders (§10), with [Drift-detection.md](Drift-detection.md).
 5. Threads in place, mentions and direct messages, as the relay offers them.
