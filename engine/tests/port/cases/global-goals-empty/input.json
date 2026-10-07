@@ -44,6 +44,7 @@
     "extra-envs-yml": "{}",
     "format-check-in-root-dir": false,
     "goals-yml": "",
+    "notifications-yml": "",
     "path-relevance-enabled": true,
     "pr-auto-merge-app-id": "",
     "pr-auto-merge-app-private-key-secret": "",
@@ -97,6 +98,10 @@
         "value": {}
       },
       "goals-yml": {
+        "ok": true,
+        "value": null
+      },
+      "notifications-yml": {
         "ok": true,
         "value": null
       },

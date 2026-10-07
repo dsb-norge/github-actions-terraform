@@ -44,6 +44,7 @@
     "extra-envs-yml": "{}",
     "format-check-in-root-dir": false,
     "goals-yml": "- init\n- format\n- validate\n- lint\n",
+    "notifications-yml": "",
     "path-relevance-enabled": true,
     "pr-auto-merge-app-id": "",
     "pr-auto-merge-app-private-key-secret": "",
@@ -112,6 +113,10 @@
           "validate",
           "lint"
         ]
+      },
+      "notifications-yml": {
+        "ok": true,
+        "value": null
       },
       "pr-auto-merge-from-actors-yml": {
         "ok": true,

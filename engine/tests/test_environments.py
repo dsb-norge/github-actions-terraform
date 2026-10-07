@@ -59,7 +59,7 @@ class EnvironmentsTest(unittest.TestCase):
         keys = {"schema_version", "errors", "notices", "warnings", "environments", "matrices", "counts", "record",
                 "admission"}
         output = decide.decide(support.document())
-        self.assertEqual(keys | {"relevance", "tests", "comments", "trigger", "ordering"}, set(output))
+        self.assertEqual(keys | {"relevance", "tests", "comments", "trigger", "ordering", "notify"}, set(output))
         self.assertEqual({"applies": False}, output["admission"])
         self.assertEqual(1, output["schema_version"])
         self.assertEqual(["relevance all (not-computed): 1 of 1 environment affected"], output["notices"])

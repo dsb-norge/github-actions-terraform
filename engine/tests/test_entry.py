@@ -75,8 +75,9 @@ class CreateMatrixCommandTest(unittest.TestCase):
         calls = []
         with mock.patch.object(adapter, "run", lambda *args: calls.append(args) or 7):
             self.assertEqual(7, cli.main(["create-matrix", "--inputs-file", "/tmp/inputs.json", "--mode", "project"]))
-        inputs_file, environ, stream, tools, isdir, mode = calls[0]
+        inputs_file, environ, stream, tools, isdir, mode, notify_target_file = calls[0]
         self.assertEqual("/tmp/inputs.json", inputs_file)
+        self.assertEqual("", notify_target_file)
         self.assertIs(os.environ, environ)
         self.assertIs(sys.stdout, stream)
         self.assertIsInstance(tools, adapter.Tools)
@@ -85,6 +86,10 @@ class CreateMatrixCommandTest(unittest.TestCase):
         with mock.patch.object(adapter, "run", lambda *args: calls.append(args) or 0):
             self.assertEqual(0, cli.main(["create-matrix", "--inputs-file", "/tmp/x.json", "--mode", "module"]))
         self.assertIs(True, calls[1][5])
+        with mock.patch.object(adapter, "run", lambda *args: calls.append(args) or 0):
+            self.assertEqual(0, cli.main(["create-matrix", "--inputs-file", "/tmp/x.json", "--mode", "project",
+                                          "--notify-target-file", "/tmp/target.json"]))
+        self.assertEqual("/tmp/target.json", calls[2][6])
 
     def test_the_mode_is_required_and_one_of_two(self):
         for argv in (["create-matrix", "--inputs-file", "/tmp/x.json"],
@@ -103,6 +108,7 @@ class CreateMatrixCommandTest(unittest.TestCase):
             cli.main(["create-matrix", "--help"])
         self.assertIn("path of the file holding toJSON(inputs)", stdout.getvalue())
         self.assertIn("the calling workflow's kind of repository", stdout.getvalue())
+        self.assertIn("the notify-target-json file; empty for none", stdout.getvalue())
 
     def test_the_inputs_file_is_required(self):
         with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
@@ -143,6 +149,7 @@ class EvaluateAutomergeCommandTest(unittest.TestCase):
         for fragment in ("glob of the environment jobs' metadata", "path of relevance.json; empty for none",
                          "glob of the test jobs' metadata; empty for none", "path of the file holding stage-results-json"):
             self.assertIn(fragment, " ".join(stdout.getvalue().split()))
+
 
 
 if __name__ == "__main__":

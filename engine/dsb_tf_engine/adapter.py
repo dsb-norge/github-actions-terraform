@@ -55,7 +55,7 @@ NOTICE_TITLE = "Terraform CI"
 # What the jobs after the matrix read, by file: never a job output, which nothing caps and every
 # downstream interpolation would carry.
 PUBLISHED = ("schema_version", "relevance", "counts", "environments", "tests", "comments", "notices", "warnings",
-             "record", "trigger", "ordering", "admission")
+             "record", "trigger", "ordering", "admission", "notify")
 # A module's decision has its test stage and its admission head alone (docs/Module-ci.md §5).
 MODULE_PUBLISHED = ("schema_version", "mode", "tests", "notices", "warnings", "record", "trigger", "admission",
                     "comments", "automerge", "relevance")
@@ -392,6 +392,32 @@ def gather_tests(tools, entries):
     return {"files": files, "directories_with_tf": directories, "environment_locks": locks}
 
 
+NOTIFY_TARGET_KEYS = ("bot-url", "bot-audience", "alias")
+
+
+def read_notify_target(path):
+    """The notification target the workflow read from its variables (docs/Notifications.md §6.1), or None
+    when it handed over none. An unset variable reads as empty, whether the workflow wrote "" or null."""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as error:
+        raise AdapterError(f"the action's input 'notify-target-json' cannot be read: {error}") from None
+    if not text.strip():
+        return None
+    try:
+        target = json.loads(text)
+    except ValueError:
+        target = None
+    if not (isinstance(target, dict) and set(target) == set(NOTIFY_TARGET_KEYS)
+            and all(value is None or isinstance(value, str) for value in target.values())):
+        raise AdapterError("the action's input 'notify-target-json' is not a JSON object of the strings bot-url, "
+                           "bot-audience and alias")
+    return {key.replace("-", "_"): target[key] or "" for key in NOTIFY_TARGET_KEYS}
+
+
 def read_inputs(path):
     try:
         with open(path, encoding="utf-8") as handle:
@@ -427,6 +453,8 @@ def build_document(inputs, facts, tools, isdir, module=False):
     }
     if module:
         document["mode"] = "module"
+    elif facts.get("notify_target") is not None:
+        document["notify_target"] = facts["notify_target"]
     # Switched off, relevance needs no facts, so it makes no requests.
     if inputs.get(relevance.SWITCH) not in (False, "false"):
         changed = fetch_changed_files(tools, facts["repository"], facts["default_branch"], event, facts["payload"])
@@ -498,7 +526,7 @@ def union_matrix(output):
     return {"environment": [row["environment"] for row in rows], "include": rows}
 
 
-def run(inputs_file, environ, stream, tools, isdir, module=False):
+def run(inputs_file, environ, stream, tools, isdir, module=False, notify_target_file=""):
     """Run the create-matrix step. Returns the exit code: 0, 1 a fault, 2 an invalid configuration."""
     log = workflow.Log(stream, TITLE)
     try:
@@ -509,6 +537,7 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
         require_yq(tools)
         inputs = read_inputs(inputs_file)
         log.group("input 'inputs-json'", json.dumps(inputs, indent=2, ensure_ascii=False))
+        notify_target = read_notify_target(notify_target_file)
         payload = read_payload(environ.get("GITHUB_EVENT_PATH", ""))
         facts = {
             "repository": environ["GITHUB_REPOSITORY"],
@@ -522,6 +551,7 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
             "actor": environ.get("GITHUB_ACTOR", ""),
             "triggering_actor": environ.get("GITHUB_TRIGGERING_ACTOR", ""),
             "base_ref": environ.get("GITHUB_BASE_REF", ""),
+            "notify_target": notify_target,
         }
         document = build_document(inputs, facts, tools, isdir, module)
     except AdapterError as error:
@@ -585,6 +615,7 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
         for name, value in outputs.items():
             workflow.append_output(environ["GITHUB_OUTPUT"], name, value)
         return EXIT_OK
+    log.group("notifications", output["notify"]["reason"])
     matrix = union_matrix(output)
     log.group("matrix-json", json.dumps(matrix, indent=2, sort_keys=True, ensure_ascii=False))
     outputs = {
@@ -601,6 +632,9 @@ def run(inputs_file, environ, stream, tools, isdir, module=False):
         "tests-count": str(output["tests"]["count"]),
         "tests-active": "true" if output["tests"]["active"] else "false",
         **admission_outputs(output),
+        # The notify job reads them (docs/Notifications.md §7); the target, checked, also when the run does not notify.
+        "notify-active": "true" if output["notify"]["active"] else "false",
+        "notify-target-json": compact(output["notify"]["target"]) if output["notify"]["target"] else "{}",
     }
     for name, value in outputs.items():
         workflow.append_output(environ["GITHUB_OUTPUT"], name, value)

@@ -16,7 +16,9 @@ TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml"
 # Present only when the adapter fetched them; absent means "relevance not computed".
 # admission: the facts of a Dependabot run the admission judges (docs/Dependabot-admission.md §8).
 # automerge: a module pull request's commits, for its auto-merge (docs/Module-auto-merge.md §4).
-OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission", "automerge")
+# notify_target: the notification target the workflow read from its variables (docs/Notifications.md §6.1).
+OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission", "automerge", "notify_target")
+NOTIFY_TARGET_KEYS = ("bot_url", "bot_audience", "alias")
 # Absent means the project workflow's decision; a module decides its test stage alone (docs/Module-ci.md §5).
 MODES = ("project", "module")
 TESTS_KEYS = ("files", "directories_with_tf", "environment_locks")
@@ -229,6 +231,11 @@ def check(document):
         _require(_is_automerge(document["automerge"]),
                  "input document: 'automerge' needs exactly 'available', 'reason', 'head_ref', 'count' and 'commits', "
                  "shaped as docs/Module-auto-merge.md §4 describes")
+    if "notify_target" in document:
+        target = document["notify_target"]
+        _require(isinstance(target, dict) and set(target) == set(NOTIFY_TARGET_KEYS)
+                 and all(isinstance(value, str) for value in target.values()),
+                 "input document: 'notify_target' needs exactly the strings 'bot_url', 'bot_audience' and 'alias'")
     if "tests" in document:
         _require(_is_tests(document["tests"]),
                  "input document: 'tests' needs exactly 'files' and 'directories_with_tf' (lists of strings) and "

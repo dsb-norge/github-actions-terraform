@@ -21,7 +21,7 @@ PER_ENVIRONMENT = {"add-pr-comment", "apply-extract-include-outputs", "cache-ter
                    "terraform-version", "tflint-version", "verify-lock-file"}
 YAML_SETTINGS = {"goals-yml", "terraform-init-additional-dirs-yml", "extra-envs-yml", "extra-envs-from-secrets-yml",
                  "extra-envs-per-goal-yml", "extra-envs-from-secrets-per-goal-yml", "pr-auto-merge-from-actors-yml",
-                 "pr-auto-merge-limits-yml"}
+                 "pr-auto-merge-limits-yml", "notifications-yml"}
 WORKFLOW_ONLY = {"environments-yml", "trigger-events-yml", "path-relevance-enabled", "allow-failing-terraform-tests",
                  "terraform-test-enabled", "terraform-test-exclude-paths-yml", "terraform-test-lanes-yml",
                  "terraform-test-runs-on", "terraform-test-timeout-minutes", "pr-auto-merge-app-id",

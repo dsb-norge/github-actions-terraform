@@ -17,6 +17,13 @@ inputs:
       and relevance-file only (docs/Module-ci.md §5).
     required: false
     default: "project"
+  notify-target-json:
+    description: |
+      The Teams notification target, {"bot-url", "bot-audience", "alias"}, from the calling workflow's
+      TF_NOTIFY_* variables; an unset one is "" or null (docs/Notifications.md §6.1). Empty for none.
+      Project mode only: checked, it decides notify-active and is published as notify-target-json.
+    required: false
+    default: ""
 outputs:
   matrix-json:
     description: "All terraform ci/cd variables as json, one row per affected environment, every stage's together; may be empty"
@@ -81,6 +88,12 @@ outputs:
   tests-required-missing:
     description: "Module mode: 'true' when a test file is required and there is none (docs/Module-ci.md D9)"
     value: ${{ steps.create-matrix.outputs.tests-required-missing }}
+  notify-active:
+    description: "'true' when the run notifies: a push, schedule or dispatch on the default branch, a valid target, and notifications not switched off (docs/Notifications.md §7)"
+    value: ${{ steps.create-matrix.outputs.notify-active }}
+  notify-target-json:
+    description: "The checked target as {\"bot-url\", \"bot-audience\", \"alias\"}, or {} when there is no valid one"
+    value: ${{ steps.create-matrix.outputs.notify-target-json }}
   relevance-file:
     description: |
       Path of relevance.json on the runner: every environment's verdict and resolved path rules, the
@@ -98,14 +111,18 @@ runs:
       run: |
         # Resolve the terraform ci/cd variables of every environment into the job matrix
         #
-        # The inputs reach the adapter through a file, never a variable or argv. GitHub pastes
-        # the expression into this script before bash parses it; the quoted heredoc keeps bash
-        # from expanding anything in it, and toJSON output cannot contain the delimiter line
-        # because JSON escapes a string's newlines. The adapter rejects anything that is not a
-        # JSON object. Isolated mode (-I): docs/Decision-engine.md P21.
+        # The inputs reach the adapter through files, never a variable or argv. GitHub pastes
+        # the expressions into this script before bash parses it; the quoted heredocs keep bash
+        # from expanding anything in them, and JSON cannot contain a delimiter line because it
+        # escapes a string's newlines. The adapter rejects anything that is not the JSON it
+        # expects. Isolated mode (-I): docs/Decision-engine.md P21.
         inputs_file="$(mktemp)"
         cat >"${inputs_file}" <<'CREATE_TF_VARS_MATRIX_INPUTS_JSON'
         ${{ inputs.inputs-json }}
         CREATE_TF_VARS_MATRIX_INPUTS_JSON
+        notify_target_file="$(mktemp)"
+        cat >"${notify_target_file}" <<'CREATE_TF_VARS_MATRIX_NOTIFY_TARGET_JSON'
+        ${{ inputs.notify-target-json }}
+        CREATE_TF_VARS_MATRIX_NOTIFY_TARGET_JSON
         python3 -I -B "${{ github.action_path }}/../engine/run.py" create-matrix --inputs-file "${inputs_file}" \
-          --mode "${MODE}"
+          --mode "${MODE}" --notify-target-file "${notify_target_file}"

@@ -43,6 +43,7 @@
     "extra-envs-per-goal-yml": "{}",
     "extra-envs-yml": "{}",
     "goals-yml": "[all]",
+    "notifications-yml": "",
     "path-relevance-enabled": true,
     "pr-auto-merge-enabled": "false",
     "pr-auto-merge-from-actors-yml": "[]",
@@ -96,6 +97,10 @@
         "value": [
           "all"
         ]
+      },
+      "notifications-yml": {
+        "ok": true,
+        "value": null
       },
       "pr-auto-merge-from-actors-yml": {
         "ok": true,

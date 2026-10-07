@@ -31,6 +31,7 @@ YML_INPUTS = (
     "extra-envs-per-goal-yml",
     "extra-envs-yml",
     "goals-yml",
+    "notifications-yml",
     "pr-auto-merge-from-actors-yml",
     "pr-auto-merge-limits-yml",
     "terraform-init-additional-dirs-yml",
@@ -59,6 +60,7 @@ MERGE_FIELDS = (
     "extra-envs-from-secrets-yml",
     "extra-envs-per-goal-yml",
     "extra-envs-yml",
+    "notifications-yml",
     "pr-auto-merge-limits-yml",
 )
 
@@ -360,9 +362,102 @@ def limit_problems(subject, key_subject, value):
     return problems
 
 
+# Teams notifications (docs/Notifications.md §6): how each kind is routed, globally and per environment.
+NOTIFICATIONS = "notifications-yml"
+NOTIFY_KINDS = ("apply-cancelled", "apply-failed", "held-back")
+NOTIFY_KEYS = ("defaults", "deliver-as", "enabled", "kinds", "runs-on")
+# The jobs run once for the whole run, so these cannot differ per environment.
+NOTIFY_WORKFLOW_WIDE = ("enabled", "runs-on")
+ROUTE_KEYS = ("alias", "direct", "mention", "off", "remind")
+PEOPLE = ("author", "merger")
+# The relay's own rule for an alias, which is a path segment of the URL it is posted to.
+ALIAS = re.compile(r"[a-z0-9][a-z0-9-]{0,48}[a-z0-9]")
+ALIAS_RULE = "an alias is 2 to 50 of a-z 0-9 -, starting and ending with a letter or a digit"
+
+
+def is_flag(value):
+    """true or false, as a boolean or its text; never 1 or 0, which equal True and False in Python."""
+    return value is True or value is False or value in ("true", "false")
+
+
+def _guess(written, known):
+    guess = near_miss(written, known)
+    return f" (did you mean '{guess}'?)" if guess else ""
+
+
+def _route_problems(owner, subject, where, value):
+    """Every problem of the routing of the defaults or of one kind; `subject` names the value as a whole,
+    `where` is the path its keys hang from."""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{owner}: {subject} is {shown(value)}; it must be a mapping of {', '.join(ROUTE_KEYS)}"]
+    problems = []
+    for key in sorted(value):
+        each = value[key]
+        if key not in ROUTE_KEYS:
+            problems.append(f"{owner}: {where}: unknown key {shown(key)}{_guess(key, ROUTE_KEYS)}; known keys: "
+                            f"{', '.join(ROUTE_KEYS)}")
+        elif key == "alias" and not (isinstance(each, str) and ALIAS.fullmatch(each)):
+            problems.append(f"{owner}: {where}.alias is {shown(each)}; {ALIAS_RULE}")
+        elif key in ("direct", "mention") and not isinstance(as_list(each), list):
+            problems.append(f"{owner}: {where}.{key} is {shown(each)}; it must be a list of author and merger")
+        elif key in ("direct", "mention"):
+            problems += [f"{owner}: {where}.{key} takes author and merger, not {shown(person)}"
+                         for person in as_list(each) if person not in PEOPLE]
+        elif key in ("off", "remind") and not is_flag(each):
+            problems.append(f"{owner}: {where}.{key} is {shown(each)}; it must be true or false")
+    return problems
+
+
+def _kind_problems(owner, value):
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{owner}: 'kinds' is {shown(value)}; it must be a mapping from a kind to its settings"]
+    problems = []
+    for kind in sorted(value):
+        if kind in NOTIFY_KINDS:
+            problems += _route_problems(owner, f"kinds.{kind}", f"kinds.{kind}", value[kind])
+        else:
+            problems.append(f"{owner}: kinds: unknown kind {shown(kind)}{_guess(kind, NOTIFY_KINDS)}; kinds: "
+                            f"{', '.join(NOTIFY_KINDS)}")
+    return problems
+
+
+def notification_problems(owner, value, names, per_environment):
+    """Every problem of one notifications-yml value (docs/Notifications.md §6.4); `owner` begins each message,
+    `names` are the environments deliver-as may name. An environment may not set the workflow-wide keys."""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [f"{owner} is {shown(value)}; it must be a mapping of settings (docs/Notifications.md §6.2)"]
+    known = tuple(key for key in NOTIFY_KEYS if not (per_environment and key in NOTIFY_WORKFLOW_WIDE))
+    problems = []
+    for key in sorted(value):
+        each = value[key]
+        if per_environment and key in NOTIFY_WORKFLOW_WIDE:
+            problems.append(f"{owner}: '{key}' is workflow-wide; set it in the {NOTIFICATIONS} input")
+        elif key not in NOTIFY_KEYS:
+            problems.append(f"{owner}: unknown key {shown(key)}{_guess(key, known)}; known keys: {', '.join(known)}")
+        elif key == "enabled" and not is_flag(each):
+            problems.append(f"{owner}: 'enabled' is {shown(each)}; it must be true or false")
+        elif key == "runs-on" and not (isinstance(each, str) and each):
+            problems.append(f"{owner}: 'runs-on' is {shown(each)}; it must be a runner label")
+        elif key == "deliver-as" and each not in names:
+            problems.append(f"{owner}: 'deliver-as' names {shown(each)}, which is not an environment of environments-yml")
+        elif key == "defaults":
+            problems += _route_problems(owner, "'defaults'", "defaults", each)
+        elif key == "kinds":
+            problems += _kind_problems(owner, each)
+    return problems
+
+
 def _setting_problems(document, globals_, environments):
     """Every problem of the list and limit settings as written, each global value once, naming the input,
     then each environment's own."""
+    names = [entry["environment"] for entry in environments
+             if isinstance(entry, dict) and _is_name(entry.get("environment"))]
     problems = goal_problems("goals-yml", globals_["goals-yml"])
     problems += init_dir_problems(INIT_DIRS, f"{INIT_DIRS} is", globals_[INIT_DIRS])
     problems += actor_problems(ACTORS, f"{ACTORS} is", globals_[ACTORS])
@@ -370,6 +465,7 @@ def _setting_problems(document, globals_, environments):
     for setting in JOB_VARIABLE_SETTINGS:
         problems += variable_problems(lambda key, setting=setting: f"The variable {shown(key)} in '{setting}'",
                                       globals_[setting])
+    problems += notification_problems(NOTIFICATIONS, globals_[NOTIFICATIONS], names, False)
     for index, entry in enumerate(environments):
         if not (isinstance(entry, dict) and _is_name(entry.get("environment"))):
             continue
@@ -391,6 +487,9 @@ def _setting_problems(document, globals_, environments):
                 lambda key, name=name, setting=setting: f"The variable {shown(key)} of the environment '{name}' in "
                                                         f"'{setting}'",
                 _env_field(document, index, setting))
+        if NOTIFICATIONS in entry:
+            problems += notification_problems(f"environments-yml: environment '{name}': {NOTIFICATIONS}",
+                                              _env_field(document, index, NOTIFICATIONS), names, True)
     return problems
 
 

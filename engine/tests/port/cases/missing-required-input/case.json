@@ -30,7 +30,8 @@
     "runs-on": "ubuntu-latest",
     "trigger-events-yml": "[pull_request, push, workflow_dispatch]",
     "dependabot-admission-enabled": true,
-    "dependabot-admission-yml": ""
+    "dependabot-admission-yml": "",
+    "notifications-yml": ""
   },
   "ref_name": "main",
   "default_branch": "main",
