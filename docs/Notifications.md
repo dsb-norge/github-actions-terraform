@@ -3,7 +3,7 @@
 Authoritative spec for Microsoft Teams notifications from
 [`terraform-ci-cd-default.yml`](../.github/workflows/terraform-ci-cd-default.yml): when an
 environment on the default branch is left unapplied with nobody watching (an apply that failed after
-a merge, a stage held back, a cancelled run), a card reaches the right Teams channel and names, and
+a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
 Status: **specified, not built.** Teams-side behaviour this spec relies on was verified against a
@@ -45,7 +45,7 @@ and other automation posts through it. What is missing is the pipeline reaching 
 | D8 | Incidents open on `push` and `schedule` on the default branch only, never on `pull_request` or `workflow_dispatch`. A dispatch on the default branch may **resolve** an open incident. | A pull request's author is looking at the pull request; whoever dispatched a run is looking at the run. An apply re-run by hand is the usual fix, and must close the thread. |
 | D9 | The first kinds are `apply-failed`, `apply-cancelled` and `held-back`, raised only for environments whose `goals-granted` hold `apply` in the run (§4). | The three ways an environment that should have been applied ends up not applied without anybody watching. A plan-only environment is never "not applied". |
 | D10 | The people are the authors of the merged pull requests, then the merger; bots are never named (§5). | The run's actor is often an App, and the merger is not always the author. |
-| D11 | A person is **named** in the card from the first kind on; **mentioned**, and for some kinds **messaged directly**, once the relay mentions and messages by Entra object ID (§13). | The relay knows Teams; this repository knows GitHub (D21). |
+| D11 | A person is **named** in the message from the first kind on; **mentioned**, and for some kinds **messaged directly**, once the relay mentions and messages by Entra object ID (§13). | The relay knows Teams; this repository knows GitHub (D21). |
 | D12 | One Teams thread per incident, addressed by the **`messageId` the relay returns** for its first post. The record job remembers it once the relay accepted the post, and the state forgets it when the incident resolves. | Unique per post, so a new incident never lands in an old thread; general for every relay caller; no caller-chosen keys in the relay. |
 | D13 | Reminders come from the next scheduled run, never from the relay (§10). | D2. An unrelated push does not retry a failed apply ([Path-relevance.md](Path-relevance.md) P16), so a scheduled run is the only clock this repository has. |
 | D14 | The deliver job runs on `ubuntu-latest`; `notifications-yml` may set `runs-on`. | Decided by the maintainer: a relay instance that admits the hosted runners' egress (the `AzureCloud` service tag in its `allowed_caller_rules`) needs no firewall work per landing zone, and the token with the relay's application role is the gate. The override covers an instance that does not. |
@@ -54,9 +54,10 @@ and other automation posts through it. What is missing is the pipeline reaching 
 | D17 | Events of the run rather than of an environment (tests failing on the default branch, a configuration rejected, an auto-merge that failed) are out of scope at first. When they join, they deliver from the first environment that ran; a rejected configuration, where nothing ran, stays in the run's annotations and the conclusion line. | Rare on the default branch: the same validation and tests run on the pull request first. |
 | D18 | GitHub admin and system accounts are never mentioned or messaged. | Decided by the maintainer: those accounts carry no Microsoft 365 licence and do configuration work, not changes to infrastructure. |
 | D19 | The state of open incidents is **one document per repository** in the Actions cache, merged by the record job under a concurrency lock; an observation older than the stored one is ignored (§9). | Runs overlap and finish out of order (a later run's first stage can finish before an earlier run's last), and cache entries are immutable; one document merged under a lock loses nothing, and a stale run cannot reopen an incident a newer one resolved. |
-| D20 | The card is rendered and escaped in the decide job, which holds no identity that can change anything; the deliver job posts the rendered bytes and exports nothing but the sender's tenant and client ID. | The deliver job holds an apply identity; nothing from a pull request should run or be interpreted there. |
-| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds organisation Members read and nothing else, and hands the relay Entra object IDs. Without the App, cards name people and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities; an installation token with Members read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
+| D20 | The message is rendered and escaped in the decide job, which holds no identity that can change anything; the deliver job posts the rendered bytes and exports nothing but the sender's tenant and client ID. | The deliver job holds an apply identity; nothing from a pull request should run or be interpreted there. |
+| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds organisation Members read and nothing else, and hands the relay Entra object IDs. Without the App, messages name people and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities; an installation token with Members read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
 | D22 | The relay is trusted on authentication: holding its `Notifications.Send` role is the whole permission to post, to any alias of that instance. | Decided by the maintainer: each landing zone has its own instance, and only its identities hold the role there, so one landing zone cannot post into another's channels; inside one, the posting identities are apply identities that can already change production. |
+| D23 | Notifications are **markdown text messages** (the relay's `format: text`), not Adaptive Cards. Links are markdown links. | Decided by the maintainer: a notification is a few lines, and a text message uses the channel's full width where a card is narrow and crowded. Mentions, tag mentions, replies and updates work for text as for cards, and markdown links do what buttons would, so the relay is asked for no `Action.OpenUrl`. |
 
 ## 3. Who meets it
 
@@ -76,7 +77,7 @@ default branch for an environment with `apply`, or a scheduled reconcile
 ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4). Only such an environment raises the kinds
 below; its result decides which.
 
-| The environment's result | Kind | Card says |
+| The environment's result | Kind | The message says |
 |---|---|---|
 | its apply failed, or did not run because a step before it failed; tolerated by `allow-failing-terraform-operations` or not | `apply-failed` | the first step that failed |
 | its job or its apply step was cancelled | `apply-cancelled` | where it was cancelled |
@@ -117,7 +118,7 @@ request for merge, squash and rebase merges alike but not who merged it, so
 | a direct push by an App | nobody; the channel only |
 | a schedule | nobody new; an open incident keeps the people it opened with |
 
-`mention` in §6.2 chooses which of those are mentioned once the relay can; the card always names
+`mention` in §6.2 chooses which of those are mentioned once the relay can; the message always names
 them. For each person to mention or message, the adapter reads the organisation's SAML identity of
 the login with the identity App's token (D21):
 
@@ -130,7 +131,7 @@ and takes the object ID from the attribute `http://schemas.microsoft.com/identit
 the UPN from `username` and the display name from the given and family names. A login without an
 identity, or whose UPN is not in `TF_NOTIFY_PEOPLE_DOMAINS`, is named and never mentioned: that is
 how admin and system accounts, which live in another domain, stay out (D18). A failed lookup is a
-fact like any other: the card names the person and mentions nobody. The environment jobs' metadata cannot supply any of this: it drops every key containing
+fact like any other: the message names the person and mentions nobody. The environment jobs' metadata cannot supply any of this: it drops every key containing
 `auth` ([capture-matrix-job-meta](../capture-matrix-job-meta/step_capture.sh)), `author` among them.
 
 ## 6. Configuration
@@ -151,7 +152,7 @@ the module workflows read `vars.ORG_TF_CICD_APP_ID`, and hands them to `create-m
 input of their own, `notify-target-json`, not the `toJSON(inputs)` document, whose every input is
 forwarded into every row. Environment-level variables are not read.
 
-Mentions and direct messages need three more organisation settings; without them cards name people
+Mentions and direct messages need three more organisation settings; without them messages name people
 and mention nobody:
 
 | Setting | Kind | Holds |
@@ -252,8 +253,8 @@ gather one is reported, never fatal. The pure core decides; it writes:
 
 | File or output | Holds |
 |---|---|
-| `events/<id>.json` | one event per card to post (below) |
-| `events/<id>.card.json` | its rendered Adaptive Card |
+| `events/<id>.json` | one event per message to post (below) |
+| `events/<id>.md` | its rendered markdown text |
 | `observations.json` | what this run saw, per environment and slot, for the record job |
 | `summary.md` | sent, skipped and why, for the step summary |
 | `deliver-matrix-json` | one row per sending environment: its `github-environment`, its tenant and client ID settings, and its event IDs |
@@ -264,7 +265,7 @@ gather one is reported, never fatal. The pure core decides; it writes:
  "action": "open", "reply_to": null, "update": null,
  "mentions": [{"object_id": "…", "name": "…"}], "direct": [],
  "alias": "…", "idempotency_key": "<repository>/<run id>/<run attempt>/prod/apply/open",
- "card": "e1.card.json"}
+ "message": "e1.md"}
 ```
 
 `action` is `open`, `reply`, `resolve` or `remind`. The rules are pure, under the engine's coverage
@@ -340,26 +341,26 @@ incident stays as a tombstone (`status: resolved`) for 30 days, then is dropped;
 entry would need `actions: write`, beyond the callers' grant.
 
 The decide job reads the newest state without the lock. Two overlapping runs can both see no open
-incident and both post a new card: a duplicate thread, never a lost one, because the record job
+incident and both post a new message: a duplicate thread, never a lost one, because the record job
 merges under the lock and keeps the older `message_id`. An incident whose post the relay did not
 accept stays `pending` and is posted fresh by the next run that sees it.
 
 | Last state | This run | Action |
 |---|---|---|
-| none or resolved | apply failed, cancelled or held back | post a new card; record its `messageId` |
+| none or resolved | apply failed, cancelled or held back | post a new message; record its `messageId` |
 | open | the same, again | reply in the thread with the new run |
-| open | resolved (§4) | update the card to resolved, reply "Recovered", tombstone it |
+| open | resolved (§4) | update the first message to resolved, reply "Recovered", tombstone it |
 | open | not run | nothing |
-| open, for an environment no longer in `environments-yml` | any run | update the card to resolved, reply "removed from the configuration", tombstone it |
-| pending | the same, again | post a new card |
+| open, for an environment no longer in `environments-yml` | any run | update the first message to resolved, reply "removed from the configuration", tombstone it |
+| pending | the same, again | post a new message |
 
 A state entry unused for seven days, or pushed out by the repository's 10 GB cache limit, is gone.
-The next failure then opens a new thread, and the old card is never marked resolved: the cost of
+The next failure then opens a new thread, and the old message is never marked resolved: the cost of
 keeping no state outside the cache.
 
 **First release without threads.** Until the relay can reply to and update a message by its
-`messageId` (§13), `reply` and `resolve` are new posts in the channel, quoting the incident's first
-card time, and nothing is updated in place. Everything else, the state included, is as above.
+`messageId` (§13), `reply` and `resolve` are new posts in the channel, quoting the time of the
+incident's first message, and nothing is updated in place. Everything else, the state included, is as above.
 
 ## 10. Reminders
 
@@ -386,9 +387,8 @@ A composite action in the modern layout
 | Input | Meaning |
 |---|---|
 | `bot-url`, `bot-audience`, `alias` | the target |
-| `card-file` | the rendered Adaptive Card |
+| `message-file` | the rendered markdown text |
 | `reply-to`, `update` | a `messageId`, once the relay supports them |
-| `mentions`, `direct` | Entra object IDs with display names, once the relay supports them |
 | `idempotency-key` | from the event, computed by the decide job, so re-running only the deliver job does not post twice |
 | `dry-run` | print the request and send nothing |
 
@@ -399,19 +399,21 @@ A composite action in the modern layout
 | `accepted` | `true` when the relay accepted the request; acceptance is not delivery (P4) |
 
 It gets a token with `az account get-access-token --resource <bot-audience>`, posts to
-`<bot-url>/v1/notify/<alias>` with `format: adaptive-card` and the card as a file, and never fails
+`<bot-url>/v1/notify/<alias>` with `format: text` and the message as a file, and never fails
 its step. Retries are bounded: each request times out after 30 seconds, 429 and 5xx are retried at
 most three times with jitter, `Retry-After` is honoured only within what is left of a 3-minute
-budget per card, and when the budget is spent the action reports `accepted: false` and moves on.
+budget per message, and when the budget is spent the action reports `accepted: false` and moves on.
 The deliver job's `timeout-minutes` is the hard stop above that. Its suite runs against a fake
 relay that answers 202, 4xx, 429, 5xx and timeouts.
 
-The decide job renders the card: a title, the environment, the facts (the step that failed, plan
-counts, the stage held back on), the people (§5), and markdown links to the run and the pull request
-built from their numbers, never from text. Text from a pull request or a commit (titles, branch
-names, logins) has `\` `` ` `` `*` `_` `[` `]` `(` `)` `#` `+` `-` `.` `!` `|` `<` `>` and `~`
-escaped and newlines replaced by spaces, so it can carry neither a link nor a mention. A card stays
-under the relay's 28 KB request limit by shortening lists.
+Mentions and direct messages (D11) join as inputs once the relay supports them (§13).
+
+The decide job renders the message (D23): a bold first line with the kind and the environment, the
+facts (the step that failed, plan counts, the stage held back on), the people (§5), and markdown
+links to the run and the pull request built from their numbers, never from text. Text from a pull
+request or a commit (titles, branch names, logins) has `\` `` ` `` `*` `_` `[` `]` `(` `)` `#` `+`
+`-` `.` `!` `|` `<` `>` and `~` escaped and newlines replaced by spaces, so it can carry neither a
+link nor a mention. A message stays under the relay's 28 KB request limit by shortening lists.
 
 ## 12. Identity and network
 
@@ -431,17 +433,16 @@ under the relay's 28 KB request limit by shortening lists.
 
 | Capability | Needed by | Today |
 |---|---|---|
-| Post an Adaptive Card to an alias, returning a `messageId` | §4 | yes |
+| Post markdown text to an alias, returning a `messageId` | §4 | yes |
 | Reply to and update a message by its `messageId`, and report whether it was delivered | threads (§9) | no; Teams supports both, verified |
 | Mentions by Entra object ID or UPN, each checked against the roster of the team being posted to, an unknown one sent as plain text | mentions (D11) | no; Teams mentions by object ID and UPN notify, verified |
 | A direct message by Entra object ID or UPN, through the roster of a team the bot shares with the person | `direct` (§6.2) | no; verified through the roster |
 | Mentions of a channel's tag | reminders (§10) | no |
-| `Action.OpenUrl` to an allow-listed host | link buttons | rejected today |
 
-Escalation, reminders, deduplication, digests, GitHub identities (D21) and per-alias authorization
-(D22) are not asked of the relay. One finding is passed on without being a requirement: any Teams
-user who can message the bot can repoint or remove any alias with its commands, which the relay's
-own documentation says is refused.
+Escalation, reminders, deduplication, digests, GitHub identities (D21), per-alias authorization
+(D22) and `Action.OpenUrl` (D23) are not asked of the relay. One finding is passed on without being
+a requirement: any Teams user who can message the bot can repoint or remove any alias with its
+commands, which the relay's own documentation says is refused.
 
 ## 14. Onboarding a landing zone
 
@@ -475,12 +476,12 @@ A minor release.
 | Risk | Mitigation |
 |---|---|
 | A channel nobody reads because it is noisy | Only unattended failures; one thread per incident; reminders in working days |
-| A shared credential expiring fails every environment at once: one card each | Accepted for now; a card per channel per run listing the environments is a later rule in the decide job |
+| A shared credential expiring fails every environment at once: one message each | Accepted for now; one message per channel per run listing the environments is a later rule in the decide job |
 | A mention of the wrong person | The relay checks every mention against the team's roster before posting (P2) |
 | Any repository of a landing zone able to post into any of its aliases | Accepted (D22): the posting identities can already change production |
 | A delivery lost after the relay accepted it | Delivery status from the relay (§13) |
-| A card that says failed about a success | The outcome comes from the steps, never from parsed counts |
-| Text from a pull request in a bot's card | Rendered and escaped without secrets (D20, §11) |
+| A message that says failed about a success | The outcome comes from the steps, never from parsed counts |
+| Text from a pull request in a bot's message | Rendered and escaped without secrets (D20, §11) |
 
 ## 18. Pitfalls
 
@@ -489,10 +490,10 @@ A minor release.
 | P1 | `workflow_run.pull_requests` is empty for push runs and can list other repositories' fork pull requests. | A wrong or missing author. | Not used; §5. |
 | P2 | Teams drops a mention entity it cannot resolve and puts the next mention on the first `<at>` tag. | Seen on the relay's test instance: a nonexistent person shown as the real one. | The relay checks each mention against the roster first. |
 | P3 | `deployment: false` does not bypass required reviewers, and cannot be combined with a custom deployment protection rule. | A deliver job waiting for an approval, or one that cannot start. | D16: protected senders are not used. |
-| P4 | A 202 from the relay means queued, not delivered. | A card that never arrives, unreported. | `accepted`, not `delivered` (§11); delivery status (§13). |
+| P4 | A 202 from the relay means queued, not delivered. | A message that never arrives, unreported. | `accepted`, not `delivered` (§11); delivery status (§13). |
 | P5 | The GitHub OIDC assertion behind an Entra login expires after about five minutes; a later `get-access-token` fails. | `AADSTS700024` after a long job. | Log in immediately before posting. |
 | P6 | The relay's `Idempotency-Key` is global across callers and never expires. | A recurring incident swallowed as a duplicate. | The key carries the repository, run, attempt and action (§7). |
-| P7 | A bot cannot post into a private channel. | No card, no error from the API. | Aliases in standard channels only. |
+| P7 | A bot cannot post into a private channel. | No message, no error from the API. | Aliases in standard channels only. |
 | P8 | The metadata capture drops keys containing `auth`. | No author in the artifact. | §5. |
 | P9 | A matrix job with an empty matrix fails ([Environment-ordering.md](Environment-ordering.md) P4). | A red `deliver` on every run with nothing to send. | The `deliver-count` guard. |
 | P10 | Actions cache entries are immutable, and a prefix restore returns the newest entry of any run. | Lost updates between overlapping runs; a re-run that cannot save. | One document, keyed by run and attempt, merged under a lock (D19). |
@@ -525,6 +526,8 @@ in-place updates work; a direct message through the team roster works.
   ([Terraform-tests.md](Terraform-tests.md) P26)? Needs a test-bed run.
 - Can `GITHUB_TOKEN` read an environment's `protection_rules` (§7)? GitHub documents the call for
   anyone with read access. Needs a test-bed run.
+- Does Teams honour backslash escapes in a bot's markdown text message (§11)? Needs a post to the
+  relay's test instance; where it does not, the renderer replaces those characters instead.
 - Does an organisation's OIDC subject template that includes `job_workflow_ref` give the nested
   deliver job a subject the sending identity does not trust? Needs a test-bed run per organisation.
 - Does any Conditional Access policy restrict the sending identities' sign-ins from GitHub-hosted
