@@ -1313,6 +1313,87 @@ unset input_mode
 teardown
 
 # ----------------------------------------------------------------------
+# DS — a scheduled plan-only run marks a plan with changes
+# (docs/Drift-detection.md §3)
+# ----------------------------------------------------------------------
+# write_scheduled_meta <env> <event> <goals-granted json> <plan-outcome> <total> <a:c:d> [plan-complete] [output-only]
+write_scheduled_meta() {
+  local env="${1}" event="${2}" goals="${3}" outcome="${4}" total="${5}" counts="${6}" complete="${7:-true}" output_only="${8:-false}"
+  IFS=':' read -r a c d <<<"${counts}"
+  cat >"${RUNNER_TEMP}/matrix-job-meta-${env}.json" <<JSON
+{
+  "metadata": {"environment": "${env}", "schema_version": "2.0.0"},
+  "workflow": {"run_id": "999", "event_name": "${event}"},
+  "matrix_context": {"vars": {"goals": ["all"], "goals-granted": ${goals}}},
+  "steps": {
+    "init": {"outcome": "success", "conclusion": "success", "outputs": {}},
+    "plan": {"outcome": "${outcome}", "conclusion": "${outcome}", "outputs": {"plan-time": "0:10"}},
+    "parse-plan": {"outcome": "success", "conclusion": "success", "outputs": {"count-add": "${a}", "count-change": "${c}", "count-destroy": "${d}", "count-total": "${total}", "plan-complete": "${complete}", "has-output-only-changes": "${output_only}"}}
+  }
+}
+JSON
+}
+PLAN_ONLY='["init","format","validate","lint","plan"]'
+RECONCILE='["init","format","validate","lint","plan","apply"]'
+CHANGES_MARK='<span title="the scheduled plan has changes: drift, or a default branch that is not applied">⚠️</span> '
+
+setup
+write_scheduled_meta "prod"    schedule "${PLAN_ONLY}" success 2 "1:1:0"
+write_scheduled_meta "dev"     schedule "${PLAN_ONLY}" success 0 "0:0:0"
+write_scheduled_meta "staging" schedule "${PLAN_ONLY}" success 0 "0:0:0" true true
+run_step
+assert "DS1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "DS1: the plan cell of a scheduled plan with changes carries the marker" \
+  row_has prod "| ${CHANGES_MARK}\`💫 1\` \`🛠️ 1\` \`💥 0\` |"
+assert "DS1: a plan that changes only outputs carries it too" \
+  row_has staging "| ${CHANGES_MARK}\`💫 0\` \`🛠️ 0\` \`💥 0\` |"
+assert "DS1: a clean scheduled plan carries none" \
+  row_has dev "| \`💫 0\` \`🛠️ 0\` \`💥 0\` |"
+assert "DS1: one line names them, sorted" \
+  grep -qxF '⚠️ **The scheduled plan has changes:** `prod`, `staging`. Drift, or a default branch that is not applied.' "${GITHUB_STEP_SUMMARY}"
+assert "DS1: the worst outcome stays green: nothing failed" \
+  row_has prod '| <span title="every step that ran succeeded">✅</span> |'
+assert "DS1: no unread line" bash -c "! grep -q 'could not be read' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${PLAN_ONLY}" success "?" "?:?:?" "?"
+run_step
+assert "DS2: counts that cannot be read get their own marker" \
+  row_has prod "| <span title=\"the scheduled plan's changes could not be read\">⚠️</span> \`💫 ?\` \`🛠️ ?\` \`💥 ?\` |"
+assert "DS2: and their own line" \
+  grep -qxF '⚠️ **The scheduled plan could not be read:** `prod`. See the plan in the job log.' "${GITHUB_STEP_SUMMARY}"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${PLAN_ONLY}" success 1 "1:0:0" false
+run_step
+assert "DS3: a targeted or deferred plan (plan-complete false) has valid counts" \
+  grep -qxF '⚠️ **The scheduled plan has changes:** `prod`. Drift, or a default branch that is not applied.' "${GITHUB_STEP_SUMMARY}"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${RECONCILE}" success 2 "2:0:0"
+write_scheduled_meta "dev"  push     "${RECONCILE}" success 2 "2:0:0"
+write_scheduled_meta "test" schedule "${PLAN_ONLY}" failure "?" "?:?:?" "?"
+run_step
+assert "DS4: a scheduled reconcile, a push and a failed plan carry no marker" \
+  bash -c "! grep -q '⚠️' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
+setup
+write_relevance all event 0 prod:prod:run dev:dev:skip
+write_scheduled_meta "prod" schedule "${PLAN_ONLY}" success 1 "0:0:1"
+export input_relevance_file="${RUNNER_TEMP}/relevance.json"
+run_step
+assert "DS5: with relevance, the row carries the marker" \
+  row_has prod "| ${CHANGES_MARK}\`💫 0\` \`🛠️ 0\` \`💥 1\` |"
+assert "DS5: and the line follows the footer" \
+  grep -qxF '⚠️ **The scheduled plan has changes:** `prod`. Drift, or a default branch that is not applied.' "${GITHUB_STEP_SUMMARY}"
+unset input_relevance_file
+teardown
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

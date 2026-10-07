@@ -121,15 +121,38 @@ function sum_durations {
   if [ -z "${any}" ]; then printf '—'; else printf '`%d:%02d`' $((total / 60)) $((total % 60)); fi
 }
 
-# Plan cell: '`💫 A` `🛠️ C` `💥 D`' from parse-plan, or '—'.
+# What a scheduled plan-only run's plan says (docs/Drift-detection.md §3):
+# 'changes' when it planned changes, 'unread' when its counts could not be
+# read, empty otherwise: any other event, a run granted apply (a reconcile
+# applies what it plans), a plan that did not succeed, a clean plan.
+function scheduled_plan_state {
+  local file="${1}"
+  jq -r '
+    if (.workflow.event_name // "") != "schedule" then ""
+    elif ((.matrix_context.vars["goals-granted"] // []) | (type == "array" and index("apply") != null)) then ""
+    elif (.steps.plan.outcome // "") != "success" then ""
+    else (.steps["parse-plan"].outputs // {}) as $o
+      | if ($o["plan-complete"] // "") == "?" or ($o["count-total"] // "") == "?" then "unread"
+        elif (($o["count-total"] // "0") | tostring | test("^[0-9]+$")) and (($o["count-total"] // "0") | tonumber) > 0 then "changes"
+        elif ($o["has-output-only-changes"] // "") == "true" then "changes"
+        else "" end
+    end' "${file}" 2>/dev/null || true
+}
+
+# Plan cell: '`💫 A` `🛠️ C` `💥 D`' from parse-plan, or '—'; on a scheduled
+# plan-only run, ⚠ in front when the plan has changes or cannot be read.
 function plan_cell {
   local file="${1}"
-  local a c d
+  local a c d marker=""
+  case "$(scheduled_plan_state "${file}")" in
+    changes) marker='<span title="the scheduled plan has changes: drift, or a default branch that is not applied">⚠️</span> ' ;;
+    unread)  marker='<span title="the scheduled plan'"'"'s changes could not be read">⚠️</span> ' ;;
+  esac
   a=$(meta_step_output "${file}" parse-plan count-add)
   c=$(meta_step_output "${file}" parse-plan count-change)
   d=$(meta_step_output "${file}" parse-plan count-destroy)
-  if [ -z "${a}${c}${d}" ]; then printf '—'; return; fi
-  printf '`💫 %s` `🛠️ %s` `💥 %s`' "$(count_or_q "${a}")" "$(count_or_q "${c}")" "$(count_or_q "${d}")"
+  if [ -z "${a}${c}${d}" ]; then printf '%s—' "${marker}"; return; fi
+  printf '%s`💫 %s` `🛠️ %s` `💥 %s`' "${marker}" "$(count_or_q "${a}")" "$(count_or_q "${c}")" "$(count_or_q "${d}")"
 }
 
 # Apply cell: applied/planned badges, '?' numerators when apply did not
