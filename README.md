@@ -24,6 +24,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── parse-terraform-apply           --> parses apply/destroy console output: counts, completed flag, tick-free copy
 ├── parse-terraform-plan            --> counts what a plan adds, changes, destroys, imports, moves and removes
 ├── parse-terraform-warnings        --> annotates and summarises the Warning: blocks in a terraform console output
+├── post-teams-notification         --> posts one markdown text message to a Teams notification relay, with bounded retries; never fails the job
 ├── pr-comment                      --> upsert/delete a single PR/issue comment by HTML marker (body or body-file)
 ├── pr-comments-reconcile           --> bulk seed + GC PR/issue comments by HTML marker
 ├── resolve-goal-envs               --> resolves the environment variables of every terraform goal (global and per-goal maps, secrets expanded)

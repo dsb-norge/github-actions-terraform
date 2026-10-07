@@ -1,0 +1,73 @@
+name: "Post a Teams notification"
+description: |
+  Posts one markdown text message to a Teams notification relay
+  (POST <bot-url>/v1/notify/<alias>), authenticated with a token az gets for
+  bot-audience as the identity the job is logged in with. Retries 429, 5xx
+  and no answer up to three times within 180 seconds, and never fails the
+  job: a notification that cannot be sent is a warning and accepted=false.
+  The job must be logged in with az (azure/login) as an identity that holds
+  the relay API's Notifications.Send app role.
+  See docs/Notifications.md §11.
+author: "Peder Schmedling"
+inputs:
+  bot-url:
+    description: The relay instance's API base, `https://…/api`.
+    required: true
+  bot-audience:
+    description: The relay API's application ID URI (`api://…`); the token is requested for it.
+    required: true
+  alias:
+    description: The relay alias to post to.
+    required: true
+  message-file:
+    description: |
+      Path of the markdown text to post, sent as it is with format 'text'.
+      Must not be empty. The relay refuses a request body over 28 KB.
+    required: true
+  reply-to:
+    description: A messageId the relay returned; the message is posted in its thread.
+    required: false
+    default: ""
+  update:
+    description: A messageId the relay returned; that message is replaced by this one. Not with reply-to.
+    required: false
+    default: ""
+  idempotency-key:
+    description: |
+      Sent as the Idempotency-Key header, unchanged on retries; the relay
+      answers a repeated key with its first answer. 1 to 256 printable
+      characters without spaces.
+    required: false
+    default: ""
+  dry-run:
+    description: "'true': print the URL and the request body, send nothing and ask for no token."
+    required: false
+    default: "false"
+outputs:
+  message-id:
+    description: The relay's messageId for the message, when it accepted it.
+    value: ${{ steps.post.outputs.message-id }}
+  http-status:
+    description: The relay's last HTTP status, '000' when there was no answer or no request.
+    value: ${{ steps.post.outputs.http-status }}
+  accepted:
+    description: "'true' when the relay queued the message. Queued, not delivered."
+    value: ${{ steps.post.outputs.accepted }}
+runs:
+  using: "composite"
+  steps:
+    - id: post
+      shell: bash
+      env:
+        input_bot_url: ${{ inputs.bot-url }}
+        input_bot_audience: ${{ inputs.bot-audience }}
+        input_alias: ${{ inputs.alias }}
+        input_message_file: ${{ inputs.message-file }}
+        input_reply_to: ${{ inputs.reply-to }}
+        input_update: ${{ inputs.update }}
+        input_idempotency_key: ${{ inputs.idempotency-key }}
+        input_dry_run: ${{ inputs.dry-run }}
+      run: |
+        # Post the message to the Teams notification relay
+        set -o allexport
+        source "${{ github.action_path }}/step_post.sh"

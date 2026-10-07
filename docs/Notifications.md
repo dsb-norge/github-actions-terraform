@@ -6,7 +6,7 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **specified, not built.** Teams-side behaviour this spec relies on was verified against a
+Status: **specified; the relay client (§11) is built.** Teams-side behaviour this spec relies on was verified against a
 deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -386,11 +386,11 @@ A composite action in the modern layout
 
 | Input | Meaning |
 |---|---|
-| `bot-url`, `bot-audience`, `alias` | the target |
-| `message-file` | the rendered markdown text |
-| `reply-to`, `update` | a `messageId`, once the relay supports them |
-| `idempotency-key` | from the event, computed by the decide job, so re-running only the deliver job does not post twice |
-| `dry-run` | print the request and send nothing |
+| `bot-url`, `bot-audience`, `alias` | the target; an alias outside the relay's own rule (2 to 50 of `a-z`, `0-9` and `-`, starting and ending with a letter or a digit) is not posted to |
+| `message-file` | the rendered markdown text, posted as it is; an empty or unreadable file is not posted |
+| `reply-to`, `update` | a `messageId`, sent as `replyTo` or `update`; the relay takes one or the other, so both together are not posted, and it ignores them until it supports them (§13) |
+| `idempotency-key` | from the event, computed by the decide job, so re-running only the deliver job does not post twice; 1 to 256 printable characters without spaces |
+| `dry-run` | print the URL and the request body; send nothing and ask for no token |
 
 | Output | Meaning |
 |---|---|
@@ -398,13 +398,23 @@ A composite action in the modern layout
 | `http-status` | the last response's status, `000` for none |
 | `accepted` | `true` when the relay accepted the request; acceptance is not delivery (P4) |
 
-It gets a token with `az account get-access-token --resource <bot-audience>`, posts to
-`<bot-url>/v1/notify/<alias>` with `format: text` and the message as a file, and never fails
-its step. Retries are bounded: each request times out after 30 seconds, 429 and 5xx are retried at
-most three times with jitter, `Retry-After` is honoured only within what is left of a 3-minute
-budget per message, and when the budget is spent the action reports `accepted: false` and moves on.
-The deliver job's `timeout-minutes` is the hard stop above that. Its suite runs against a fake
-relay that answers 202, 4xx, 429, 5xx and timeouts.
+It gets a token with `az account get-access-token --resource <bot-audience>` as the identity the job
+is logged in with, posts `{"format": "text", "message": <the file>}` to
+`<bot-url>/v1/notify/<alias>`, and never fails its step: anything not sent is a `::warning` titled
+*Teams notification not sent*, naming the alias and why, and `accepted: false`. The token never
+enters a variable or an argument; it goes from `az` to a header file in a private directory, and the
+message stays in files too, out of reach of `allexport`
+([Action-implementation-guide.md](Action-implementation-guide.md) → "Anti-pattern: exporting
+heredoc-captured JSON").
+
+Retries are bounded. Each request times out after 30 seconds. 429, 5xx and no answer are retried
+at most three times, after `Retry-After` when it gives seconds, otherwise after 1, 2 and 4 seconds,
+with the same idempotency key. A wait is taken only when it and the next request at its full
+timeout still fit a 180-second budget, so the step ends within the budget whatever the relay does;
+when it does not fit, the warning says the budget is spent. Any other 4xx is not retried, and its
+warning carries the relay's problem detail, or for a bare 401 or 403 (the platform's own
+authentication answers without a body) what to check: the audience, or the `Notifications.Send`
+role. A `messageId` that is not a plain ID is not passed on.
 
 Mentions and direct messages (D11) join as inputs once the relay supports them (§13).
 
@@ -506,8 +516,11 @@ A minor release.
   the mutation gate: every row of §4's table, stale observations, pending posts, removed
   environments, overlapping runs; validation messages as literal strings; the evidence adapter
   against recorded artifacts, including missing and unreadable ones; the escaping of §11.
-- **Action:** `post-teams-notification` against the fake relay: every status, retries, `dry-run`,
-  idempotency keys.
+- **Action:** `post-teams-notification` against a fake relay (a local HTTP server answering a
+  scripted list of responses and recording every request) and a stub `az`: the request's shape, 202
+  with and without a `messageId`, 4xx with and without a problem detail, 429 with `Retry-After`, 5xx
+  and no answer until the retries run out, the budget, no token, the token never printed, `dry-run`,
+  and every input that is not posted.
 - **Structural:** `notify`'s `needs` and `if`, its absence from `conclusion.needs`, and in
   `terraform-notify.yml` every job's `if`, `continue-on-error` and timeout, `deliver`'s
   `environment` with `deployment: false`, and `record`'s concurrency group.
