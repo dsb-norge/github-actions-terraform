@@ -55,6 +55,22 @@ EOF
   export input_status_destroy=""
   export input_destroy_count_destroy="?"
   export input_destroy_time=""
+  # The plan inputs as a push run's plan-only environment hands them over: no warning.
+  export input_event_name="push"
+  export input_apply_granted="false"
+  export input_status_plan="success"
+  export input_plan_count_total="0"
+  export input_plan_count_add="0"; export input_plan_count_change="0"; export input_plan_count_destroy="0"
+  export input_plan_count_import="0"; export input_plan_count_move="0"; export input_plan_count_remove="0"
+  export input_plan_has_output_only_changes="false"
+  export input_plan_complete="true"
+}
+
+# A scheduled plan-only run's environment (docs/Drift-detection.md §3).
+scheduled_plan() {
+  export input_event_name="schedule"
+  export input_apply_granted="false"
+  export input_status_plan="success"
 }
 
 teardown() {
@@ -300,6 +316,100 @@ export input_step_summary_file=""
 run_step
 assert "empty summary path: exits 0 with fallback block" \
   bash -c "[ ${LAST_EXIT} -eq 0 ] && grep -q 'Summary not available' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
+# ----------------------------------------------------------------------
+# S — a scheduled plan-only run warns about a plan with changes
+# (docs/Drift-detection.md §3)
+# ----------------------------------------------------------------------
+setup
+scheduled_plan
+export input_plan_count_total="3"; export input_plan_count_add="2"; export input_plan_count_change="1"
+run_step
+assert "S1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "S1: exactly one ::warning" test "$(count_cmd warning)" -eq 1
+assert "S1: the warning names the non-zero counts, byte-exact" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 3 changes (2 to add, 1 to change): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_count_total="1"; export input_plan_count_destroy="1"
+run_step
+assert "S2: one change reads in the singular" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 1 change (1 to destroy): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_count_total="2"; export input_plan_count_import="1"; export input_plan_count_move="1"
+run_step
+assert "S3: imports and moves are counted like any other change" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 2 changes (1 to import, 1 to move): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_has_output_only_changes="true"
+run_step
+assert "S4: a plan that changes only outputs says so" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan changes only outputs: drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_complete="?"; export input_plan_count_total="?"
+run_step
+assert "S5: counts that cannot be read are a warning of their own" \
+  grep -qxF "::warning title=Plan not read::dev — the scheduled plan's changes could not be read; see the plan in the job log" "${OUT_FILE}"
+assert "S5: and only that one" test "$(count_cmd warning)" -eq 1
+teardown
+
+setup
+scheduled_plan
+export input_plan_complete="false"; export input_plan_count_total="1"; export input_plan_count_add="1"
+run_step
+assert "S6: a targeted or deferred plan (plan-complete false) has valid counts" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 1 change (1 to add): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_count_total="0"
+run_step
+assert "S7: a clean scheduled plan is silent" test "$(count_cmd warning)" -eq 0
+teardown
+
+setup
+scheduled_plan
+export input_apply_granted="true"; export input_plan_count_total="3"; export input_plan_count_add="3"
+run_step
+assert "S8: a scheduled reconcile, which applies what it plans, is silent" test "$(count_cmd warning)" -eq 0
+teardown
+
+setup
+scheduled_plan
+export input_status_plan="failure"; export input_plan_count_total="?"
+run_step
+assert "S9: a failed plan is not a plan with changes" test "$(count_cmd warning)" -eq 0
+teardown
+
+for event in push pull_request workflow_dispatch ""; do
+  setup
+  export input_event_name="${event}"
+  export input_plan_count_total="3"; export input_plan_count_add="3"
+  run_step
+  assert "S10: no warning on event '${event:-<none>}'" test "$(count_cmd warning)" -eq 0
+  teardown
+done
+
+setup
+scheduled_plan
+export input_environment_name="prod,eu:1"
+export input_plan_count_total="1"; export input_plan_count_add="1"
+run_step
+assert "S11: the environment name is escaped in the message only, as the other annotations do" \
+  grep -qxF '::warning title=Plan has changes::prod,eu:1 — the scheduled plan has 1 change (1 to add): drift, or a default branch that is not applied' "${OUT_FILE}"
 teardown
 
 # ----------------------------------------------------------------------
