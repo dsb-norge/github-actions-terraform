@@ -6,7 +6,11 @@
 #   - Each test creates a temp dir
 #   - A fake `gh` script is placed on PATH ahead of the real one; it records
 #     every call to ${GH_FAKE_CALL_LOG} and returns canned responses driven
-#     by ${GH_FAKE_LIST_RESPONSE_FILE} (for `--paginate ... /comments`)
+#     by ${GH_FAKE_LIST_RESPONSE_FILE} (for `--paginate ... /comments`), or
+#     by ${TEST_DIR}/list-response-<n>.json for the n-th listing when there is
+#     one, and by ${GH_FAKE_POST_SEQUENCE}, one line per POST: `ok`, or
+#     `fail <exit code> <what gh prints>`
+#   - The step's wait between retries is recorded in ${TEST_DIR}/sleeps, not slept
 #   - The step is sourced in a subshell so its side-effects don't leak
 #   - Assertions inspect stdout, GITHUB_OUTPUT, and the recorded gh calls
 #
@@ -31,7 +35,11 @@ LOG="${GH_FAKE_CALL_LOG:-/dev/null}"
 echo "gh $*" >> "${LOG}"
 case "$*" in
   *"--paginate"*"/comments"*)
-    if [ -n "${GH_FAKE_LIST_RESPONSE_FILE:-}" ] && [ -f "${GH_FAKE_LIST_RESPONSE_FILE}" ]; then
+    LIST_COUNT=$(( $(cat "${TEST_DIR}/.list-calls" 2>/dev/null || echo 0) + 1 ))
+    echo "${LIST_COUNT}" > "${TEST_DIR}/.list-calls"
+    if [ -f "${TEST_DIR}/list-response-${LIST_COUNT}.json" ]; then
+      cat "${TEST_DIR}/list-response-${LIST_COUNT}.json"
+    elif [ -n "${GH_FAKE_LIST_RESPONSE_FILE:-}" ] && [ -f "${GH_FAKE_LIST_RESPONSE_FILE}" ]; then
       cat "${GH_FAKE_LIST_RESPONSE_FILE}"
     else
       echo "[]"
@@ -69,6 +77,16 @@ case "$*" in
     if [ "${GH_FAKE_POST_EXIT:-0}" != "0" ]; then
       exit "${GH_FAKE_POST_EXIT}"
     fi
+    POST_CALLS=$(( $(cat "${TEST_DIR}/.post-calls" 2>/dev/null || echo 0) + 1 ))
+    echo "${POST_CALLS}" > "${TEST_DIR}/.post-calls"
+    if [ -n "${GH_FAKE_POST_SEQUENCE:-}" ]; then
+      OUTCOME="$(sed -n "${POST_CALLS}p" "${GH_FAKE_POST_SEQUENCE}")"
+      if [[ "${OUTCOME}" == fail* ]]; then
+        read -r _ CODE MESSAGE <<<"${OUTCOME}"
+        echo "${MESSAGE}" >&2
+        exit "${CODE}"
+      fi
+    fi
     for arg in "$@"; do
       if [[ "${arg}" == body=@* ]] && [ -n "${GH_FAKE_BODY_CAPTURE:-}" ]; then
         cp "${arg#body=@}" "${GH_FAKE_BODY_CAPTURE}"
@@ -87,7 +105,8 @@ FAKE_GH
   export GH_FAKE_CALL_LOG="${TEST_DIR}/gh-calls.log"
   export GH_FAKE_LIST_RESPONSE_FILE="${TEST_DIR}/list-response.json"
   export GH_FAKE_BODY_CAPTURE="${TEST_DIR}/posted-body.md"
-  unset GH_FAKE_LIST_EXIT GH_FAKE_DELETE_EXIT GH_FAKE_POST_EXIT GH_FAKE_PATCH_EXIT
+  unset GH_FAKE_LIST_EXIT GH_FAKE_DELETE_EXIT GH_FAKE_POST_EXIT GH_FAKE_PATCH_EXIT GH_FAKE_POST_SEQUENCE
+  export TEST_DIR
   unset input_body_file
   echo "[]" > "${GH_FAKE_LIST_RESPONSE_FILE}"
   : > "${GH_FAKE_CALL_LOG}"
@@ -110,6 +129,18 @@ FAKE_GH
 "
 
   cd "${TEST_DIR}"
+}
+
+# The step's wait between retries: recorded, not slept. The step defines its own only when none is
+# defined, so this one, inherited by run_step's subshell, is used.
+_pr_comment_sleep() { echo "${1}" >> "${TEST_DIR}/sleeps"; }
+
+sleeps() { paste -sd' ' "${TEST_DIR}/sleeps" 2>/dev/null; }
+
+# post_sequence <line>...: the POSTs' outcomes, in order.
+post_sequence() {
+  export GH_FAKE_POST_SEQUENCE="${TEST_DIR}/post-sequence"
+  printf '%s\n' "$@" > "${GH_FAKE_POST_SEQUENCE}"
 }
 
 teardown() {
@@ -255,6 +286,102 @@ JSON
   [[ "$(count_calls PATCH)" -eq 1 ]] || { echo "expected 1 PATCH attempt"; return 1; }
   [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST fallback"; return 1; }
   [[ "$(get_output action)" == "created" ]] || { echo "action='$(get_output action)', expected 'created'"; return 1; }
+  return 0
+}
+
+# A comment lost to a transient GitHub failure is a plan nobody sees: a broken answer, a 5xx, a 429 or no
+# answer is tried again, after looking whether the failed POST landed after all.
+
+test_post_retries_a_broken_answer() {
+  post_sequence "fail 1 unexpected end of JSON input" "ok"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 2 ]] || { echo "expected 2 POSTs, got $(count_calls POST)"; return 1; }
+  [[ "$(grep -c -- '--paginate' "${GH_FAKE_CALL_LOG}")" -eq 2 ]] || { echo "expected a second listing before the retry"; return 1; }
+  [[ "$(sleeps)" == "2" ]] || { echo "sleeps '$(sleeps)', expected '2'"; return 1; }
+  [[ "$(get_output action)" == "created" ]] || { echo "action='$(get_output action)'"; return 1; }
+  [[ "$(get_output comment-id)" == "9001" ]] || { echo "comment-id='$(get_output comment-id)'"; return 1; }
+  grep -qF 'Failed to post: unexpected end of JSON input' "${TEST_DIR}/step.log" || { echo "no warning naming the failure"; return 1; }
+  grep -qF 'Attempt 2 of 3: posting again' "${TEST_DIR}/step.log" || { echo "no line saying it posts again"; return 1; }
+  return 0
+}
+
+test_post_gives_up_after_three_attempts() {
+  post_sequence "fail 1 gh: HTTP 502: Bad Gateway" "fail 1 gh: HTTP 503: Service Unavailable" "fail 1 gh: HTTP 502: Bad Gateway" "ok"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 3 ]] || { echo "expected 3 POSTs, got $(count_calls POST)"; return 1; }
+  [[ "$(sleeps)" == "2 4" ]] || { echo "sleeps '$(sleeps)', expected '2 4'"; return 1; }
+  [[ "$(get_output action)" == "post-failed" ]] || { echo "action='$(get_output action)'"; return 1; }
+  [[ -z "$(get_output comment-id)" ]] || { echo "comment-id='$(get_output comment-id)'"; return 1; }
+  return 0
+}
+
+test_post_does_not_retry_a_4xx() {
+  post_sequence "fail 1 gh: Validation Failed (HTTP 422)" "ok"
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST, got $(count_calls POST)"; return 1; }
+  [[ -z "$(sleeps)" ]] || { echo "slept '$(sleeps)'"; return 1; }
+  [[ "$(get_output action)" == "post-failed" ]] || { echo "action='$(get_output action)'"; return 1; }
+  return 0
+}
+
+test_post_retries_a_429() {
+  post_sequence "fail 1 gh: API rate limit exceeded (HTTP 429)" "ok"
+  run_step
+  [[ "$(count_calls POST)" -eq 2 ]] || { echo "expected 2 POSTs, got $(count_calls POST)"; return 1; }
+  [[ "$(get_output action)" == "created" ]] || { echo "action='$(get_output action)'"; return 1; }
+  return 0
+}
+
+test_a_failed_post_that_landed_is_not_posted_twice() {
+  post_sequence "fail 1 unexpected end of JSON input" "ok"
+  cat > "${TEST_DIR}/list-response-2.json" <<'JSON'
+[{"id": 7777, "created_at": "2026-01-01T00:00:01Z", "body": "<!-- tf:head:env:dev -->\n\nposted"}, {"id": 1, "created_at": "2026-01-01T00:00:00Z", "body": null}]
+JSON
+  run_step
+  [[ ${STEP_EXIT_CODE} -eq 0 ]] || { echo "step exit ${STEP_EXIT_CODE}"; return 1; }
+  [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST, got $(count_calls POST)"; return 1; }
+  [[ "$(count_calls PATCH)" -eq 1 ]] || { echo "expected the landed comment PATCHed, got $(count_calls PATCH)"; return 1; }
+  grep -q -- "-X PATCH repos/dsb-norge/test-repo/issues/comments/7777" "${GH_FAKE_CALL_LOG}" || { echo "PATCH not on 7777"; return 1; }
+  [[ "$(get_output action)" == "updated" ]] || { echo "action='$(get_output action)'"; return 1; }
+  [[ "$(get_output comment-id)" == "7777" ]] || { echo "comment-id='$(get_output comment-id)'"; return 1; }
+  grep -qF 'Attempt 2 of 3: updating comment id=7777' "${TEST_DIR}/step.log" || { echo "no line saying it updates"; return 1; }
+  return 0
+}
+
+test_the_oldest_landed_comment_is_the_one_updated() {
+  post_sequence "fail 1 unexpected end of JSON input"
+  cat > "${TEST_DIR}/list-response-2.json" <<'JSON'
+[{"id": 8, "created_at": "2026-01-01T00:00:09Z", "body": "<!-- tf:head:env:dev -->"}]
+[{"id": 6, "created_at": "2026-01-01T00:00:02Z", "body": "<!-- tf:head:env:dev -->"}]
+JSON
+  run_step
+  grep -q -- "-X PATCH repos/dsb-norge/test-repo/issues/comments/6" "${GH_FAKE_CALL_LOG}" || { echo "PATCH not on 6"; return 1; }
+  return 0
+}
+
+test_a_landed_comment_that_cannot_be_updated_is_retried_then_given_up() {
+  post_sequence "fail 1 unexpected end of JSON input"
+  for n in 2 3; do
+    echo '[{"id": 7777, "created_at": "2026-01-01T00:00:01Z", "body": "<!-- tf:head:env:dev -->"}]' > "${TEST_DIR}/list-response-${n}.json"
+  done
+  export GH_FAKE_PATCH_EXIT=1
+  run_step
+  [[ "$(count_calls POST)" -eq 1 ]] || { echo "expected 1 POST, got $(count_calls POST)"; return 1; }
+  [[ "$(count_calls PATCH)" -eq 2 ]] || { echo "expected 2 PATCHes, got $(count_calls PATCH)"; return 1; }
+  [[ "$(get_output action)" == "post-failed" ]] || { echo "action='$(get_output action)'"; return 1; }
+  grep -qF 'Failed to update comment id=7777' "${TEST_DIR}/step.log" || { echo "no warning naming the update"; return 1; }
+  return 0
+}
+
+test_a_listing_that_fails_before_a_retry_posts_again() {
+  post_sequence "fail 1 unexpected end of JSON input" "ok"
+  echo "not json" > "${TEST_DIR}/list-response-2.json"
+  run_step
+  [[ "$(count_calls POST)" -eq 2 ]] || { echo "expected 2 POSTs, got $(count_calls POST)"; return 1; }
+  [[ "$(get_output action)" == "created" ]] || { echo "action='$(get_output action)'"; return 1; }
   return 0
 }
 
@@ -579,6 +706,14 @@ run_test "upsert: match, different hash → PATCH"                        test_u
 run_test "upsert: match (any body shape) → PATCH"                       test_upsert_match_arbitrary_body_patches
 run_test "upsert: duplicates → keep oldest, PATCH it, DELETE others"    test_upsert_duplicates_keep_oldest
 run_test "upsert: PATCH fail → fallback POST fresh"                     test_upsert_patch_fail_falls_back_to_post
+run_test "post: a broken answer is retried after a fresh listing"          test_post_retries_a_broken_answer
+run_test "post: three attempts, 2 and 4 seconds apart, then post-failed"     test_post_gives_up_after_three_attempts
+run_test "post: a 4xx is not retried"                                       test_post_does_not_retry_a_4xx
+run_test "post: a 429 is retried"                                           test_post_retries_a_429
+run_test "post: a failed post that landed is updated, never posted twice"   test_a_failed_post_that_landed_is_not_posted_twice
+run_test "post: of several landed comments, the oldest is updated"          test_the_oldest_landed_comment_is_the_one_updated
+run_test "post: a landed comment that cannot be updated is given up on"     test_a_landed_comment_that_cannot_be_updated_is_retried_then_given_up
+run_test "post: a failed listing before a retry posts again"                test_a_listing_that_fails_before_a_retry_posts_again
 run_test "delete: no match → not-found, 0 DELETEs"                      test_delete_no_match
 run_test "delete: 1 match → 1 DELETE"                                   test_delete_single_match
 run_test "delete: 3 matches → 3 DELETEs"                                test_delete_multiple_matches
