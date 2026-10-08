@@ -1927,6 +1927,9 @@ jobs:
           plan-count-remove: ${{ steps.parse-plan.outputs.count-remove }}
           plan-has-output-only-changes: ${{ steps.parse-plan.outputs.has-output-only-changes }}
           plan-complete: ${{ steps.parse-plan.outputs.plan-complete }}
+          plan-class: ${{ steps.parse-plan.outputs.plan-class }}
+          plan-count-drift: ${{ steps.parse-plan.outputs.count-drift }}
+          plan-has-pending-changes: ${{ steps.parse-plan.outputs.has-pending-changes }}
         continue-on-error: true # never fail the job over run-page reporting
 
       # Outcome gates for the mutating steps (docs/Apply-and-destroy-reporting.md

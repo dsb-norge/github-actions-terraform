@@ -85,6 +85,22 @@ function annotate_scheduled_plan {
     return 0
   fi
 
+  # With the plan's class (parse-terraform-plan's plan-class), the warning
+  # says which of the two it is. Without one, or one that cannot be trusted,
+  # it says what the stopgap always said.
+  local drift="${input_plan_count_drift:-}"
+  if [ "${input_plan_class:-}" = 'drift' ] && [[ "${drift}" =~ ^[0-9]+$ ]] && [ "${drift}" -gt 0 ]; then
+    local resources="resources"; [ "${drift}" -eq 1 ] && resources="resource"
+    local own=""
+    [ "${input_plan_has_pending_changes:-}" = 'true' ] && own=", and has changes of its own: the default branch is not applied"
+    echo "::warning title=$(escape-annotation-property "Drift")::${env_msg} — the scheduled plan finds ${drift} ${resources} changed outside Terraform, which the next apply would change back${own}"
+    return 0
+  fi
+  local title="Plan has changes" meaning="drift, or a default branch that is not applied"
+  if [ "${input_plan_class:-}" = 'pending' ]; then
+    title="Default branch not applied" meaning="the default branch is not applied"
+  fi
+
   local total="${input_plan_count_total:-0}"
   [[ "${total}" =~ ^[0-9]+$ ]] || total=0
   if [ "${total}" -gt 0 ]; then
@@ -100,9 +116,9 @@ function annotate_scheduled_plan {
     done
     [ -n "${detail}" ] && detail=" (${detail})"
     local noun="changes"; [ "${total}" -eq 1 ] && noun="change"
-    echo "::warning title=$(escape-annotation-property "Plan has changes")::${env_msg} — the scheduled plan has ${total} ${noun}${detail}: drift, or a default branch that is not applied"
+    echo "::warning title=$(escape-annotation-property "${title}")::${env_msg} — the scheduled plan has ${total} ${noun}${detail}: ${meaning}"
   elif [ "${input_plan_has_output_only_changes:-false}" = 'true' ]; then
-    echo "::warning title=$(escape-annotation-property "Plan has changes")::${env_msg} — the scheduled plan changes only outputs: drift, or a default branch that is not applied"
+    echo "::warning title=$(escape-annotation-property "${title}")::${env_msg} — the scheduled plan changes only outputs: ${meaning}"
   fi
 }
 

@@ -64,6 +64,7 @@ EOF
   export input_plan_count_import="0"; export input_plan_count_move="0"; export input_plan_count_remove="0"
   export input_plan_has_output_only_changes="false"
   export input_plan_complete="true"
+  export input_plan_class=""; export input_plan_count_drift=""; export input_plan_has_pending_changes=""
 }
 
 # A scheduled plan-only run's environment (docs/Drift-detection.md §3).
@@ -410,6 +411,89 @@ export input_plan_count_total="1"; export input_plan_count_add="1"
 run_step
 assert "S11: the environment name is escaped in the message only, as the other annotations do" \
   grep -qxF '::warning title=Plan has changes::prod,eu:1 — the scheduled plan has 1 change (1 to add): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+# ----------------------------------------------------------------------
+# SC — with the plan's class (docs/Drift-detection.md §4), the warning says
+# which: drift, or a default branch that is not applied
+# ----------------------------------------------------------------------
+setup
+scheduled_plan
+export input_plan_class="drift"; export input_plan_count_drift="2"; export input_plan_has_pending_changes="false"
+export input_plan_count_total="2"; export input_plan_count_change="2"
+run_step
+assert "SC1: drift is a warning of its own, byte-exact" \
+  grep -qxF '::warning title=Drift::dev — the scheduled plan finds 2 resources changed outside Terraform, which the next apply would change back' "${OUT_FILE}"
+assert "SC1: and only that one" test "$(count_cmd warning)" -eq 1
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="drift"; export input_plan_count_drift="1"; export input_plan_has_pending_changes="true"
+export input_plan_count_total="2"; export input_plan_count_add="2"
+run_step
+assert "SC2: drift beside changes of its own says both, in the singular" \
+  grep -qxF '::warning title=Drift::dev — the scheduled plan finds 1 resource changed outside Terraform, which the next apply would change back, and has changes of its own: the default branch is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="pending"; export input_plan_count_drift="0"; export input_plan_has_pending_changes="true"
+export input_plan_count_total="3"; export input_plan_count_add="2"; export input_plan_count_change="1"
+run_step
+assert "SC3: pending changes say the default branch is not applied" \
+  grep -qxF '::warning title=Default branch not applied::dev — the scheduled plan has 3 changes (2 to add, 1 to change): the default branch is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="pending"; export input_plan_count_drift="0"; export input_plan_has_pending_changes="true"
+export input_plan_has_output_only_changes="true"
+run_step
+assert "SC4: pending output changes alone say so" \
+  grep -qxF '::warning title=Default branch not applied::dev — the scheduled plan changes only outputs: the default branch is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="clean"; export input_plan_count_drift="0"; export input_plan_has_pending_changes="false"
+run_step
+assert "SC5: a clean plan is silent" test "$(count_cmd warning)" -eq 0
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="unknown"; export input_plan_count_drift="?"; export input_plan_has_pending_changes="?"
+export input_plan_count_total="1"; export input_plan_count_add="1"
+run_step
+assert "SC6: a plan whose counts stand but that cannot be classified keeps the stopgap's wording" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 1 change (1 to add): drift, or a default branch that is not applied' "${OUT_FILE}"
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="unknown"; export input_plan_count_drift="?"; export input_plan_has_pending_changes="?"
+export input_plan_complete="?"; export input_plan_count_total="?"
+run_step
+assert "SC7: counts that cannot be read stay 'Plan not read'" \
+  grep -qxF "::warning title=Plan not read::dev — the scheduled plan's changes could not be read; see the plan in the job log" "${OUT_FILE}"
+teardown
+
+setup
+export input_event_name="push"
+export input_plan_class="drift"; export input_plan_count_drift="2"; export input_plan_has_pending_changes="false"
+export input_plan_count_total="2"; export input_plan_count_change="2"
+run_step
+assert "SC8: drift in a push's plan is not warned about: the push applies it" test "$(count_cmd warning)" -eq 0
+teardown
+
+setup
+scheduled_plan
+export input_plan_class="drift"; export input_plan_count_drift="x"; export input_plan_has_pending_changes="false"
+export input_plan_count_total="2"; export input_plan_count_change="2"
+run_step
+assert "SC9: a drift count that is not a number keeps the stopgap's wording" \
+  grep -qxF '::warning title=Plan has changes::dev — the scheduled plan has 2 changes (2 to change): drift, or a default branch that is not applied' "${OUT_FILE}"
 teardown
 
 # ----------------------------------------------------------------------

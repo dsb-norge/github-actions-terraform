@@ -119,6 +119,21 @@ inputs:
       read; 'false' (a targeted or deferred plan) still has valid counts.
     required: false
     default: ""
+  plan-class:
+    description: |
+      parse-terraform-plan's `plan-class`. 'drift' and 'pending' make the warning say
+      which (docs/Drift-detection.md §3, §4); empty or 'unknown' keeps the wording
+      that names both.
+    required: false
+    default: ""
+  plan-count-drift:
+    description: Resources that drifted and that the plan would change back (parse-terraform-plan's `count-drift`).
+    required: false
+    default: ""
+  plan-has-pending-changes:
+    description: "'true' when the plan has changes of its own besides reverting drift (parse-terraform-plan's `has-pending-changes`)."
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -148,6 +163,9 @@ runs:
         input_plan_count_remove: ${{ inputs.plan-count-remove }}
         input_plan_has_output_only_changes: ${{ inputs.plan-has-output-only-changes }}
         input_plan_complete: ${{ inputs.plan-complete }}
+        input_plan_class: ${{ inputs.plan-class }}
+        input_plan_count_drift: ${{ inputs.plan-count-drift }}
+        input_plan_has_pending_changes: ${{ inputs.plan-has-pending-changes }}
       run: |
         # Write the per-env block to the job summary and annotate the plan, apply and destroy outcomes
         set -o allexport
