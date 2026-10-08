@@ -57,7 +57,7 @@ and other automation posts through it. What is missing is the pipeline reaching 
 | D18 | GitHub admin and system accounts are never mentioned or messaged. | Decided by the maintainer: those accounts carry no Microsoft 365 licence and do configuration work, not changes to infrastructure. |
 | D19 | The state of open incidents is **one document per repository** in the Actions cache, merged by the record job under a concurrency lock; an observation older than the stored one is ignored (§9). | Runs overlap and finish out of order (a later run's first stage can finish before an earlier run's last), and cache entries are immutable; one document merged under a lock loses nothing, and a stale run cannot reopen an incident a newer one resolved. |
 | D20 | The message is rendered and escaped in the decide job, which holds no identity that can change anything; the deliver job posts the rendered bytes and exports nothing but the sender's tenant and client ID. | The deliver job holds an apply identity; nothing from a pull request should run or be interpreted there. |
-| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds organisation Members read and nothing else, and hands the relay Entra object IDs. Without the App, messages name people and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities; an installation token with Members read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
+| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds Organization administration read and nothing else, and hands the relay Entra object IDs. Without the App, messages name people and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities, nor can an installation token with Members read alone, whatever GitHub's documentation says (P13); one with Organization administration read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
 | D22 | The relay is trusted on authentication: holding its `Notifications.Send` role is the whole permission to post, to any alias of that instance. | Decided by the maintainer: each landing zone has its own instance, and only its identities hold the role there, so one landing zone cannot post into another's channels; inside one, the posting identities are apply identities that can already change production. |
 | D23 | Notifications are **markdown text messages** (the relay's `format: text`), not Adaptive Cards. Links are markdown links. | Decided by the maintainer: a notification is a few lines, and a text message uses the channel's full width where a card is narrow and crowded. Mentions, tag mentions, replies and updates work for text as for cards, and markdown links do what buttons would, so the relay is asked for no `Action.OpenUrl`. |
 
@@ -160,7 +160,7 @@ and mention nobody:
 
 | Setting | Kind | Holds |
 |---|---|---|
-| `TF_NOTIFY_IDENTITY_APP_ID` | variable | the client ID of a GitHub App installed in the organisation with Members read only |
+| `TF_NOTIFY_IDENTITY_APP_ID` | variable | the client ID (or App ID) of a GitHub App with Organization administration read and no other permission, installed in the organisation on no repository |
 | `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY` | secret | its private key |
 | `TF_NOTIFY_PEOPLE_DOMAINS` | variable | the UPN domains of people who may be mentioned, comma-separated |
 
@@ -583,7 +583,8 @@ commands, which the relay's own documentation says is refused.
 3. The landing zone's repositories get `TF_NOTIFY_BOT_URL`, `TF_NOTIFY_BOT_AUDIENCE` and
    `TF_NOTIFY_ALIAS` as repository variables.
 4. A repository whose production runs behind a protected GitHub Environment sets `deliver-as`.
-5. For mentions, once per organisation: the identity App installed with Members read, and §6.1's
+5. For mentions, once per organisation: the identity App, with Organization administration read
+   and no other permission, installed on the organisation without repository access, and §6.1's
    three settings at organisation level.
 6. Each repository on v1 notifies from its next push to the default branch.
 
@@ -628,8 +629,9 @@ A minor release.
 | P8 | The metadata capture drops keys containing `auth`. | No author in the artifact. | §5. |
 | P9 | A matrix job with an empty matrix fails ([Environment-ordering.md](Environment-ordering.md) P4). | A red `deliver` on every run with nothing to send. | The `deliver-count` guard. |
 | P10 | Actions cache entries are immutable, and a prefix restore returns the newest entry of any run. | Lost updates between overlapping runs; a re-run that cannot save. | One document, keyed by run and attempt, merged under a lock (D19). |
-| P11 | `GITHUB_TOKEN` cannot read an organisation's SAML identities; they are visible to owners and to an App installation token with Members read. | `samlIdentityProvider` is `null`. | The identity App (D21). |
+| P11 | `GITHUB_TOKEN` cannot read an organisation's SAML identities; they are visible to owners and to an App installation token with Organization administration read. | `samlIdentityProvider` is `null`. | The identity App (D21). |
 | P12 | An identity's SAML `nameId` is the person's mail, which people can change themselves. | A mention that stops resolving after a rename. | The object ID from the attributes; the UPN only as display and filter. |
+| P13 | GitHub's documentation says organisation Members read reads SAML identities; an installation token with Members read alone is refused. | `Resource not accessible by integration (organization.samlIdentityProvider)` on every lookup. | Organization administration read (D21), verified with the identity App. |
 
 ## 19. Tests
 
@@ -680,8 +682,6 @@ in-place updates work; a direct message through the team roster works.
   with its own template needs a run.
 - Does any Conditional Access policy restrict the sending identities' sign-ins from GitHub-hosted
   runners? None did for the test instance's landing zone; each other landing zone needs a run.
-- Does an installation token with Members read only see `samlIdentityProvider` for an organisation
-  with SAML at organisation level, as GitHub's schema says? Needs one query with the App.
 - The relay capabilities of §13: specified for the relay's maintainers separately.
 
 The preview refs need no change: the rewrite covers every internal `uses:` in every workflow file, a
