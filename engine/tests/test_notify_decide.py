@@ -360,6 +360,14 @@ class TransitionTest(unittest.TestCase):
                           "`qa` is no longer in environments-yml: the incident opened at 2026-10-05 08:30 UTC is "
                           "closed."], decided["messages"]["e1.md"].split("\n")[:3])
 
+    def test_a_removed_environment_closes_the_incident_of_every_slot(self):
+        drift = incident(kind="drift", sender_name="dev")
+        decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="dev"), qa__drift=drift)))
+        self.assertEqual([("qa", "apply", "removed", key("o/r", "4711", "1", "qa", "apply", "removed")),
+                          ("qa", "drift", "removed", key("o/r", "4711", "1", "qa", "drift", "removed"))],
+                         [(e["environment"], e["slot"], e["action"], e["idempotency_key"]) for e in decided["events"]])
+        self.assertEqual(["apply", "drift"], [o["slot"] for o in decided["observations"] if o["environment"] == "qa"])
+
     def test_a_removed_environment_whose_sender_is_gone_too_is_closed_quietly(self):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="qa"))))
         self.assertEqual([], decided["events"])

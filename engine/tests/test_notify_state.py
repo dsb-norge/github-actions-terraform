@@ -119,6 +119,17 @@ class LaterTest(unittest.TestCase):
         self.assertEqual("resolved", state["incidents"]["prod/apply"]["status"])
 
 
+class SlotTest(unittest.TestCase):
+    def test_each_slot_is_an_incident_of_its_own(self):
+        given = {"schema_version": 1, "incidents": {"prod/apply": incident()}}
+        drift = dict(observation(kind="drift"), slot="drift")
+        state, _ = merge(copy.deepcopy(given), [drift], accepted())
+        self.assertEqual(["prod/apply", "prod/drift"], sorted(state["incidents"]))
+        self.assertEqual(incident(), state["incidents"]["prod/apply"])
+        self.assertEqual(("drift", "open"), (state["incidents"]["prod/drift"]["kind"],
+                                             state["incidents"]["prod/drift"]["status"]))
+
+
 class RemindTest(unittest.TestCase):
     def given(self, **kwargs):
         return {"schema_version": 1, "incidents": {"prod/apply": incident(**kwargs)}}
