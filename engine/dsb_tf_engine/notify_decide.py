@@ -117,17 +117,17 @@ def _route(row, kind):
     return {**defaults, **own}, settings.get("deliver-as")
 
 
-def _key(facts, environment, action):
+def _key(facts, environment, slot, action):
     """The relay's Idempotency-Key: one per message of a run attempt, so re-running only the deliver job does
     not post twice. Hashed: the relay's store refuses '/' in a key, and a name may make it too long."""
     run = facts["run"]
-    text = "/".join((facts["repository"], str(run["id"]), str(run["attempt"]), environment, SLOT, action))
+    text = "/".join((facts["repository"], str(run["id"]), str(run["attempt"]), environment, slot, action))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _incident(facts, environment):
+def _incident(facts, environment, slot):
     state = facts["state"]
-    return state["incidents"].get(f"{environment.lower()}/{SLOT}") if state else None
+    return state["incidents"].get(f"{environment.lower()}/{slot}") if state else None
 
 
 def _bot(login):
@@ -205,7 +205,7 @@ def _plan(facts):
         result, detail = classify(row, entry, facts["metadata"].get(name), facts["stage_results"], facts["event"])
         kind = OPENING.get(result)
         route, deliver_as = _route(row, kind)
-        incident = _incident(facts, name)
+        incident = _incident(facts, name, SLOT)
         status = incident["status"] if incident else "none"
         action, level, age = "none", None, None
         if kind and facts["event"] in OPENING_EVENTS and status in ("none", "resolved", "pending"):
@@ -224,19 +224,20 @@ def _plan(facts):
                 action, level = "remind", due
         # The incident's later messages go where its first went, as its sender (§9).
         later = action in ("reply", "resolve", "remind")
-        observations.append({"environment": name, "result": result, "detail": detail, "kind": kind, "action": action,
-                             "incident": incident, "route": route, "level": level, "age": age,
+        observations.append({"environment": name, "slot": SLOT, "result": result, "detail": detail, "kind": kind,
+                             "action": action, "incident": incident, "route": route, "level": level, "age": age,
                              "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
                              "sender": incident["sender"] if later else deliver_as or name})
     seen = {observation["environment"].lower() for observation in observations}
     names = {name.lower() for name in facts["senders"]}
     incidents = facts["state"]["incidents"] if facts["state"] else {}
     for state_key, incident in sorted(incidents.items()):
-        environment = state_key.rpartition("/")[0]
+        environment, _, slot = state_key.rpartition("/")
         if environment in seen or environment in names or incident["status"] not in ("open", "pending"):
             continue
-        observations.append({"environment": environment, "result": "removed", "kind": None, "action": "resolve",
-                             "incident": incident, "alias": incident["alias"], "sender": incident["sender"]})
+        observations.append({"environment": environment, "slot": slot, "result": "removed", "kind": None,
+                             "action": "resolve", "incident": incident, "alias": incident["alias"],
+                             "sender": incident["sender"]})
     return observations
 
 
@@ -392,9 +393,10 @@ def decide(facts):
             incident = observation["incident"]
             event_action = "removed" if observation["result"] == "removed" else action
             reply_to = incident["message_id"] if action != "open" else None
-            event = {"id": event_id, "environment": name, "slot": SLOT, "kind": observation["kind"],
+            event = {"id": event_id, "environment": name, "slot": observation["slot"], "kind": observation["kind"],
                      "action": event_action, "alias": observation["alias"], "reply_to": reply_to, "update": None,
-                     "sender": observation["sender"], "idempotency_key": _key(facts, name, event_action),
+                     "sender": observation["sender"],
+                     "idempotency_key": _key(facts, name, observation["slot"], event_action),
                      "message": f"{event_id}.md",
                      "mentions": _mentions(facts, _reminded(observation) if action == "remind"
                                            else _chosen(facts, observation))}
@@ -413,7 +415,8 @@ def decide(facts):
                 table.append(f"| `{name}` | {what} | to `{observation['alias']}` as `{observation['sender']}` |")
                 sending = True
         people = named(facts["people"]) if action in ("open", "reply") and facts["event"] == "push" else []
-        observed.append({"environment": name, "slot": SLOT, "result": observation["result"], "kind": observation["kind"],
+        observed.append({"environment": name, "slot": observation["slot"], "result": observation["result"],
+                         "kind": observation["kind"],
                          "action": action, "event": event_id, "people": people, "alias": observation["alias"],
                          "sender": observation["sender"], "sending": sending,
                          "mentioned": _chosen(facts, observation) if action == "open" else [],

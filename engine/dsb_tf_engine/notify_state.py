@@ -10,7 +10,6 @@ what a newer run resolved.
 import json
 
 SCHEMA_VERSION = 1
-SLOT = "apply"
 
 
 def valid(document):
@@ -29,7 +28,7 @@ def merge(state, observations, results, run_number, now, cutoff):
     # A copy, through JSON: the document is JSON, and the core imports nothing else to copy it.
     incidents = json.loads(json.dumps(before["incidents"]))
     for observation in observations:
-        key = f"{observation['environment'].lower()}/{SLOT}"
+        key = f"{observation['environment'].lower()}/{observation['slot']}"
         incident = incidents.get(key)
         if incident is not None and incident["seen_run"] > run_number:
             continue
