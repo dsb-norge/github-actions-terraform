@@ -17,7 +17,7 @@ PUBLISHED = {"bot-url": "https://relay.example.net/api", "bot-audience": "api://
              "alias": "tf-alerts"}
 GLOBAL_KEYS = "defaults, deliver-as, enabled, kinds, runs-on"
 ROUTE_KEYS = "alias, direct, mention, off, remind"
-KINDS = "apply-cancelled, apply-failed, held-back"
+KINDS = "apply-cancelled, apply-failed, drift, drift-check-failing, held-back, pending-change, scheduled-failed"
 ALIAS_RULE = "an alias is 2 to 50 of a-z 0-9 -, starting and ending with a letter or a digit"
 OFF_PREFIX = "notifications are off: "
 NO_TARGET = "no target: TF_NOTIFY_BOT_URL, TF_NOTIFY_BOT_AUDIENCE and TF_NOTIFY_ALIAS are not set"
@@ -106,9 +106,9 @@ class GlobalSettingsTest(unittest.TestCase):
     def test_an_unknown_kind_and_a_kind_that_is_not_a_mapping(self):
         self.assertEqual([f"notifications-yml: kinds: unknown kind 'apply-fail' (did you mean 'apply-failed'?); kinds: "
                           f"{KINDS}",
-                          f"notifications-yml: kinds: unknown kind 'drift'; kinds: {KINDS}",
+                          f"notifications-yml: kinds: unknown kind 'flaky'; kinds: {KINDS}",
                           f"notifications-yml: kinds.held-back is 'off'; it must be a mapping of {ROUTE_KEYS}"],
-                         errors({"kinds": {"held-back": "off", "drift": {}, "apply-fail": {}}}))
+                         errors({"kinds": {"held-back": "off", "flaky": {}, "apply-fail": {}}}))
 
     def test_the_routing_keys(self):
         self.assertEqual([f"notifications-yml: defaults.alias is 'TF Alerts'; {ALIAS_RULE}",

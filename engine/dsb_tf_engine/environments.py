@@ -364,7 +364,8 @@ def limit_problems(subject, key_subject, value):
 
 # Teams notifications (docs/Notifications.md §6): how each kind is routed, globally and per environment.
 NOTIFICATIONS = "notifications-yml"
-NOTIFY_KINDS = ("apply-cancelled", "apply-failed", "held-back")
+NOTIFY_KINDS = ("apply-cancelled", "apply-failed", "drift", "drift-check-failing", "held-back", "pending-change",
+                "scheduled-failed")
 NOTIFY_KEYS = ("defaults", "deliver-as", "enabled", "kinds", "runs-on")
 # The jobs run once for the whole run, so these cannot differ per environment.
 NOTIFY_WORKFLOW_WIDE = ("enabled", "runs-on")

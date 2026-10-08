@@ -6,6 +6,7 @@ Every message and line is compared as a literal.
 
 import copy
 import hashlib
+import json
 import unittest
 
 from dsb_tf_engine import notify_decide
@@ -220,7 +221,8 @@ class OpenTest(unittest.TestCase):
         self.assertEqual([], decided["events"])
         self.assertEqual([{"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed",
                            "action": "none", "event": None, "people": [], "alias": "tf-alerts", "sender": "prod",
-                           "sending": False, "mentioned": [], "reminder_level": None}],
+                           "sending": False, "mentioned": [], "reminder_level": None,
+                           "fingerprint": None}],
                          [o for o in decided["observations"] if o["environment"] == "prod"])
 
     def test_a_kind_switched_off_opens_nothing(self):
@@ -373,7 +375,8 @@ class TransitionTest(unittest.TestCase):
         self.assertEqual([], decided["events"])
         self.assertEqual([{"environment": "qa", "slot": "apply", "result": "removed", "kind": None,
                            "action": "resolve", "event": None, "people": [], "alias": "tf-alerts", "sender": "qa",
-                           "sending": False, "mentioned": [], "reminder_level": None}],
+                           "sending": False, "mentioned": [], "reminder_level": None,
+                           "fingerprint": None}],
                          [o for o in decided["observations"] if o["environment"] == "qa"])
         self.assertIn("`qa`: removed from environments-yml, and its sender `qa` with it; closed without a message",
                       decided["summary"])
@@ -836,6 +839,271 @@ class RemindTest(unittest.TestCase):
                 decided = self.decide("2026-10-07T01:00:00Z", state=state(prod__apply=incident(people=people)))
                 lines = decided["messages"]["e1.md"].split("\n")
                 self.assertEqual(line, lines[4] if len(lines) == 8 else None)
+
+
+PLAN_ONLY = ("init", "format", "validate", "lint", "plan")
+DRIFTED = ["azurerm_storage_account.logs", 'module.net.azurerm_subnet.app["web"]']
+
+
+def planned(name, plan_class, pending=False, fingerprint="f1", drift=0, addresses=(), add=0, change=0, destroy=0,
+            outputs_only=False):
+    """The metadata of a plan-only job whose plan succeeded and was classified (Drift-detection.md §4)."""
+    content = metadata(name, apply="skipped")
+    content["steps"]["parse-plan"] = {"outcome": "success", "outputs": {
+        "count-total": str(add + change + destroy), "count-add": str(add), "count-change": str(change),
+        "count-destroy": str(destroy), "count-import": "0", "count-move": "0", "count-remove": "0",
+        "has-output-only-changes": "true" if outputs_only else "false", "plan-complete": "true",
+        "plan-class": plan_class, "count-drift": str(drift), "has-pending-changes": "true" if pending else "false",
+        "drift-addresses": json.dumps(list(addresses)), "plan-fingerprint": fingerprint}}
+    return content
+
+
+def drifted(fingerprint="f1", pending=False, addresses=DRIFTED, drift=None, **counts):
+    return planned("prod", "drift", pending=pending, fingerprint=fingerprint,
+                   drift=len(addresses) if drift is None else drift, addresses=addresses, **({"change": 2} | counts))
+
+
+class ScheduledFindingTest(unittest.TestCase):
+    """What a scheduled plan-only run finds (Drift-detection.md §4, §5): drift in the drift slot, a default branch
+    not applied in the apply slot."""
+
+    def decide(self, prod, event="schedule", now=NOW, notifications=None, goals=PLAN_ONLY, **overrides):
+        rows = {"dev": row("dev"), "prod": row("prod", goals=goals, notifications=notifications)}
+        given = {"event": event, "now": now, "people": None, "rows": rows,
+                 "metadata": {"dev": metadata("dev"), "prod": prod}, **overrides}
+        return notify_decide.decide(facts(**given))
+
+    def prod(self, decided):
+        return [(o["slot"], o["action"]) for o in decided["observations"] if o["environment"] == "prod"]
+
+    def test_drift_opens_an_incident_in_the_drift_slot(self):
+        decided = self.decide(drifted())
+        self.assertEqual([("apply", "none"), ("drift", "open")], self.prod(decided))
+        self.assertEqual([("drift", "drift", "open", key("o/r", "4711", "1", "prod", "drift", "open"), [])],
+                         [(e["slot"], e["kind"], e["action"], e["idempotency_key"], e["mentions"])
+                          for e in decided["events"]])
+        self.assertEqual(["🌀 **Drift** in `prod` · o/r", "",
+                          "2 resources in `prod` changed outside Terraform, and the next apply would change them back:",
+                          "",
+                          "- `azurerm_storage_account.logs`",
+                          "- `module.net.azurerm_subnet.app[\"web\"]`", "",
+                          "Found by the scheduled run.", "",
+                          f"[Open the run]({RUN_URL})", ""],
+                         decided["messages"]["e1.md"].split("\n"))
+        self.assertEqual(("drift", "f1"), [(o["result"], o["fingerprint"]) for o in decided["observations"]
+                                           if o["slot"] == "drift"][0])
+        self.assertIn("| `prod` | drift | to `tf-alerts` as `prod` |", decided["summary"])
+
+    def test_one_drifted_resource_reads_in_the_singular(self):
+        decided = self.decide(drifted(addresses=["a.b"]))
+        self.assertEqual("1 resource in `prod` changed outside Terraform, and the next apply would change it back:",
+                         decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_at_most_twenty_addresses_are_listed_and_each_is_a_safe_code_span(self):
+        addresses = [f"a.r{i:02d}" for i in range(25)]
+        decided = self.decide(drifted(addresses=addresses[:22], drift=60))
+        lines = decided["messages"]["e1.md"].split("\n")
+        self.assertEqual("60 resources in `prod` changed outside Terraform, and the next apply would change them back:",
+                         lines[2])
+        self.assertEqual([f"- `a.r{i:02d}`" for i in range(20)] + ["- and 40 more"], lines[4:25])
+        decided = self.decide(drifted(addresses=["a.b[\"x`y <z>\"]"]))
+        self.assertEqual("- `a.b[\"x'y ‹z›\"]`", decided["messages"]["e1.md"].split("\n")[4])
+
+    def test_addresses_that_cannot_be_read_are_left_out(self):
+        for broken in ("not json", json.dumps({"a": 1}), json.dumps([1, "a.b"])):
+            with self.subTest(broken=broken):
+                prod = drifted(drift=3)
+                prod["steps"]["parse-plan"]["outputs"]["drift-addresses"] = broken
+                lines = self.decide(prod)["messages"]["e1.md"].split("\n")
+                self.assertEqual(["3 resources in `prod` changed outside Terraform, and the next apply would change them "
+                                  "back.", "", "Found by the scheduled run."], lines[2:5])
+
+    def test_the_same_drift_again_sends_nothing_until_a_weekly_reminder(self):
+        opened = incident(kind="drift", people=())
+        opened.update(fingerprint="f1", mentioned=[], reminder_level=0)
+        for now, expected in (("2026-10-09T01:00:00Z", ("drift", "none")),   # 3 working days
+                              ("2026-10-13T01:00:00Z", ("drift", "remind"))):  # 5 working days
+            with self.subTest(now=now):
+                decided = self.decide(drifted(), now=now, state=state(prod__drift=opened))
+                self.assertEqual([("apply", "none"), expected], self.prod(decided))
+        self.assertEqual(["⏰ **Still drifted** in `prod` · o/r", "",
+                          "`prod` has drifted for 5 working days, since the scheduled plan found it at 2026-10-05 08:30 "
+                          "UTC.", "", f"[Open the run]({RUN_URL})", ""], decided["messages"]["e1.md"].split("\n"))
+        self.assertEqual([], decided["events"][0]["mentions"])
+        opened["reminder_level"] = 1
+        self.assertEqual([("apply", "none"), ("drift", "none")],
+                         self.prod(self.decide(drifted(), now="2026-10-16T01:00:00Z", state=state(prod__drift=opened))))
+        self.assertEqual([("apply", "none"), ("drift", "remind")],
+                         self.prod(self.decide(drifted(), now="2026-10-20T01:00:00Z", state=state(prod__drift=opened))))
+        off = {"kinds": {"drift": {"remind": False}}}
+        opened["reminder_level"] = 0
+        self.assertEqual([("apply", "none"), ("drift", "none")],
+                         self.prod(self.decide(drifted(), now="2026-10-13T01:00:00Z", notifications=off,
+                                               state=state(prod__drift=opened))))
+
+    def test_a_reminder_or_a_resolution_of_drift_goes_where_the_incident_went(self):
+        opened = incident(kind="drift", people=(), alias="tf-old", sender_name="dev")
+        opened["fingerprint"] = "f1"
+        for prod, now, action in ((drifted(), "2026-10-13T01:00:00Z", "remind"),
+                                  (planned("prod", "clean", fingerprint=""), NOW, "resolve")):
+            with self.subTest(action=action):
+                decided = self.decide(prod, now=now, state=state(prod__drift=opened))
+                self.assertEqual([(action, "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
+                                                              for e in decided["events"] if e["slot"] == "drift"])
+
+    def test_a_drift_incident_from_before_reminders_and_reminders_off_as_text(self):
+        opened = incident(kind="drift", people=())
+        opened["fingerprint"] = "f1"
+        self.assertIn(("drift", "remind"), self.prod(self.decide(drifted(), now="2026-10-13T01:00:00Z",
+                                                                 state=state(prod__drift=opened))))
+        off = {"kinds": {"drift": {"remind": "false"}}}
+        self.assertIn(("drift", "none"), self.prod(self.decide(drifted(), now="2026-10-13T01:00:00Z", notifications=off,
+                                                               state=state(prod__drift=opened))))
+
+    def test_drift_after_a_resolved_or_pending_incident_opens_anew(self):
+        for status in ("resolved", "pending"):
+            with self.subTest(status=status):
+                opened = incident(kind="drift", people=(), status=status)
+                opened["fingerprint"] = "f0"
+                self.assertIn(("drift", "open"), self.prod(self.decide(drifted(), state=state(prod__drift=opened))))
+
+    def test_drift_routes_to_its_alias_and_turns_off_as_text(self):
+        decided = self.decide(drifted(), notifications={"kinds": {"drift": {"alias": "tf-drift"}}})
+        self.assertEqual([("open", "tf-drift")], [(e["action"], e["alias"]) for e in decided["events"]])
+        decided = self.decide(drifted(), notifications={"kinds": {"drift": {"off": "true"}}})
+        self.assertEqual([], decided["events"])
+
+    def test_a_drift_count_that_is_not_a_number_counts_the_addresses(self):
+        prod = drifted(addresses=["a.b", "c.d"])
+        prod["steps"]["parse-plan"]["outputs"]["count-drift"] = "?"
+        self.assertEqual("2 resources in `prod` changed outside Terraform, and the next apply would change them back:",
+                         self.decide(prod)["messages"]["e1.md"].split("\n")[2])
+        prod["steps"]["parse-plan"]["outputs"]["drift-addresses"] = "x"
+        self.assertEqual("0 resources in `prod` changed outside Terraform, and the next apply would change them back.",
+                         self.decide(prod)["messages"]["e1.md"].split("\n")[2])
+
+    def test_an_apply_resolves_a_pending_drift_incident_quietly(self):
+        opened = incident(kind="drift", people=(), status="pending", message_id=None)
+        decided = notify_decide.decide(facts(event="push", now=NOW, state=state(prod__drift=opened)))
+        self.assertEqual(([], [("drift", "resolve", "applied")]),
+                         (decided["events"], [(o["slot"], o["action"], o["result"]) for o in decided["observations"]
+                                              if o["slot"] == "drift"]))
+
+    def test_other_drift_is_a_reply(self):
+        opened = incident(kind="drift", alias="tf-old", people=())
+        opened["fingerprint"] = "f1"
+        decided = self.decide(drifted(fingerprint="f2", addresses=["a.b"]), state=state(prod__drift=opened))
+        self.assertEqual([("reply", "msg-1", "tf-old")], [(e["action"], e["reply_to"], e["alias"])
+                                                          for e in decided["events"]])
+        self.assertEqual(["🌀 **Drift changed** in `prod` · o/r", "",
+                          "1 resource in `prod` changed outside Terraform, and the next apply would change it back:"],
+                         decided["messages"]["e1.md"].split("\n")[:3])
+        self.assertEqual("f2", [o for o in decided["observations"] if o["slot"] == "drift"][0]["fingerprint"])
+        self.assertIn("| `prod` | drift changed | to `tf-old` as `prod` |", decided["summary"])
+
+    def test_no_drift_resolves_and_a_pending_drift_incident_quietly(self):
+        opened = incident(kind="drift", people=())
+        opened["fingerprint"] = "f1"
+        for prod in (planned("prod", "clean", fingerprint=""), planned("prod", "pending", pending=True, add=1)):
+            with self.subTest(plan_class=prod["steps"]["parse-plan"]["outputs"]["plan-class"]):
+                decided = self.decide(prod, state=state(prod__drift=opened))
+                drift = [e for e in decided["events"] if e["slot"] == "drift"]
+                self.assertEqual([("resolve", "msg-1")], [(e["action"], e["reply_to"]) for e in drift])
+                self.assertEqual(["✅ **No drift** in `prod` · o/r", "",
+                                  "The scheduled plan of `prod` finds no drift: the drift found at 2026-10-05 08:30 UTC "
+                                  "is gone."], decided["messages"][drift[0]["message"]].split("\n")[:3])
+                self.assertEqual(["no-drift"], [o["result"] for o in decided["observations"] if o["slot"] == "drift"])
+        decided = self.decide(planned("prod", "clean", fingerprint=""),
+                              state=state(prod__drift=dict(opened, status="pending", message_id=None)))
+        self.assertEqual(([], [("apply", "clean"), ("drift", "resolve")]),
+                         (decided["events"], [(o["slot"], o["result"]) if o["slot"] == "apply" else
+                                              (o["slot"], o["action"]) for o in decided["observations"]
+                                              if o["environment"] == "prod"]))
+
+    def test_an_apply_changes_drift_back_and_resolves_it_on_any_event(self):
+        opened = incident(kind="drift", people=())
+        opened["fingerprint"] = "f1"
+        for event in ("push", "schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                decided = notify_decide.decide(facts(event=event, now=NOW, state=state(prod__drift=opened)))
+                self.assertEqual([("drift", "resolve")], [(e["slot"], e["action"]) for e in decided["events"]])
+                self.assertEqual(["✅ **No drift** in `prod` · o/r", "",
+                                  "`prod` is applied, which changed back the drift found at 2026-10-05 08:30 UTC."],
+                                 decided["messages"]["e1.md"].split("\n")[:3])
+
+    def test_drift_is_found_by_a_scheduled_plan_only_run_alone(self):
+        for event, goals in (("push", PLAN_ONLY), ("workflow_dispatch", PLAN_ONLY), ("schedule", None)):
+            with self.subTest(event=event, goals=goals):
+                given = {} if goals else {"goals": ("init", "plan", "apply")}
+                decided = self.decide(drifted(), event=event, **({"goals": goals} if goals else given))
+                self.assertEqual([], [e for e in decided["events"] if e["slot"] == "drift"])
+
+    def test_unknown_or_failed_plans_say_nothing_about_drift(self):
+        opened = incident(kind="drift", people=())
+        opened["fingerprint"] = "f1"
+        for prod in (planned("prod", "unknown", fingerprint=""), metadata("prod", plan="failure", apply="skipped"),
+                     planned("prod", "", fingerprint="")):
+            with self.subTest(prod=prod["steps"].get("parse-plan")):
+                self.assertEqual([("apply", "none"), ("drift", "none")],
+                                 self.prod(self.decide(prod, state=state(prod__drift=opened))))
+                self.assertEqual([("apply", "none")], self.prod(self.decide(prod)))
+
+    def test_drift_switched_off_opens_nothing(self):
+        decided = self.decide(drifted(), notifications={"kinds": {"drift": {"off": True}}})
+        self.assertEqual(([], [("apply", "none")]), (decided["events"], self.prod(decided)))
+
+    def test_pending_changes_open_a_default_branch_not_applied(self):
+        decided = self.decide(planned("prod", "pending", pending=True, add=2, change=1))
+        self.assertEqual([("apply", "open")], self.prod(decided))
+        self.assertEqual([("apply", "pending-change", "open")], [(e["slot"], e["kind"], e["action"])
+                                                                 for e in decided["events"]])
+        self.assertEqual(["⏳ **Not applied** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` has 3 changes (2 to add, 1 to change), so the default branch "
+                          "is not applied in `prod`.", "",
+                          "Found by the scheduled run.", "",
+                          f"[Open the run]({RUN_URL})", ""], decided["messages"]["e1.md"].split("\n"))
+        self.assertIn("| `prod` | not applied | to `tf-alerts` as `prod` |", decided["summary"])
+
+    def test_the_pending_reason_names_each_count_and_output_changes(self):
+        for prod, reason in ((planned("prod", "pending", pending=True, destroy=1),
+                              "The scheduled plan of `prod` has 1 change (1 to destroy), so the default branch is not "
+                              "applied in `prod`."),
+                             (planned("prod", "pending", pending=True, outputs_only=True),
+                              "The scheduled plan of `prod` changes only outputs, so the default branch is not applied "
+                              "in `prod`.")):
+            with self.subTest(reason=reason):
+                self.assertEqual(reason, self.decide(prod)["messages"]["e1.md"].split("\n")[2])
+
+    def test_drift_beside_changes_of_its_own_opens_both(self):
+        decided = self.decide(drifted(pending=True, add=1))
+        self.assertEqual([("apply", "open"), ("drift", "open")], self.prod(decided))
+        self.assertEqual(["pending-change", "drift"], [e["kind"] for e in decided["events"]])
+
+    def test_drift_alone_or_no_changes_resolve_the_apply_slot(self):
+        for prod in (drifted(), planned("prod", "clean", fingerprint="")):
+            with self.subTest(plan_class=prod["steps"]["parse-plan"]["outputs"]["plan-class"]):
+                decided = self.decide(prod, state=state(prod__apply=incident()))
+                self.assertEqual(("apply", "resolve"), self.prod(decided)[0])
+
+    def test_pending_changes_with_an_apply_incident_open_are_its_reminder(self):
+        decided = self.decide(planned("prod", "pending", pending=True, add=1), now="2026-10-07T01:00:00Z",
+                              state=state(prod__apply=incident(kind="pending-change", people=())))
+        self.assertEqual([("apply", "remind")], self.prod(decided))
+        self.assertEqual("`prod` has not been applied for 1 working day, since the scheduled plan found changes at "
+                         "2026-10-05 08:30 UTC.", decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_the_pending_reason_counts_every_kind_and_skips_what_is_not_a_number(self):
+        prod = planned("prod", "pending", pending=True)
+        prod["steps"]["parse-plan"]["outputs"].update({"count-import": "1", "count-move": "2", "count-remove": "1",
+                                                       "count-add": "x"})
+        self.assertEqual("The scheduled plan of `prod` has 4 changes (1 to import, 2 to move, 1 to remove), so the "
+                         "default branch is not applied in `prod`.", self.decide(prod)["messages"]["e1.md"].split("\n")[2])
+
+    def test_pending_changes_on_a_dispatch_or_switched_off_open_nothing(self):
+        prod = planned("prod", "pending", pending=True, add=1)
+        self.assertEqual([("apply", "none")], self.prod(self.decide(prod, event="workflow_dispatch")))
+        self.assertEqual([("apply", "none")],
+                         self.prod(self.decide(prod, notifications={"kinds": {"pending-change": {"off": True}}})))
 
 
 class WantedTest(unittest.TestCase):

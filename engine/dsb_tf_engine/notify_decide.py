@@ -7,13 +7,20 @@ run needs, and writes every file. Facts the adapter could not gather are None, n
 """
 
 import hashlib
+import json
 
 from . import environments
 
 SLOT = "apply"
 # The steps before the apply, in the order the job runs them; the first that failed is the reason.
 STEPS_BEFORE_APPLY = ("init", "verify-lock", "fmt", "validate", "lint", "plan")
-OPENING = {"failed": "apply-failed", "cancelled": "apply-cancelled", "held-back": "held-back"}
+OPENING = {"failed": "apply-failed", "cancelled": "apply-cancelled", "held-back": "held-back",
+           "pending": "pending-change"}
+DRIFT_SLOT = "drift"
+# A drift message lists this many addresses, then how many more (Drift-detection.md §5).
+ADDRESS_LIMIT = 20
+# Drift reminds once a week, in working days, and mentions nobody (Drift-detection.md §5).
+DRIFT_REMINDER_DAYS = 5
 RESOLVING = ("applied", "clean")
 # A dispatch may resolve, never open (D8): whoever dispatched it is looking at the run.
 OPENING_EVENTS = ("push", "schedule")
@@ -23,10 +30,13 @@ HEADERS = {
     "apply-failed": ("❌", "Apply failed"),
     "apply-cancelled": ("🚫", "Apply cancelled"),
     "held-back": ("⏸️", "Held back"),
+    "pending-change": ("⏳", "Not applied"),
 }
-WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "held-back": "held back"}
+WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "held-back": "held back",
+        "pending-change": "not applied", "drift": "drift"}
 REMINDED = {"apply-failed": "the apply failed", "apply-cancelled": "the apply was cancelled",
-            "held-back": "its stage was held back"}
+            "held-back": "its stage was held back", "pending-change": "the scheduled plan found changes"}
+COUNTED = ("add", "change", "destroy", "import", "move", "remove")
 # What a display name may hold to be written as it is: no character in it starts markup in a message.
 NAME_PUNCTUATION = " .'-"
 
@@ -59,6 +69,27 @@ def _held_back(stage, stage_results):
     return None
 
 
+def _plan_outputs(content):
+    outputs = path(content, "steps", "parse-plan", "outputs")
+    return outputs if isinstance(outputs, dict) else {}
+
+
+def _planned(content, event):
+    """The apply slot of an environment the run does not apply, from its classified plan (Drift-detection.md
+    §4): clean when the plan changes nothing of its own, drift alone included; pending, on a schedule, when it
+    does. A plan without a class is clean only when it changes nothing at all."""
+    if event not in ("schedule", "workflow_dispatch") or _outcome(content, "plan") != "success":
+        return "none", {}
+    outputs = _plan_outputs(content)
+    plan_class, own = outputs.get("plan-class"), outputs.get("has-pending-changes")
+    if plan_class == "clean" or (plan_class == "drift" and own == "false"):
+        return "clean", {}
+    if plan_class in ("pending", "drift"):
+        # Pending on a dispatch too, which opens nothing (D8).
+        return "pending", {"outputs": outputs}
+    return ("clean" if not plan_class and _clean_plan(content) else "none"), {}
+
+
 def classify(row, entry, content, stage_results, event):
     """The environment's result in the apply slot and what says so (§4)."""
     due = "apply" in row["goals-granted"]
@@ -72,7 +103,7 @@ def classify(row, entry, content, stage_results, event):
             return ("failed" if result == "failure" else "cancelled"), {"step": None}
         return ("unknown" if due else "none"), {}
     if not due:
-        return ("clean" if event in ("schedule", "workflow_dispatch") and _clean_plan(content) else "none"), {}
+        return _planned(content, event)
     apply = _outcome(content, "apply")
     if apply == "success":
         return "applied", {}
@@ -194,6 +225,50 @@ def _mentions(facts, logins):
             for login in logins if _identity(facts, login)]
 
 
+def _addresses(outputs):
+    """The drifted addresses parse-terraform-plan lists, or None when they cannot be read."""
+    try:
+        addresses = json.loads(outputs.get("drift-addresses") or "")
+    except ValueError:
+        return None
+    return addresses if isinstance(addresses, list) and all(isinstance(each, str) for each in addresses) else None
+
+
+def _drift(facts, name, row, content, applied):
+    """The environment's drift slot (Drift-detection.md §5), or None when there is nothing to observe: a
+    scheduled plan-only run reads drift from its classified plan, and an apply changes drift back."""
+    incident = _incident(facts, name, DRIFT_SLOT)
+    status = incident["status"] if incident else "none"
+    outputs = _plan_outputs(content)
+    scheduled = facts["event"] == "schedule" and "apply" not in row["goals-granted"] \
+        and _outcome(content, "plan") == "success"
+    plan_class = outputs.get("plan-class") if scheduled else None
+    fingerprint = outputs.get("plan-fingerprint") or None
+    route, deliver_as = _route(row, "drift")
+    action, level, age, result = "none", None, None, "drift"
+    if applied and status in ("open", "pending"):
+        action, result = "resolve", "applied"
+    elif plan_class == "drift" and status in ("none", "resolved", "pending"):
+        action = "none" if route.get("off") in (True, "true") else "open"
+    elif plan_class == "drift" and incident.get("fingerprint") != fingerprint:
+        action = "reply"
+    elif plan_class == "drift":
+        age = working_days(incident["opened_at"], facts["now"])
+        due = age // DRIFT_REMINDER_DAYS
+        if due > incident.get("reminder_level", 0) and route.get("remind") not in (False, "false"):
+            action, level = "remind", due
+    elif plan_class in ("pending", "clean") and status in ("open", "pending"):
+        action, result = "resolve", "no-drift"
+    if incident is None and action == "none":
+        return None
+    later = action in ("reply", "resolve", "remind")
+    return {"environment": name, "slot": DRIFT_SLOT, "result": result, "kind": "drift",
+            "action": action, "incident": incident, "level": level, "age": age,
+            "detail": {"outputs": outputs}, "fingerprint": fingerprint,
+            "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
+            "sender": incident["sender"] if later else deliver_as or name}
+
+
 def _plan(facts):
     """Every environment's observation, and the actions, before anything is rendered."""
     observations = []
@@ -226,8 +301,11 @@ def _plan(facts):
         later = action in ("reply", "resolve", "remind")
         observations.append({"environment": name, "slot": SLOT, "result": result, "detail": detail, "kind": kind,
                              "action": action, "incident": incident, "route": route, "level": level, "age": age,
+                             "fingerprint": None,
                              "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
                              "sender": incident["sender"] if later else deliver_as or name})
+        drift = _drift(facts, name, row, facts["metadata"].get(name), result == "applied")
+        observations += [drift] if drift else []
     seen = {observation["environment"].lower() for observation in observations}
     names = {name.lower() for name in facts["senders"]}
     incidents = facts["state"]["incidents"] if facts["state"] else {}
@@ -237,7 +315,7 @@ def _plan(facts):
             continue
         observations.append({"environment": environment, "slot": slot, "result": "removed", "kind": None,
                              "action": "resolve", "incident": incident, "alias": incident["alias"],
-                             "sender": incident["sender"]})
+                             "sender": incident["sender"], "fingerprint": None})
     return observations
 
 
@@ -299,9 +377,22 @@ def _when(stamp):
     return f"{stamp[:10]} {stamp[11:16]} UTC"
 
 
+def _changes(outputs):
+    """'has 3 changes (2 to add, 1 to change)', naming the non-zero counts, or 'changes only outputs'."""
+    counts = [(int(given), kind) for given, kind in ((outputs.get(f"count-{kind}") or "", kind) for kind in COUNTED)
+              if given.isdigit()]
+    detail = [f"{count} to {kind}" for count, kind in counts if count]
+    total = sum(count for count, _ in counts)
+    if not total:
+        return "changes only outputs"
+    return f"has {total} change{'' if total == 1 else 's'} ({', '.join(detail)})"
+
+
 def _reason(observation):
     name, detail = observation["environment"], observation["detail"]
     not_applied = f"so the default branch is not applied in `{name}`."
+    if observation["result"] == "pending":
+        return f"The scheduled plan of `{name}` {_changes(detail['outputs'])}, {not_applied}"
     if observation["result"] == "held-back":
         verb = "failed" if detail["cause_result"] == "failure" else "was cancelled"
         return f"Stage {detail['stage']} did not run because stage {detail['cause']} {verb}, {not_applied}"
@@ -322,6 +413,45 @@ def _reason(observation):
            f"applied in `{name}`."
 
 
+def _drift_list(observation):
+    """The paragraphs that say what drifted: how many, and up to ADDRESS_LIMIT addresses as code spans."""
+    outputs = observation["detail"]["outputs"]
+    addresses = _addresses(outputs)
+    given = outputs.get("count-drift") or ""
+    count = int(given) if given.isdigit() else len(addresses or [])
+    name = observation["environment"]
+    them = "them" if count != 1 else "it"
+    sentence = f"{count} resource{'' if count == 1 else 's'} in `{name}` changed outside Terraform, and the next " \
+               f"apply would change {them} back"
+    if not addresses:
+        return [sentence + "."]
+    shown = [f"- `{_title(address)}`" for address in addresses[:ADDRESS_LIMIT]]
+    if count > len(shown):
+        shown.append(f"- and {count - len(shown)} more")
+    return [sentence + ":", "\n".join(shown)]
+
+
+def _render_drift(facts, observation, link):
+    name, repository, action = observation["environment"], facts["repository"], observation["action"]
+    incident = observation["incident"]
+    if action == "resolve" and observation["result"] == "applied":
+        lines = [f"✅ **No drift** in `{name}` · {repository}",
+                 f"`{name}` is applied, which changed back the drift found at {_when(incident['opened_at'])}."]
+    elif action == "resolve":
+        lines = [f"✅ **No drift** in `{name}` · {repository}",
+                 f"The scheduled plan of `{name}` finds no drift: the drift found at {_when(incident['opened_at'])} "
+                 "is gone."]
+    elif action == "remind":
+        days = observation["age"]
+        lines = [f"⏰ **Still drifted** in `{name}` · {repository}",
+                 f"`{name}` has drifted for {days} working days, since the scheduled plan "
+                 f"found it at {_when(incident['opened_at'])}."]
+    else:
+        title = "Drift changed" if action == "reply" else "Drift"
+        lines = [f"🌀 **{title}** in `{name}` · {repository}", *_drift_list(observation), "Found by the scheduled run."]
+    return "\n\n".join(lines + [link]) + "\n"
+
+
 def render(facts, observation):
     """The message, markdown text (D23): a first line that says what and where, why, who, and the run.
     The repository is plain text: Teams draws a code span as a box, and an owner/name is letters, digits,
@@ -330,6 +460,8 @@ def render(facts, observation):
     run = facts["run"]
     link = f"[Open the run]({facts['server_url']}/{repository}/actions/runs/{run['id']}/attempts/{run['attempt']})"
     action = observation["action"]
+    if observation["slot"] == DRIFT_SLOT and observation["result"] != "removed":
+        return _render_drift(facts, observation, link)
     if action == "resolve":
         since = _when(observation["incident"]["opened_at"])
         if observation["result"] == "removed":
@@ -385,6 +517,7 @@ def decide(facts):
         name, action = observation["environment"], observation["action"]
         what = "resolved" if action == "resolve" else WHAT.get(observation["kind"])
         what = f"reminder {observation['level']}" if action == "remind" else what
+        what = "drift changed" if action == "reply" and observation["slot"] == DRIFT_SLOT else what
         if _messaged(observation) and observation["sender"] not in facts["senders"]:
             notes.append(f"`{name}`: removed from environments-yml, and its sender `{observation['sender']}` with it; "
                          "closed without a message")
@@ -420,7 +553,7 @@ def decide(facts):
                          "action": action, "event": event_id, "people": people, "alias": observation["alias"],
                          "sender": observation["sender"], "sending": sending,
                          "mentioned": _chosen(facts, observation) if action == "open" else [],
-                         "reminder_level": observation.get("level")})
+                         "reminder_level": observation.get("level"), "fingerprint": observation["fingerprint"]})
     parts = []
     if table:
         parts.append("\n".join(["| Environment | What | Sent |", "|---|---|---|", *table]))

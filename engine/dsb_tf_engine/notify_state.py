@@ -44,13 +44,13 @@ def merge(state, observations, results, run_number, now, cutoff):
                               "alias": observation["alias"], "sender": observation["sender"], "opened_at": now,
                               "opened_run": run_number, "seen_run": run_number, "people": observation["people"],
                               "resolved_at": None, "mentioned": observation["mentioned"], "reminder_level": 0,
-                              "reminded_at": None}
+                              "reminded_at": None, "fingerprint": observation["fingerprint"]}
         elif incident is None or incident["status"] == "resolved":
             continue
         elif action == "resolve":
             incident.update(status="resolved", resolved_at=now, seen_run=run_number)
         elif action == "reply":
-            incident.update(kind=observation["kind"], seen_run=run_number)
+            incident.update(kind=observation["kind"], seen_run=run_number, fingerprint=observation["fingerprint"])
         elif action == "remind" and accepted:
             incident.update(reminder_level=observation["reminder_level"], reminded_at=now, seen_run=run_number)
         else:

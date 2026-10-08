@@ -7,8 +7,8 @@ that is not applied, marks either on the run, and, through [Notifications.md](No
 reaches the environment's Teams channel once per change rather than once per night.
 
 Status: **the scheduled plan** ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4), **the
-stopgap (§3) and the classification (§4) are built; the kinds and transitions (§4, §5) are specified,
-not built.** The open questions are in §9; §11 records what building changed.
+stopgap (§3), the classification (§4) and the `drift` and `pending-change` kinds and their transitions
+(§4, §5) are built; the `schedule` slot's kinds are specified, not built.** The open questions are in §9; §11 records what building changed.
 
 ## 1. Why
 
@@ -112,7 +112,7 @@ classification answers is taken on trust: a value of another shape is `unknown`,
 | Kind | Raised by a scheduled plan-only run when | Severity | Slot |
 |---|---|---|---|
 | `drift` | `plan-class` is `drift` | medium | `drift` |
-| `pending-change` | `plan-class` is `pending` (D7) | medium | `apply` |
+| `pending-change` | `plan-class` is `pending`, or `drift` with `has-pending-changes` (D7) | medium | `apply` |
 | `scheduled-failed` | a step of the environment job failed, the second run in a row | medium | `schedule` |
 | `drift-check-failing` | `plan-class` was `unknown` three runs in a row | low | `schedule` |
 
@@ -124,9 +124,10 @@ and slot, with the last fingerprint and counts of consecutive failed and unreada
 | Slot | Last state | This scheduled run | Action |
 |---|---|---|---|
 | `drift` | none or resolved | drift, fingerprint F | a new message |
-| `drift` | open with F | drift with F | nothing; reminders weekly, mentioning nobody |
-| `drift` | open with F | drift with F′ | update the first message, reply "changed", remember F′ |
-| `drift` | open | pending or clean | update the first message to resolved, reply "resolved" |
+| `drift` | open with F | drift with F | nothing; a reminder every five working days, mentioning nobody |
+| `drift` | open with F | drift with F′ | reply "changed", remember F′ |
+| `drift` | open | pending or clean | reply "resolved" |
+| `drift` | open | an apply of the environment, on any event | reply "resolved": the apply changed the drift back |
 | `apply` | none or resolved | pending, fingerprint F | a new `pending-change` message |
 | `apply` | open (any kind) | pending | nothing new; the reminders of [Notifications.md](Notifications.md) §10 carry it |
 | `apply` | open (any kind) | drift or clean, with no changes of its own | resolved, as [Notifications.md](Notifications.md) §4 says for a clean plan |
@@ -136,8 +137,44 @@ and slot, with the last fingerprint and counts of consecutive failed and unreada
 | any | state lost | the finding again | a new message: a duplicate, never a missed finding |
 
 A drift plan that also has changes of its own (drift and unapplied code together) keeps or opens the
-`drift` incident and the `apply` incident. The message lists the class, the counts and up to twenty
-drifted addresses, and links the run, whose summary has the plan.
+`drift` incident and the `apply` incident. A pending incident opens again and resolves quietly, and
+`off: true` on a kind opens nothing, as in [Notifications.md](Notifications.md) §9. Until the relay
+updates messages, the first message is not updated: every message stands alone.
+
+The drift message says how many resources drifted and lists up to twenty of their addresses, each a
+code span made safe as a pull request's title is ([Notifications.md](Notifications.md) §11), then
+how many more; without addresses it can read, it gives the number alone:
+
+```markdown
+🌀 **Drift** in `prod` · example-org/example-repo
+
+2 resources in `prod` changed outside Terraform, and the next apply would change them back:
+
+- `azurerm_storage_account.logs`
+- `module.net.azurerm_subnet.app["web"]`
+
+Found by the scheduled run.
+
+[Open the run](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+A changed finding is `🌀 Drift changed` with the new list; a resolution `✅ No drift`, saying the
+scheduled plan finds none or that an apply changed it back; a reminder `⏰ Still drifted`, saying how
+many working days since the scheduled plan found it. The `pending-change` message:
+
+```markdown
+⏳ **Not applied** in `prod` · example-org/example-repo
+
+The scheduled plan of `prod` has 3 changes (1 to add, 2 to change), so the default branch is not applied in `prod`.
+
+Found by the scheduled run.
+
+[Open the run](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+Its reminders are the `apply` slot's ([Notifications.md](Notifications.md) §10), "since the scheduled
+plan found changes". A plan without `plan-class`, as from an earlier parser, keeps the earlier rule:
+clean only when it changes nothing at all, and never pending.
 
 ## 6. Configuration
 
@@ -198,7 +235,8 @@ environment that is never applied from CI is `pending` by design and may set
 
 1. The stopgap (§3). Built.
 2. The classification (§4), which sharpens the stopgap's wording. Built.
-3. The kinds and transitions (§4, §5) with the state of [Notifications.md](Notifications.md) §9.
+3. The kinds and transitions (§4, §5) with the state of [Notifications.md](Notifications.md) §9:
+   `drift` and `pending-change` built; `scheduled-failed` and `drift-check-failing` next.
 
 ## 11. What implementation taught the spec
 
@@ -215,6 +253,10 @@ environment that is never applied from CI is `pending` by design and may set
 - The console says nothing about drift that the plan reverts by creating a resource again: Terraform's
   "Objects have changed outside of Terraform" note was absent from the recorded plan of a deleted
   resource. Only the JSON plan's `resource_drift` tells drift from a new resource.
+- An apply changes drift back, so a successful apply of the environment, on any event, resolves the
+  `drift` incident at once instead of waiting for the next scheduled plan.
+- Drift reminds every five working days from the day it was found, the "weekly" of §5 counted as
+  the `apply` slot's reminders are.
 - P1 and P2 hold as written: a value changed by hand under `ignore_changes` is in `resource_drift` as
   an `update` while the console says `No changes.` and the plan exits 0, so the exit code would call
   it clean and `resource_drift` alone would call it drift. D3's intersection calls it ignored.
