@@ -6,6 +6,22 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.10.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.9.0...v1.10.0) (2026-10-08)
+
+
+### Features
+
+* create-matrix checks notifications-yml and the Teams target ([d92e0f2](https://github.com/dsb-norge/github-actions-terraform/commit/d92e0f20996815e075b3454724bfdd097ea37c80))
+* lighter notification headers, Applied in and a plain repository ([45f86ee](https://github.com/dsb-norge/github-actions-terraform/commit/45f86ee6ecfba56a5d8aca3eed5342d91ca209ea))
+* notify Teams when the default branch is left unapplied ([3ebc1a4](https://github.com/dsb-norge/github-actions-terraform/commit/3ebc1a49b2150c1948661160d45100e9cbeb3e7e))
+* post-teams-notification posts a message to the Teams relay ([57c1361](https://github.com/dsb-norge/github-actions-terraform/commit/57c1361684194fde7936b163d1db1bf167c4182a))
+* the engine decides and records Teams notifications ([b8b1457](https://github.com/dsb-norge/github-actions-terraform/commit/b8b14572b1be05a7e58c178ec455a887da2ff871))
+
+
+### Bug Fixes
+
+* pr-comment retries a post GitHub fails transiently ([d27f8a1](https://github.com/dsb-norge/github-actions-terraform/commit/d27f8a18d60f012460162fea787bc84c4458eccd))
+
 ## [1.9.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.8.0...v1.9.0) (2026-10-07)
 
 
