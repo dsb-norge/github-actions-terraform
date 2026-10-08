@@ -720,6 +720,14 @@ A minor release.
   protection rules. A cancelled apply and a protected sender were not run there; both are unit
   tested.
 
+  For reminders, a one-off workflow saved an incident state as the newest cache entry: an incident
+  on the failing environment, opened on a Monday. On a Thursday, the first scheduled plan of that
+  environment sent reminder 1 ("has not been applied for 2 working days"), to the incident's alias
+  as its sender, naming the change's author by display name with the object ID in `mentions`; the
+  relay accepted it, and the next scheduled run sent nothing. A push that applied the environment
+  then resolved the incident, on the release before reminders, which read the state with the new
+  fields.
+
   With the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` set on the test bed, a merge whose apply
   failed opened two incidents whose messages named the pull request's author and merger by display
   name, and whose events listed that person once in `mentions` with an object ID; the decide job
