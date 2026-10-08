@@ -14,7 +14,7 @@ def observation(action="open", environment="prod", result="failed", kind="apply-
                 alias="tf-alerts", sender="prod", mentioned=("jdoe",), reminder_level=None, fingerprint=None):
     return {"environment": environment, "slot": "apply", "result": result, "kind": kind, "action": action,
             "event": event, "people": list(people), "alias": alias, "sender": sender, "mentioned": list(mentioned),
-            "reminder_level": reminder_level, "fingerprint": fingerprint}
+            "reminder_level": reminder_level, "fingerprint": fingerprint, "checks": None}
 
 
 def incident(status="open", message_id="msg-1", seen_run=40, opened_run=40, kind="apply-failed", resolved_at=None):
@@ -142,6 +142,56 @@ class FingerprintTest(unittest.TestCase):
                                       state["incidents"]["prod/drift"]["seen_run"]))
 
 
+class ChecksTest(unittest.TestCase):
+    """The counts of a scheduled plan's failed and unreadable runs in a row (Drift-detection.md D6)."""
+
+    def counted(self, failed, unread, environment="Prod", action="none"):
+        return dict(observation(action, environment=environment, kind=None, event=None, people=(), mentioned=()),
+                    slot="schedule", checks={"failed": failed, "unread": unread})
+
+    def test_counts_are_kept_per_environment_with_the_run(self):
+        state, changed = merge(None, [self.counted(1, 0)])
+        self.assertEqual({"schema_version": 1, "incidents": {}, "checks": {"prod": {"failed": 1, "unread": 0,
+                                                                                     "seen_run": 42}}}, state)
+        self.assertTrue(changed)
+
+    def test_counts_back_to_zero_are_dropped(self):
+        given = {"schema_version": 1, "incidents": {}, "checks": {"prod": {"failed": 1, "unread": 0, "seen_run": 41}}}
+        state, changed = merge(given, [self.counted(0, 0)])
+        self.assertEqual({"schema_version": 1, "incidents": {}, "checks": {}}, state)
+        self.assertTrue(changed)
+
+    def test_an_older_run_never_overwrites_newer_counts(self):
+        given = {"schema_version": 1, "incidents": {}, "checks": {"prod": {"failed": 2, "unread": 0, "seen_run": 43}}}
+        self.assertEqual((given, False), merge(copy.deepcopy(given), [self.counted(1, 0)]))
+
+    def test_an_observation_without_counts_leaves_them(self):
+        given = {"schema_version": 1, "incidents": {}, "checks": {"prod": {"failed": 1, "unread": 0, "seen_run": 41}}}
+        self.assertEqual((given, False), merge(copy.deepcopy(given), [dict(observation("none", event=None),
+                                                                            checks=None)]))
+
+    def test_the_same_run_counts_again_and_other_environments_keep_theirs(self):
+        given = {"schema_version": 1, "incidents": {}, "checks": {
+            "prod": {"failed": 1, "unread": 0, "seen_run": 42}, "dev": {"failed": 0, "unread": 2, "seen_run": 40}}}
+        state, _ = merge(copy.deepcopy(given), [self.counted(2, 0)])
+        self.assertEqual({"prod": {"failed": 2, "unread": 0, "seen_run": 42},
+                          "dev": {"failed": 0, "unread": 2, "seen_run": 40}}, state["checks"])
+
+    def test_zero_counts_with_nothing_stored_change_nothing(self):
+        for given in ({"schema_version": 1, "incidents": {}},
+                      {"schema_version": 1, "incidents": {}, "checks": {"dev": {"failed": 1, "unread": 0,
+                                                                                "seen_run": 40}}}):
+            with self.subTest(given=given):
+                self.assertEqual((given, False), merge(copy.deepcopy(given), [self.counted(0, 0)]))
+
+    def test_an_incident_opens_beside_the_counts(self):
+        opened = dict(self.counted(2, 0, action="open"), kind="scheduled-failed", event="e1")
+        state, _ = merge(None, [opened], accepted())
+        self.assertEqual(("scheduled-failed", "open"), (state["incidents"]["prod/schedule"]["kind"],
+                                                        state["incidents"]["prod/schedule"]["status"]))
+        self.assertEqual({"failed": 2, "unread": 0, "seen_run": 42}, state["checks"]["prod"])
+
+
 class RemindTest(unittest.TestCase):
     def given(self, **kwargs):
         return {"schema_version": 1, "incidents": {"prod/apply": incident(**kwargs)}}
@@ -173,11 +223,15 @@ class TombstoneTest(unittest.TestCase):
 class ReadTest(unittest.TestCase):
     def test_a_state_of_another_shape_is_none(self):
         for given in (None, [], {"schema_version": 2, "incidents": {}}, {"schema_version": 1, "incidents": []},
-                      {"schema_version": 1}, {"schema_version": 1, "incidents": {"prod/apply": "x"}}):
+                      {"schema_version": 1}, {"schema_version": 1, "incidents": {"prod/apply": "x"}},
+                      {"schema_version": 1, "incidents": {}, "checks": []},
+                      {"schema_version": 1, "incidents": {}, "checks": {"prod": 1}}):
             with self.subTest(given=given):
                 self.assertIsNone(notify_state.valid(given))
         self.assertEqual({"schema_version": 1, "incidents": {}}, notify_state.valid({"schema_version": 1,
                                                                                       "incidents": {}}))
+        with_checks = {"schema_version": 1, "incidents": {}, "checks": {"prod": {"failed": 1}}}
+        self.assertEqual(with_checks, notify_state.valid(with_checks))
 
     def test_merging_into_none_starts_empty(self):
         self.assertEqual(({"schema_version": 1, "incidents": {}}, False), merge(None, []))

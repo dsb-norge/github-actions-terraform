@@ -72,7 +72,8 @@ def key(*parts):
 class ClassifyTest(unittest.TestCase):
     def result(self, **kwargs):
         decided = notify_decide.decide(facts(**kwargs))
-        return {observation["environment"]: observation["result"] for observation in decided["observations"]}
+        return {observation["environment"]: observation["result"] for observation in decided["observations"]
+                if observation["slot"] == "apply"}
 
     def test_an_apply_that_succeeded_or_failed_or_was_cancelled(self):
         self.assertEqual({"dev": "applied", "prod": "failed"},
@@ -222,7 +223,7 @@ class OpenTest(unittest.TestCase):
         self.assertEqual([{"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed",
                            "action": "none", "event": None, "people": [], "alias": "tf-alerts", "sender": "prod",
                            "sending": False, "mentioned": [], "reminder_level": None,
-                           "fingerprint": None}],
+                           "fingerprint": None, "checks": None}],
                          [o for o in decided["observations"] if o["environment"] == "prod"])
 
     def test_a_kind_switched_off_opens_nothing(self):
@@ -370,13 +371,24 @@ class TransitionTest(unittest.TestCase):
                          [(e["environment"], e["slot"], e["action"], e["idempotency_key"]) for e in decided["events"]])
         self.assertEqual(["apply", "drift"], [o["slot"] for o in decided["observations"] if o["environment"] == "qa"])
 
+    def test_a_removed_environment_says_so_in_every_slot(self):
+        incidents = {f"qa__{slot}": incident(kind=kind, sender_name="dev")
+                     for slot, kind in (("drift", "drift"), ("schedule", "scheduled-failed"))}
+        decided = notify_decide.decide(facts(state=state(**incidents)))
+        for event in decided["events"]:
+            with self.subTest(slot=event["slot"]):
+                self.assertEqual(["✅ **No longer watched** `qa` · o/r", "",
+                                  "`qa` is no longer in environments-yml: the incident opened at 2026-10-05 08:30 UTC is "
+                                  "closed."], decided["messages"][event["message"]].split("\n")[:3])
+        self.assertEqual(["drift", "schedule"], [e["slot"] for e in decided["events"]])
+
     def test_a_removed_environment_whose_sender_is_gone_too_is_closed_quietly(self):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="qa"))))
         self.assertEqual([], decided["events"])
         self.assertEqual([{"environment": "qa", "slot": "apply", "result": "removed", "kind": None,
                            "action": "resolve", "event": None, "people": [], "alias": "tf-alerts", "sender": "qa",
                            "sending": False, "mentioned": [], "reminder_level": None,
-                           "fingerprint": None}],
+                           "fingerprint": None, "checks": None}],
                          [o for o in decided["observations"] if o["environment"] == "qa"])
         self.assertIn("`qa`: removed from environments-yml, and its sender `qa` with it; closed without a message",
                       decided["summary"])
@@ -1044,9 +1056,11 @@ class ScheduledFindingTest(unittest.TestCase):
         for prod in (planned("prod", "unknown", fingerprint=""), metadata("prod", plan="failure", apply="skipped"),
                      planned("prod", "", fingerprint="")):
             with self.subTest(prod=prod["steps"].get("parse-plan")):
-                self.assertEqual([("apply", "none"), ("drift", "none")],
-                                 self.prod(self.decide(prod, state=state(prod__drift=opened))))
-                self.assertEqual([("apply", "none")], self.prod(self.decide(prod)))
+                drift_and_apply = [each for each in self.prod(self.decide(prod, state=state(prod__drift=opened)))
+                                   if each[0] != "schedule"]
+                self.assertEqual([("apply", "none"), ("drift", "none")], drift_and_apply)
+                self.assertEqual([("apply", "none")], [each for each in self.prod(self.decide(prod))
+                                                       if each[0] != "schedule"])
 
     def test_drift_switched_off_opens_nothing(self):
         decided = self.decide(drifted(), notifications={"kinds": {"drift": {"off": True}}})
@@ -1104,6 +1118,175 @@ class ScheduledFindingTest(unittest.TestCase):
         self.assertEqual([("apply", "none")], self.prod(self.decide(prod, event="workflow_dispatch")))
         self.assertEqual([("apply", "none")],
                          self.prod(self.decide(prod, notifications={"kinds": {"pending-change": {"off": True}}})))
+
+
+class ScheduleSlotTest(unittest.TestCase):
+    """A scheduled plan that fails or cannot be read (Drift-detection.md D6): the schedule slot."""
+
+    def decide(self, prod, checks=None, incidents=None, now=NOW, notifications=None, **overrides):
+        rows = {"dev": row("dev"), "prod": row("prod", goals=PLAN_ONLY, notifications=notifications)}
+        stored = {"schema_version": 1, "incidents": incidents or {}}
+        if checks is not None:
+            stored["checks"] = {"prod": checks}
+        given = {"event": "schedule", "now": now, "people": None, "rows": rows, "state": stored,
+                 "metadata": {"dev": metadata("dev"), "prod": prod}, **overrides}
+        return notify_decide.decide(facts(**given))
+
+    def schedule(self, decided):
+        return [(o["action"], o["kind"], o["checks"]) for o in decided["observations"]
+                if o["environment"] == "prod" and o["slot"] == "schedule"]
+
+    def failed(self, step="plan"):
+        return metadata("prod", **{step: "failure"}, apply="skipped")
+
+    def test_the_first_failed_scheduled_plan_is_counted_and_the_second_opens_an_incident(self):
+        self.assertEqual([("none", None, {"failed": 1, "unread": 0})], self.schedule(self.decide(self.failed())))
+        decided = self.decide(self.failed(), checks={"failed": 1, "unread": 0, "seen_run": 41})
+        self.assertEqual([("open", "scheduled-failed", {"failed": 2, "unread": 0})], self.schedule(decided))
+        self.assertEqual([("schedule", "scheduled-failed", "open", key("o/r", "4711", "1", "prod", "schedule", "open"))],
+                         [(e["slot"], e["kind"], e["action"], e["idempotency_key"]) for e in decided["events"]])
+        self.assertEqual(["❌ **Scheduled plan failed** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` failed 2 times in a row, the last at the `plan` step: drift "
+                          "and a default branch that is not applied go unseen.", "",
+                          "Found by the scheduled run.", "",
+                          f"[Open the run]({RUN_URL})", ""], decided["messages"]["e1.md"].split("\n"))
+        self.assertIn("| `prod` | scheduled plan failed | to `tf-alerts` as `prod` |", decided["summary"])
+
+    def test_a_job_that_reported_nothing_fails_too(self):
+        decided = self.decide(None, checks={"failed": 1, "unread": 0, "seen_run": 41},
+                              stage_results={"1": "failure", "2": "skipped", "3": "skipped"})
+        self.assertEqual("The scheduled plan of `prod` failed 2 times in a row, the last without reporting its steps: "
+                         "drift and a default branch that is not applied go unseen.",
+                         decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_the_third_plan_in_a_row_that_cannot_be_read_opens_an_incident(self):
+        unread = planned("prod", "unknown", fingerprint="")
+        self.assertEqual([("none", None, {"failed": 0, "unread": 2})],
+                         self.schedule(self.decide(unread, checks={"failed": 0, "unread": 1, "seen_run": 41})))
+        decided = self.decide(unread, checks={"failed": 0, "unread": 2, "seen_run": 41})
+        self.assertEqual([("open", "drift-check-failing", {"failed": 0, "unread": 3})], self.schedule(decided))
+        self.assertEqual(["⚠️ **Drift check failing** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` could not be read 3 times in a row: drift and a default branch "
+                          "that is not applied go unseen.", "", "Found by the scheduled run.", "",
+                          f"[Open the run]({RUN_URL})", ""], decided["messages"]["e1.md"].split("\n"))
+        old = planned("prod", "", fingerprint="")
+        old["steps"]["parse-plan"]["outputs"]["count-total"] = "?"
+        self.assertEqual([("none", None, {"failed": 0, "unread": 1})], self.schedule(self.decide(old)))
+
+    def test_a_failure_breaks_a_row_of_unread_plans_and_a_read_plan_a_row_of_failures(self):
+        self.assertEqual([("none", None, {"failed": 1, "unread": 0})],
+                         self.schedule(self.decide(self.failed(), checks={"failed": 0, "unread": 2, "seen_run": 41})))
+        self.assertEqual([("none", None, {"failed": 0, "unread": 1})],
+                         self.schedule(self.decide(planned("prod", "unknown", fingerprint=""),
+                                                   checks={"failed": 1, "unread": 0, "seen_run": 41})))
+
+    def test_a_readable_plan_resets_the_counts_and_resolves(self):
+        clean = planned("prod", "clean", fingerprint="")
+        self.assertEqual([("none", None, {"failed": 0, "unread": 0})],
+                         self.schedule(self.decide(clean, checks={"failed": 1, "unread": 0, "seen_run": 41})))
+        self.assertEqual([], self.schedule(self.decide(clean)))
+        self.assertEqual([], self.schedule(self.decide(clean, checks={"failed": 0, "unread": 0, "seen_run": 41})))
+        opened = incident(kind="scheduled-failed", people=())
+        decided = self.decide(clean, checks={"failed": 2, "unread": 0, "seen_run": 41},
+                              incidents={"prod/schedule": opened})
+        self.assertEqual([("resolve", None, {"failed": 0, "unread": 0})], self.schedule(decided))
+        self.assertEqual(["✅ **Scheduled plan works** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` ran and was read: the incident opened at 2026-10-05 08:30 UTC "
+                          "is resolved."], decided["messages"]["e1.md"].split("\n")[:3])
+
+    def test_an_open_incident_is_not_opened_again_and_reminds_weekly(self):
+        opened = incident(kind="scheduled-failed", people=())
+        incidents = {"prod/schedule": opened}
+        self.assertEqual([("none", None, {"failed": 3, "unread": 0})],
+                         self.schedule(self.decide(self.failed(), checks={"failed": 2, "unread": 0, "seen_run": 41},
+                                                   incidents=incidents)))
+        decided = self.decide(self.failed(), checks={"failed": 2, "unread": 0, "seen_run": 41}, incidents=incidents,
+                              now="2026-10-13T01:00:00Z")
+        self.assertEqual([("remind", None, {"failed": 3, "unread": 0})], self.schedule(decided))
+        self.assertEqual(["⏰ **Scheduled plan still failing** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` has not worked for 5 working days, since 2026-10-05 08:30 UTC."],
+                         decided["messages"]["e1.md"].split("\n")[:3])
+
+    def test_the_summary_names_a_failing_drift_check(self):
+        decided = self.decide(planned("prod", "unknown", fingerprint=""), checks={"failed": 0, "unread": 2, "seen_run": 41})
+        self.assertIn("| `prod` | drift check failing | to `tf-alerts` as `prod` |", decided["summary"])
+
+    def test_a_pending_incident_opens_again(self):
+        pending = incident(kind="scheduled-failed", people=(), status="pending", message_id=None)
+        decided = self.decide(self.failed(), checks={"failed": 1, "unread": 0, "seen_run": 41},
+                              incidents={"prod/schedule": pending})
+        self.assertEqual([("open", "scheduled-failed", {"failed": 2, "unread": 0})], self.schedule(decided))
+
+    def test_reminders_go_where_the_incident_went_and_respect_its_kinds_routing(self):
+        opened = incident(kind="scheduled-failed", people=(), alias="tf-old", sender_name="dev")
+        checks = {"failed": 2, "unread": 0, "seen_run": 41}
+        decided = self.decide(self.failed(), checks=checks, incidents={"prod/schedule": opened},
+                              now="2026-10-13T01:00:00Z")
+        self.assertEqual([("remind", "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
+                                                        for e in decided["events"]])
+        for off in (False, "false"):
+            with self.subTest(off=off):
+                decided = self.decide(self.failed(), checks=checks, incidents={"prod/schedule": opened},
+                                      now="2026-10-13T01:00:00Z",
+                                      notifications={"kinds": {"scheduled-failed": {"remind": off}}})
+                self.assertEqual([("none", None, {"failed": 3, "unread": 0})], self.schedule(decided))
+        decided = self.decide(planned("prod", "clean", fingerprint=""), checks=checks,
+                              incidents={"prod/schedule": opened})
+        self.assertEqual([("resolve", "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
+                                                         for e in decided["events"]])
+
+    def test_a_resolved_incident_opens_anew_and_a_pending_one_resolves_quietly(self):
+        resolved = incident(kind="scheduled-failed", people=(), status="resolved")
+        self.assertEqual([("open", "scheduled-failed", {"failed": 2, "unread": 0})],
+                         self.schedule(self.decide(self.failed(), checks={"failed": 1, "unread": 0, "seen_run": 41},
+                                                   incidents={"prod/schedule": resolved})))
+        pending = incident(kind="scheduled-failed", people=(), status="pending", message_id=None)
+        decided = self.decide(planned("prod", "clean", fingerprint=""), checks={"failed": 2, "unread": 0, "seen_run": 41},
+                              incidents={"prod/schedule": pending})
+        self.assertEqual(([], [("resolve", None, {"failed": 0, "unread": 0})]), (decided["events"], self.schedule(decided)))
+
+    def test_routing_to_an_alias_and_off_as_text(self):
+        checks = {"failed": 1, "unread": 0, "seen_run": 41}
+        decided = self.decide(self.failed(), checks=checks,
+                              notifications={"kinds": {"scheduled-failed": {"alias": "tf-health"}}})
+        self.assertEqual([("open", "tf-health")], [(e["action"], e["alias"]) for e in decided["events"]])
+        decided = self.decide(self.failed(), checks=checks, notifications={"kinds": {"scheduled-failed": {"off": "true"}}})
+        self.assertEqual([], decided["events"])
+
+    def test_an_incident_reminded_at_the_level_due_is_not_reminded_again(self):
+        opened = incident(kind="scheduled-failed", people=())
+        opened["reminder_level"] = 1
+        decided = self.decide(self.failed(), checks={"failed": 2, "unread": 0, "seen_run": 41},
+                              incidents={"prod/schedule": opened}, now="2026-10-13T01:00:00Z")
+        self.assertEqual([("none", None, {"failed": 3, "unread": 0})], self.schedule(decided))
+
+    def test_an_incident_from_before_reminders_is_reminded(self):
+        opened = incident(kind="drift-check-failing", people=())
+        decided = self.decide(planned("prod", "unknown", fingerprint=""), checks={"failed": 0, "unread": 3, "seen_run": 41},
+                              incidents={"prod/schedule": opened}, now="2026-10-13T01:00:00Z")
+        self.assertEqual([("remind", None, {"failed": 0, "unread": 4})], self.schedule(decided))
+
+    def test_a_reconcile_or_a_job_that_did_not_report_and_did_not_fail_counts_nothing(self):
+        rows = {"dev": row("dev"), "prod": row("prod")}
+        self.assertEqual([], self.schedule(self.decide(self.failed(), rows=rows)))
+        self.assertEqual([], self.schedule(self.decide(None, checks={"failed": 1, "unread": 0, "seen_run": 41},
+                                                       stage_results={"1": "success", "2": "skipped",
+                                                                      "3": "skipped"})))
+
+    def test_a_cancelled_plan_counts_nothing(self):
+        cancelled = metadata("prod", plan="cancelled", apply="skipped")
+        self.assertEqual([], self.schedule(self.decide(cancelled)))
+        self.assertEqual([], self.schedule(self.decide(cancelled, checks={"failed": 1, "unread": 0, "seen_run": 41})))
+
+    def test_only_a_scheduled_plan_only_run_counts(self):
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.assertEqual([], self.schedule(self.decide(self.failed(), event=event)))
+
+    def test_switched_off_counts_but_opens_nothing(self):
+        decided = self.decide(self.failed(), checks={"failed": 1, "unread": 0, "seen_run": 41},
+                              notifications={"kinds": {"scheduled-failed": {"off": True}}})
+        self.assertEqual(([], [("none", None, {"failed": 2, "unread": 0})]), (decided["events"], self.schedule(decided)))
 
 
 class WantedTest(unittest.TestCase):
