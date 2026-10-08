@@ -47,6 +47,7 @@ def facts(**overrides):
         "people": {"available": True, "error": None, "pull_requests": [
             {"number": 7, "title": "Add a storage account", "author": "jdoe", "merged_by": "asmith"}], "pusher": "asmith"},
         "protection": {"dev": False, "prod": False},
+        "identities": None, "people_domains": ["example.org"],
     }
     base.update(overrides)
     return base
@@ -149,7 +150,8 @@ class OpenTest(unittest.TestCase):
         decided = notify_decide.decide(self.failing())
         self.assertEqual([{"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed", "action": "open",
                            "alias": "tf-alerts", "reply_to": None, "update": None, "sender": "prod",
-                           "idempotency_key": key("o/r", "4711", "1", "prod", "apply", "open"), "message": "e1.md"}],
+                           "idempotency_key": key("o/r", "4711", "1", "prod", "apply", "open"), "message": "e1.md",
+                           "mentions": []}],
                          decided["events"])
         self.assertEqual(["❌ **Apply failed** in `prod` · o/r",
                           "",
@@ -553,6 +555,107 @@ class RulesTest(unittest.TestCase):
         environments = [{"environment": "dev", "verdict": "skip"}, {"environment": "prod", "verdict": "run", "stage": 1}]
         self.assertEqual(["prod"], [o["environment"] for o in notify_decide.decide(facts(environments=environments))[
             "observations"]])
+
+
+def identity(name, object_id, upn):
+    return {"name": name, "object_id": object_id, "upn": upn}
+
+
+IDENTITIES = {"available": True, "error": None, "people": {
+    "jdoe": identity("Jane Doe", "oid-jdoe", "100001@example.org"),
+    "asmith": identity("Ola Nordmann", "oid-asmith", "100002@EXAMPLE.ORG"),
+    "kim": identity("Kim Admin", "oid-kim", "kim@admin.example.net"),
+    "lee": None}}
+
+
+class IdentityTest(unittest.TestCase):
+    """People named by their SAML identity, and mentioned once the relay can (§5, D11, D21)."""
+
+    def decide(self, people=None, notifications=None, **overrides):
+        rows = {"dev": row("dev"), "prod": row("prod", notifications=notifications)}
+        given = {"identities": IDENTITIES, "rows": rows,
+                 "metadata": {"dev": metadata("dev"), "prod": metadata("prod", apply="failure")}, **overrides}
+        if people is not None:
+            given["people"] = people
+        return notify_decide.decide(facts(**given))
+
+    def line(self, decided):
+        return decided["messages"]["e1.md"].split("\n")[4]
+
+    def test_people_are_named_by_their_identity(self):
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by Jane Doe, merged by "
+                         "Ola Nordmann.", self.line(self.decide()))
+
+    def test_an_identity_outside_the_people_domains_or_none_is_named_by_login(self):
+        prs = [{"number": 7, "title": "", "author": "kim", "merged_by": "lee"}]
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": prs, "pusher": None})
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) by kim, merged by lee.", self.line(decided))
+        self.assertEqual([], decided["events"][0]["mentions"])
+
+    def test_a_name_that_is_empty_or_could_carry_markup_is_the_login(self):
+        people = {"available": True, "error": None, "pusher": None, "pull_requests": [
+            {"number": 7, "title": "", "author": "jdoe", "merged_by": "asmith"}]}
+        for name, shown in (("", "jdoe"), ("<b>J</b>", "jdoe"), ("J*o*", "jdoe"), ("[J](x)", "jdoe"),
+                            ("Åse O'Brien-Ødegård Jr.", "Åse O'Brien-Ødegård Jr.")):
+            identities = {"available": True, "error": None, "people": {
+                "jdoe": identity(name, "oid-jdoe", "100001@example.org"), "asmith": None}}
+            decided = self.decide(people=people, identities=identities)
+            self.assertEqual(f"Change: [#7](https://github.com/o/r/pull/7) by {shown}, merged by asmith.",
+                             self.line(decided))
+            self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": shown}],
+                             decided["events"][0]["mentions"])
+
+    def test_identities_that_could_not_be_read_name_logins(self):
+        decided = self.decide(identities={"available": False, "error": "x", "people": {}})
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by jdoe, merged by asmith.",
+                         self.line(decided))
+        self.assertEqual([], decided["events"][0]["mentions"])
+        decided = self.decide(identities=None)
+        self.assertEqual([], decided["events"][0]["mentions"])
+
+    def test_the_author_is_mentioned_by_default(self):
+        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}],
+                         self.decide()["events"][0]["mentions"])
+
+    def test_the_routing_chooses_who_is_mentioned(self):
+        both = self.decide(notifications={"defaults": {"mention": ["author", "merger"]}})["events"][0]["mentions"]
+        self.assertEqual(["jdoe", "asmith"], [m["login"] for m in both])
+        merger = self.decide(notifications={"kinds": {"apply-failed": {"mention": "merger"}}})["events"][0]["mentions"]
+        self.assertEqual(["asmith"], [m["login"] for m in merger])
+        nobody = self.decide(notifications={"defaults": {"mention": []}})["events"][0]["mentions"]
+        self.assertEqual([], nobody)
+
+    def test_a_merger_who_is_an_author_is_mentioned_once(self):
+        prs = [{"number": 7, "title": "", "author": "jdoe", "merged_by": "asmith"},
+               {"number": 8, "title": "", "author": "asmith", "merged_by": "jdoe"}]
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": prs, "pusher": None},
+                              notifications={"defaults": {"mention": ["author", "merger"]}})
+        self.assertEqual(["jdoe", "asmith"], [m["login"] for m in decided["events"][0]["mentions"]])
+
+    def test_people_of_several_pull_requests_are_named_and_mentioned_once(self):
+        prs = [{"number": 7, "title": "", "author": "jdoe", "merged_by": "asmith"},
+               {"number": 8, "title": "", "author": "jdoe", "merged_by": "asmith"}]
+        people = {"available": True, "error": None, "pull_requests": prs, "pusher": None}
+        decided = self.decide(people=people, notifications={"defaults": {"mention": ["author", "merger"]}})
+        self.assertEqual(["jdoe", "asmith"], [m["login"] for m in decided["events"][0]["mentions"]])
+        self.assertEqual(["jdoe", "asmith"], notify_decide.named(people))
+
+    def test_a_direct_push_mentions_its_pusher_as_its_author(self):
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": [], "pusher": "jdoe"})
+        self.assertEqual("Pushed by Jane Doe.", self.line(decided))
+        self.assertEqual(["jdoe"], [m["login"] for m in decided["events"][0]["mentions"]])
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": [], "pusher": "jdoe"},
+                              notifications={"defaults": {"mention": "merger"}})
+        self.assertEqual([], decided["events"][0]["mentions"])
+
+    def test_a_reply_mentions_too_and_a_resolution_or_a_schedule_never(self):
+        reply = self.decide(state=state(prod__apply=incident()))
+        self.assertEqual(("reply", ["jdoe"]), (reply["events"][0]["action"],
+                                               [m["login"] for m in reply["events"][0]["mentions"]]))
+        resolve = notify_decide.decide(facts(identities=IDENTITIES, state=state(prod__apply=incident())))
+        self.assertEqual(("resolve", []), (resolve["events"][0]["action"], resolve["events"][0]["mentions"]))
+        scheduled = self.decide(event="schedule", people=None)
+        self.assertEqual([], scheduled["events"][0]["mentions"])
 
 
 class WantedTest(unittest.TestCase):

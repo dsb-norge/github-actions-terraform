@@ -430,6 +430,8 @@ Change: [#7](https://github.com/example-org/example-repo/pull/7) `Add a storage 
 
 `enabled: false` switches notifications off for the repository. An environment may carry its own `notifications-yml`, with every key but `enabled` and `runs-on`, merged over the input's. The settings and their mistakes: [Notifications.md](Notifications.md) §6.
 
+**People by name.** A message names the people whose change it was by GitHub login. With the organisation's identity App (`TF_NOTIFY_IDENTITY_APP_ID` and the secret `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY`) and `TF_NOTIFY_PEOPLE_DOMAINS`, it names each person whose SAML identity is in those domains by display name instead, and lists them for the mentions to come: [Notifications.md](Notifications.md) §5, §6.1.
+
 #### Worked examples
 
 Each example is the part of the calling workflow's `with:` that matters, what runs on each event, and why. Find the one closest to your configuration. The tables and messages come from running the workflow's own code on the configuration shown: its decision engine, which is the `Create job matrix` job, and, where an example says what a later step decides (the auto-merge evaluator, the conclusion, the export of variables), that step. Every message is quoted as the workflow prints it.

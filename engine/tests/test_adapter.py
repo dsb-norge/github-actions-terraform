@@ -11,6 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import support
 from dsb_tf_engine import adapter, decide, environments
@@ -1153,6 +1154,13 @@ class ToolsTest(unittest.TestCase):
         code, stdout, stderr = adapter.Tools().run(
             [sys.executable, "-c", "import sys; print(sys.stdin.read().upper()); print('e', file=sys.stderr); sys.exit(3)"], "hi")
         self.assertEqual((3, "HI\n", "e\n"), (code, stdout, stderr))
+
+    def test_tools_run_a_program_with_variables_over_the_environment(self):
+        program = [sys.executable, "-c", "import os; print(os.environ['DSB_TF_KEPT'], os.environ['DSB_TF_GIVEN'])"]
+        with mock.patch.dict(os.environ, {"DSB_TF_KEPT": "kept", "DSB_TF_GIVEN": "old"}):
+            code, stdout, _ = adapter.Tools().run(program, env={"DSB_TF_GIVEN": "new"})
+            self.assertEqual((0, "kept new\n"), (code, stdout))
+            self.assertEqual("old", os.environ["DSB_TF_GIVEN"])
 
     def test_a_missing_program_raises_os_error(self):
         with self.assertRaises(OSError):

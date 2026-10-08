@@ -2,7 +2,8 @@
 
 decide-notifications reads the run's evidence (the environment jobs' metadata, the matrix, relevance.json,
 the stage results and the restored incident state), asks notify_decide which costly facts the run needs,
-gathers them with gh (the push's pull requests, the senders' protection rules), and writes the events,
+gathers them with gh (the push's pull requests, the people's SAML identities with the identity App's token,
+the senders' protection rules), and writes the events,
 their messages, the observations and the summary for the jobs after it. record-notifications merges the
 observations and the deliver jobs' answers into the newest state. A fact that cannot be gathered is a
 fact; only a file the step cannot do without is a fault. The log goes through workflow.Log, so nothing
@@ -25,6 +26,12 @@ COMMIT_LIMIT = 50
 TOMBSTONE_DAYS = 30
 ERROR_CAP = 500
 AGAIN = "it is posted again by the next run that sees it"
+IDENTITY_QUERY = ("query($org: String!, $login: String!) { organization(login: $org) { samlIdentityProvider { "
+                  "externalIdentities(login: $login, first: 1) { nodes { samlIdentity { username givenName familyName "
+                  "attributes { name value } } } } } } }")
+# Entra's object ID survives a rename; the UPN is the filter and the mail-like username (P12).
+OBJECT_ID = "http://schemas.microsoft.com/identity/claims/objectidentifier"
+NOBODY = "people are named by login and mentioned by nobody"
 
 
 class Fault(Exception):
@@ -112,6 +119,70 @@ def gather_people(tools, repository, payload, default_branch):
         return {"available": True, "error": None, "pull_requests": pull_requests, "pusher": _login(payload.get("sender"))}
     except _Unanswered as error:
         return {"available": False, "error": str(error), "pull_requests": [], "pusher": None}
+
+
+def _saml_identity(tools, organisation, login, token):
+    """One login's identity, None for a login without a usable one (no identity, no object ID, no UPN)."""
+    argv = ("gh", "api", "graphql", "-f", f"query={IDENTITY_QUERY}", "-f", f"org={organisation}", "-f", f"login={login}")
+    try:
+        code, stdout, stderr = tools.run(argv, env={"GH_TOKEN": token})
+    except OSError as error:
+        raise _Unanswered(f"'gh' cannot be run on this runner: {error}") from None
+    if code != 0:
+        raise _Unanswered(f"the identity of {login} cannot be read: {(stderr or stdout).strip()[:ERROR_CAP]}")
+    try:
+        answer = json.loads(stdout)
+    except ValueError:
+        raise _Unanswered(f"the identity of {login} cannot be read: the answer is not JSON") from None
+    # A token without the permission reads the provider as null, as an organisation without SAML does.
+    nodes = notify_decide.path(answer, "data", "organization", "samlIdentityProvider", "externalIdentities", "nodes")
+    if not isinstance(nodes, list):
+        raise _Unanswered(f"the identity App's token sees no SAML identities in {organisation}")
+    saml = notify_decide.path(nodes[0] if nodes else None, "samlIdentity")
+    attributes = notify_decide.path(saml, "attributes")
+    object_ids = [each.get("value") for each in attributes if isinstance(each, dict) and each.get("name") == OBJECT_ID] \
+        if isinstance(attributes, list) else []
+    upn = notify_decide.path(saml, "username")
+    if not (object_ids and isinstance(object_ids[0], str) and object_ids[0] and isinstance(upn, str) and "@" in upn):
+        return None
+    names = (saml.get("givenName"), saml.get("familyName"))
+    return {"name": " ".join(part.strip() for part in names if isinstance(part, str) and part.strip()),
+            "object_id": object_ids[0], "upn": upn}
+
+
+def gather_identities(tools, organisation, logins, token):
+    """Each login's SAML identity in the organisation (§5, D21), or why they could not be read: the first
+    failure stops the lookups, as the next would fail the same way."""
+    try:
+        return {"available": True, "error": None,
+                "people": {login: _saml_identity(tools, organisation, login, token) for login in logins}}
+    except _Unanswered as error:
+        return {"available": False, "error": str(error), "people": {}}
+
+
+def people_domains(text):
+    """TF_NOTIFY_PEOPLE_DOMAINS as a list: comma-separated, a leading '@' and the case ignored."""
+    return [domain.strip().lstrip("@").lower() for domain in text.split(",") if domain.strip()]
+
+
+def _identities(tools, facts, environ, log):
+    """The identities of the people a run names, when the identity App and the domains are both set."""
+    logins = notify_decide.named(facts["people"])
+    token = environ.get("NOTIFY_IDENTITY_TOKEN", "")
+    if not logins or not (token or facts["people_domains"]):
+        return None
+    if not token:
+        log.warning("TF_NOTIFY_PEOPLE_DOMAINS is set, but the decide job has no identity App token "
+                    f"(TF_NOTIFY_IDENTITY_APP_ID and its key): {NOBODY}")
+        return None
+    if not facts["people_domains"]:
+        log.warning(f"the identity App is set, but TF_NOTIFY_PEOPLE_DOMAINS is not: {NOBODY}")
+        return None
+    identities = gather_identities(tools, facts["repository"].partition("/")[0], logins, token)
+    if not identities["available"]:
+        log.warning(f"the identities of the people named cannot be read, so they are named by login and mentioned by "
+                    f"nobody: {identities['error']}")
+    return identities
 
 
 def protected(tools, repository, name):
@@ -236,10 +307,12 @@ def run_decide(metadata_pattern, matrix_file, relevance_file, stage_results_file
     facts = {"repository": environ["GITHUB_REPOSITORY"], "server_url": environ["GITHUB_SERVER_URL"],
              "event": environ["GITHUB_EVENT_NAME"], "run": run, "target": notify["target"],
              "senders": notify["senders"], "runs_on": notify["runs-on"], "environments": relevance["environments"],
-             "rows": rows, "metadata": metadata, "stage_results": stage_results, "state": state}
+             "rows": rows, "metadata": metadata, "stage_results": stage_results, "state": state,
+             "people_domains": people_domains(environ.get("NOTIFY_PEOPLE_DOMAINS", ""))}
     wanted = notify_decide.wanted(facts)
     facts["people"] = gather_people(tools, facts["repository"], payload, notify_decide.path(
         payload, "repository", "default_branch")) if wanted["people"] else None
+    facts["identities"] = _identities(tools, facts, environ, log)
     facts["protection"] = {name: protected(tools, facts["repository"], name) for name in wanted["protection"]}
     decided = notify_decide.decide(facts)
 

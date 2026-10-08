@@ -25,6 +25,8 @@ HEADERS = {
     "held-back": ("⏸️", "Held back"),
 }
 WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "held-back": "held back"}
+# What a display name may hold to be written as it is: no character in it starts markup in a message.
+NAME_PUNCTUATION = " .'-"
 
 
 def path(value, *keys):
@@ -106,15 +108,51 @@ def _bot(login):
     return not isinstance(login, str) or not login or login.endswith("[bot]")
 
 
-def named(people):
-    """The people of a push (§5): each author, then each merger who is not an author; bots and Apps never."""
+def _roles(people):
+    """The people of a push by role (§5): the authors, the pusher of a direct push among them, and the
+    mergers who are not authors; bots and Apps never."""
     if people is None or not people["available"]:
-        return []
-    names = [pr["author"] for pr in people["pull_requests"] if not _bot(pr["author"])]
-    names += [pr["merged_by"] for pr in people["pull_requests"] if not _bot(pr["merged_by"])]
+        return [], []
+    authors = [pr["author"] for pr in people["pull_requests"] if not _bot(pr["author"])]
     if not people["pull_requests"] and not _bot(people["pusher"]):
-        names.append(people["pusher"])
-    return list(dict.fromkeys(names))
+        authors.append(people["pusher"])
+    authors = list(dict.fromkeys(authors))
+    mergers = [pr["merged_by"] for pr in people["pull_requests"] if not _bot(pr["merged_by"])]
+    return authors, [login for login in dict.fromkeys(mergers) if login not in authors]
+
+
+def named(people):
+    """The people of a push (§5): each author, then each merger who is not an author."""
+    authors, mergers = _roles(people)
+    return authors + mergers
+
+
+def _identity(facts, login):
+    """The login's SAML identity when its UPN is in TF_NOTIFY_PEOPLE_DOMAINS, else None (§5, D18)."""
+    identities = facts["identities"]
+    found = identities["people"].get(login) if identities and identities["available"] else None
+    if found is None or found["upn"].rpartition("@")[2].lower() not in facts["people_domains"]:
+        return None
+    return found
+
+
+def _name(facts, login):
+    """A person as the message names them: by display name when it is known and safe to write, else by login."""
+    found = _identity(facts, login)
+    name = found["name"] if found else ""
+    return name if name and all(c.isalpha() or c in NAME_PUNCTUATION for c in name) else login
+
+
+def _mentions(facts, observation):
+    """The people the event mentions once the relay can (§6.2 `mention`): of those named, the roles the
+    route chooses, each with an identity in the people domains."""
+    if observation["action"] not in ("open", "reply") or facts["event"] != "push":
+        return []
+    authors, mergers = _roles(facts["people"])
+    chosen = environments.as_list(observation["route"].get("mention", ["author"]))
+    logins = (authors if "author" in chosen else []) + (mergers if "merger" in chosen else [])
+    return [{"login": login, "object_id": _identity(facts, login)["object_id"], "name": _name(facts, login)}
+            for login in logins if _identity(facts, login)]
 
 
 def _plan(facts):
@@ -140,7 +178,7 @@ def _plan(facts):
         # The incident's later messages go where its first went, as its sender (§9).
         later = action in ("reply", "resolve")
         observations.append({"environment": name, "result": result, "detail": detail, "kind": kind, "action": action,
-                             "incident": incident,
+                             "incident": incident, "route": route,
                              "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
                              "sender": incident["sender"] if later else deliver_as or name})
     seen = {observation["environment"].lower() for observation in observations}
@@ -186,14 +224,14 @@ def _people_line(facts):
         return "Who made the change could not be read."
     pull_requests = people["pull_requests"]
     if not pull_requests:
-        return f"Pushed by {people['pusher']}." if not _bot(people["pusher"]) else "Pushed by an app."
+        return f"Pushed by {_name(facts, people['pusher'])}." if not _bot(people["pusher"]) else "Pushed by an app."
     parts = []
     for pr in pull_requests[:PULL_REQUEST_LIMIT]:
         part = f"[#{pr['number']}]({facts['server_url']}/{facts['repository']}/pull/{pr['number']})"
         title = _title(pr["title"] or "")
         part += f" `{title}`" if title else ""
-        part += f" by {pr['author']}" if not _bot(pr["author"]) else ""
-        part += f", merged by {pr['merged_by']}" if not _bot(pr["merged_by"]) and pr["merged_by"] != pr["author"] else ""
+        part += f" by {_name(facts, pr['author'])}" if not _bot(pr["author"]) else ""
+        part += f", merged by {_name(facts, pr['merged_by'])}" if not _bot(pr["merged_by"]) and pr["merged_by"] != pr["author"] else ""
         parts.append(part)
     if len(pull_requests) > PULL_REQUEST_LIMIT:
         parts.append(f"and {len(pull_requests) - PULL_REQUEST_LIMIT} more")
@@ -293,7 +331,7 @@ def decide(facts):
             event = {"id": event_id, "environment": name, "slot": SLOT, "kind": observation["kind"],
                      "action": event_action, "alias": observation["alias"], "reply_to": reply_to, "update": None,
                      "sender": observation["sender"], "idempotency_key": _key(facts, name, event_action),
-                     "message": f"{event_id}.md"}
+                     "message": f"{event_id}.md", "mentions": _mentions(facts, observation)}
             events.append(event)
             messages[event["message"]] = render(facts, observation)
             why_not = _not_sent(facts, observation)

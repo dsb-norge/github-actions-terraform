@@ -55,7 +55,8 @@ BEFORE="$(printf 'b%.0s' {1..40})"
 AFTER="$(printf 'a%.0s' {1..40})"
 
 # A workspace holding one environment's metadata, the relevance file and the event, and a stub gh
-# that answers from ${SANDBOX}/api/<endpoint with / as __>.json.
+# that answers from ${SANDBOX}/api/<endpoint with / as __>.json, a GraphQL identity lookup from
+# ${SANDBOX}/api/graphql__<login>.json, and logs the token of every call to ${SANDBOX}/tokens.
 make_sandbox() {
   SANDBOX="$(mktemp -d "${SCRATCH}/sandbox.XXXXXX")"
   mkdir -p "${SANDBOX}/ws" "${SANDBOX}/bin" "${SANDBOX}/api" "${SANDBOX}/temp"
@@ -82,7 +83,9 @@ EOF
   cat >"${SANDBOX}/bin/gh" <<EOF
 #!/bin/env bash
 [ "\$1" = "api" ] || exit 64
+echo "\$2 \${GH_TOKEN}" >>"${SANDBOX}/tokens"
 file="${SANDBOX}/api/\${2//\//__}.json"
+[ "\$2" = "graphql" ] && file="${SANDBOX}/api/graphql__\${8#login=}.json"
 [ -f "\${file}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
 cat "\${file}"
 EOF
@@ -145,6 +148,16 @@ else
   fail "the run block no longer has its hardened shape"
 fi
 
+begin "the step's env: the identity token and the people domains come from their inputs alone"
+if [[ "$(yq '.runs.steps[0].env.NOTIFY_IDENTITY_TOKEN' "${_this_script_dir}/action.yml")" == '${{ inputs.identity-token }}' ]] \
+  && [[ "$(yq '.runs.steps[0].env.NOTIFY_PEOPLE_DOMAINS' "${_this_script_dir}/action.yml")" == '${{ inputs.people-domains }}' ]] \
+  && [[ "$(yq '.inputs.identity-token.required' "${_this_script_dir}/action.yml")" == "false" ]] \
+  && [[ "$(yq '.inputs.people-domains.required' "${_this_script_dir}/action.yml")" == "false" ]]; then
+  pass
+else
+  fail "action.yml does not map the two inputs to the step's env"
+fi
+
 begin "a failed apply on a push: one deliver row, its message, the observations and the summary"
 make_sandbox
 run_step
@@ -157,6 +170,27 @@ if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output deliver-count)" == "1" ]] \
   pass
 else
   fail "exit ${STEP_EXIT}, deliver-count '$(step_output deliver-count)'"
+fi
+
+begin "with the identity App: gh looks people up with its token, and the message names them"
+make_sandbox
+saml() {
+  jq -n --arg upn "${1}" --arg given "${2}" --arg family "${3}" --arg oid "${4}" '{data: {organization: {samlIdentityProvider:
+    {externalIdentities: {nodes: [{samlIdentity: {username: $upn, givenName: $given, familyName: $family, attributes: [
+    {name: "http://schemas.microsoft.com/identity/claims/objectidentifier", value: $oid}]}}]}}}}}'
+}
+saml 100001@example.org Jane Doe oid-jdoe >"${SANDBOX}/api/graphql__jdoe.json"
+saml github-admin@admin.example.net Ola Admin oid-asmith >"${SANDBOX}/api/graphql__asmith.json"
+run_step NOTIFY_IDENTITY_TOKEN=identity-token NOTIFY_PEOPLE_DOMAINS=example.org
+if [[ ${STEP_EXIT} -eq 0 ]] \
+  && grep -qF 'Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by Jane Doe, merged by asmith.' "${SANDBOX}/notify/events/e1.md" \
+  && [[ "$(jq -c '.mentions' "${SANDBOX}/notify/events/e1.json")" == '[{"login":"jdoe","object_id":"oid-jdoe","name":"Jane Doe"}]' ]] \
+  && [[ "$(grep -c '^graphql identity-token$' "${SANDBOX}/tokens")" == "2" ]] \
+  && [[ "$(grep -vc ' fake-token$' "${SANDBOX}/tokens")" == "2" ]] \
+  && ! grep -rqF identity-token "${SANDBOX}/notify" "${SANDBOX}/output.txt" "${SANDBOX}/summary.md" "${OUT_FILE}"; then
+  pass
+else
+  fail "exit ${STEP_EXIT}, gh calls: $(cat "${SANDBOX}/tokens" 2>/dev/null | tr '\n' ';')"
 fi
 
 begin "a stored state is read: the next success resolves the incident"
