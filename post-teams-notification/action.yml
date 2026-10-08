@@ -36,7 +36,7 @@ inputs:
     description: |
       Path of a JSON list of the people the message mentions, sent as the relay's
       `mentions`: [{"key": "p1", "id": "<Entra object ID>", "name": "<display name>"}],
-      each placed in the message as <at>key</at> (relay 2.2.0 or later). Empty, or an
+      each placed in the message as <at>key</at> (relay 2.2.1 or later). Empty, or an
       empty list: no mentions. Anything but a JSON list is not sent.
     required: false
     default: ""

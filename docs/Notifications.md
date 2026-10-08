@@ -6,7 +6,7 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **built, with threads and mentions on a relay of 2.2.0 or later (§9, §13), but for direct
+Status: **built, with threads and mentions on a relay of 2.2.1 or later (§9, §13), but for direct
 messages (D11), which come next. Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
@@ -489,7 +489,7 @@ The next failure then opens a new thread, and the old message is never marked re
 keeping no state outside the cache.
 
 **Threads.** Every `reply`, `remind`, `resolve` and `removed` carries the first message's
-`messageId` as `reply-to`, and a relay of 2.2.0 or later posts it in that message's thread. When an
+`messageId` as `reply-to`, and a relay of 2.2.1 or later posts it in that message's thread. When an
 incident closes with a message, a second event, `update`, replaces the first message with one that
 says it is resolved, or closed for an environment no longer in `environments-yml`:
 
@@ -502,7 +502,8 @@ Opened at 2026-10-05 08:30 UTC, resolved at 2026-10-07 12:00 UTC.
 ```
 
 The update goes where the incident's messages go, mentions nobody, and is not recorded: whether
-the relay took it changes nothing in the state. An incident without a first message gets none.
+the relay took it changes nothing in the state, so an update of a first message someone deleted
+fails harmlessly (P15). An incident without a first message gets none.
 Every message still names its environment and repository, because the relay posts a reply as a
 new message when the first one failed or its record expired (after 180 days), and an older relay
 ignores `replyTo` altogether.
@@ -640,11 +641,11 @@ request limit.
 Escalation, reminders, deduplication, digests, GitHub identities (D21), per-alias authorization
 (D22), `Action.OpenUrl` (D23) and tag mentions (D24) are not asked of the relay, which offers the
 last by the tag's Graph ID. Any Teams user who can message the bot can repoint or remove any alias
-with its commands; relay 2.2.0 documents it, and it is by design (D25).
+with its commands; the relay documents it, and it is by design (D25).
 
 ## 14. Onboarding a landing zone
 
-1. A relay instance of 2.2.0 or later runs for the landing zone, with the hosted runners' egress
+1. A relay instance of 2.2.1 or later (P14) runs for the landing zone, with the hosted runners' egress
    (the `AzureCloud` service tag) in its `allowed_caller_rules`, and an alias created in a standard
    channel. An older relay ignores threads and shows mentions as `<at>p1</at>`.
 2. Each sending identity of the landing zone holds `Notifications.Send` on that instance's API.
@@ -700,6 +701,8 @@ A minor release.
 | P11 | `GITHUB_TOKEN` cannot read an organisation's SAML identities; they are visible to owners and to an App installation token with Organization administration read. | `samlIdentityProvider` is `null`. | The identity App (D21). |
 | P12 | An identity's SAML `nameId` is the person's mail, which people can change themselves. | A mention that stops resolving after a rename. | The object ID from the attributes; the UPN only as display and filter. |
 | P13 | GitHub's documentation says organisation Members read reads SAML identities; an installation token with Members read alone is refused. | `Resource not accessible by integration (organization.samlIdentityProvider)` on every lookup. | Organization administration read (D21), verified with the identity App. |
+| P14 | Relay 2.2.0 recorded a post Teams throttled (429) as delivered, and posted a send or an update Teams refused into the channel as an error message; Teams refuses an update now and then (404). | A missing message; `UpdateActivity operation returned an invalid status code '(404) NotFound'` posted in the channel. | Relay 2.2.1 or later (§14), which retries both: a throttled post about two seconds later, a refused update about 30 seconds later. |
+| P15 | An update of a first message someone deleted in Teams is refused (403) every time. | The relay's poison alert after five attempts, for the incident's close-update. | Accepted: the update is not recorded, so the state does not depend on it (§9). |
 
 ## 19. Tests
 
@@ -784,4 +787,4 @@ nested workflow and its actions included.
    state of §9. Built.
 3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
 4. Reminders (§10). Built; drift's come with [Drift-detection.md](Drift-detection.md).
-5. Threads in place and mentions (relay 2.2.0). Built; direct messages next.
+5. Threads in place and mentions (relay 2.2.1). Built; direct messages next.

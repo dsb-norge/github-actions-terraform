@@ -432,7 +432,7 @@ Change: [#7](https://github.com/example-org/example-repo/pull/7) `Add a storage 
 
 **Reminders.** An environment whose `trigger-events` hold `schedule` gets a reminder in the thread while it stays unapplied: after one working day, after three, then every five more. `remind: false` on a kind turns them off ([Notifications.md](Notifications.md) §10).
 
-**People by name.** A message names the people whose change it was by GitHub login. With the organisation's identity App (`TF_NOTIFY_IDENTITY_APP_ID` and the secret `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY`) and `TF_NOTIFY_PEOPLE_DOMAINS`, it names each person whose SAML identity is in those domains by display name instead, and mentions the author in Teams (the `mention` setting chooses who) on a relay of 2.2.0 or later: [Notifications.md](Notifications.md) §5, §6.1.
+**People by name.** A message names the people whose change it was by GitHub login. With the organisation's identity App (`TF_NOTIFY_IDENTITY_APP_ID` and the secret `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY`) and `TF_NOTIFY_PEOPLE_DOMAINS`, it names each person whose SAML identity is in those domains by display name instead, and mentions the author in Teams (the `mention` setting chooses who) on a relay of 2.2.1 or later: [Notifications.md](Notifications.md) §5, §6.1.
 
 #### Worked examples
 
