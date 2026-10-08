@@ -1,0 +1,16 @@
+local_file.probe: Refreshing state... [id=fecdab9fb0d6fc07dfc6d1650fbd871d1f40d8e8]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # terraform_data.extra will be created
+  + resource "terraform_data" "extra" {
+      + id     = (known after apply)
+      + input  = "new"
+      + output = (known after apply)
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.

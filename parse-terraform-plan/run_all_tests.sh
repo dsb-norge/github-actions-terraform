@@ -587,6 +587,212 @@ unset TEST_ACTION_DIR
 rm -rf "${_derived}"
 
 # --------------------------------------------------
+# JS31–JS35: the drift fixtures counted, beside their classification below.
+# --------------------------------------------------
+#                                                       imports adds changes destroys moves removes
+run_json_test "JS31: a resource deleted outside Terraform is one to add" \
+  "${_td}/plan_json_drift_deleted.log" "${_td}/plan_json_drift_deleted.json" \
+                                                          "0" "1" "0" "0" "0" "0"
+run_json_test "JS32: the same beside a resource of its own is two to add" \
+  "${_td}/plan_json_drift_with_own_changes.log" "${_td}/plan_json_drift_with_own_changes.json" \
+                                                          "0" "2" "0" "0" "0" "0"
+run_json_test "JS33: a new resource beside an unchanged one" \
+  "${_td}/plan_json_pending_create.log" "${_td}/plan_json_pending_create.json" \
+                                                          "0" "1" "0" "0" "0" "0"
+run_json_test "JS34: an unapplied moved block is one move" \
+  "${_td}/plan_json_moved_unapplied.log" "${_td}/plan_json_moved_unapplied.json" \
+                                                          "0" "0" "0" "0" "1" "0"
+run_json_test "JS35: an unapplied import block is one import" \
+  "${_td}/plan_json_import_unapplied.log" "${_td}/plan_json_import_unapplied.json" \
+                                                          "1" "0" "0" "0" "0" "0"
+
+# --------------------------------------------------
+# DC1–DC20: the classification of a JSON plan (docs/Drift-detection.md §4,
+# D3, D4). drift: an address in resource_drift that also has a planned action
+# (anything but no-op and read); pending: any other change; clean: none. The
+# fingerprint is the SHA-256 of the sorted lines '<address> <actions>',
+# '<address> moved-from <previous>', '<address> importing', 'output <name>
+# <actions>' and '<address> drifted', each ending in a newline; empty for clean
+# and unknown. The recorded plans were planned against a hand-written local
+# state (test-data/README.md); the rest are derived from them in one place.
+# --------------------------------------------------
+# Usage: run_class_test <name> <JSON plan or ''> <plan-class> <count-drift> <count-drift-ignored>
+#                       <has-pending-changes> <drift-addresses> [<fingerprint line>...]
+run_class_test() {
+  local test_name="${1}" json_file="${2}" expected_class="${3}" expected_drift="${4}" expected_ignored="${5}"
+  local expected_pending="${6}" expected_addresses="${7}"
+  shift 7
+  local expected_fingerprint=''
+  [ $# -gt 0 ] && expected_fingerprint="$(printf '%s\n' "$@" | sha256sum | cut -d' ' -f1)"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  echo -e "${BLUE}TEST ${TESTS_RUN}: ${test_name}${NC}"
+  local action_dir="${TEST_ACTION_DIR:-${_this_script_dir}}"
+  export GITHUB_OUTPUT=$(mktemp)
+  export GITHUB_ACTION_PATH="${action_dir}" GITHUB_WORKSPACE="${action_dir}"
+  export input_plan_console_file="${_td}/plan_json_no_changes.log"
+  if [ -n "${json_file}" ]; then export input_plan_json_file="${json_file}"; else unset input_plan_json_file; fi
+  local exit_code
+  (
+    set -o allexport
+    source "${action_dir}/step_parse_plan_output.sh"
+  ) >"${_test_output}" 2>&1
+  exit_code=$?
+  unset input_plan_json_file
+  local failures='' name expected actual
+  [ "${exit_code}" -eq 0 ] || failures+="  exit code: expected 0, got ${exit_code}\n"
+  for name in plan-class count-drift count-drift-ignored has-pending-changes drift-addresses plan-fingerprint; do
+    case "${name}" in
+      plan-class) expected="${expected_class}" ;;
+      count-drift) expected="${expected_drift}" ;;
+      count-drift-ignored) expected="${expected_ignored}" ;;
+      has-pending-changes) expected="${expected_pending}" ;;
+      drift-addresses) expected="${expected_addresses}" ;;
+      plan-fingerprint) expected="${expected_fingerprint}" ;;
+    esac
+    if ! grep -q "^${name}=" "${GITHUB_OUTPUT}"; then
+      failures+="  ${name}: expected '${expected}', but the output was not published\n"
+    elif [[ "$(get_output "${name}")" != "${expected}" ]]; then
+      failures+="  ${name}: expected '${expected}', got '$(get_output "${name}")'\n"
+    fi
+  done
+  if [ -z "${failures}" ]; then
+    echo -e "${GREEN}✓ PASSED${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+  else
+    echo -e "${RED}✗ FAILED${NC}:"
+    echo -e "${failures}"
+    echo "--- Step output ---"
+    cat "${_test_output}"
+    echo "--- End step output ---"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+  fi
+  rm -f "${GITHUB_OUTPUT}"
+}
+
+_derived="$(mktemp -d)"
+_deleted="${_td}/plan_json_drift_deleted.json"
+#                                                          class   drift ignored pending addresses
+run_class_test "DC1: a resource deleted outside Terraform, which the plan creates again, is drift" \
+  "${_deleted}"                                            drift   1     0       false   '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted"
+run_class_test "DC2: drift beside a change of its own is drift, with pending changes" \
+  "${_td}/plan_json_drift_with_own_changes.json"           drift   1     0       true    '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted" "terraform_data.extra create"
+run_class_test "DC3: a change and no drift is pending" \
+  "${_td}/plan_json_pending_create.json"                   pending 0     0       true    '[]' \
+  "terraform_data.extra create"
+run_class_test "DC4: an unapplied moved block alone is pending" \
+  "${_td}/plan_json_moved_unapplied.json"                  pending 0     0       true    '[]' \
+  "terraform_data.new moved-from terraform_data.old"
+run_class_test "DC5: an unapplied import block alone is pending" \
+  "${_td}/plan_json_import_unapplied.json"                 pending 0     0       true    '[]' \
+  "random_string.imported importing"
+run_class_test "DC6: no changes is clean, without a fingerprint" \
+  "${_td}/plan_json_no_changes.json"                       clean   0     0       false   '[]'
+run_class_test "DC7: output changes alone are pending" \
+  "${_td}/plan_json_outputs_only.json"                     pending 0     0       true    '[]' \
+  "output extra create"
+run_class_test "DC8: every kind of change has its line; no-ops and data reads none" \
+  "${_td}/plan_json_injected_summary.json"                 pending 0     0       true    '[]' \
+  "output o update" "random_string.imported[0] delete,create" "random_string.imported[0] importing" \
+  "terraform_data.created create" "terraform_data.delete_me[0] delete" "terraform_data.forget_me[0] forget" \
+  "terraform_data.new_name moved-from terraform_data.old_name[0]" "terraform_data.new_name update" \
+  "terraform_data.replace_me delete,create" "terraform_data.update_me update"
+jq -c '(.resource_changes[] | select(.address == "local_file.probe") | .change.actions) = ["no-op"]' \
+  "${_deleted}" >"${_derived}/drift_ignored.json"
+run_class_test "DC9: drift no planned action reverts (ignore_changes) is clean, and counted apart" \
+  "${_derived}/drift_ignored.json"                         clean   0     1       false   '[]'
+jq -c '(.resource_drift[0].change.actions) = ["update"] | (.resource_changes[0].change.actions) = ["update"]' \
+  "${_deleted}" >"${_derived}/drift_updated.json"
+run_class_test "DC10: an attribute changed outside Terraform that the plan changes back is drift" \
+  "${_derived}/drift_updated.json"                         drift   1     0       false   '["local_file.probe"]' \
+  "local_file.probe drifted" "local_file.probe update"
+jq -c '.resource_changes |= reverse | .resource_drift |= reverse' \
+  "${_td}/plan_json_drift_with_own_changes.json" >"${_derived}/reordered.json"
+run_class_test "DC11: the fingerprint does not depend on the order of the plan" \
+  "${_derived}/reordered.json"                             drift   1     0       true    '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted" "terraform_data.extra create"
+jq -c '.resource_changes += [{"address":"terraform_data.unrelated","mode":"managed","change":{"actions":["no-op"]}}]' \
+  "${_deleted}" >"${_derived}/unrelated_no_op.json"
+run_class_test "DC12: an unrelated no-op resource does not change the fingerprint" \
+  "${_derived}/unrelated_no_op.json"                       drift   1     0       false   '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted"
+jq -c '.output_changes = {"o": {"actions": ["update"]}}' "${_deleted}" >"${_derived}/drift_and_outputs.json"
+run_class_test "DC13: output changes beside drift are not changes of its own: reverting drift changes outputs" \
+  "${_derived}/drift_and_outputs.json"                     drift   1     0       false   '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted" "output o update"
+jq -c '.resource_drift += [{"address":"data.x.y","mode":"data","change":{"actions":["update"]}}]' \
+  "${_deleted}" >"${_derived}/data_drift.json"
+run_class_test "DC14: a data source in resource_drift counts nowhere" \
+  "${_derived}/data_drift.json"                            drift   1     0       false   '["local_file.probe"]' \
+  "local_file.probe create" "local_file.probe drifted"
+jq -c '.resource_drift = [range(0; 150) as $i | .resource_drift[0] | .address = "module.storage.azurerm_storage_account.account[\"\($i + 1000)\"]"]
+       | .resource_changes = [.resource_drift[] | {address, mode: "managed", change: {actions: ["update"]}}]' \
+  "${_deleted}" >"${_derived}/many_drifted.json"
+_many="$(jq -c '[range(0; 150) | "module.storage.azurerm_storage_account.account[\"\(. + 1000)\"]"] | sort | .[0:50]' -n)"
+_many_lines=()
+while IFS= read -r _line; do _many_lines+=("${_line}"); done < <(jq -r -n \
+  '[range(0; 150) | "module.storage.azurerm_storage_account.account[\"\(. + 1000)\"]" | (. + " drifted"), (. + " update")] | sort[]')
+run_class_test "DC15: the drifted addresses are capped at 3000 bytes of JSON; count-drift has them all" \
+  "${_derived}/many_drifted.json"                          drift   150   0       false   "${_many}" "${_many_lines[@]}"
+run_class_test "DC16: an errored plan is unknown" \
+  "${_td}/plan_json_errored.json"                          unknown '?'   '?'     '?'     ''
+run_class_test "DC17: a JSON plan that cannot be read is unknown" \
+  "${_derived}/no-such-plan.json"                          unknown '?'   '?'     '?'     ''
+run_class_test "DC18: console counts are not classified: every output is empty" \
+  ''                                                       ''      ''    ''      ''      ''
+jq -c '.resource_drift = {"local_file.probe": .resource_drift[0]}' "${_deleted}" >"${_derived}/drift_not_a_list.json"
+run_class_test "DC19: resource_drift that is not a list is unknown; the counts still stand" \
+  "${_derived}/drift_not_a_list.json"                      unknown '?'   '?'     '?'     ''
+assert_last_log "DC19: the log says why the plan cannot be classified" "cannot be classified: its resource_drift is not a list"
+jq -c 'del(.resource_drift)' "${_td}/plan_json_pending_create.json" >"${_derived}/no_drift_key.json"
+run_class_test "DC20: a plan without resource_drift has no drift" \
+  "${_derived}/no_drift_key.json"                          pending 0     0       true    '[]' \
+  "terraform_data.extra create"
+
+# DC21–DC27: nothing the classification answers is taken on trust. A copy of
+# the action whose classifying helpers are replaced; the counts stay real.
+_stub_action="${_derived}/stub-action"
+mkdir -p "${_stub_action}"
+cp "${_this_script_dir}/helpers.sh" "${_this_script_dir}/step_parse_plan_output.sh" "${_stub_action}/"
+export TEST_ACTION_DIR="${_stub_action}"
+stub_classify() {
+  { cat "${_this_script_dir}/helpers_additional.sh"; printf '%s\n' "$@"; } >"${_stub_action}/helpers_additional.sh"
+}
+stub_classify 'function plan-json-classify { printf "ok\tdrift\t1\t0\n"; }'
+run_class_test "DC21: an 'ok' with values missing is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+assert_last_log "DC21: the log says what the classification returned" "cannot be classified: the classification returned 'ok"
+stub_classify 'function plan-json-classify { printf "ok\tstale\t1\t0\tfalse\t[]\n"; }'
+run_class_test "DC22: an 'ok' with a class that is not one is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+stub_classify 'function plan-json-classify { printf "ok\tdrift\tone\t0\tfalse\t[]\n"; }'
+run_class_test "DC22a: an 'ok' with a count that is not a number is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+stub_classify 'function plan-json-classify { printf "ok\tdrift\t1\t0\tyes\t[]\n"; }'
+run_class_test "DC22b: an 'ok' whose pending flag is neither true nor false is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+stub_classify 'function plan-json-classify { printf "ok\tdrift\t1\t0\tfalse\tlocal_file.probe\n"; }'
+run_class_test "DC22c: an 'ok' whose addresses are not a JSON list is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+stub_classify 'function plan-json-classify { echo "jq: error: stub" >&2; return 5; }'
+run_class_test "DC23: a classification that fails is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+assert_last_log "DC23: the log carries jq's message" "cannot be classified: jq failed on it: jq: error: stub"
+stub_classify 'function plan-json-fingerprint { echo "jq: error: stub" >&2; return 5; }'
+run_class_test "DC24: a fingerprint that cannot be taken is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+assert_last_log "DC24: the log says so" "cannot be classified: its fingerprint cannot be taken: jq: error: stub"
+stub_classify 'function plan-json-fingerprint { echo "not-a-hash"; }'
+run_class_test "DC25: a fingerprint that is not a SHA-256 is unknown" \
+  "${_deleted}"                                            unknown '?'   '?'     '?'     ''
+stub_classify 'function plan-json-fingerprint { echo "not-a-hash"; }'
+run_class_test "DC26: a clean plan takes no fingerprint" \
+  "${_td}/plan_json_no_changes.json"                       clean   0     0       false   '[]'
+unset TEST_ACTION_DIR
+rm -rf "${_derived}"
+
+# --------------------------------------------------
 # Summary
 # --------------------------------------------------
 echo ""

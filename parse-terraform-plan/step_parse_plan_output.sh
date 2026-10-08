@@ -31,6 +31,36 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # Main Logic
 # ============================================================================
 
+# Sets main's plan_class, count_drift, count_drift_ignored, has_pending_changes,
+# drift_addresses and plan_fingerprint from the JSON plan, or leaves them
+# unknown with a warning. Nothing it is handed is taken on trust.
+function classify-json-plan {
+  local result='' err_file c_status='' c_class='' c_drift='' c_ignored='' c_pending='' c_addresses='' fingerprint=''
+  err_file="$(mktemp)"
+  if ! result="$(plan-json-classify "${input_plan_json_file}" 2>"${err_file}")"; then
+    result="unknown"$'\t'"jq failed on it: $(head -c 300 "${err_file}")"
+  fi
+  IFS=$'\t' read -r c_status c_class c_drift c_ignored c_pending c_addresses <<<"${result}"
+  if [ "${c_status}" = 'ok' ] && [[ "${c_class}" =~ ^(drift|pending|clean)$ ]] && [[ "${c_drift}" =~ ^[0-9]+$ ]] \
+    && [[ "${c_ignored}" =~ ^[0-9]+$ ]] && [[ "${c_pending}" =~ ^(true|false)$ ]] && [[ "${c_addresses}" == '['*']' ]]; then
+    if [ "${c_class}" != 'clean' ] && ! fingerprint="$(plan-json-fingerprint "${input_plan_json_file}" 2>"${err_file}")"; then
+      c_status='unknown' c_class="its fingerprint cannot be taken: $(head -c 300 "${err_file}")"
+    elif [ "${c_class}" != 'clean' ] && [[ ! "${fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
+      c_status='unknown' c_class="its fingerprint came back as '${fingerprint}'"
+    fi
+  elif [ "${c_status}" != 'unknown' ]; then
+    c_status='unknown' c_class="the classification returned '${result}'"
+  fi
+  rm -f "${err_file}"
+  if [ "${c_status}" != 'ok' ]; then
+    log-warn "the JSON plan cannot be classified: ${c_class}"
+    return 0
+  fi
+  plan_class="${c_class}" count_drift="${c_drift}" count_drift_ignored="${c_ignored}"
+  has_pending_changes="${c_pending}" drift_addresses="${c_addresses}" plan_fingerprint="${fingerprint}"
+  log-info "the JSON plan is ${plan_class}: ${count_drift} drifted and reverted, ${count_drift_ignored} drifted and not reverted; changes of its own: ${has_pending_changes}"
+}
+
 function main {
   log-info "Starting parse-plan-output..."
 
@@ -57,9 +87,14 @@ function main {
   # targeted plan keeps its real counts in the comment while a consumer that
   # needs the whole plan (auto-merge) refuses anything but 'true'.
   local plan_complete=''
+  # The classification of a JSON plan (docs/Drift-detection.md §4): drift,
+  # pending, clean, or unknown with every other value '?' or empty. All empty
+  # for console counts, which cannot tell drift from a change.
+  local plan_class='' count_drift='' count_drift_ignored='' has_pending_changes='' drift_addresses='' plan_fingerprint=''
 
   if [ -n "${input_plan_json_file:-}" ]; then
     counts_source='json'
+    plan_class='unknown' count_drift='?' count_drift_ignored='?' has_pending_changes='?'
     plan_complete='?'
     log-info "counting from the JSON plan: ${input_plan_json_file}"
 
@@ -104,6 +139,7 @@ function main {
         if [ "${plan_complete}" != 'true' ]; then
           log-warn "the JSON plan does not say it is complete (as with -target or deferred changes): it may not be the whole plan."
         fi
+        classify-json-plan
       else
         json_reason="the counting returned '${json_rest}'"
       fi
@@ -256,6 +292,12 @@ function main {
   set-output 'remove-count' "${removes}"
   set-output 'total-count' "${total}"
   set-output 'has-output-only-changes' "${has_output_only_changes}"
+  set-output 'plan-class' "${plan_class}"
+  set-output 'count-drift' "${count_drift}"
+  set-output 'count-drift-ignored' "${count_drift_ignored}"
+  set-output 'has-pending-changes' "${has_pending_changes}"
+  set-output 'drift-addresses' "${drift_addresses}"
+  set-output 'plan-fingerprint' "${plan_fingerprint}"
 
   log-info "parse-plan-output completed."
   return 0

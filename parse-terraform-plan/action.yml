@@ -2,7 +2,8 @@ name: "Parse terraform plan file"
 description: |
   Counts the resources a Terraform plan adds, changes, destroys, imports, moves and removes.
   The counts come from the JSON plan when 'plan-json-file' is given, and from the plan's
-  console output otherwise.
+  console output otherwise. A JSON plan is also classified as drift, pending or clean, with
+  a fingerprint of what it would do.
 author: "Peder Schmedling"
 inputs:
   plan-console-file:
@@ -96,6 +97,45 @@ outputs:
       is not a reliable signal on its own: it is omitted whenever the plan also
       defers a data source read, which output-only plans commonly do.
     value: ${{ steps.parse-plan-output.outputs.has-output-only-changes }}
+  plan-class:
+    description: |
+      What the JSON plan finds (docs/Drift-detection.md §4, D3): "drift" when a resource
+      changed outside Terraform and the plan would change it back (an address in
+      'resource_drift' that also has a planned action other than no-op and read);
+      "pending" for any other change, outputs included; "clean" for none; "unknown"
+      when the counts are '?' or the plan cannot be classified. Empty when the counts
+      come from the console, which cannot tell drift from a change.
+    value: ${{ steps.parse-plan-output.outputs.plan-class }}
+  count-drift:
+    description: |
+      Number of resources that drifted and that the plan would change back. '?' when
+      'plan-class' is unknown, empty when it is empty.
+    value: ${{ steps.parse-plan-output.outputs.count-drift }}
+  count-drift-ignored:
+    description: |
+      Number of resources that drifted with no planned change to revert them: attributes
+      under ignore_changes, values a provider normalises. Never a finding. '?' when
+      'plan-class' is unknown, empty when it is empty.
+    value: ${{ steps.parse-plan-output.outputs.count-drift-ignored }}
+  has-pending-changes:
+    description: |
+      "true" when the plan has a change of its own besides reverting drift: a change on
+      a resource that did not drift or, without drift, an output change. "true" for
+      every "pending" plan, "false" for "clean"; for "drift" it tells drift alone from
+      drift beside an unapplied change. '?' when 'plan-class' is unknown, empty when it
+      is empty.
+    value: ${{ steps.parse-plan-output.outputs.has-pending-changes }}
+  drift-addresses:
+    description: |
+      The addresses 'count-drift' counts, sorted, as a compact JSON list of as many as
+      fit in 3000 bytes; 'count-drift' says how many there are in all. "[]" without
+      drift; empty when 'plan-class' is unknown or empty.
+    value: ${{ steps.parse-plan-output.outputs.drift-addresses }}
+  plan-fingerprint:
+    description: |
+      SHA-256 of what the plan would do (docs/Drift-detection.md D4): equal fingerprints
+      are the same finding. Empty for "clean", "unknown" and an empty 'plan-class'.
+    value: ${{ steps.parse-plan-output.outputs.plan-fingerprint }}
 runs:
   using: "composite"
   steps:

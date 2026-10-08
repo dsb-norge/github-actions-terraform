@@ -1,0 +1,10 @@
+terraform_data.new: Refreshing state... [id=6f1e8a8c-0000-4000-8000-000000000001]
+
+Terraform will perform the following actions:
+
+  # terraform_data.old has moved to terraform_data.new
+    resource "terraform_data" "new" {
+        id = "6f1e8a8c-0000-4000-8000-000000000001"
+    }
+
+Plan: 0 to add, 0 to change, 0 to destroy.
