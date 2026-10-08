@@ -755,6 +755,12 @@ A minor release.
   then resolved the incident, on the release before reminders, which read the state with the new
   fields.
 
+  For threads and mentions, on the relay's 2.2.1: a merge whose apply failed opened two incidents
+  whose messages mentioned the change's author, shown under the roster's display name and in the
+  author's activity feed; the push that applied the environment again replied "Applied" in both
+  threads and replaced both first messages with "Resolved". On 2.2.0, one of two updates had hit
+  Teams' intermittent 404 and the relay posted the error in the channel (P14).
+
   With the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` set on the test bed, a merge whose apply
   failed opened two incidents whose messages named the pull request's author and merger by display
   name, and whose events listed that person once in `mentions` with an object ID; the decide job
