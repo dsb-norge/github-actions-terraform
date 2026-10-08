@@ -90,8 +90,10 @@ class AdapterError(Exception):
 class Tools:
     """The external programs, behind one method so the tests can stand in for them."""
 
-    def run(self, argv, stdin=""):
-        completed = subprocess.run(argv, input=stdin, capture_output=True, text=True, check=False)
+    def run(self, argv, stdin="", env=None):
+        """`env` is set over the step's environment for this program alone: a token in it never reaches argv."""
+        completed = subprocess.run(argv, input=stdin, capture_output=True, text=True, check=False,
+                                   env={**os.environ, **env} if env else None)
         return completed.returncode, completed.stdout, completed.stderr
 
     def read_text(self, path):

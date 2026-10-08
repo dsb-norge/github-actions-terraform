@@ -65,6 +65,19 @@ jobs:
           # Never this run's own key: the prefix restores the newest state of any run (§9).
           key: tf-notify-state-none
           restore-keys: tf-notify-state-
+      # Names people by display name, and finds whom to mention, from their SAML identities (§5, D21).
+      # Without the App, or when the token cannot be minted, people are named by login: the decide
+      # step says why in a warning.
+      - name: "🔑 Mint the identity App's token"
+        id: identity
+        if: vars.TF_NOTIFY_IDENTITY_APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TF_NOTIFY_IDENTITY_APP_ID }}
+          private-key: ${{ secrets.TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-administration: read
+        continue-on-error: true
       - name: "📣 Decide what to tell Teams"
         id: decide
         uses: dsb-norge/github-actions-terraform/decide-notifications@v1
@@ -75,6 +88,8 @@ jobs:
           stage-results-json: ${{ toJSON(fromJSON(inputs.stage-results-json)) }}
           state-file: .tf-notify-state/state.json
           out-dir: ${{ runner.temp }}/notify
+          identity-token: ${{ steps.identity.outputs.token }}
+          people-domains: ${{ vars.TF_NOTIFY_PEOPLE_DOMAINS }}
       - name: "📦 Upload the events"
         uses: actions/upload-artifact@v7
         with:

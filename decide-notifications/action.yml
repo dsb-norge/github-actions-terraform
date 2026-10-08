@@ -7,9 +7,10 @@ description: |
   summary to the job summary, and publishes one deliver row per message.
 
   The decision engine's command `decide-notifications` (`engine/`, docs/Decision-engine.md §3.2):
-  its adapter reads the files and asks GitHub for the push's pull requests and the senders'
-  protection rules; its core decides. Needs Python 3.12 or later on the runner and GH_TOKEN with
-  pull-requests and actions read. Fails only on a file it cannot do without.
+  its adapter reads the files and asks GitHub for the push's pull requests, the people's SAML
+  identities (with identity-token) and the senders' protection rules; its core decides. Needs
+  Python 3.12 or later on the runner and GH_TOKEN with pull-requests and actions read. Fails only on
+  a file it cannot do without.
 author: "Peder Schmedling"
 inputs:
   metadata-files-pattern:
@@ -31,6 +32,19 @@ inputs:
   out-dir:
     description: Directory to write the events, the observations and the summary to.
     required: true
+  identity-token:
+    description: >-
+      An installation token of the identity App with Organization administration read
+      (docs/Notifications.md D21), to read the SAML identity of each person a message names. Empty,
+      people are named by login and mentioned by nobody.
+    required: false
+    default: ""
+  people-domains:
+    description: >-
+      TF_NOTIFY_PEOPLE_DOMAINS: the UPN domains, comma-separated, of the people a message names by
+      display name and mentions. Everyone else is named by login.
+    required: false
+    default: ""
 outputs:
   deliver-matrix-json:
     description: '{"include": [...]}: one row per message to post, for the deliver jobs'' matrix.'
@@ -49,6 +63,9 @@ runs:
         RELEVANCE_FILE: ${{ inputs.relevance-file }}
         STATE_FILE: ${{ inputs.state-file }}
         OUT_DIR: ${{ inputs.out-dir }}
+        # Read by the engine, which hands the token to gh for the identity lookups alone.
+        NOTIFY_IDENTITY_TOKEN: ${{ inputs.identity-token }}
+        NOTIFY_PEOPLE_DOMAINS: ${{ inputs.people-domains }}
       run: |
         # Decide what the run tells Teams
         #

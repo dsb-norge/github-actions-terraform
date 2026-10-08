@@ -2295,8 +2295,10 @@ fi
 # Every job runs whatever came before it, cannot fail the caller and ends in bounded time
 # (D15); the deliver job runs in its sender's GitHub environment without a deployment and
 # only when there is something to deliver (P9); the record job merges under one lock that
-# queues instead of cancelling (D19); and the deliver job exports the sender's identity and
-# nothing else (D20). F32_WORKFLOW points the check at another file.
+# queues instead of cancelling (D19); the deliver job exports the sender's identity and
+# nothing else (D20); and the identity App's token is minted for the organisation with
+# Organization administration read alone and reaches the decide step and nothing else (D21).
+# F32_WORKFLOW points the check at another file.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
@@ -2356,6 +2358,23 @@ if record.get("concurrency") != {"group": "tf-notify-state", "cancel-in-progress
     problems.append(f"record: concurrency is {record.get('concurrency')!r}, expected one queueing lock")
 if record.get("needs") != ["decide", "deliver"] or deliver.get("needs") != "decide":
     problems.append("the needs are not decide <- deliver <- record")
+MINT = {"client-id": "${{ vars.TF_NOTIFY_IDENTITY_APP_ID }}",
+        "private-key": "${{ secrets.TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY }}",
+        "owner": "${{ github.repository_owner }}", "permission-organization-administration": "read"}
+decide_steps = jobs.get("decide", {}).get("steps", [])
+mints = [s for s in decide_steps if str(s.get("uses", "")).startswith("actions/create-github-app-token@")]
+if len(mints) != 1 or mints[0].get("with") != MINT or mints[0].get("id") != "identity" \
+        or mints[0].get("if") != "vars.TF_NOTIFY_IDENTITY_APP_ID != ''" or mints[0].get("continue-on-error") is not True:
+    problems.append("decide: the identity App's token is not minted once, as identity, when the App is set, for the "
+                    "organisation with administration read alone, and without failing the job")
+decides = [s for s in decide_steps if str(s.get("uses", "")).startswith("dsb-norge/github-actions-terraform/decide-notifications@")]
+if len(decides) != 1 or decides[0].get("with", {}).get("identity-token") != "${{ steps.identity.outputs.token }}" \
+        or decides[0].get("with", {}).get("people-domains") != "${{ vars.TF_NOTIFY_PEOPLE_DOMAINS }}":
+    problems.append("decide: the decide step is not given the identity token and TF_NOTIFY_PEOPLE_DOMAINS")
+for job_name, job in jobs.items():
+    for step in job.get("steps", []):
+        if "steps.identity.outputs.token" in yaml.safe_dump(step) and step not in decides:
+            problems.append(f"{job_name}: the step {step.get('name')!r} reads the identity token")
 print("checked the three jobs of terraform-notify.yml")
 for problem in problems:
     print(f"PROBLEM {problem}")

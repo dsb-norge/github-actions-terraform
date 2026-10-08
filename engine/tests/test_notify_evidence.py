@@ -16,16 +16,30 @@ CLOCK = lambda: datetime.datetime(2026, 10, 7, 12, 0, 0, tzinfo=datetime.timezon
 BEFORE, AFTER = "b" * 40, "a" * 40
 
 
+OBJECT_ID = "http://schemas.microsoft.com/identity/claims/objectidentifier"
+QUERY = ("query($org: String!, $login: String!) { organization(login: $org) { samlIdentityProvider { "
+         "externalIdentities(login: $login, first: 1) { nodes { samlIdentity { username givenName familyName "
+         "attributes { name value } } } } } } }")
+
+
 class FakeTools:
-    """gh api by endpoint: {endpoint: answer or (code, stdout, stderr)}; anything else is a 404."""
+    """gh api by endpoint: {endpoint: answer or (code, stdout, stderr)}; anything else is a 404. A GraphQL
+    identity lookup in organisation o is answered from `identities` by login the same way."""
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, identities=None):
         self.api = api or {}
+        self.identities = identities or {}
         self.calls = []
+        self.envs = []
 
-    def run(self, argv, stdin=""):
+    def run(self, argv, stdin="", env=None):
         self.calls.append(tuple(argv))
-        assert argv[:2] == ("gh", "api") and len(argv) == 3, argv
+        self.envs.append(env)
+        if argv[:3] == ("gh", "api", "graphql"):
+            assert argv[3:7] == ("-f", f"query={QUERY}", "-f", "org=o") and argv[7] == "-f" and len(argv) == 9, argv
+            answer = self.identities.get(argv[8].removeprefix("login="))
+            return answer if isinstance(answer, tuple) else (0, json.dumps(answer), "")
+        assert argv[:2] == ("gh", "api") and len(argv) == 3 and env is None, argv
         answer = self.api.get(argv[2])
         if answer is None:
             return 1, "", f"gh: Not Found (HTTP 404)"
@@ -39,6 +53,13 @@ def pull(number, author="jdoe", merged_by="asmith", base="main", merged=True, ti
     return {"number": number, "title": title, "merged_at": "2026-10-07T11:00:00Z" if merged else None,
             "base": {"ref": base}, "user": {"login": author, "type": "User"},
             "merged_by": {"login": merged_by, "type": "User"}}
+
+
+def saml(username="100001@example.org", given="Jane", family="Doe", object_id="oid-jdoe"):
+    attributes = [{"name": "http://schemas.microsoft.com/identity/claims/tenantid", "value": "tenant"}]
+    attributes += [{"name": OBJECT_ID, "value": object_id}] if object_id is not None else []
+    return {"data": {"organization": {"samlIdentityProvider": {"externalIdentities": {"nodes": [
+        {"samlIdentity": {"username": username, "givenName": given, "familyName": family, "attributes": attributes}}]}}}}}
 
 
 def metadata(name, apply="success"):
@@ -120,7 +141,7 @@ class DecideTest(unittest.TestCase):
         key = hashlib.sha256(b"o/r/4711/1/prod/apply/open").hexdigest()
         self.assertEqual({"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed", "action": "open",
                           "alias": "tf-alerts", "reply_to": None, "update": None, "sender": "prod",
-                          "idempotency_key": key, "message": "e1.md"},
+                          "idempotency_key": key, "message": "e1.md", "mentions": []},
                          json.loads(runner.read(runner.out, "events", "e1.json")))
         self.assertIn("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by jdoe, merged by asmith.",
                       runner.read(runner.out, "events", "e1.md"))
@@ -386,6 +407,151 @@ class PeopleTest(unittest.TestCase):
         self.assertEqual(shas[::-1][:50], line)
         self.assertEqual([AFTER], notify_evidence.first_parent([], BEFORE, AFTER))
         self.assertEqual([AFTER], notify_evidence.first_parent([{"sha": AFTER, "parents": []}], BEFORE, AFTER))
+
+
+IDENTITIES = {"jdoe": saml(), "asmith": saml("100002@example.org", "Ola", "Nordmann", "oid-asmith")}
+WITH_APP = {"NOTIFY_IDENTITY_TOKEN": "ghs_identity", "NOTIFY_PEOPLE_DOMAINS": "example.org"}
+
+
+class IdentityDecideTest(unittest.TestCase):
+    """The identity App's lookups in the decide step (§5, D21)."""
+
+    def graphql(self, runner):
+        return [(call[8], env) for call, env in zip(runner.tools.calls, runner.tools.envs) if call[2] == "graphql"]
+
+    def test_a_push_names_and_mentions_people_by_their_identity(self):
+        runner = Runner(self, environ=WITH_APP)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}],
+                         json.loads(runner.read(runner.out, "events", "e1.json"))["mentions"])
+        self.assertIn("`Add a storage account` by Jane Doe, merged by Ola Nordmann.",
+                      runner.read(runner.out, "events", "e1.md"))
+        self.assertEqual([("login=jdoe", {"GH_TOKEN": "ghs_identity"}), ("login=asmith", {"GH_TOKEN": "ghs_identity"})],
+                         self.graphql(runner))
+        self.assertNotIn("::warning", runner.log.getvalue())
+        for root, _, files in os.walk(runner.dir):
+            for name in files:
+                self.assertNotIn("ghs_identity", runner.read(root, name))
+        self.assertNotIn("ghs_identity", runner.log.getvalue())
+
+    def test_only_a_run_that_names_people_looks_them_up(self):
+        runner = Runner(self, metadata_files={"prod": metadata("prod")}, environ=WITH_APP)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+        self.assertEqual([], self.graphql(runner))
+        runner = Runner(self, environ={**WITH_APP, "GITHUB_EVENT_NAME": "schedule"})
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+        self.assertEqual([], self.graphql(runner))
+        api = {**PEOPLE_API, "repos/o/r/pulls/7": pull(7, author="dependabot[bot]", merged_by="merger[bot]")}
+        runner = Runner(self, environ=WITH_APP)
+        self.assertEqual(0, runner.decide(FakeTools(api, IDENTITIES)))
+        self.assertEqual([], self.graphql(runner))
+        self.assertNotIn("::warning", runner.log.getvalue())
+
+    def test_a_token_without_domains_or_domains_without_a_token_is_a_warning(self):
+        for environ, warning in (
+                ({"NOTIFY_PEOPLE_DOMAINS": "example.org"}, "TF_NOTIFY_PEOPLE_DOMAINS is set, but the decide job has no "
+                 "identity App token (TF_NOTIFY_IDENTITY_APP_ID and its key): people are named by login and "
+                 "mentioned by nobody"),
+                ({"NOTIFY_IDENTITY_TOKEN": "ghs_identity", "NOTIFY_PEOPLE_DOMAINS": " , "},
+                 "the identity App is set, but TF_NOTIFY_PEOPLE_DOMAINS is not: people are named by login and "
+                 "mentioned by nobody")):
+            with self.subTest(environ=environ):
+                runner = Runner(self, environ=environ)
+                self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+                self.assertEqual([], self.graphql(runner))
+                self.assertIn(f"::warning title=decide-notifications::{warning}\n", runner.log.getvalue())
+                self.assertIn("by jdoe, merged by asmith.", runner.read(runner.out, "events", "e1.md"))
+        runner = Runner(self)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+        self.assertEqual([], self.graphql(runner))
+        self.assertNotIn("::warning", runner.log.getvalue())
+
+    def test_a_lookup_that_fails_is_a_warning_and_names_logins(self):
+        identities = {**IDENTITIES, "jdoe": (1, "", "GraphQL: Resource not accessible by integration "
+                                                    "(organization.samlIdentityProvider)\n")}
+        runner = Runner(self, environ=WITH_APP)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, identities)))
+        self.assertEqual(["login=jdoe"], [login for login, _ in self.graphql(runner)])
+        self.assertIn("::warning title=decide-notifications::the identities of the people named cannot be read, so "
+                      "they are named by login and mentioned by nobody: the identity of jdoe cannot be read: GraphQL: "
+                      "Resource not accessible by integration (organization.samlIdentityProvider)\n",
+                      runner.log.getvalue())
+        self.assertIn("by jdoe, merged by asmith.", runner.read(runner.out, "events", "e1.md"))
+        self.assertEqual([], json.loads(runner.read(runner.out, "events", "e1.json"))["mentions"])
+
+    def test_the_domains_are_a_comma_separated_list(self):
+        self.assertEqual(["example.org", "example.com"], notify_evidence.people_domains(" Example.ORG , @Example.com ,,"))
+        self.assertEqual([], notify_evidence.people_domains(""))
+
+
+class IdentityTest(unittest.TestCase):
+    def gather(self, answers, logins=("jdoe",)):
+        tools = FakeTools(identities=answers)
+        return notify_evidence.gather_identities(tools, "o", list(logins), "ghs_identity"), tools
+
+    def test_an_identity_is_its_name_object_id_and_upn(self):
+        found, tools = self.gather({"jdoe": saml(given=" Jane ", family="van Doe ")})
+        self.assertEqual({"available": True, "error": None, "people": {
+            "jdoe": {"name": "Jane van Doe", "object_id": "oid-jdoe", "upn": "100001@example.org"}}}, found)
+        self.assertEqual([("gh", "api", "graphql", "-f", f"query={QUERY}", "-f", "org=o", "-f", "login=jdoe")],
+                         tools.calls)
+        self.assertEqual([{"GH_TOKEN": "ghs_identity"}], tools.envs)
+
+    def test_a_name_may_be_partly_or_wholly_absent(self):
+        for given, family, name in (("Jane", None, "Jane"), (None, "Doe", "Doe"), ("", " ", ""), (5, None, "")):
+            with self.subTest(given=given, family=family):
+                found, _ = self.gather({"jdoe": saml(given=given, family=family)})
+                self.assertEqual(name, found["people"]["jdoe"]["name"])
+
+    def test_a_login_without_a_usable_identity_has_none(self):
+        empty = {"data": {"organization": {"samlIdentityProvider": {"externalIdentities": {"nodes": []}}}}}
+        no_saml = {"data": {"organization": {"samlIdentityProvider": {"externalIdentities": {"nodes": [
+            {"samlIdentity": None}]}}}}}
+        no_attributes = saml()
+        no_attributes["data"]["organization"]["samlIdentityProvider"]["externalIdentities"]["nodes"][0][
+            "samlIdentity"]["attributes"] = None
+        odd_attribute = saml()
+        odd_attribute["data"]["organization"]["samlIdentityProvider"]["externalIdentities"]["nodes"][0][
+            "samlIdentity"]["attributes"].insert(0, "x")
+        for answer, expected in ((empty, None), (no_saml, None), (saml(object_id=None), None),
+                                 (saml(object_id=""), None), (saml(object_id=5), None), (saml(username=None), None),
+                                 (saml(username="no-domain"), None), (no_attributes, None)):
+            with self.subTest(answer=answer):
+                found, _ = self.gather({"jdoe": answer})
+                self.assertEqual({"available": True, "error": None, "people": {"jdoe": expected}}, found)
+        found, _ = self.gather({"jdoe": odd_attribute})
+        self.assertEqual("oid-jdoe", found["people"]["jdoe"]["object_id"])
+
+    def test_every_login_is_looked_up_once_in_order(self):
+        found, tools = self.gather({"jdoe": saml(), "asmith": saml(object_id=None)}, ("jdoe", "asmith"))
+        self.assertEqual(["jdoe", "asmith"], list(found["people"]))
+        self.assertEqual(["login=jdoe", "login=asmith"], [call[8] for call in tools.calls])
+
+    def test_an_answer_that_cannot_be_used_is_a_fact(self):
+        no_provider = {"data": {"organization": {"samlIdentityProvider": None}}}
+        for answer, error in (
+                ((1, "", "GraphQL: Resource not accessible by integration\n"),
+                 "the identity of jdoe cannot be read: GraphQL: Resource not accessible by integration"),
+                ((1, "out\n", ""), "the identity of jdoe cannot be read: out"),
+                ((0, "not json", ""), "the identity of jdoe cannot be read: the answer is not JSON"),
+                (no_provider, "the identity App's token sees no SAML identities in o"),
+                ({"data": None}, "the identity App's token sees no SAML identities in o")):
+            with self.subTest(answer=answer):
+                found, tools = self.gather({"jdoe": answer, "asmith": saml()}, ("jdoe", "asmith"))
+                self.assertEqual({"available": False, "error": error, "people": {}}, found)
+                self.assertEqual(1, len(tools.calls))
+
+    def test_a_long_error_is_cut(self):
+        found, _ = self.gather({"jdoe": (1, "", "x" * 600)})
+        self.assertEqual("the identity of jdoe cannot be read: " + "x" * 500, found["error"])
+
+    def test_gh_that_cannot_run_is_a_fact(self):
+        class Missing(FakeTools):
+            def run(self, argv, stdin="", env=None):
+                raise FileNotFoundError("gh")
+
+        found = notify_evidence.gather_identities(Missing(), "o", ["jdoe"], "t")
+        self.assertEqual({"available": False, "error": "'gh' cannot be run on this runner: gh", "people": {}}, found)
 
 
 class ProtectionTest(unittest.TestCase):

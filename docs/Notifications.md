@@ -6,9 +6,9 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **built, but for reminders (§10), mentions and direct messages (D11), the identity App
-that resolves people for them (D21), and threads (§9), which wait for the relay (§13) or come with
-drift detection; run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+Status: **built, but for reminders (§10), threads (§9), and mentions and direct messages (D11),
+which wait for the relay (§13) or come with drift detection; the people to mention are resolved
+already (D21). Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -57,7 +57,7 @@ and other automation posts through it. What is missing is the pipeline reaching 
 | D18 | GitHub admin and system accounts are never mentioned or messaged. | Decided by the maintainer: those accounts carry no Microsoft 365 licence and do configuration work, not changes to infrastructure. |
 | D19 | The state of open incidents is **one document per repository** in the Actions cache, merged by the record job under a concurrency lock; an observation older than the stored one is ignored (§9). | Runs overlap and finish out of order (a later run's first stage can finish before an earlier run's last), and cache entries are immutable; one document merged under a lock loses nothing, and a stale run cannot reopen an incident a newer one resolved. |
 | D20 | The message is rendered and escaped in the decide job, which holds no identity that can change anything; the deliver job posts the rendered bytes and exports nothing but the sender's tenant and client ID. | The deliver job holds an apply identity; nothing from a pull request should run or be interpreted there. |
-| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds Organization administration read and nothing else, and hands the relay Entra object IDs. Without the App, messages name people and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities, nor can an installation token with Members read alone, whatever GitHub's documentation says (P13); one with Organization administration read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
+| D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds Organization administration read and nothing else, names the person by display name, and hands the relay Entra object IDs. Without the App, messages name people by login and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities, nor can an installation token with Members read alone, whatever GitHub's documentation says (P13); one with Organization administration read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
 | D22 | The relay is trusted on authentication: holding its `Notifications.Send` role is the whole permission to post, to any alias of that instance. | Decided by the maintainer: each landing zone has its own instance, and only its identities hold the role there, so one landing zone cannot post into another's channels; inside one, the posting identities are apply identities that can already change production. |
 | D23 | Notifications are **markdown text messages** (the relay's `format: text`), not Adaptive Cards. Links are markdown links. | Decided by the maintainer: a notification is a few lines, and a text message uses the channel's full width where a card is narrow and crowded. Mentions, tag mentions, replies and updates work for text as for cards, and markdown links do what buttons would, so the relay is asked for no `Action.OpenUrl`. |
 
@@ -120,22 +120,32 @@ request for merge, squash and rebase merges alike but not who merged it, so
 | a direct push by an App | nobody; the channel only |
 | a schedule | nobody new; an open incident keeps the people it opened with |
 
-`mention` in §6.2 chooses which of those are mentioned once the relay can; the message always names
-them, by login, in plain text. For each person to mention or message, the adapter will read the
-organisation's SAML identity of the login with the identity App's token (D21), which is built with
-mentions (§13):
+`mention` in §6.2 chooses which of those are mentioned once the relay can (D11); a direct push's
+pusher counts as its author. When the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` are set (§6.1),
+the adapter reads the organisation's SAML identity of each person named, one query per login with
+the App's token (D21), `$org` being the repository's owner:
 
 ```graphql
-organization(login: $org) { samlIdentityProvider { externalIdentities(login: $login, first: 1) {
-  nodes { samlIdentity { username givenName familyName attributes { name value } } } } } }
+query($org: String!, $login: String!) { organization(login: $org) { samlIdentityProvider {
+  externalIdentities(login: $login, first: 1) { nodes { samlIdentity { username givenName familyName
+  attributes { name value } } } } } } }
 ```
 
-and takes the object ID from the attribute `http://schemas.microsoft.com/identity/claims/objectidentifier`,
-the UPN from `username` and the display name from the given and family names. A login without an
-identity, or whose UPN is not in `TF_NOTIFY_PEOPLE_DOMAINS`, is named and never mentioned: that is
-how admin and system accounts, which live in another domain, stay out (D18). A failed lookup is a
-fact like any other: the message names the person and mentions nobody. The environment jobs' metadata cannot supply any of this: it drops every key containing
-`auth` ([capture-matrix-job-meta](../capture-matrix-job-meta/step_capture.sh)), `author` among them.
+It takes the object ID from the attribute `http://schemas.microsoft.com/identity/claims/objectidentifier`,
+the UPN from `username` and the display name from the given and family names; an identity without
+an object ID or a UPN counts as none. A person whose UPN is in a domain of
+`TF_NOTIFY_PEOPLE_DOMAINS` (the case and a leading `@` ignored) is named by display name and, as
+the route's `mention` chooses, listed in the event's `mentions` (§7) with the object ID. Everyone
+else is named by login and never mentioned: that is how admin and system accounts, which live in
+another domain, stay out (D18). A display name is written only when it is letters, spaces, `.`, `'`
+and `-`, so it can start no markup; otherwise, and when it is empty, the person is named by login.
+
+A failed lookup is a fact like any other: the first failure stops the lookups, a warning says why,
+and the message names everyone by login and mentions nobody. So does one of the App and the domains
+set without the other, with a warning; neither set is silent. The token reaches `gh` in its
+environment for these queries alone, never on a command line or in a file. The environment jobs'
+metadata cannot supply any of this: it drops every key containing `auth`
+([capture-matrix-job-meta](../capture-matrix-job-meta/step_capture.sh)), `author` among them.
 
 ## 6. Configuration
 
@@ -155,16 +165,19 @@ the module workflows read `vars.ORG_TF_CICD_APP_ID`, and hands them to `create-m
 input of their own, `notify-target-json`, not the `toJSON(inputs)` document, whose every input is
 forwarded into every row. Environment-level variables are not read.
 
-Mentions and direct messages need three more organisation settings; without them messages name people
-and mention nobody:
+Display names and mentions need three more organisation settings; without them messages name
+people by login and mention nobody:
 
 | Setting | Kind | Holds |
 |---|---|---|
 | `TF_NOTIFY_IDENTITY_APP_ID` | variable | the client ID (or App ID) of a GitHub App with Organization administration read and no other permission, installed in the organisation on no repository |
-| `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY` | secret | its private key |
-| `TF_NOTIFY_PEOPLE_DOMAINS` | variable | the UPN domains of people who may be mentioned, comma-separated |
+| `TF_NOTIFY_IDENTITY_APP_PRIVATE_KEY` | secret | its private key, available to the repositories that notify |
+| `TF_NOTIFY_PEOPLE_DOMAINS` | variable | the UPN domains of people who are named by display name and may be mentioned, comma-separated |
 
 The decide job reads them directly, as the module workflows read their App's variable and secret.
+When `TF_NOTIFY_IDENTITY_APP_ID` is set, it mints the App's token for the repository's owner with
+Organization administration read alone (`actions/create-github-app-token`); a token that cannot be
+minted fails nothing, and the decide step warns that people are named by login.
 
 ### 6.2 `notifications-yml`
 
@@ -295,10 +308,11 @@ A command, `decide-notifications`, runs after the environments, as `evaluate-aut
 | `--stage-results-file` | `stage-results-json`, as the auto-merge job builds it |
 | `--state-file` | the state restored from the cache (§9); a file that does not exist means none |
 | `--out-dir` | where it writes its files |
-| the runner's environment | the event and its payload (the push's `before`, `after`, `forced` and sender, the default branch), the run's ID, number and attempt, the server URL, and `GH_TOKEN` for §5 |
+| the runner's environment | the event and its payload (the push's `before`, `after`, `forced` and sender, the default branch), the run's ID, number and attempt, the server URL, `GH_TOKEN` for §5, and `NOTIFY_IDENTITY_TOKEN` and `NOTIFY_PEOPLE_DOMAINS` (the action's `identity-token` and `people-domains`) for §5's identities |
 
 The core first says which costly facts the run needs, and the adapter gathers only those: the
-people of the push (§5) when a push opens or repeats an incident, and the protection rules of each
+people of the push (§5) when a push opens or repeats an incident, their identities when the
+identity App and the people domains are set, and the protection rules of each
 sender it posts as (`GET /repos/{owner}/{repo}/environments/{name}`: a rule other than a branch
 policy holds a job; an environment that does not exist holds nothing). A run with nothing to send
 asks GitHub nothing. Each fact that cannot be gathered is a fact: people that cannot be read make
@@ -332,14 +346,17 @@ The core writes:
 ```json
 {"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed",
  "action": "open", "alias": "tf-alerts", "reply_to": null, "update": null, "sender": "prod",
- "idempotency_key": "9f2c…", "message": "e1.md"}
+ "idempotency_key": "9f2c…", "message": "e1.md",
+ "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe"}]}
 ```
 
 `action` is `open`, `reply`, `resolve` or `removed` (§9). The idempotency key is the SHA-256, in
 lowercase hex, of `<repository>/<run id>/<run attempt>/<environment>/<slot>/<action>`: one key per
 message of a run attempt, so re-running only a deliver job posts nothing twice, and hashed because
-the relay's store refuses `/` in a key and an environment name may be 255 characters. Mentions and
-direct messages join the event when the relay supports them (§13). The rules are pure, under the
+the relay's store refuses `/` in a key and an environment name may be 255 characters. `mentions`
+lists whom the message would mention (§5, §6.2): empty for a resolution, on a schedule and for
+anyone without an identity in the people domains. Nothing posts it until the relay takes mentions
+(§13); direct messages join the event then. The rules are pure, under the
 engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); the adapter is
 `notify_evidence.py`.
 
@@ -351,10 +368,12 @@ engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); th
 
 **`decide`**, `if: always()`, on `runs-on`,
 `permissions: { actions: read, contents: read, pull-requests: read }`: downloads the metadata and
-the relevance artifact as the auto-merge job does, restores the state (§9), runs
-`decide-notifications` (the two JSON inputs read and written again with `toJSON(fromJSON(…))`, so
-what its run block captures is JSON by construction, F9), and uploads `--out-dir` as the
-`notify-events` artifact.
+the relevance artifact as the auto-merge job does, restores the state (§9), mints the identity
+App's token when `TF_NOTIFY_IDENTITY_APP_ID` is set (§6.1), runs `decide-notifications` (the two
+JSON inputs read and written again with `toJSON(fromJSON(…))`, so what its run block captures is
+JSON by construction, F9; the token and `TF_NOTIFY_PEOPLE_DOMAINS` as `identity-token` and
+`people-domains`), and uploads `--out-dir` as the `notify-events` artifact. No other step sees the
+token.
 
 **`deliver`**, `if: always() && needs.decide.outputs.deliver-count != '' && … != '0'` (the count is
 set only by a decide job that finished, and an empty matrix fails, P9), a matrix over the decide
@@ -538,7 +557,8 @@ cancelled, the stage that held it back, or that the job did not report), who (§
 known), and the run. Links are built from numbers, never from text. Environment names and steps are
 written as code; the repository is plain text, because Teams draws every code span as a box and an
 `owner/name` is letters, digits, `.`, `-` and `_`, none of which starts markup inside a word; a login is
-letters, digits and hyphens. A pull request's title, the one piece of
+letters, digits and hyphens, and a display name is written only when it is letters, spaces, `.`, `'`
+and `-` (§5). A pull request's title, the one piece of
 free text, is a code span with every `` ` `` made `'`, `<` and `>` made `‹` and `›` and whitespace
 collapsed, cut to 100 characters: inside a code span nothing is markup, and nothing in it can end the
 span, so a title can carry neither a link nor a mention, without relying on backslash escapes. At
@@ -583,9 +603,9 @@ commands, which the relay's own documentation says is refused.
 3. The landing zone's repositories get `TF_NOTIFY_BOT_URL`, `TF_NOTIFY_BOT_AUDIENCE` and
    `TF_NOTIFY_ALIAS` as repository variables.
 4. A repository whose production runs behind a protected GitHub Environment sets `deliver-as`.
-5. For mentions, once per organisation: the identity App, with Organization administration read
-   and no other permission, installed on the organisation without repository access, and §6.1's
-   three settings at organisation level.
+5. For display names and mentions, once per organisation: the identity App, with Organization
+   administration read and no other permission, installed on the organisation without repository
+   access, and §6.1's three settings at organisation level.
 6. Each repository on v1 notifies from its next push to the default branch.
 
 ## 15. What stays out
@@ -638,12 +658,15 @@ A minor release.
 - **Engine:** the rules of §4, §5 and §9 as table cases, at 100 percent coverage and through the
   mutation gate (`test_notifications`, `test_notify_decide`, `test_notify_state`): every result of
   §7, every transition of §9, stale observations, pending posts, removed environments and their
-  senders, overlapping runs, routing and `deliver-as`, protected and identity-less senders, every
+  senders, overlapping runs, routing and `deliver-as`, protected and identity-less senders, people
+  named and mentioned by identity in and out of the people domains, unsafe display names, every
   message as a literal; validation messages as literal strings; the adapter (`test_notify_evidence`)
   against files on disk and a stub `gh`, including missing and unreadable ones, the first-parent
-  walk, bots by name and by type, and every failure of a GitHub call as a fact.
+  walk, bots by name and by type, the identity lookups with the token in `gh`'s environment alone
+  and nowhere in the output, and every failure of a GitHub call as a fact.
 - **Actions:** `decide-notifications` and `record-notifications` run their action's run block end to
-  end, with shell syntax in the pasted JSON and a caller's `json.py` in the working directory.
+  end, with shell syntax in the pasted JSON and a caller's `json.py` in the working directory;
+  `decide-notifications` also with the identity token, which reaches the lookups and nothing else.
 - **Action:** `post-teams-notification` against a fake relay (a local HTTP server answering a
   scripted list of responses and recording every request) and a stub `az`: the request's shape, 202
   with and without a `messageId`, 4xx with and without a problem detail, 429 with `Retry-After`, 5xx
@@ -652,7 +675,9 @@ A minor release.
 - **Structural:** F31, `create-matrix`'s target and outputs, `notify`'s `needs`, `if`, permissions
   and inputs, and that no job needs it; F32, in `terraform-notify.yml` every job's `if`,
   `continue-on-error`, timeout and permissions, `deliver`'s `environment` with `deployment: false`,
-  matrix, runner and identity export, and `record`'s queueing lock.
+  matrix, runner and identity export, `record`'s queueing lock, and the identity App's token: minted
+  once, when the App is set, for the owner with Organization administration read alone, and read by
+  the decide step alone.
 - **Test bed:** a test-bed repository on the default workflow's preview ref, its three variables
   pointing at the relay's test instance. One environment fails its apply while a switch is on,
   another depends on it, and a third, named by `deliver-as`, sends for both: its identity holds
