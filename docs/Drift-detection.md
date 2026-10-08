@@ -240,8 +240,16 @@ environment that is never applied from CI is `pending` by design and may set
   ref, with three plan-only environments against a local backend: one whose committed, hand-written
   state holds a file the runner does not have warned `Drift` (1 resource) and carried the drift
   marker and line in the run summary; one with a resource to add and one with only an output change
-  warned `Default branch not applied` and were named in that line. The transitions' runs wait for
-  §10's third step.
+  warned `Default branch not applied` and were named in that line.
+
+  For the kinds and transitions, three plan-only environments on a five-minute schedule, on the
+  pull request's preview ref: one whose committed state holds a file the runner does not have, one
+  with a resource to add, and one whose every plan fails a precondition. The first scheduled run sent
+  `🌀 Drift` (listing the file's address) and `⏳ Not applied`, and counted the failing plan once; the
+  second sent `❌ Scheduled plan failed` (2 times in a row, at the `plan` step) and nothing for the
+  same drift; the third sent nothing and counted 3. Removing the three environments closed their
+  incidents in the `drift`, `apply` and `schedule` slots as no longer watched, and the relay accepted
+  every message.
 
 ## 9. Open questions
 
