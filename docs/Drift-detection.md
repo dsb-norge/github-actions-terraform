@@ -178,6 +178,12 @@ environment that is never applied from CI is `pending` by design and may set
 - **Engine:** the transitions of §5 as table cases.
 - **Test bed:** a scheduled plan with a resource changed by hand, then the same finding twice, then
   the change reverted; an attribute under `ignore_changes` changed by hand, which stays clean.
+  For the classification, one scheduled run on a test-bed repository, on the pull request's preview
+  ref, with three plan-only environments against a local backend: one whose committed, hand-written
+  state holds a file the runner does not have warned `Drift` (1 resource) and carried the drift
+  marker and line in the run summary; one with a resource to add and one with only an output change
+  warned `Default branch not applied` and were named in that line. The transitions' runs wait for
+  §10's third step.
 
 ## 9. Open questions
 
