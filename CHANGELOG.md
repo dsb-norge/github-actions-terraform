@@ -6,6 +6,15 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.11.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.10.0...v1.11.0) (2026-10-08)
+
+
+### Features
+
+* classify a JSON plan as drift, pending or clean ([9c03845](https://github.com/dsb-norge/github-actions-terraform/commit/9c03845591e44a1a84d06de858d4baa9d6581073))
+* name people in Teams notifications by their SAML identity ([77e9503](https://github.com/dsb-norge/github-actions-terraform/commit/77e9503f7ba4a39da6454a83853ac36c4bb5fa52))
+* say drift or default branch not applied for a scheduled plan ([af49f1b](https://github.com/dsb-norge/github-actions-terraform/commit/af49f1b64b04725c7c5c94a1468b945faf616b12))
+
 ## [1.10.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.9.0...v1.10.0) (2026-10-08)
 
 
