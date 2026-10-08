@@ -25,6 +25,8 @@ HEADERS = {
     "held-back": ("⏸️", "Held back"),
 }
 WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "held-back": "held back"}
+REMINDED = {"apply-failed": "the apply failed", "apply-cancelled": "the apply was cancelled",
+            "held-back": "its stage was held back"}
 # What a display name may hold to be written as it is: no character in it starts markup in a message.
 NAME_PUNCTUATION = " .'-"
 
@@ -80,6 +82,30 @@ def classify(row, entry, content, stage_results, event):
         if _outcome(content, step) in ("failure", "cancelled"):
             return ("failed" if _outcome(content, step) == "failure" else "cancelled"), {"step": step}
     return "failed", {"step": "not-run"}
+
+
+def _day(stamp):
+    """The day number, since 1970-01-01, of an ISO 8601 UTC stamp's date (H. Hinnant's days_from_civil): the core
+    imports no datetime."""
+    year, month, day = int(stamp[0:4]), int(stamp[5:7]), int(stamp[8:10])
+    year -= month <= 2
+    era = year // 400
+    year_of_era = year - era * 400
+    day_of_year = (153 * (month + (-3 if month > 2 else 9)) + 2) // 5 + day - 1
+    return era * 146097 + year_of_era * 365 + year_of_era // 4 - year_of_era // 100 + day_of_year - 719468
+
+
+def working_days(since, now):
+    """The whole working days, Monday to Friday, between the day of `since` and the day of `now` (§10): an
+    incident opened on a Tuesday is one working day old on Thursday. 1970-01-01 was a Thursday."""
+    return sum(1 for day in range(_day(since) + 1, _day(now)) if (day + 3) % 7 < 5)
+
+
+def reminder_due(age):
+    """The reminder level due after `age` working days (§10): 1 after one, 2 after three, one more every five."""
+    if age < 3:
+        return 1 if age >= 1 else 0
+    return 2 + (age - 3) // 5
 
 
 def _route(row, kind):
@@ -143,14 +169,27 @@ def _name(facts, login):
     return name if name and all(c.isalpha() or c in NAME_PUNCTUATION for c in name) else login
 
 
-def _mentions(facts, observation):
-    """The people the event mentions once the relay can (§6.2 `mention`): of those named, the roles the
-    route chooses, each with an identity in the people domains."""
+def _chosen(facts, observation):
+    """Whom an opening or a reply means to mention (§6.2 `mention`): of the push's people, the roles the route
+    chooses."""
     if observation["action"] not in ("open", "reply") or facts["event"] != "push":
         return []
     authors, mergers = _roles(facts["people"])
     chosen = environments.as_list(observation["route"].get("mention", ["author"]))
-    logins = (authors if "author" in chosen else []) + (mergers if "merger" in chosen else [])
+    return (authors if "author" in chosen else []) + (mergers if "merger" in chosen else [])
+
+
+def _reminded(observation):
+    """Whom a reminder mentions (§10): at level 1 the people the incident opened mentioning, at level 2 everyone it
+    named, later nobody but the channel's tag. A state from before reminders mentions everyone named first."""
+    incident = observation["incident"]
+    if observation["level"] == 1:
+        return incident.get("mentioned", incident["people"])
+    return incident["people"] if observation["level"] == 2 else []
+
+
+def _mentions(facts, logins):
+    """The events' mentions once the relay can: each login with an identity in the people domains."""
     return [{"login": login, "object_id": _identity(facts, login)["object_id"], "name": _name(facts, login)}
             for login in logins if _identity(facts, login)]
 
@@ -168,17 +207,25 @@ def _plan(facts):
         route, deliver_as = _route(row, kind)
         incident = _incident(facts, name)
         status = incident["status"] if incident else "none"
-        action = "none"
+        action, level, age = "none", None, None
         if kind and facts["event"] in OPENING_EVENTS and status in ("none", "resolved", "pending"):
             action = "none" if route.get("off") in (True, "true") else "open"
         elif kind and facts["event"] == "push" and status == "open":
             action = "reply"
         elif result in RESOLVING and status in ("open", "pending"):
             action = "resolve"
+        elif facts["event"] == "schedule" and status == "open":
+            # A schedule's repeat of an open incident is its reminder, when one is due and the incident's kind
+            # wants them (§10).
+            age = working_days(incident["opened_at"], facts["now"])
+            due = reminder_due(age)
+            if due > incident.get("reminder_level", 0) and _route(row, incident["kind"])[0].get("remind") \
+                    not in (False, "false"):
+                action, level = "remind", due
         # The incident's later messages go where its first went, as its sender (§9).
-        later = action in ("reply", "resolve")
+        later = action in ("reply", "resolve", "remind")
         observations.append({"environment": name, "result": result, "detail": detail, "kind": kind, "action": action,
-                             "incident": incident, "route": route,
+                             "incident": incident, "route": route, "level": level, "age": age,
                              "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
                              "sender": incident["sender"] if later else deliver_as or name})
     seen = {observation["environment"].lower() for observation in observations}
@@ -196,17 +243,20 @@ def _plan(facts):
 def _messaged(observation):
     """Whether the observation's action is a message: a pending incident never reached Teams, so it resolves
     quietly."""
-    if observation["action"] in ("open", "reply"):
+    if observation["action"] in ("open", "reply", "remind"):
         return True
     return observation["action"] == "resolve" and observation["incident"]["status"] == "open"
 
 
 def wanted(facts):
-    """Which costly facts the run needs: the people of the push when it opens or repeats an incident, and the
-    protection rules of the senders it posts as."""
+    """Which costly facts the run needs: the people of the push when it opens or repeats an incident, the
+    people its reminders name, whose identities it reads, and the protection rules of the senders it posts as."""
     observations = [o for o in _plan(facts) if _messaged(o) and o["sender"] in facts["senders"]]
+    # A reminder names everyone the incident opened with, and mentions some of them.
+    reminded = [login for o in observations if o["action"] == "remind" for login in o["incident"]["people"]]
     return {"people": facts["event"] == "push" and any(o["action"] in ("open", "reply") for o in observations),
-            "protection": sorted({facts["senders"][o["sender"]]["github-environment"] for o in observations})}
+            "protection": sorted({facts["senders"][o["sender"]]["github-environment"] for o in observations}),
+            "reminded": list(dict.fromkeys(reminded))}
 
 
 def _title(text):
@@ -236,6 +286,11 @@ def _people_line(facts):
     if len(pull_requests) > PULL_REQUEST_LIMIT:
         parts.append(f"and {len(pull_requests) - PULL_REQUEST_LIMIT} more")
     return f"{'Change' if len(pull_requests) == 1 else 'Changes'}: {'; '.join(parts)}."
+
+
+def _listed(names):
+    """'a', 'a and b', 'a, b and c'."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def _when(stamp):
@@ -286,6 +341,14 @@ def render(facts, observation):
             lines = [f"✅ **Applied** in `{name}` · {repository}",
                      f"`{name}` is applied again: the incident opened at {since} is resolved."]
         return "\n\n".join(lines + [link]) + "\n"
+    if action == "remind":
+        incident, days = observation["incident"], observation["age"]
+        lines = [f"⏰ **Still not applied** in `{name}` · {repository}",
+                 f"`{name}` has not been applied for {days} working day{'' if days == 1 else 's'}, since "
+                 f"{REMINDED[incident['kind']]} at {_when(incident['opened_at'])}."]
+        if incident["people"]:
+            lines.append(f"The change was by {_listed([_name(facts, login) for login in incident['people']])}.")
+        return "\n\n".join(lines + [link]) + "\n"
     icon, title = HEADERS[observation["kind"]]
     reason = _reason(observation)
     if action == "reply":
@@ -320,6 +383,7 @@ def decide(facts):
         event_id, sending = None, False
         name, action = observation["environment"], observation["action"]
         what = "resolved" if action == "resolve" else WHAT.get(observation["kind"])
+        what = f"reminder {observation['level']}" if action == "remind" else what
         if _messaged(observation) and observation["sender"] not in facts["senders"]:
             notes.append(f"`{name}`: removed from environments-yml, and its sender `{observation['sender']}` with it; "
                          "closed without a message")
@@ -331,7 +395,9 @@ def decide(facts):
             event = {"id": event_id, "environment": name, "slot": SLOT, "kind": observation["kind"],
                      "action": event_action, "alias": observation["alias"], "reply_to": reply_to, "update": None,
                      "sender": observation["sender"], "idempotency_key": _key(facts, name, event_action),
-                     "message": f"{event_id}.md", "mentions": _mentions(facts, observation)}
+                     "message": f"{event_id}.md",
+                     "mentions": _mentions(facts, _reminded(observation) if action == "remind"
+                                           else _chosen(facts, observation))}
             events.append(event)
             messages[event["message"]] = render(facts, observation)
             why_not = _not_sent(facts, observation)
@@ -349,7 +415,9 @@ def decide(facts):
         people = named(facts["people"]) if action in ("open", "reply") and facts["event"] == "push" else []
         observed.append({"environment": name, "slot": SLOT, "result": observation["result"], "kind": observation["kind"],
                          "action": action, "event": event_id, "people": people, "alias": observation["alias"],
-                         "sender": observation["sender"], "sending": sending})
+                         "sender": observation["sender"], "sending": sending,
+                         "mentioned": _chosen(facts, observation) if action == "open" else [],
+                         "reminder_level": observation.get("level")})
     parts = []
     if table:
         parts.append("\n".join(["| Environment | What | Sent |", "|---|---|---|", *table]))

@@ -163,12 +163,13 @@ class NotificationCommandsTest(unittest.TestCase):
         calls = []
         with mock.patch.object(notify_evidence, "run_decide", lambda *args: calls.append(args) or 3):
             self.assertEqual(3, cli.main(self.DECIDE))
-        *paths, environ, stream, tools = calls[0]
+        *paths, environ, stream, tools, clock = calls[0]
         self.assertEqual(["m-*.json", "/tmp/matrix.json", "/tmp/r.json", "/tmp/stages", "/tmp/state.json", "/tmp/out"],
                          paths)
         self.assertIs(os.environ, environ)
         self.assertIs(sys.stdout, stream)
         self.assertIsInstance(tools, adapter.Tools)
+        self.assertEqual("UTC", clock().tzname())
 
     def test_record_runs_the_adapter(self):
         calls = []

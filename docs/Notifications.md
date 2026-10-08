@@ -6,9 +6,9 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **built, but for reminders (§10), threads (§9), and mentions and direct messages (D11),
-which wait for the relay (§13) or come with drift detection; the people to mention are resolved
-already (D21). Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+Status: **built, but for threads (§9), mentions and direct messages (D11), which wait for the
+relay (§13), and drift's reminders, which come with drift detection; the people to mention are
+resolved already (D21). Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -308,11 +308,11 @@ A command, `decide-notifications`, runs after the environments, as `evaluate-aut
 | `--stage-results-file` | `stage-results-json`, as the auto-merge job builds it |
 | `--state-file` | the state restored from the cache (§9); a file that does not exist means none |
 | `--out-dir` | where it writes its files |
-| the runner's environment | the event and its payload (the push's `before`, `after`, `forced` and sender, the default branch), the run's ID, number and attempt, the server URL, `GH_TOKEN` for §5, and `NOTIFY_IDENTITY_TOKEN` and `NOTIFY_PEOPLE_DOMAINS` (the action's `identity-token` and `people-domains`) for §5's identities |
+| the runner's environment | the event and its payload (the push's `before`, `after`, `forced` and sender, the default branch), the run's ID, number and attempt, the server URL, `GH_TOKEN` for §5, and `NOTIFY_IDENTITY_TOKEN` and `NOTIFY_PEOPLE_DOMAINS` (the action's `identity-token` and `people-domains`) for §5's identities, and its clock for §10 |
 
 The core first says which costly facts the run needs, and the adapter gathers only those: the
-people of the push (§5) when a push opens or repeats an incident, their identities when the
-identity App and the people domains are set, and the protection rules of each
+people of the push (§5) when a push opens or repeats an incident, their identities and those of
+the people a reminder names (§10) when the identity App and the people domains are set, and the protection rules of each
 sender it posts as (`GET /repos/{owner}/{repo}/environments/{name}`: a rule other than a branch
 policy holds a job; an environment that does not exist holds nothing). A run with nothing to send
 asks GitHub nothing. Each fact that cannot be gathered is a fact: people that cannot be read make
@@ -350,7 +350,7 @@ The core writes:
  "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe"}]}
 ```
 
-`action` is `open`, `reply`, `resolve` or `removed` (§9). The idempotency key is the SHA-256, in
+`action` is `open`, `reply`, `remind` (§10), `resolve` or `removed` (§9). The idempotency key is the SHA-256, in
 lowercase hex, of `<repository>/<run id>/<run attempt>/<environment>/<slot>/<action>`: one key per
 message of a run attempt, so re-running only a deliver job posts nothing twice, and hashed because
 the relay's store refuses `/` in a key and an environment name may be 255 characters. `mentions`
@@ -441,7 +441,8 @@ an entry saved from another path is never restored.
 {"schema_version": 1,
  "incidents": {"prod/apply": {"kind": "apply-failed", "status": "open", "message_id": "msg-…",
    "alias": "tf-alerts", "sender": "prod", "opened_at": "2026-10-07T12:00:00Z", "opened_run": 412,
-   "seen_run": 415, "people": ["jdoe", "asmith"], "resolved_at": null}}}
+   "seen_run": 415, "people": ["jdoe", "asmith"], "resolved_at": null, "mentioned": ["jdoe"],
+   "reminder_level": 1, "reminded_at": "2026-10-09T01:10:00Z"}}}
 ```
 
 Keys are `<environment>/<slot>`, the environment lowercased. `status` is `open`, `pending` (the
@@ -450,7 +451,10 @@ message went and who sent it: every later message of the incident goes there, as
 routing says by then, because the relay refuses a reply to a message of another alias. `seen_run`
 is the run number of the newest observation; the record job ignores an observation from an older
 run, so a re-run of an old commit, or an earlier run finishing last, cannot reopen what a newer run
-resolved. A resolved incident stays as a tombstone for 30 days, then is dropped; deleting a cache
+resolved. `people` is everyone the opening push named (§5) and `mentioned` those its route chose to
+mention (§6.2); `reminder_level` and `reminded_at` are the last reminder the relay accepted (§10).
+A document written before reminders lacks the last three: no reminder yet, and `people` in place of
+`mentioned`. A resolved incident stays as a tombstone for 30 days, then is dropped; deleting a cache
 entry would need `actions: write`, beyond the callers' grant. A stored document of another
 `schema_version` is started over, never misread.
 
@@ -462,7 +466,7 @@ merges under the lock and keeps the older `message_id`.
 |---|---|---|
 | none, resolved or pending | apply failed, cancelled or held back, on a push or a schedule | `open`: a new message; the incident is open once the relay accepts it, else pending |
 | open | the same again, on a push | `reply`: a message in the thread, naming the push's people |
-| open | the same again, on a schedule | nothing; the schedule's are the reminders (§10) |
+| open | the same again, or a plan-only schedule with changes, on a schedule | `remind`, when a reminder is due (§10); else nothing |
 | any | apply failed, cancelled or held back, on a dispatch | nothing (D8) |
 | open | applied, or a clean plan on a schedule or dispatch | `resolve`: a message in the thread; a tombstone |
 | pending | applied, or a clean plan | a tombstone, without a message: the incident never reached Teams |
@@ -483,19 +487,39 @@ is then updated to resolved as well.
 
 ## 10. Reminders
 
-Not built yet. On a scheduled run, each open incident in the `apply` slot whose next reminder is due
-gets a reply in its thread. Age counts in working days, Monday to Friday; the reply goes out with the
-first scheduled run after the reminder is due. The state gains `reminder_level` and `reminded_at`.
+On a scheduled run, each open incident in the `apply` slot of an environment the run ran, whose next
+reminder is due, gets a `remind` reply in its thread, to the incident's alias, as its sender. Age is
+the number of whole working days, Monday to Friday in UTC, between the day the incident opened and
+the day of the run, neither counted: an incident opened on a Tuesday is one working day old on
+Thursday, and one opened on a Friday on Tuesday. The reply goes out with the first scheduled run
+after the reminder is due; a run that finds several levels due sends one reminder, at the highest.
 
-| `reminder_level` | Due after | Reply mentions |
+| `reminder_level` | Due after | Mentions |
 |---|---|---|
-| 1 | one working day open | the people it opened with |
-| 2 | three working days open | the same and the mergers, and the channel's team tag |
-| 3 and on | five more working days each | the team tag |
+| 1 | one working day open | the people the incident opened mentioning (`mentioned`) |
+| 2 | three working days open | everyone it named (`people`), and the channel's team tag |
+| 3 and on | five more working days each (8, 13, …) | the team tag |
 
-A schedule that runs at night posts at night; the reminder is read in the morning. An environment
-without a schedule gets no reminders; `remind: false` turns them off for a kind. Until the relay
-mentions tags (§13), level 2 and on mention no tag. Drift reminders follow
+```markdown
+⏰ **Still not applied** in `prod` · example-org/example-repo
+
+`prod` has not been applied for 3 working days, since the apply failed at 2026-10-05 08:30 UTC.
+
+The change was by jdoe and asmith.
+
+[Open the run](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+The second line says what opened it: the apply failed, the apply was cancelled, or its stage was held
+back. The third names everyone the incident opened with, by display name where §5 allows, and is
+left out for an incident a schedule opened. The summary row says `reminder <level>`.
+
+The decide job takes the time from its runner's clock. A reminder the relay does not accept leaves
+the level where it was, so the next scheduled run sends it again. An environment without a schedule
+gets no reminders, nor does a pending incident, which a schedule that still fails opens again;
+`remind: false` on the incident's kind turns them off. A clean plan or an apply on the schedule
+resolves instead. A schedule that runs at night posts at night; the reminder is read in the morning.
+Until the relay mentions tags (§13), level 2 and on mention no tag. Drift reminders follow
 [Drift-detection.md](Drift-detection.md) §5.
 
 ## 11. The relay client: `post-teams-notification`
@@ -659,8 +683,10 @@ A minor release.
   mutation gate (`test_notifications`, `test_notify_decide`, `test_notify_state`): every result of
   §7, every transition of §9, stale observations, pending posts, removed environments and their
   senders, overlapping runs, routing and `deliver-as`, protected and identity-less senders, people
-  named and mentioned by identity in and out of the people domains, unsafe display names, every
-  message as a literal; validation messages as literal strings; the adapter (`test_notify_evidence`)
+  named and mentioned by identity in and out of the people domains, unsafe display names,
+  reminders by working days across weekends, a leap day and a new year, each level, a late first
+  schedule, `remind: false`, pending incidents and unscheduled environments, every message as a
+  literal; validation messages as literal strings; the adapter (`test_notify_evidence`)
   against files on disk and a stub `gh`, including missing and unreadable ones, the first-parent
   walk, bots by name and by type, the identity lookups with the token in `gh`'s environment alone
   and nowhere in the output, and every failure of a GitHub call as a fact.
@@ -725,5 +751,5 @@ nested workflow and its actions included.
 2. The engine: validation, `notify-active`, `decide-notifications` with the kinds of §4 and the
    state of §9. Built.
 3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
-4. Reminders (§10), with [Drift-detection.md](Drift-detection.md).
+4. Reminders (§10). Built; drift's come with [Drift-detection.md](Drift-detection.md).
 5. Threads in place, mentions and direct messages, as the relay offers them.

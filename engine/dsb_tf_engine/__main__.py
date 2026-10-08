@@ -96,7 +96,7 @@ def main(argv=None):
     if args.command == "decide-notifications":
         return notify_evidence.run_decide(args.metadata_files_pattern, args.matrix_file, args.relevance_file,
                                           args.stage_results_file, args.state_file, args.out_dir, os.environ,
-                                          sys.stdout, adapter.Tools())
+                                          sys.stdout, adapter.Tools(), _utc_now)
     if args.command == "record-notifications":
         return notify_evidence.run_record(args.state_file, args.observations_file, args.results_files_pattern,
                                           args.out_file, os.environ, sys.stdout, _utc_now)
