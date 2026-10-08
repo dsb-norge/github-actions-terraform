@@ -147,7 +147,7 @@ jobs:
           bot-audience: ${{ fromJSON(inputs.notify-target-json).bot-audience }}
           alias: ${{ matrix.alias }}
           message-file: ${{ runner.temp }}/notify/events/${{ matrix.id }}.md
-          # The people the message mentions (relay 2.2.0 or later); an empty list mentions nobody.
+          # The people the message mentions (relay 2.2.1 or later); an empty list mentions nobody.
           mentions-file: ${{ runner.temp }}/notify/events/${{ matrix.id }}.mentions.json
           reply-to: ${{ matrix.reply-to }}
           update: ${{ matrix.update }}
