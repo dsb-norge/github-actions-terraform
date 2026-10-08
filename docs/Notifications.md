@@ -767,7 +767,9 @@ A minor release.
   whose messages mentioned the change's author, shown under the roster's display name and in the
   author's activity feed; the push that applied the environment again replied "Applied" in both
   threads and replaced both first messages with "Resolved". On 2.2.0, one of two updates had hit
-  Teams' intermittent 404 and the relay posted the error in the channel (P14).
+  Teams' intermittent 404 and the relay posted the error in the channel (P14). With `direct: [author]`
+  on `apply-failed`, the failing merge also sent the opening to its author in the bot's personal
+  chat, the names written out.
 
   With the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` set on the test bed, a merge whose apply
   failed opened two incidents whose messages named the pull request's author and merger by display
