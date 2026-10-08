@@ -11,10 +11,10 @@ CUTOFF = "2026-09-07T12:00:00Z"
 
 
 def observation(action="open", environment="prod", result="failed", kind="apply-failed", event="e1", people=("jdoe",),
-                alias="tf-alerts", sender="prod", mentioned=("jdoe",), reminder_level=None):
+                alias="tf-alerts", sender="prod", mentioned=("jdoe",), reminder_level=None, fingerprint=None):
     return {"environment": environment, "slot": "apply", "result": result, "kind": kind, "action": action,
             "event": event, "people": list(people), "alias": alias, "sender": sender, "mentioned": list(mentioned),
-            "reminder_level": reminder_level}
+            "reminder_level": reminder_level, "fingerprint": fingerprint}
 
 
 def incident(status="open", message_id="msg-1", seen_run=40, opened_run=40, kind="apply-failed", resolved_at=None):
@@ -37,7 +37,7 @@ class OpenTest(unittest.TestCase):
         self.assertEqual({"schema_version": 1, "incidents": {"prod/apply": {
             "kind": "apply-failed", "status": "open", "message_id": "msg-9", "alias": "tf-alerts", "sender": "prod",
             "opened_at": NOW, "opened_run": 42, "seen_run": 42, "people": ["jdoe"], "resolved_at": None,
-            "mentioned": ["jdoe"], "reminder_level": 0, "reminded_at": None}}}, state)
+            "mentioned": ["jdoe"], "reminder_level": 0, "reminded_at": None, "fingerprint": None}}}, state)
         self.assertTrue(changed)
 
     def test_an_open_the_relay_did_not_accept_is_pending(self):
@@ -78,7 +78,8 @@ class LaterTest(unittest.TestCase):
 
     def test_a_reply_moves_the_incident_on_and_keeps_its_thread_and_people(self):
         state, changed = merge(self.given(), [observation("reply", kind="held-back", people=("kim",))], accepted())
-        self.assertEqual({**incident(), "kind": "held-back", "seen_run": 42}, state["incidents"]["prod/apply"])
+        self.assertEqual({**incident(), "kind": "held-back", "seen_run": 42, "fingerprint": None},
+                         state["incidents"]["prod/apply"])
         self.assertTrue(changed)
 
     def test_a_resolve_leaves_a_tombstone(self):
@@ -128,6 +129,17 @@ class SlotTest(unittest.TestCase):
         self.assertEqual(incident(), state["incidents"]["prod/apply"])
         self.assertEqual(("drift", "open"), (state["incidents"]["prod/drift"]["kind"],
                                              state["incidents"]["prod/drift"]["status"]))
+
+
+class FingerprintTest(unittest.TestCase):
+    def test_drift_opens_with_its_fingerprint_and_a_reply_moves_it_on(self):
+        drift = dict(observation(kind="drift", people=(), mentioned=(), fingerprint="f1"), slot="drift")
+        state, _ = merge(None, [drift], accepted())
+        self.assertEqual("f1", state["incidents"]["prod/drift"]["fingerprint"])
+        changed = dict(drift, action="reply", fingerprint="f2")
+        state, _ = merge(state, [changed], accepted(), run=43)
+        self.assertEqual(("f2", 43), (state["incidents"]["prod/drift"]["fingerprint"],
+                                      state["incidents"]["prod/drift"]["seen_run"]))
 
 
 class RemindTest(unittest.TestCase):

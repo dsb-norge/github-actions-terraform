@@ -209,8 +209,9 @@ notifications-yml: |
 | `remind` | `true` | `false` turns reminders off |
 | `off` | `false` | `true` sends nothing for the kind |
 
-The kinds are `apply-failed`, `apply-cancelled` and `held-back`; [Drift-detection.md](Drift-detection.md)
-adds its own when it is built. A list may be one value written alone (`mention: author`), and
+The kinds are `apply-failed`, `apply-cancelled` and `held-back`, and the scheduled plan's `drift`,
+`pending-change`, `scheduled-failed` and `drift-check-failing` ([Drift-detection.md](Drift-detection.md)
+§4). A list may be one value written alone (`mention: author`), and
 `true` and `false` may be written as text.
 
 ### 6.3 Per environment
@@ -241,7 +242,7 @@ value's once and first, then each environment's, whose messages begin
 | `runs-on` not a label | `notifications-yml: 'runs-on' is 3; it must be a runner label` |
 | `deliver-as` naming no environment | `notifications-yml: 'deliver-as' names 'dve', which is not an environment of environments-yml` |
 | `kinds` not a mapping | `notifications-yml: 'kinds' is 'held-back'; it must be a mapping from a kind to its settings` |
-| an unknown kind | `notifications-yml: kinds: unknown kind 'apply-fail' (did you mean 'apply-failed'?); kinds: apply-cancelled, apply-failed, held-back` |
+| an unknown kind | `notifications-yml: kinds: unknown kind 'apply-fail' (did you mean 'apply-failed'?); kinds: apply-cancelled, apply-failed, drift, drift-check-failing, held-back, pending-change, scheduled-failed` |
 | `defaults` or a kind not a mapping | `notifications-yml: kinds.held-back is 'off'; it must be a mapping of alias, direct, mention, off, remind` |
 | an unknown routing key | `notifications-yml: defaults: unknown key 'mentions' (did you mean 'mention'?); known keys: alias, direct, mention, off, remind` |
 | an alias the relay could not have made | `notifications-yml: defaults.alias is 'TF Alerts'; an alias is 2 to 50 of a-z 0-9 -, starting and ending with a letter or a digit` |
@@ -442,7 +443,7 @@ an entry saved from another path is never restored.
  "incidents": {"prod/apply": {"kind": "apply-failed", "status": "open", "message_id": "msg-…",
    "alias": "tf-alerts", "sender": "prod", "opened_at": "2026-10-07T12:00:00Z", "opened_run": 412,
    "seen_run": 415, "people": ["jdoe", "asmith"], "resolved_at": null, "mentioned": ["jdoe"],
-   "reminder_level": 1, "reminded_at": "2026-10-09T01:10:00Z"}}}
+   "reminder_level": 1, "reminded_at": "2026-10-09T01:10:00Z", "fingerprint": null}}}
 ```
 
 Keys are `<environment>/<slot>`, the environment lowercased. `status` is `open`, `pending` (the
@@ -452,8 +453,10 @@ routing says by then, because the relay refuses a reply to a message of another 
 is the run number of the newest observation; the record job ignores an observation from an older
 run, so a re-run of an old commit, or an earlier run finishing last, cannot reopen what a newer run
 resolved. `people` is everyone the opening push named (§5) and `mentioned` those its route chose to
-mention (§6.2); `reminder_level` and `reminded_at` are the last reminder the relay accepted (§10).
-A document written before reminders lacks the last three: no reminder yet, and `people` in place of
+mention (§6.2); `reminder_level` and `reminded_at` are the last reminder the relay accepted (§10);
+`fingerprint` is the finding a `drift` incident last reported ([Drift-detection.md](Drift-detection.md)
+D4), null in the `apply` slot.
+A document written before reminders lacks the last four: no reminder yet, and `people` in place of
 `mentioned`. A resolved incident stays as a tombstone for 30 days, then is dropped; deleting a cache
 entry would need `actions: write`, beyond the callers' grant. A stored document of another
 `schema_version` is started over, never misread.

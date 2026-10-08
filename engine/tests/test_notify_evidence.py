@@ -641,7 +641,7 @@ class RecordTest(unittest.TestCase):
     def observation(self, event="e1", sending=True):
         return {"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed", "action": "open",
                 "event": event, "people": ["jdoe"], "alias": "tf-alerts", "sender": "prod", "sending": sending,
-                "mentioned": ["jdoe"], "reminder_level": None}
+                "mentioned": ["jdoe"], "reminder_level": None, "fingerprint": None}
 
     def test_an_accepted_delivery_opens_the_incident_and_the_state_changed(self):
         self.assertEqual(0, self.record([self.observation()], [{"id": "e1", "accepted": "true",
