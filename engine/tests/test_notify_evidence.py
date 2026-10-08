@@ -167,7 +167,7 @@ class DecideTest(unittest.TestCase):
         runner = Runner(self)
         self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API)))
         self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API)))
-        self.assertEqual(["e1.json", "e1.md"], sorted(os.listdir(os.path.join(runner.out, "events"))))
+        self.assertEqual(["e1.json", "e1.md", "e1.mentions.json"], sorted(os.listdir(os.path.join(runner.out, "events"))))
 
     def test_nothing_to_send_asks_github_nothing(self):
         runner = Runner(self, metadata_files={"prod": metadata("prod")})
@@ -423,10 +423,13 @@ class IdentityDecideTest(unittest.TestCase):
     def test_a_push_names_and_mentions_people_by_their_identity(self):
         runner = Runner(self, environ=WITH_APP)
         self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
-        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}],
+        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe", "key": "p1"}],
                          json.loads(runner.read(runner.out, "events", "e1.json"))["mentions"])
-        self.assertIn("`Add a storage account` by Jane Doe, merged by Ola Nordmann.",
+        self.assertIn("`Add a storage account` by <at>p1</at>, merged by Ola Nordmann.",
                       runner.read(runner.out, "events", "e1.md"))
+        # The relay's mentions, beside the message the deliver job posts.
+        self.assertEqual([{"key": "p1", "id": "oid-jdoe", "name": "Jane Doe"}],
+                         json.loads(runner.read(runner.out, "events", "e1.mentions.json")))
         self.assertEqual([("login=jdoe", {"GH_TOKEN": "ghs_identity"}), ("login=asmith", {"GH_TOKEN": "ghs_identity"})],
                          self.graphql(runner))
         self.assertNotIn("::warning", runner.log.getvalue())
@@ -500,11 +503,11 @@ class ReminderDecideTest(unittest.TestCase):
         runner = self.runner(WITH_APP)
         self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
         event = json.loads(runner.read(runner.out, "events", "e1.json"))
-        self.assertEqual(("remind", "msg-1", [{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}]),
+        self.assertEqual(("remind", "msg-1", [{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe", "key": "p1"}]),
                          (event["action"], event["reply_to"], event["mentions"]))
         self.assertEqual("⏰ **Still not applied** in `prod` · o/r",
                          runner.read(runner.out, "events", "e1.md").split("\n")[0])
-        self.assertIn("The change was by Jane Doe and Ola Nordmann.", runner.read(runner.out, "events", "e1.md"))
+        self.assertIn("The change was by <at>p1</at> and Ola Nordmann.", runner.read(runner.out, "events", "e1.md"))
         self.assertEqual(["login=jdoe", "login=asmith"], [call[8] for call in runner.tools.calls if call[2] == "graphql"])
         self.assertEqual(1, json.loads(runner.read(runner.out, "observations.json"))["observations"][0]["reminder_level"])
 

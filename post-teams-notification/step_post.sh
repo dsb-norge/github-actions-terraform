@@ -25,6 +25,7 @@
 #   input_update           - messageId to replace
 #   input_idempotency_key  - Idempotency-Key; the relay answers a repeat with its first answer
 #   input_dry_run          - 'true': print the request, send nothing, ask for no token
+#   input_mentions_file    - path of a JSON list sent as the relay's `mentions`
 #
 # Outputs:
 #   message-id   - the relay's messageId when it accepted the message
@@ -82,17 +83,25 @@ function validate {
     not_sent "the message file ${input_message_file} is empty"
     return 1
   fi
+  # The message places each mention with <at>key</at>; sent without them, the relay refuses it (400).
+  if [ -n "${input_mentions_file:-}" ] && ! jq -e 'type == "array"' "${input_mentions_file}" >/dev/null 2>&1; then
+    not_sent "the mentions file ${input_mentions_file} is not a JSON list"
+    return 1
+  fi
   return 0
 }
 
 # The request body, from the file: the text is never held in a variable, which
 # allexport would put in the environment of every process the step starts.
 function build_body {
-  jq -n --rawfile message "${input_message_file}" \
+  local mentions="${input_mentions_file:-}"
+  [ -n "${mentions}" ] || mentions=/dev/null
+  jq -n --rawfile message "${input_message_file}" --slurpfile mentions "${mentions}" \
     --arg reply_to "${input_reply_to:-}" --arg update "${input_update:-}" \
     '{format: "text", message: $message}
      + (if $reply_to != "" then {replyTo: $reply_to} else {} end)
-     + (if $update != "" then {update: $update} else {} end)' >"${1}"
+     + (if $update != "" then {update: $update} else {} end)
+     + (if ($mentions[0] // []) != [] then {mentions: $mentions[0]} else {} end)' >"${1}"
 }
 
 # The token goes from az into a header file in the step's 0700 work directory

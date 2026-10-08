@@ -322,6 +322,10 @@ def run_decide(metadata_pattern, matrix_file, relevance_file, stage_results_file
     for event in decided["events"]:
         _write(os.path.join(out_dir, "events", f"{event['id']}.json"), json.dumps(event))
         _write(os.path.join(out_dir, "events", event["message"]), decided["messages"][event["message"]])
+        # The relay's mentions (Notifications.md §11), beside the message the deliver job posts.
+        _write(os.path.join(out_dir, "events", f"{event['id']}.mentions.json"),
+               json.dumps([{"key": mention["key"], "id": mention["object_id"], "name": mention["name"]}
+                           for mention in event["mentions"]]))
         log.group(f"{event['id']}: {event['action']} {event['environment']}", decided["messages"][event["message"]])
     _write(os.path.join(out_dir, "observations.json"),
            json.dumps({"run_number": run["number"], "observations": decided["observations"]}))

@@ -6,9 +6,8 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **built, but for threads (§9), mentions and direct messages (D11), which wait for the
-relay (§13), and drift's reminders, which come with drift detection; the people to mention are
-resolved already (D21). Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+Status: **built, with threads and mentions on a relay of 2.2.0 or later (§9, §13), but for direct
+messages and the channel's tag (D11, §10), which come next. Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -120,7 +119,7 @@ request for merge, squash and rebase merges alike but not who merged it, so
 | a direct push by an App | nobody; the channel only |
 | a schedule | nobody new; an open incident keeps the people it opened with |
 
-`mention` in §6.2 chooses which of those are mentioned once the relay can (D11); a direct push's
+`mention` in §6.2 chooses which of those are mentioned (D11); a direct push's
 pusher counts as its author. When the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` are set (§6.1),
 the adapter reads the organisation's SAML identity of each person named, one query per login with
 the App's token (D21), `$org` being the repository's owner:
@@ -339,6 +338,7 @@ The core writes:
 |---|---|
 | `events/<id>.json` | one event per message to post (below) |
 | `events/<id>.md` | its rendered markdown text (§11) |
+| `events/<id>.mentions.json` | the relay's `mentions` for it, `[{"key", "id", "name"}]`, the object ID as `id`; `[]` when it mentions nobody |
 | `observations.json` | `run_number` and, per environment and slot, what this run saw and did, for the record job |
 | `summary.md` | sent, not sent and why; also appended to the step summary |
 | `deliver-matrix-json` | `{"include": [...]}`, one row per message: `id`, `sender`, its `github-environment`, the deliver job's `runs-on`, `alias`, `reply-to`, `update`, `idempotency-key`, and the sender's `extra-envs` and `extra-envs-from-secrets` (§7's `senders`) |
@@ -348,16 +348,18 @@ The core writes:
 {"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed",
  "action": "open", "alias": "tf-alerts", "reply_to": null, "update": null, "sender": "prod",
  "idempotency_key": "9f2c…", "message": "e1.md",
- "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe"}]}
+ "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe", "key": "p1"}]}
 ```
 
-`action` is `open`, `reply`, `remind` (§10), `resolve` or `removed` (§9). The idempotency key is the SHA-256, in
+`action` is `open`, `reply`, `remind` (§10), `resolve`, `removed` or `update` (§9). The idempotency key is the SHA-256, in
 lowercase hex, of `<repository>/<run id>/<run attempt>/<environment>/<slot>/<action>`: one key per
 message of a run attempt, so re-running only a deliver job posts nothing twice, and hashed because
 the relay's store refuses `/` in a key and an environment name may be 255 characters. `mentions`
-lists whom the message would mention (§5, §6.2): empty for a resolution, on a schedule and for
-anyone without an identity in the people domains. Nothing posts it until the relay takes mentions
-(§13); direct messages join the event then. The rules are pure, under the
+lists whom the message mentions (§5, §6.2), each with the key the message places it by,
+`<at>p1</at>` where the person's name would be: empty for a resolution, on a schedule and for anyone
+without an identity in the people domains. Only a person the message writes is mentioned, because
+the relay refuses a mention it cannot place: of a push that merged more than ten pull requests,
+only the people of the ten it lists. Direct messages join the event when they are built. The rules are pure, under the
 engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); the adapter is
 `notify_evidence.py`.
 
@@ -484,12 +486,24 @@ A state entry unused for seven days, or pushed out by the repository's 10 GB cac
 The next failure then opens a new thread, and the old message is never marked resolved: the cost of
 keeping no state outside the cache.
 
-**Without threads, as the relay is today.** Every `reply`, `resolve` and `removed` carries the first
-message's `messageId` as `reply-to`; until the relay supports it (§13) it ignores the field and posts
-in the channel. So every message stands alone: it names the environment and the repository, and a
-reply or resolution says since when the environment has not been applied. No `update` is sent
-before the relay supports it, because today it would be a second post; the incident's first message
-is then updated to resolved as well.
+**Threads.** Every `reply`, `remind`, `resolve` and `removed` carries the first message's
+`messageId` as `reply-to`, and a relay of 2.2.0 or later posts it in that message's thread. When an
+incident closes with a message, a second event, `update`, replaces the first message with one that
+says it is resolved, or closed for an environment no longer in `environments-yml`:
+
+```markdown
+✅ **Resolved**: Apply failed in `prod` · example-org/example-repo
+
+Opened at 2026-10-05 08:30 UTC, resolved at 2026-10-07 12:00 UTC.
+
+[Open the run that resolved it](https://github.com/example-org/example-repo/actions/runs/4711/attempts/1)
+```
+
+The update goes where the incident's messages go, mentions nobody, and is not recorded: whether
+the relay took it changes nothing in the state. An incident without a first message gets none.
+Every message still names its environment and repository, because the relay posts a reply as a
+new message when the first one failed or its record expired (after 180 days), and an older relay
+ignores `replyTo` altogether.
 
 ## 10. Reminders
 
@@ -525,7 +539,8 @@ the level where it was, so the next scheduled run sends it again. An environment
 gets no reminders, nor does a pending incident, which a schedule that still fails opens again;
 `remind: false` on the incident's kind turns them off. A clean plan or an apply on the schedule
 resolves instead. A schedule that runs at night posts at night; the reminder is read in the morning.
-Until the relay mentions tags (§13), level 2 and on mention no tag. Drift reminders follow
+The channel's tag is not mentioned yet: the relay needs its Graph ID from us (§13), a setting that
+comes with direct messages. Drift reminders follow
 [Drift-detection.md](Drift-detection.md) §5.
 
 ## 11. The relay client: `post-teams-notification`
@@ -565,7 +580,9 @@ warning carries the relay's problem detail, or for a bare 401 or 403 (the platfo
 authentication answers without a body) what to check: the audience, or the `Notifications.Send`
 role. A `messageId` that is not a plain ID is not passed on.
 
-Mentions and direct messages (D11) join as inputs once the relay supports them (§13).
+`mentions-file` names a JSON list the step sends as the relay's `mentions` when it is not empty: the
+decide job's `events/<id>.mentions.json`. A file that is not a JSON list is not sent, since the
+message places mentions the relay would then refuse. Direct messages (D11) join when they are built.
 
 The decide job renders the message (D23), paragraphs of markdown text:
 
@@ -615,20 +632,22 @@ request limit.
 | Capability | Needed by | Today |
 |---|---|---|
 | Post markdown text to an alias, returning a `messageId` | §4 | yes |
-| Reply to and update a message by its `messageId`, and report whether it was delivered | threads (§9) | no; Teams supports both, verified |
-| Mentions by Entra object ID or UPN, each checked against the roster of the team being posted to, an unknown one sent as plain text | mentions (D11) | no; Teams mentions by object ID and UPN notify, verified |
-| A direct message by Entra object ID or UPN, through the roster of a team the bot shares with the person | `direct` (§6.2) | no; verified through the roster |
-| Mentions of a channel's tag | reminders (§10) | no |
+| Reply to and update a message by its `messageId`, and report whether it was delivered | threads (§9) | 2.2.0: `replyTo`, `update`, `GET /v1/messages/{id}` |
+| Mentions by Entra object ID or UPN, each checked against the roster of the team being posted to, an unknown one sent as plain text | mentions (D11) | 2.2.0: `mentions` with `<at>key</at>` placements |
+| A direct message by Entra object ID or UPN, through the roster of a team the bot shares with the person | `direct` (§6.2) | 2.2.0: `/v1/send` to one person per request |
+| Mentions of a channel's tag | reminders (§10) | 2.2.0, by the tag's Graph ID, which the caller supplies |
 
 Escalation, reminders, deduplication, digests, GitHub identities (D21), per-alias authorization
-(D22) and `Action.OpenUrl` (D23) are not asked of the relay. One finding is passed on without being
+(D22) and `Action.OpenUrl` (D23) are not asked of the relay. One finding was passed on without being
 a requirement: any Teams user who can message the bot can repoint or remove any alias with its
-commands, which the relay's own documentation says is refused.
+commands. Relay 2.2.0 documents it ("aliases have no owner"); a repointed alias sends to another
+channel without a sign on our side.
 
 ## 14. Onboarding a landing zone
 
-1. A relay instance runs for the landing zone, with the hosted runners' egress (the `AzureCloud`
-   service tag) in its `allowed_caller_rules`, and an alias created in a standard channel.
+1. A relay instance of 2.2.0 or later runs for the landing zone, with the hosted runners' egress
+   (the `AzureCloud` service tag) in its `allowed_caller_rules`, and an alias created in a standard
+   channel. An older relay ignores threads and shows mentions as `<at>p1</at>`.
 2. Each sending identity of the landing zone holds `Notifications.Send` on that instance's API.
 3. The landing zone's repositories get `TF_NOTIFY_BOT_URL`, `TF_NOTIFY_BOT_AUDIENCE` and
    `TF_NOTIFY_ALIAS` as repository variables.
@@ -766,4 +785,4 @@ nested workflow and its actions included.
    state of §9. Built.
 3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
 4. Reminders (§10). Built; drift's come with [Drift-detection.md](Drift-detection.md).
-5. Threads in place, mentions and direct messages, as the relay offers them.
+5. Threads in place and mentions (relay 2.2.0). Built; direct messages and the channel's tag next.

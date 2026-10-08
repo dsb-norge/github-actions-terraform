@@ -41,6 +41,10 @@ WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "h
 REMINDED = {"apply-failed": "the apply failed", "apply-cancelled": "the apply was cancelled",
             "held-back": "its stage was held back", "pending-change": "the scheduled plan found changes"}
 COUNTED = ("add", "change", "destroy", "import", "move", "remove")
+# What each kind was, as the update that closes an incident names it.
+TITLES = {"apply-failed": "Apply failed", "apply-cancelled": "Apply cancelled", "held-back": "Held back",
+          "pending-change": "Not applied", "drift": "Drift", "scheduled-failed": "Scheduled plan failed",
+          "drift-check-failing": "Drift check failing"}
 # What a display name may hold to be written as it is: no character in it starts markup in a message.
 NAME_PUNCTUATION = " .'-"
 
@@ -407,7 +411,12 @@ def _title(text):
     return text if len(text) <= TITLE_LIMIT else text[:TITLE_LIMIT - 1] + "…"
 
 
-def _people_line(facts):
+def _who(facts, login, keys):
+    """A person in the text: the relay's mention placement when the message mentions them, else their name."""
+    return f"<at>{keys[login]}</at>" if login in keys else _name(facts, login)
+
+
+def _people_line(facts, keys):
     if facts["event"] == "schedule":
         return "Found by the scheduled run."
     people = facts.get("people")
@@ -415,14 +424,14 @@ def _people_line(facts):
         return "Who made the change could not be read."
     pull_requests = people["pull_requests"]
     if not pull_requests:
-        return f"Pushed by {_name(facts, people['pusher'])}." if not _bot(people["pusher"]) else "Pushed by an app."
+        return f"Pushed by {_who(facts, people['pusher'], keys)}." if not _bot(people["pusher"]) else "Pushed by an app."
     parts = []
     for pr in pull_requests[:PULL_REQUEST_LIMIT]:
         part = f"[#{pr['number']}]({facts['server_url']}/{facts['repository']}/pull/{pr['number']})"
         title = _title(pr["title"] or "")
         part += f" `{title}`" if title else ""
-        part += f" by {_name(facts, pr['author'])}" if not _bot(pr["author"]) else ""
-        part += f", merged by {_name(facts, pr['merged_by'])}" if not _bot(pr["merged_by"]) and pr["merged_by"] != pr["author"] else ""
+        part += f" by {_who(facts, pr['author'], keys)}" if not _bot(pr["author"]) else ""
+        part += f", merged by {_who(facts, pr['merged_by'], keys)}" if not _bot(pr["merged_by"]) and pr["merged_by"] != pr["author"] else ""
         parts.append(part)
     if len(pull_requests) > PULL_REQUEST_LIMIT:
         parts.append(f"and {len(pull_requests) - PULL_REQUEST_LIMIT} more")
@@ -539,7 +548,23 @@ def _render_schedule(facts, observation, link):
     return "\n\n".join(lines + [link]) + "\n"
 
 
-def render(facts, observation):
+def render_close(facts, observation):
+    """The update that marks an incident's first message once it closes (relay 2.2.0's `update`)."""
+    name, repository, incident = observation["environment"], facts["repository"], observation["incident"]
+    run = facts["run"]
+    url = f"{facts['server_url']}/{repository}/actions/runs/{run['id']}/attempts/{run['attempt']}"
+    opened = _when(incident["opened_at"])
+    if observation["result"] == "removed":
+        lines = [f"✅ **Closed**: {TITLES[incident['kind']]} in `{name}` · {repository}",
+                 f"Opened at {opened}; `{name}` is no longer in environments-yml.",
+                 f"[Open the run that closed it]({url})"]
+    else:
+        lines = [f"✅ **Resolved**: {TITLES[incident['kind']]} in `{name}` · {repository}",
+                 f"Opened at {opened}, resolved at {_when(facts['now'])}.", f"[Open the run that resolved it]({url})"]
+    return "\n\n".join(lines) + "\n"
+
+
+def render(facts, observation, keys):
     """The message, markdown text (D23): a first line that says what and where, why, who, and the run.
     The repository is plain text: Teams draws a code span as a box, and an owner/name is letters, digits,
     '.', '-' and '_', none of which starts markup inside a word."""
@@ -569,14 +594,14 @@ def render(facts, observation):
                  f"`{name}` has not been applied for {days} working day{'' if days == 1 else 's'}, since "
                  f"{REMINDED[incident['kind']]} at {_when(incident['opened_at'])}."]
         if incident["people"]:
-            lines.append(f"The change was by {_listed([_name(facts, login) for login in incident['people']])}.")
+            lines.append(f"The change was by {_listed([_who(facts, login, keys) for login in incident['people']])}.")
         return "\n\n".join(lines + [link]) + "\n"
     icon, title = HEADERS[observation["kind"]]
     reason = _reason(observation)
     if action == "reply":
         title += " again"
         reason += f" It has not been applied since {_when(observation['incident']['opened_at'])}."
-    return "\n\n".join([f"{icon} **{title}** in `{name}` · {repository}", reason, _people_line(facts), link]) + "\n"
+    return "\n\n".join([f"{icon} **{title}** in `{name}` · {repository}", reason, _people_line(facts, keys), link]) + "\n"
 
 
 def _identity_complete(sender):
@@ -598,9 +623,38 @@ def _not_sent(facts, observation):
     return None
 
 
+def _keyed(mentions):
+    """The mentions with the keys the relay places them by: p1, p2, … in their order."""
+    return [dict(mention, key=f"p{index}") for index, mention in enumerate(mentions, 1)]
+
+
 def decide(facts):
     """{events, messages, deliver, observations, summary} for the run (§7)."""
     events, messages, deliver, observed, table, notes = [], {}, [], [], [], []
+
+    def post(observation, action, text, mentions, reply_to, update, what):
+        """One event, its message, and its deliver row or why it is not sent; returns its ID and whether it is
+        sent."""
+        name, event_id = observation["environment"], f"e{len(events) + 1}"
+        event = {"id": event_id, "environment": name, "slot": observation["slot"], "kind": observation["kind"],
+                 "action": action, "alias": observation["alias"], "reply_to": reply_to, "update": update,
+                 "sender": observation["sender"], "idempotency_key": _key(facts, name, observation["slot"], action),
+                 "message": f"{event_id}.md", "mentions": mentions}
+        events.append(event)
+        messages[event["message"]] = text
+        why_not = _not_sent(facts, observation)
+        if why_not:
+            table.append(f"| `{name}` | {what} | not sent: {why_not} |")
+            return event_id, False
+        sender = facts["senders"][observation["sender"]]
+        deliver.append({"id": event_id, "sender": observation["sender"],
+                        "github-environment": sender["github-environment"], "runs-on": facts["runs_on"],
+                        "alias": observation["alias"], "reply-to": reply_to or "", "update": update or "",
+                        "idempotency-key": event["idempotency_key"], "extra-envs": sender["extra-envs"],
+                        "extra-envs-from-secrets": sender["extra-envs-from-secrets"]})
+        table.append(f"| `{name}` | {what} | to `{observation['alias']}` as `{observation['sender']}` |")
+        return event_id, True
+
     for observation in _plan(facts):
         event_id, sending = None, False
         name, action = observation["environment"], observation["action"]
@@ -611,31 +665,18 @@ def decide(facts):
             notes.append(f"`{name}`: removed from environments-yml, and its sender `{observation['sender']}` with it; "
                          "closed without a message")
         elif _messaged(observation):
-            event_id = f"e{len(events) + 1}"
             incident = observation["incident"]
-            event_action = "removed" if observation["result"] == "removed" else action
-            reply_to = incident["message_id"] if action != "open" else None
-            event = {"id": event_id, "environment": name, "slot": observation["slot"], "kind": observation["kind"],
-                     "action": event_action, "alias": observation["alias"], "reply_to": reply_to, "update": None,
-                     "sender": observation["sender"],
-                     "idempotency_key": _key(facts, name, observation["slot"], event_action),
-                     "message": f"{event_id}.md",
-                     "mentions": _mentions(facts, _reminded(observation) if action == "remind"
-                                           else _chosen(facts, observation))}
-            events.append(event)
-            messages[event["message"]] = render(facts, observation)
-            why_not = _not_sent(facts, observation)
-            if why_not:
-                table.append(f"| `{name}` | {what} | not sent: {why_not} |")
-            else:
-                sender = facts["senders"][observation["sender"]]
-                deliver.append({"id": event_id, "sender": observation["sender"],
-                                "github-environment": sender["github-environment"], "runs-on": facts["runs_on"],
-                                "alias": observation["alias"], "reply-to": reply_to or "", "update": "",
-                                "idempotency-key": event["idempotency_key"], "extra-envs": sender["extra-envs"],
-                                "extra-envs-from-secrets": sender["extra-envs-from-secrets"]})
-                table.append(f"| `{name}` | {what} | to `{observation['alias']}` as `{observation['sender']}` |")
-                sending = True
+            removed = observation["result"] == "removed"
+            candidates = _keyed(_mentions(facts, _reminded(observation) if action == "remind"
+                                          else _chosen(facts, observation)))
+            text = render(facts, observation, {mention["login"]: mention["key"] for mention in candidates})
+            # The relay refuses a mention it cannot place: only the people the message writes are mentioned.
+            mentions = [mention for mention in candidates if f"<at>{mention['key']}</at>" in text]
+            event_id, sending = post(observation, "removed" if removed else action, text, mentions,
+                                     incident["message_id"] if action != "open" else None, None, what)
+            if action == "resolve" and incident["message_id"]:
+                post(observation, "update", render_close(facts, observation), [], None, incident["message_id"],
+                     f"first message marked {'closed' if removed else 'resolved'}")
         people = named(facts["people"]) if action in ("open", "reply") and facts["event"] == "push" else []
         observed.append({"environment": name, "slot": observation["slot"], "result": observation["result"],
                          "kind": observation["kind"],
