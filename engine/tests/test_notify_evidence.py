@@ -228,7 +228,7 @@ class DecideEdgesTest(unittest.TestCase):
         log = runner.log.getvalue()
         self.assertNotIn("::warning", log)
         self.assertIn("::group::decide-notifications: e1: open prod\n::stop-commands::", log)
-        self.assertIn("\n❌ **Apply failed** in `prod` · `o/r`\n", log)
+        self.assertIn("\n❌ **Apply failed** in `prod` · o/r\n", log)
 
     def test_no_state_file_and_an_empty_path_are_no_state_without_a_warning(self):
         for state in (None, ""):
