@@ -17,10 +17,13 @@ STEPS_BEFORE_APPLY = ("init", "verify-lock", "fmt", "validate", "lint", "plan")
 OPENING = {"failed": "apply-failed", "cancelled": "apply-cancelled", "held-back": "held-back",
            "pending": "pending-change"}
 DRIFT_SLOT = "drift"
+SCHEDULE_SLOT = "schedule"
+# A scheduled plan that fails this many times in a row, or cannot be read this many, is an incident (D6).
+FAILED_RUNS, UNREAD_RUNS = 2, 3
 # A drift message lists this many addresses, then how many more (Drift-detection.md §5).
 ADDRESS_LIMIT = 20
-# Drift reminds once a week, in working days, and mentions nobody (Drift-detection.md §5).
-DRIFT_REMINDER_DAYS = 5
+# Drift and the schedule slot remind once a week, in working days, and mention nobody (Drift-detection.md §5).
+WEEKLY = 5
 RESOLVING = ("applied", "clean")
 # A dispatch may resolve, never open (D8): whoever dispatched it is looking at the run.
 OPENING_EVENTS = ("push", "schedule")
@@ -33,7 +36,8 @@ HEADERS = {
     "pending-change": ("⏳", "Not applied"),
 }
 WHAT = {"apply-failed": "apply failed", "apply-cancelled": "apply cancelled", "held-back": "held back",
-        "pending-change": "not applied", "drift": "drift"}
+        "pending-change": "not applied", "drift": "drift", "scheduled-failed": "scheduled plan failed",
+        "drift-check-failing": "drift check failing"}
 REMINDED = {"apply-failed": "the apply failed", "apply-cancelled": "the apply was cancelled",
             "held-back": "its stage was held back", "pending-change": "the scheduled plan found changes"}
 COUNTED = ("add", "change", "destroy", "import", "move", "remove")
@@ -254,7 +258,7 @@ def _drift(facts, name, row, content, applied):
         action = "reply"
     elif plan_class == "drift":
         age = working_days(incident["opened_at"], facts["now"])
-        due = age // DRIFT_REMINDER_DAYS
+        due = age // WEEKLY
         if due > incident.get("reminder_level", 0) and route.get("remind") not in (False, "false"):
             action, level = "remind", due
     elif plan_class in ("pending", "clean") and status in ("open", "pending"):
@@ -265,6 +269,63 @@ def _drift(facts, name, row, content, applied):
     return {"environment": name, "slot": DRIFT_SLOT, "result": result, "kind": "drift",
             "action": action, "incident": incident, "level": level, "age": age,
             "detail": {"outputs": outputs}, "fingerprint": fingerprint,
+            "checks": None,
+            "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
+            "sender": incident["sender"] if later else deliver_as or name}
+
+
+def _health(content, entry, stage_results):
+    """How a scheduled plan-only run's plan went: ('failed', the step or None), ('unread', None) when it ran but
+    its changes cannot be read, ('read', None), or (None, None) when it did not run, a cancelled run included."""
+    if content is None:
+        return ("failed" if stage_results.get(str(entry["stage"])) == "failure" else None), None
+    for step in STEPS_BEFORE_APPLY:
+        if _outcome(content, step) == "failure":
+            return "failed", step
+    if _outcome(content, "plan") != "success":
+        return None, None
+    outputs = _plan_outputs(content)
+    plan_class = outputs.get("plan-class")
+    # A parser without plan-class says it could not read the plan with counts of '?'.
+    unread = plan_class == "unknown" if plan_class else outputs.get("count-total") == "?"
+    return ("unread" if unread else "read"), None
+
+
+def _schedule(facts, name, row, entry, content):
+    """The environment's schedule slot (Drift-detection.md D6), or None when nothing changes: the counts of its
+    scheduled plan's failed and unreadable runs in a row, and the incident the second failure or the third
+    unreadable plan opens."""
+    if facts["event"] != "schedule" or "apply" in row["goals-granted"]:
+        return None
+    health, step = _health(content, entry, facts["stage_results"])
+    if health is None:
+        return None
+    incident = _incident(facts, name, SCHEDULE_SLOT)
+    status = incident["status"] if incident else "none"
+    stored = ((facts["state"] or {}).get("checks") or {}).get(name.lower()) or {}
+    before = {"failed": stored.get("failed", 0), "unread": stored.get("unread", 0)}
+    counts = {"failed": before["failed"] + 1 if health == "failed" else 0,
+              "unread": before["unread"] + 1 if health == "unread" else 0}
+    kind = "scheduled-failed" if counts["failed"] >= FAILED_RUNS else \
+        "drift-check-failing" if counts["unread"] >= UNREAD_RUNS else None
+    route, deliver_as = _route(row, kind)
+    action, level, age = "none", None, None
+    if kind and status in ("none", "resolved", "pending"):
+        action = "none" if route.get("off") in (True, "true") else "open"
+    elif health == "read" and status in ("open", "pending"):
+        action = "resolve"
+    elif status == "open":
+        age = working_days(incident["opened_at"], facts["now"])
+        due = age // WEEKLY
+        if due > incident.get("reminder_level", 0) and _route(row, incident["kind"])[0].get("remind") \
+                not in (False, "false"):
+            action, level = "remind", due
+    if action == "none" and counts == before:
+        return None
+    later = action in ("resolve", "remind")
+    return {"environment": name, "slot": SCHEDULE_SLOT, "result": health, "kind": kind if action == "open" else None,
+            "action": action, "incident": incident, "level": level, "age": age,
+            "detail": {"step": step, "counts": counts}, "fingerprint": None, "checks": counts,
             "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
             "sender": incident["sender"] if later else deliver_as or name}
 
@@ -301,11 +362,12 @@ def _plan(facts):
         later = action in ("reply", "resolve", "remind")
         observations.append({"environment": name, "slot": SLOT, "result": result, "detail": detail, "kind": kind,
                              "action": action, "incident": incident, "route": route, "level": level, "age": age,
-                             "fingerprint": None,
+                             "fingerprint": None, "checks": None,
                              "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
                              "sender": incident["sender"] if later else deliver_as or name})
         drift = _drift(facts, name, row, facts["metadata"].get(name), result == "applied")
-        observations += [drift] if drift else []
+        schedule = _schedule(facts, name, row, entry, facts["metadata"].get(name))
+        observations += [each for each in (drift, schedule) if each]
     seen = {observation["environment"].lower() for observation in observations}
     names = {name.lower() for name in facts["senders"]}
     incidents = facts["state"]["incidents"] if facts["state"] else {}
@@ -315,7 +377,7 @@ def _plan(facts):
             continue
         observations.append({"environment": environment, "slot": slot, "result": "removed", "kind": None,
                              "action": "resolve", "incident": incident, "alias": incident["alias"],
-                             "sender": incident["sender"], "fingerprint": None})
+                             "sender": incident["sender"], "fingerprint": None, "checks": None})
     return observations
 
 
@@ -452,6 +514,31 @@ def _render_drift(facts, observation, link):
     return "\n\n".join(lines + [link]) + "\n"
 
 
+def _render_schedule(facts, observation, link):
+    name, repository, action = observation["environment"], facts["repository"], observation["action"]
+    incident, detail = observation["incident"], observation["detail"]
+    unseen = "drift and a default branch that is not applied go unseen."
+    if action == "resolve":
+        lines = [f"✅ **Scheduled plan works** in `{name}` · {repository}",
+                 f"The scheduled plan of `{name}` ran and was read: the incident opened at "
+                 f"{_when(incident['opened_at'])} is resolved."]
+    elif action == "remind":
+        days = observation["age"]
+        lines = [f"⏰ **Scheduled plan still failing** in `{name}` · {repository}",
+                 f"The scheduled plan of `{name}` has not worked for {days} working days, "
+                 f"since {_when(incident['opened_at'])}."]
+    elif observation["kind"] == "scheduled-failed":
+        where = f"at the `{detail['step']}` step" if detail["step"] else "without reporting its steps"
+        lines = [f"❌ **Scheduled plan failed** in `{name}` · {repository}",
+                 f"The scheduled plan of `{name}` failed {detail['counts']['failed']} times in a row, the last {where}: "
+                 f"{unseen}", "Found by the scheduled run."]
+    else:
+        lines = [f"⚠️ **Drift check failing** in `{name}` · {repository}",
+                 f"The scheduled plan of `{name}` could not be read {detail['counts']['unread']} times in a row: "
+                 f"{unseen}", "Found by the scheduled run."]
+    return "\n\n".join(lines + [link]) + "\n"
+
+
 def render(facts, observation):
     """The message, markdown text (D23): a first line that says what and where, why, who, and the run.
     The repository is plain text: Teams draws a code span as a box, and an owner/name is letters, digits,
@@ -462,6 +549,8 @@ def render(facts, observation):
     action = observation["action"]
     if observation["slot"] == DRIFT_SLOT and observation["result"] != "removed":
         return _render_drift(facts, observation, link)
+    if observation["slot"] == SCHEDULE_SLOT and observation["result"] != "removed":
+        return _render_schedule(facts, observation, link)
     if action == "resolve":
         since = _when(observation["incident"]["opened_at"])
         if observation["result"] == "removed":
@@ -553,7 +642,8 @@ def decide(facts):
                          "action": action, "event": event_id, "people": people, "alias": observation["alias"],
                          "sender": observation["sender"], "sending": sending,
                          "mentioned": _chosen(facts, observation) if action == "open" else [],
-                         "reminder_level": observation.get("level"), "fingerprint": observation["fingerprint"]})
+                         "reminder_level": observation.get("level"), "fingerprint": observation["fingerprint"],
+                         "checks": observation["checks"]})
     parts = []
     if table:
         parts.append("\n".join(["| Environment | What | Sent |", "|---|---|---|", *table]))

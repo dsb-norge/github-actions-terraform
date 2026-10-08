@@ -455,7 +455,10 @@ run, so a re-run of an old commit, or an earlier run finishing last, cannot reop
 resolved. `people` is everyone the opening push named (§5) and `mentioned` those its route chose to
 mention (§6.2); `reminder_level` and `reminded_at` are the last reminder the relay accepted (§10);
 `fingerprint` is the finding a `drift` incident last reported ([Drift-detection.md](Drift-detection.md)
-D4), null in the `apply` slot.
+D4), null in the `apply` slot. Beside the incidents, `checks` holds per environment the counts of
+its scheduled plan's failed and unreadable runs in a row, with the run that last counted them,
+`{"prod": {"failed": 1, "unread": 0, "seen_run": 415}}`; a count back at zero is dropped, and an
+older run never overwrites a newer count ([Drift-detection.md](Drift-detection.md) D6).
 A document written before reminders lacks the last four: no reminder yet, and `people` in place of
 `mentioned`. A resolved incident stays as a tombstone for 30 days, then is dropped; deleting a cache
 entry would need `actions: write`, beyond the callers' grant. A stored document of another

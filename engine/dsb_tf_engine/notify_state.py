@@ -17,7 +17,9 @@ def valid(document):
     is started over, never misread."""
     if not (isinstance(document, dict) and document.get("schema_version") == SCHEMA_VERSION
             and isinstance(document.get("incidents"), dict)
-            and all(isinstance(each, dict) for each in document["incidents"].values())):
+            and all(isinstance(each, dict) for each in document["incidents"].values())
+            and isinstance(document.get("checks", {}), dict)
+            and all(isinstance(each, dict) for each in document.get("checks", {}).values())):
         return None
     return document
 
@@ -27,7 +29,18 @@ def merge(state, observations, results, run_number, now, cutoff):
     before = valid(state) or {"schema_version": SCHEMA_VERSION, "incidents": {}}
     # A copy, through JSON: the document is JSON, and the core imports nothing else to copy it.
     incidents = json.loads(json.dumps(before["incidents"]))
+    # The counts of a scheduled plan's failed and unreadable runs in a row, per environment (Drift-detection.md
+    # D6); a document without any has none.
+    checks = json.loads(json.dumps(before["checks"])) if "checks" in before else None
     for observation in observations:
+        counts, environment = observation["checks"], observation["environment"].lower()
+        stored = (checks or {}).get(environment)
+        if counts is not None and (stored is None or stored["seen_run"] <= run_number):
+            if counts["failed"] or counts["unread"]:
+                checks = {} if checks is None else checks
+                checks[environment] = {**counts, "seen_run": run_number}
+            elif stored is not None:
+                del checks[environment]
         key = f"{observation['environment'].lower()}/{observation['slot']}"
         incident = incidents.get(key)
         if incident is not None and incident["seen_run"] > run_number:
@@ -59,4 +72,6 @@ def merge(state, observations, results, run_number, now, cutoff):
                 if incident["status"] == "resolved" and (incident["resolved_at"] or "") < cutoff]:
         del incidents[key]
     after = {"schema_version": SCHEMA_VERSION, "incidents": incidents}
+    if checks is not None:
+        after["checks"] = checks
     return after, json.dumps(after, sort_keys=True) != json.dumps(before, sort_keys=True)
