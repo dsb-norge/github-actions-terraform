@@ -694,6 +694,12 @@ A minor release.
   protection rules. A cancelled apply and a protected sender were not run there; both are unit
   tested.
 
+  With the identity App and `TF_NOTIFY_PEOPLE_DOMAINS` set on the test bed, a merge whose apply
+  failed opened two incidents whose messages named the pull request's author and merger by display
+  name, and whose events listed that person once in `mentions` with an object ID; the decide job
+  minted the token for the organisation with Organization administration read and warned of
+  nothing. The recovery's two resolutions mentioned nobody.
+
 Teams behaviour verified against the relay's test instance, posting as its bot through the Bot
 Framework API: mentions by object ID and by UPN render and notify in cards and text replies, and
 survive an update; an unresolvable mention shifts the others (P2); replies to a message ID and
