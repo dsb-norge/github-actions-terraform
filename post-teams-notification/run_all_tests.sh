@@ -128,6 +128,7 @@ setup() {
   export input_idempotency_key="o/r/101/1/prod/apply/open"
   export input_dry_run="false"
   export input_mentions_file=""
+  export input_direct_to=""
 }
 
 teardown() {
@@ -421,6 +422,47 @@ for broken in missing not-json object; do
     bash -c "[ $(request_count) -eq 0 ] && grep -qxF '::warning title=Teams notification not sent::tf-alerts — the mentions file ${MENTIONS} is not a JSON list' '${OUT_FILE}'"
   teardown
 done
+
+# ----------------------------------------------------------------------
+# P14 — a direct message goes to /v1/send, to one person by object ID
+# ----------------------------------------------------------------------
+setup
+start_relay '[{"status": 202, "body": {"messageId": "msg-d"}}]'
+export input_direct_to="72d8e6a5-ca8b-4770-8b07-03fea54be3cf"
+run_step
+assert "P14: posted to <bot-url>/v1/send" test "$(request_field 1 .path)" = "/api/v1/send"
+assert "P14: to the person, as text, the message as it is" \
+  test "$(request_field 1 '.body | fromjson | [.target.type, .target.userId, .format, (.message | startswith("**Apply failed**"))] | map(tostring) | join(",")')" = "personal,72d8e6a5-ca8b-4770-8b07-03fea54be3cf,text,true"
+assert "P14: with the idempotency key" test "$(request_field 1 '.headers["idempotency-key"]')" = "o/r/101/1/prod/apply/open"
+assert "P14: accepted" test "$(get_output accepted)" = "true"
+teardown
+
+for refused in reply-to mentions not-an-id; do
+  setup
+  start_relay '[{"status": 202, "body": {"messageId": "x"}}]'
+  export input_direct_to="72d8e6a5-ca8b-4770-8b07-03fea54be3cf"
+  case "${refused}" in
+    reply-to) export input_reply_to="msg-root"; reason="a direct message takes no reply-to: a personal chat has no threads" ;;
+    mentions)
+      printf '%s' '[{"key":"p1","id":"oid-1","name":"Jane Doe"}]' >"${RUNNER_TEMP}/m.json"
+      export input_mentions_file="${RUNNER_TEMP}/m.json"; reason="a direct message takes no mentions: a personal chat cannot show them" ;;
+    not-an-id) export input_direct_to="jane.doe@example.org/../x"; reason="direct-to is not an Entra object ID" ;;
+  esac
+  run_step
+  assert "P14: a direct message with ${refused}: no request, a warning" \
+    bash -c "[ $(request_count) -eq 0 ] && grep -qxF '::warning title=Teams notification not sent::tf-alerts — ${reason}' '${OUT_FILE}'"
+  teardown
+done
+
+setup
+start_relay '[{"status": 202, "body": {"messageId": "x"}}]'
+printf '%s\n' '[]' >"${RUNNER_TEMP}/m.json"
+export input_mentions_file="${RUNNER_TEMP}/m.json"
+export input_direct_to="72d8e6a5-ca8b-4770-8b07-03fea54be3cf"
+run_step
+assert "P14: an empty mentions list beside a direct message is no mention" \
+  bash -c "[ $(request_count) -eq 1 ] && [ \"\$(jq -r '.body | fromjson | has(\"mentions\")' <(head -n 1 '${_work}/requests.jsonl'))\" = false ]"
+teardown
 
 # ----------------------------------------------------------------------
 # P12 — a refused token says what to check; the platform's 401 has no body

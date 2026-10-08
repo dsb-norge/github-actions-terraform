@@ -6,8 +6,7 @@ environment on the default branch is left unapplied with nobody watching (an app
 a merge, a stage held back, a cancelled run), a message reaches the right Teams channel and names, and
 later mentions, the people whose change it was.
 
-Status: **built, with threads and mentions on a relay of 2.2.1 or later (§9, §13), but for direct
-messages (D11), which come next. Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+Status: **built, with threads, mentions and direct messages on a relay of 2.2.1 or later (§9, §13). Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -206,7 +205,7 @@ notifications-yml: |
 | `defaults`, `kinds.<kind>` | | the routing of every kind, and of one kind; the keys below |
 | `alias` | `TF_NOTIFY_ALIAS` | the channel |
 | `mention` | `[author]` | which of the named people (§5) are mentioned: `author`, `merger` |
-| `direct` | `[]` | who also gets a direct message, once the relay supports it |
+| `direct` | `[]` | who also gets the opening message directly, when a push opens the incident: `author`, `merger` |
 | `remind` | `true` | `false` turns reminders off |
 | `off` | `false` | `true` sends nothing for the kind |
 
@@ -343,17 +342,17 @@ The core writes:
 | `events/<id>.mentions.json` | the relay's `mentions` for it, `[{"key", "id", "name"}]`, the object ID as `id`; `[]` when it mentions nobody |
 | `observations.json` | `run_number` and, per environment and slot, what this run saw and did, for the record job |
 | `summary.md` | sent, not sent and why; also appended to the step summary |
-| `deliver-matrix-json` | `{"include": [...]}`, one row per message: `id`, `sender`, its `github-environment`, the deliver job's `runs-on`, `alias`, `reply-to`, `update`, `idempotency-key`, and the sender's `extra-envs` and `extra-envs-from-secrets` (§7's `senders`) |
+| `deliver-matrix-json` | `{"include": [...]}`, one row per message: `id`, `sender`, its `github-environment`, the deliver job's `runs-on`, `alias`, `reply-to`, `update`, `direct-to` (a direct message's object ID, else empty), `idempotency-key`, and the sender's `extra-envs` and `extra-envs-from-secrets` (§7's `senders`) |
 | `deliver-count` | the number of rows |
 
 ```json
 {"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed",
  "action": "open", "alias": "tf-alerts", "reply_to": null, "update": null, "sender": "prod",
  "idempotency_key": "9f2c…", "message": "e1.md",
- "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe", "key": "p1"}]}
+ "mentions": [{"login": "jdoe", "object_id": "…", "name": "Jane Doe", "key": "p1"}], "to": null}
 ```
 
-`action` is `open`, `reply`, `remind` (§10), `resolve`, `removed` or `update` (§9). The idempotency key is the SHA-256, in
+`action` is `open`, `reply`, `remind` (§10), `resolve`, `removed`, `update` (§9) or `direct` (below). The idempotency key is the SHA-256, in
 lowercase hex, of `<repository>/<run id>/<run attempt>/<environment>/<slot>/<action>`: one key per
 message of a run attempt, so re-running only a deliver job posts nothing twice, and hashed because
 the relay's store refuses `/` in a key and an environment name may be 255 characters. `mentions`
@@ -361,7 +360,14 @@ lists whom the message mentions (§5, §6.2), each with the key the message plac
 `<at>p1</at>` where the person's name would be: empty for a resolution, on a schedule and for anyone
 without an identity in the people domains. Only a person the message writes is mentioned, because
 the relay refuses a mention it cannot place: of a push that merged more than ten pull requests,
-only the people of the ten it lists. Direct messages join the event when they are built. The rules are pure, under the
+only the people of the ten it lists.
+
+A push that opens an incident also messages directly the people its route's `direct` chooses (§6.2),
+each with an identity in the people domains: one event per person, `action` `direct`, with `to`
+(`login`, `object_id`, `name`) and the opening's own text, names written out, since a personal chat
+takes no mentions. Its idempotency key's action is `direct-<login>`. It goes out as the incident's
+sender and is not recorded: the state follows the channel's thread. Nothing else is sent
+directly: no reply, reminder or resolution, and nothing on a schedule, which names nobody. The rules are pure, under the
 engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); the adapter is
 `notify_evidence.py`.
 
@@ -584,7 +590,9 @@ role. A `messageId` that is not a plain ID is not passed on.
 
 `mentions-file` names a JSON list the step sends as the relay's `mentions` when it is not empty: the
 decide job's `events/<id>.mentions.json`. A file that is not a JSON list is not sent, since the
-message places mentions the relay would then refuse. Direct messages (D11) join when they are built.
+message places mentions the relay would then refuse. `direct-to`, an Entra object ID, sends the
+message to that person instead (`POST <bot-url>/v1/send`, `target.type` `personal`); it takes no
+`reply-to` and no mentions, and anything but an object ID is not sent.
 
 The decide job renders the message (D23), paragraphs of markdown text:
 
@@ -793,4 +801,4 @@ nested workflow and its actions included.
    state of §9. Built.
 3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
 4. Reminders (§10). Built; drift's come with [Drift-detection.md](Drift-detection.md).
-5. Threads in place and mentions (relay 2.2.1). Built; direct messages next.
+5. Threads in place, mentions and direct messages (relay 2.2.1). Built.

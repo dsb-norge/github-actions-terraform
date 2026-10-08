@@ -153,7 +153,7 @@ class OpenTest(unittest.TestCase):
         self.assertEqual([{"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed", "action": "open",
                            "alias": "tf-alerts", "reply_to": None, "update": None, "sender": "prod",
                            "idempotency_key": key("o/r", "4711", "1", "prod", "apply", "open"), "message": "e1.md",
-                           "mentions": []}],
+                           "mentions": [], "to": None}],
                          decided["events"])
         self.assertEqual(["❌ **Apply failed** in `prod` · o/r",
                           "",
@@ -169,7 +169,7 @@ class OpenTest(unittest.TestCase):
     def test_the_deliver_row_carries_the_senders_identity_and_nothing_of_the_message(self):
         decided = notify_decide.decide(self.failing())
         self.assertEqual([{"id": "e1", "sender": "prod", "github-environment": "prod", "runs-on": "ubuntu-24.04",
-                           "alias": "tf-alerts", "reply-to": "", "update": "",
+                           "alias": "tf-alerts", "reply-to": "", "update": "", "direct-to": "",
                            "idempotency-key": key("o/r", "4711", "1", "prod", "apply", "open"),
                            "extra-envs": {"ARM_TENANT_ID": "tenant-1"},
                            "extra-envs-from-secrets": {"ARM_CLIENT_ID": "PROD_CLIENT_ID"}}], decided["deliver"])
@@ -1362,6 +1362,65 @@ class CloseUpdateTest(unittest.TestCase):
         decided = notify_decide.decide(facts(state=state(prod__apply=incident()), protection={"prod": True}))
         self.assertEqual([], decided["deliver"])
         self.assertEqual(2, decided["summary"].count("not sent: its sender `prod` has protection rules"))
+
+
+class DirectTest(unittest.TestCase):
+    """Direct messages (§6.2 `direct`, D11): an incident a push opens, to whom the route chooses."""
+
+    def decide(self, notifications=None, **overrides):
+        rows = {"dev": row("dev"), "prod": row("prod", notifications=notifications)}
+        given = {"identities": IDENTITIES, "rows": rows,
+                 "metadata": {"dev": metadata("dev"), "prod": metadata("prod", apply="failure")}, **overrides}
+        return notify_decide.decide(facts(**given))
+
+    def test_an_opening_messages_whom_the_route_chooses_directly(self):
+        decided = self.decide(notifications={"kinds": {"apply-failed": {"direct": "author"}}})
+        self.assertEqual([("e1", "open", None), ("e2", "direct", {"login": "jdoe", "object_id": "oid-jdoe",
+                                                                  "name": "Jane Doe"})],
+                         [(e["id"], e["action"], e.get("to")) for e in decided["events"]])
+        direct = decided["events"][1]
+        self.assertEqual(("tf-alerts", None, None, [], key("o/r", "4711", "1", "prod", "apply", "direct-jdoe")),
+                         (direct["alias"], direct["reply_to"], direct["update"], direct["mentions"],
+                          direct["idempotency_key"]))
+        # The channel's message, with names written out: a personal chat takes no mentions.
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by Jane Doe, merged by "
+                         "Ola Nordmann.", decided["messages"]["e2.md"].split("\n")[4])
+        self.assertEqual([("e1", ""), ("e2", "oid-jdoe")], [(d["id"], d["direct-to"]) for d in decided["deliver"]])
+        self.assertIn("| `prod` | apply failed, directly | to Jane Doe as `prod` |", decided["summary"])
+        self.assertEqual(["e1"], [o["event"] for o in decided["observations"] if o["environment"] == "prod"])
+
+    def test_authors_then_mergers_each_once(self):
+        prs = [{"number": 7, "title": "", "author": "jdoe", "merged_by": "asmith"},
+               {"number": 8, "title": "", "author": "asmith", "merged_by": "jdoe"}]
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": prs, "pusher": None},
+                              notifications={"defaults": {"direct": ["merger", "author"]}})
+        self.assertEqual(["jdoe", "asmith"], [e["to"]["login"] for e in decided["events"] if e["action"] == "direct"])
+
+    def test_the_merger_alone(self):
+        decided = self.decide(notifications={"kinds": {"apply-failed": {"direct": "merger"}}})
+        self.assertEqual(["asmith"], [e["to"]["login"] for e in decided["events"] if e["action"] == "direct"])
+
+    def test_only_people_with_an_identity_in_the_people_domains(self):
+        prs = [{"number": 7, "title": "", "author": "kim", "merged_by": "lee"}]
+        decided = self.decide(people={"available": True, "error": None, "pull_requests": prs, "pusher": None},
+                              notifications={"defaults": {"direct": ["author", "merger"]}})
+        self.assertEqual(["open"], [e["action"] for e in decided["events"]])
+
+    def test_nobody_by_default_and_never_but_for_an_opening_on_a_push(self):
+        self.assertEqual(["open"], [e["action"] for e in self.decide()["events"]])
+        routed = {"defaults": {"direct": ["author"]}}
+        reply = self.decide(notifications=routed, state=state(prod__apply=incident()))
+        self.assertEqual(["reply"], [e["action"] for e in reply["events"]])
+        scheduled = self.decide(notifications=routed, event="schedule", people=None)
+        self.assertEqual(["open"], [e["action"] for e in scheduled["events"]])
+        resolved = notify_decide.decide(facts(identities=IDENTITIES, state=state(prod__apply=incident()),
+                                              rows={"dev": row("dev"), "prod": row("prod", notifications=routed)}))
+        self.assertNotIn("direct", [e["action"] for e in resolved["events"]])
+
+    def test_a_sender_that_cannot_send_sends_no_direct_message_either(self):
+        decided = self.decide(notifications={"defaults": {"direct": ["author"]}}, protection={"prod": True})
+        self.assertEqual([], decided["deliver"])
+        self.assertIn("| `prod` | apply failed, directly | not sent: its sender `prod` has protection rules", decided["summary"])
 
 
 class WantedTest(unittest.TestCase):

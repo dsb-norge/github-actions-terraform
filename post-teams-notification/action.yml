@@ -1,7 +1,7 @@
 name: "Post a Teams notification"
 description: |
   Posts one markdown text message to a Teams notification relay
-  (POST <bot-url>/v1/notify/<alias>), authenticated with a token az gets for
+  (POST <bot-url>/v1/notify/<alias>, or to one person with direct-to), authenticated with a token az gets for
   bot-audience as the identity the job is logged in with. Retries 429, 5xx
   and no answer up to three times within 180 seconds, and never fails the
   job: a notification that cannot be sent is a warning and accepted=false.
@@ -40,6 +40,13 @@ inputs:
       empty list: no mentions. Anything but a JSON list is not sent.
     required: false
     default: ""
+  direct-to:
+    description: |
+      An Entra object ID: the message goes to that person directly (POST <bot-url>/v1/send,
+      relay 2.2.1 or later) instead of to the alias, which then only names the warnings. Takes
+      no reply-to and no mentions, which a personal chat has no use for.
+    required: false
+    default: ""
   idempotency-key:
     description: |
       Sent as the Idempotency-Key header, unchanged on retries; the relay
@@ -76,6 +83,7 @@ runs:
         input_idempotency_key: ${{ inputs.idempotency-key }}
         input_dry_run: ${{ inputs.dry-run }}
         input_mentions_file: ${{ inputs.mentions-file }}
+        input_direct_to: ${{ inputs.direct-to }}
       run: |
         # Post the message to the Teams notification relay
         set -o allexport

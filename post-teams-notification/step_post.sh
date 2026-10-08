@@ -26,6 +26,7 @@
 #   input_idempotency_key  - Idempotency-Key; the relay answers a repeat with its first answer
 #   input_dry_run          - 'true': print the request, send nothing, ask for no token
 #   input_mentions_file    - path of a JSON list sent as the relay's `mentions`
+#   input_direct_to        - an Entra object ID: a direct message to that person (/v1/send), not the alias
 #
 # Outputs:
 #   message-id   - the relay's messageId when it accepted the message
@@ -88,6 +89,21 @@ function validate {
     not_sent "the mentions file ${input_mentions_file} is not a JSON list"
     return 1
   fi
+  if [ -n "${input_direct_to:-}" ]; then
+    # An object ID only: it is what the decide job resolves, and the relay looks a person up by it.
+    if ! [[ "${input_direct_to}" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]]; then
+      not_sent "direct-to is not an Entra object ID"
+      return 1
+    fi
+    if [ -n "${input_reply_to:-}" ]; then
+      not_sent "a direct message takes no reply-to: a personal chat has no threads"
+      return 1
+    fi
+    if [ -n "${input_mentions_file:-}" ] && jq -e 'length > 0' "${input_mentions_file}" >/dev/null; then
+      not_sent "a direct message takes no mentions: a personal chat cannot show them"
+      return 1
+    fi
+  fi
   return 0
 }
 
@@ -97,8 +113,9 @@ function build_body {
   local mentions="${input_mentions_file:-}"
   [ -n "${mentions}" ] || mentions=/dev/null
   jq -n --rawfile message "${input_message_file}" --slurpfile mentions "${mentions}" \
-    --arg reply_to "${input_reply_to:-}" --arg update "${input_update:-}" \
-    '{format: "text", message: $message}
+    --arg reply_to "${input_reply_to:-}" --arg update "${input_update:-}" --arg direct_to "${input_direct_to:-}" \
+    '(if $direct_to != "" then {target: {type: "personal", userId: $direct_to}} else {} end)
+     + {format: "text", message: $message}
      + (if $reply_to != "" then {replyTo: $reply_to} else {} end)
      + (if $update != "" then {update: $update} else {} end)
      + (if ($mentions[0] // []) != [] then {mentions: $mentions[0]} else {} end)' >"${1}"
@@ -218,6 +235,8 @@ function main {
     local work url
     work="$(mktemp -d "${RUNNER_TEMP:-/tmp}/post-teams-notification.XXXXXX")"
     url="${input_bot_url%/}/v1/notify/${input_alias}"
+    # A direct message goes to one person, through no alias (relay 2.2.0).
+    [ -z "${input_direct_to:-}" ] || url="${input_bot_url%/}/v1/send"
     if ! build_body "${work}/body.json"; then
       not_sent "the message file ${input_message_file} could not be encoded"
     elif [ "${input_dry_run:-false}" = 'true' ]; then

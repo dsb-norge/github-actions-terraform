@@ -218,6 +218,16 @@ def _chosen(facts, observation):
     return (authors if "author" in chosen else []) + (mergers if "merger" in chosen else [])
 
 
+def _directed(facts, observation):
+    """Whom an opening on a push also messages directly (§6.2 `direct`, D11): of the push's people, the roles
+    the route chooses, each with an identity in the people domains."""
+    if observation["action"] != "open" or facts["event"] != "push":
+        return []
+    authors, mergers = _roles(facts["people"])
+    chosen = environments.as_list(observation["route"].get("direct", []))
+    return _mentions(facts, (authors if "author" in chosen else []) + (mergers if "merger" in chosen else []))
+
+
 def _reminded(observation):
     """Whom a reminder mentions (§10): at level 1 the people the incident opened mentioning, at level 2 everyone it
     named, later nobody (D24). A state from before reminders mentions everyone named first."""
@@ -632,14 +642,16 @@ def decide(facts):
     """{events, messages, deliver, observations, summary} for the run (§7)."""
     events, messages, deliver, observed, table, notes = [], {}, [], [], [], []
 
-    def post(observation, action, text, mentions, reply_to, update, what):
+    def post(observation, action, text, mentions, reply_to, update, what, to=None):
         """One event, its message, and its deliver row or why it is not sent; returns its ID and whether it is
-        sent."""
+        sent. `to` is the person a direct message goes to, instead of the alias."""
         name, event_id = observation["environment"], f"e{len(events) + 1}"
         event = {"id": event_id, "environment": name, "slot": observation["slot"], "kind": observation["kind"],
                  "action": action, "alias": observation["alias"], "reply_to": reply_to, "update": update,
-                 "sender": observation["sender"], "idempotency_key": _key(facts, name, observation["slot"], action),
-                 "message": f"{event_id}.md", "mentions": mentions}
+                 "sender": observation["sender"],
+                 # One key per person a direct message goes to.
+                 "idempotency_key": _key(facts, name, observation["slot"], f"{action}-{to['login']}" if to else action),
+                 "message": f"{event_id}.md", "mentions": mentions, "to": to}
         events.append(event)
         messages[event["message"]] = text
         why_not = _not_sent(facts, observation)
@@ -650,9 +662,11 @@ def decide(facts):
         deliver.append({"id": event_id, "sender": observation["sender"],
                         "github-environment": sender["github-environment"], "runs-on": facts["runs_on"],
                         "alias": observation["alias"], "reply-to": reply_to or "", "update": update or "",
+                        "direct-to": to["object_id"] if to else "",
                         "idempotency-key": event["idempotency_key"], "extra-envs": sender["extra-envs"],
                         "extra-envs-from-secrets": sender["extra-envs-from-secrets"]})
-        table.append(f"| `{name}` | {what} | to `{observation['alias']}` as `{observation['sender']}` |")
+        where = to["name"] if to else f"`{observation['alias']}`"
+        table.append(f"| `{name}` | {what} | to {where} as `{observation['sender']}` |")
         return event_id, True
 
     for observation in _plan(facts):
@@ -674,6 +688,9 @@ def decide(facts):
             mentions = [mention for mention in candidates if f"<at>{mention['key']}</at>" in text]
             event_id, sending = post(observation, "removed" if removed else action, text, mentions,
                                      incident["message_id"] if action != "open" else None, None, what)
+            # The channel's message, names written out: a personal chat takes no mentions.
+            for person in _directed(facts, observation):
+                post(observation, "direct", render(facts, observation, {}), [], None, None, f"{what}, directly", person)
             if action == "resolve" and incident["message_id"]:
                 post(observation, "update", render_close(facts, observation), [], None, incident["message_id"],
                      f"first message marked {'closed' if removed else 'resolved'}")

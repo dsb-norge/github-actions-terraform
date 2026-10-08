@@ -142,7 +142,7 @@ class DecideTest(unittest.TestCase):
         key = hashlib.sha256(b"o/r/4711/1/prod/apply/open").hexdigest()
         self.assertEqual({"id": "e1", "environment": "prod", "slot": "apply", "kind": "apply-failed", "action": "open",
                           "alias": "tf-alerts", "reply_to": None, "update": None, "sender": "prod",
-                          "idempotency_key": key, "message": "e1.md", "mentions": []},
+                          "idempotency_key": key, "message": "e1.md", "mentions": [], "to": None},
                          json.loads(runner.read(runner.out, "events", "e1.json")))
         self.assertIn("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by jdoe, merged by asmith.",
                       runner.read(runner.out, "events", "e1.md"))
@@ -154,7 +154,7 @@ class DecideTest(unittest.TestCase):
         self.assertEqual("1", outputs["deliver-count"])
         self.assertEqual({"include": [{"id": "e1", "sender": "prod", "github-environment": "prod",
                                        "runs-on": "ubuntu-24.04", "alias": "tf-alerts",
-                                       "reply-to": "", "update": "", "idempotency-key": key,
+                                       "reply-to": "", "update": "", "direct-to": "", "idempotency-key": key,
                                        "extra-envs": {"ARM_TENANT_ID": "t"},
                                        "extra-envs-from-secrets": {"ARM_CLIENT_ID": "PROD_CLIENT_ID"}}]},
                          json.loads(outputs["deliver-matrix-json"]))
