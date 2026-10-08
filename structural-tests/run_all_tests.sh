@@ -2381,8 +2381,10 @@ for job_name, job in jobs.items():
 posts = [s for s in deliver.get("steps", []) if str(s.get("uses", "")).startswith("dsb-norge/github-actions-terraform/post-teams-notification@")]
 EVENT = "${{ runner.temp }}/notify/events/${{ matrix.id }}"
 if len(posts) != 1 or posts[0].get("with", {}).get("message-file") != f"{EVENT}.md" \
-        or posts[0].get("with", {}).get("mentions-file") != f"{EVENT}.mentions.json":
-    problems.append("deliver: the post step does not send the row's event message and its mentions file")
+        or posts[0].get("with", {}).get("mentions-file") != f"{EVENT}.mentions.json" \
+        or posts[0].get("with", {}).get("direct-to") != "${{ matrix.direct-to }}":
+    problems.append("deliver: the post step does not send the row's event message, its mentions file and its "
+                    "direct-to")
 print("checked the three jobs of terraform-notify.yml")
 for problem in problems:
     print(f"PROBLEM {problem}")

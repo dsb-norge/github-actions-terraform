@@ -151,6 +151,8 @@ jobs:
           mentions-file: ${{ runner.temp }}/notify/events/${{ matrix.id }}.mentions.json
           reply-to: ${{ matrix.reply-to }}
           update: ${{ matrix.update }}
+          # An Entra object ID on a direct message's row: the message goes to that person, not the alias.
+          direct-to: ${{ matrix.direct-to }}
           idempotency-key: ${{ matrix.idempotency-key }}
       - name: "📝 Write the relay's answer"
         if: always()
