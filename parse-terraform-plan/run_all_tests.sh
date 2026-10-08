@@ -605,6 +605,12 @@ run_json_test "JS34: an unapplied moved block is one move" \
 run_json_test "JS35: an unapplied import block is one import" \
   "${_td}/plan_json_import_unapplied.log" "${_td}/plan_json_import_unapplied.json" \
                                                           "1" "0" "0" "0" "0" "0"
+run_json_test "JS36: attribute drift changed back and a deleted resource created again" \
+  "${_td}/plan_json_drift_attributes.log" "${_td}/plan_json_drift_attributes.json" \
+                                                          "0" "1" "1" "0" "0" "0"
+run_json_test "JS37: drift under ignore_changes alone changes nothing" \
+  "${_td}/plan_json_drift_ignored.log" "${_td}/plan_json_drift_ignored.json" \
+                                                          "0" "0" "0" "0" "0" "0"
 
 # --------------------------------------------------
 # DC1–DC20: the classification of a JSON plan (docs/Drift-detection.md §4,
@@ -749,6 +755,17 @@ jq -c 'del(.resource_drift)' "${_td}/plan_json_pending_create.json" >"${_derived
 run_class_test "DC20: a plan without resource_drift has no drift" \
   "${_derived}/no_drift_key.json"                          pending 0     0       true    '[]' \
   "terraform_data.extra create"
+# DC20a–DC20b: real attribute drift, recorded with the GitHub provider: one
+# value changed by hand and planned back, one changed by hand under
+# ignore_changes, one deleted by hand and planned again; then the ignored one
+# changed alone, which Terraform plans as "No changes".
+run_class_test "DC20a: attribute drift a planned update reverts is drift; drift under ignore_changes is ignored" \
+  "${_td}/plan_json_drift_attributes.json"                 drift   2     1       false \
+  '["github_actions_variable.deleted","github_actions_variable.reverted"]' \
+  "github_actions_variable.deleted create" "github_actions_variable.deleted drifted" \
+  "github_actions_variable.reverted drifted" "github_actions_variable.reverted update"
+run_class_test "DC20b: drift under ignore_changes alone is clean, and counted apart" \
+  "${_td}/plan_json_drift_ignored.json"                    clean   0     1       false   '[]'
 
 # DC21–DC27: nothing the classification answers is taken on trust. A copy of
 # the action whose classifying helpers are replaced; the counts stay real.

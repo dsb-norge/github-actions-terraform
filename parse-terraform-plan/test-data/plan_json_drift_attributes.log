@@ -1,0 +1,30 @@
+github_actions_variable.ignored: Refreshing state... [id=example-repo:DRIFT_PROBE_IGNORED]
+github_actions_variable.reverted: Refreshing state... [id=example-repo:DRIFT_PROBE_REVERTED]
+github_actions_variable.deleted: Refreshing state... [id=example-repo:DRIFT_PROBE_DELETED]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # github_actions_variable.deleted will be created
+  + resource "github_actions_variable" "deleted" {
+      + created_at    = (known after apply)
+      + id            = (known after apply)
+      + repository    = "example-repo"
+      + repository_id = (known after apply)
+      + updated_at    = (known after apply)
+      + value         = "set by terraform"
+      + variable_name = "DRIFT_PROBE_DELETED"
+    }
+
+  # github_actions_variable.reverted will be updated in-place
+  ~ resource "github_actions_variable" "reverted" {
+        id            = "example-repo:DRIFT_PROBE_REVERTED"
+      ~ value         = "changed by hand" -> "set by terraform"
+        # (5 unchanged attributes hidden)
+    }
+
+Plan: 1 to add, 1 to change, 0 to destroy.
