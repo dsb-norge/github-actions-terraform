@@ -11,9 +11,10 @@ CUTOFF = "2026-09-07T12:00:00Z"
 
 
 def observation(action="open", environment="prod", result="failed", kind="apply-failed", event="e1", people=("jdoe",),
-                alias="tf-alerts", sender="prod"):
+                alias="tf-alerts", sender="prod", mentioned=("jdoe",), reminder_level=None):
     return {"environment": environment, "slot": "apply", "result": result, "kind": kind, "action": action,
-            "event": event, "people": list(people), "alias": alias, "sender": sender}
+            "event": event, "people": list(people), "alias": alias, "sender": sender, "mentioned": list(mentioned),
+            "reminder_level": reminder_level}
 
 
 def incident(status="open", message_id="msg-1", seen_run=40, opened_run=40, kind="apply-failed", resolved_at=None):
@@ -35,7 +36,8 @@ class OpenTest(unittest.TestCase):
         state, changed = merge(None, [observation()], accepted())
         self.assertEqual({"schema_version": 1, "incidents": {"prod/apply": {
             "kind": "apply-failed", "status": "open", "message_id": "msg-9", "alias": "tf-alerts", "sender": "prod",
-            "opened_at": NOW, "opened_run": 42, "seen_run": 42, "people": ["jdoe"], "resolved_at": None}}}, state)
+            "opened_at": NOW, "opened_run": 42, "seen_run": 42, "people": ["jdoe"], "resolved_at": None,
+            "mentioned": ["jdoe"], "reminder_level": 0, "reminded_at": None}}}, state)
         self.assertTrue(changed)
 
     def test_an_open_the_relay_did_not_accept_is_pending(self):
@@ -115,6 +117,23 @@ class LaterTest(unittest.TestCase):
     def test_the_same_run_again_is_applied(self):
         state, _ = merge(self.given(seen_run=42), [observation("resolve", result="applied")], run=42)
         self.assertEqual("resolved", state["incidents"]["prod/apply"]["status"])
+
+
+class RemindTest(unittest.TestCase):
+    def given(self, **kwargs):
+        return {"schema_version": 1, "incidents": {"prod/apply": incident(**kwargs)}}
+
+    def test_an_accepted_reminder_moves_the_level_on(self):
+        state, changed = merge(self.given(), [observation("remind", reminder_level=2)], accepted())
+        self.assertEqual({**incident(), "reminder_level": 2, "reminded_at": NOW, "seen_run": 42},
+                         state["incidents"]["prod/apply"])
+        self.assertTrue(changed)
+
+    def test_a_reminder_the_relay_did_not_accept_is_due_again(self):
+        for results in ({}, {"e1": {"accepted": False, "message_id": None}}):
+            with self.subTest(results=results):
+                state, _ = merge(self.given(), [observation("remind", reminder_level=1)], results)
+                self.assertEqual({**incident(), "seen_run": 42}, state["incidents"]["prod/apply"])
 
 
 class TombstoneTest(unittest.TestCase):

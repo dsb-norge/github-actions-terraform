@@ -165,9 +165,9 @@ def people_domains(text):
     return [domain.strip().lstrip("@").lower() for domain in text.split(",") if domain.strip()]
 
 
-def _identities(tools, facts, environ, log):
-    """The identities of the people a run names, when the identity App and the domains are both set."""
-    logins = notify_decide.named(facts["people"])
+def _identities(tools, facts, logins, environ, log):
+    """The identities of the people a run names or reminds of, when the identity App and the domains are both
+    set."""
     token = environ.get("NOTIFY_IDENTITY_TOKEN", "")
     if not logins or not (token or facts["people_domains"]):
         return None
@@ -279,7 +279,7 @@ def _write(path, text):
 
 
 def run_decide(metadata_pattern, matrix_file, relevance_file, stage_results_file, state_file, out_dir, environ, stream,
-               tools):
+               tools, clock):
     """The decide step: 0 with deliver-matrix-json and deliver-count published, 1 on a fault."""
     log = workflow.Log(stream, DECIDE_TITLE)
     try:
@@ -307,12 +307,14 @@ def run_decide(metadata_pattern, matrix_file, relevance_file, stage_results_file
     facts = {"repository": environ["GITHUB_REPOSITORY"], "server_url": environ["GITHUB_SERVER_URL"],
              "event": environ["GITHUB_EVENT_NAME"], "run": run, "target": notify["target"],
              "senders": notify["senders"], "runs_on": notify["runs-on"], "environments": relevance["environments"],
-             "rows": rows, "metadata": metadata, "stage_results": stage_results, "state": state,
+             "rows": rows, "metadata": metadata, "stage_results": stage_results, "state": state, "now": _stamp(clock()),
              "people_domains": people_domains(environ.get("NOTIFY_PEOPLE_DOMAINS", ""))}
     wanted = notify_decide.wanted(facts)
     facts["people"] = gather_people(tools, facts["repository"], payload, notify_decide.path(
         payload, "repository", "default_branch")) if wanted["people"] else None
-    facts["identities"] = _identities(tools, facts, environ, log)
+    # A push names people and reminds nobody, a schedule the reverse: the two lists never overlap.
+    facts["identities"] = _identities(tools, facts, notify_decide.named(facts["people"]) + wanted["reminded"],
+                                      environ, log)
     facts["protection"] = {name: protected(tools, facts["repository"], name) for name in wanted["protection"]}
     decided = notify_decide.decide(facts)
 

@@ -109,6 +109,7 @@ class Runner:
                         "GITHUB_EVENT_PATH": self.payload, "GITHUB_OUTPUT": self.output_file,
                         "GITHUB_STEP_SUMMARY": self.summary_file, **(environ or {})}
         self.log = io.StringIO()
+        self.clock = CLOCK
 
     def write(self, name, content):
         path = os.path.join(self.dir, name)
@@ -119,7 +120,7 @@ class Runner:
     def decide(self, tools):
         self.tools = tools
         return notify_evidence.run_decide(self.metadata_pattern, self.matrix, self.relevance, self.stages, self.state,
-                                          self.out, self.environ, self.log, tools)
+                                          self.out, self.environ, self.log, tools, self.clock)
 
     def read(self, *parts):
         with open(os.path.join(*parts), encoding="utf-8") as handle:
@@ -484,6 +485,36 @@ class IdentityDecideTest(unittest.TestCase):
         self.assertEqual([], notify_evidence.people_domains(""))
 
 
+class ReminderDecideTest(unittest.TestCase):
+    """A scheduled run reminds of an open incident (§10), with the run's clock and the people it mentions."""
+
+    def runner(self, environ=None):
+        opened = {"kind": "apply-failed", "status": "open", "message_id": "msg-1", "alias": "tf-alerts",
+                  "sender": "prod", "opened_at": "2026-10-05T08:30:00Z", "opened_run": 40, "seen_run": 40,
+                  "people": ["jdoe", "asmith"], "resolved_at": None, "mentioned": ["jdoe"], "reminder_level": 0,
+                  "reminded_at": None}
+        return Runner(self, state={"schema_version": 1, "incidents": {"prod/apply": opened}},
+                      environ={"GITHUB_EVENT_NAME": "schedule", **(environ or {})})
+
+    def test_a_working_day_after_it_opened_a_schedule_reminds(self):
+        runner = self.runner(WITH_APP)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API, IDENTITIES)))
+        event = json.loads(runner.read(runner.out, "events", "e1.json"))
+        self.assertEqual(("remind", "msg-1", [{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}]),
+                         (event["action"], event["reply_to"], event["mentions"]))
+        self.assertEqual("⏰ **Still not applied** in `prod` · o/r",
+                         runner.read(runner.out, "events", "e1.md").split("\n")[0])
+        self.assertIn("The change was by Jane Doe and Ola Nordmann.", runner.read(runner.out, "events", "e1.md"))
+        self.assertEqual(["login=jdoe", "login=asmith"], [call[8] for call in runner.tools.calls if call[2] == "graphql"])
+        self.assertEqual(1, json.loads(runner.read(runner.out, "observations.json"))["observations"][0]["reminder_level"])
+
+    def test_the_day_after_it_opened_nothing_is_due(self):
+        runner = self.runner()
+        runner.clock = lambda: datetime.datetime(2026, 10, 6, 23, 0, 0, tzinfo=datetime.timezone.utc)
+        self.assertEqual(0, runner.decide(FakeTools(PEOPLE_API)))
+        self.assertEqual("0", runner.outputs()["deliver-count"])
+
+
 class IdentityTest(unittest.TestCase):
     def gather(self, answers, logins=("jdoe",)):
         tools = FakeTools(identities=answers)
@@ -609,7 +640,8 @@ class RecordTest(unittest.TestCase):
 
     def observation(self, event="e1", sending=True):
         return {"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed", "action": "open",
-                "event": event, "people": ["jdoe"], "alias": "tf-alerts", "sender": "prod", "sending": sending}
+                "event": event, "people": ["jdoe"], "alias": "tf-alerts", "sender": "prod", "sending": sending,
+                "mentioned": ["jdoe"], "reminder_level": None}
 
     def test_an_accepted_delivery_opens_the_incident_and_the_state_changed(self):
         self.assertEqual(0, self.record([self.observation()], [{"id": "e1", "accepted": "true",

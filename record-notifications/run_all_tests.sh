@@ -53,7 +53,7 @@ make_sandbox() {
   mkdir -p "${SANDBOX}/ws" "${SANDBOX}/results" "${SANDBOX}/state"
   cat >"${SANDBOX}/observations.json" <<'EOF'
 {"run_number": 42, "observations": [{"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed",
- "action": "open", "event": "e1", "people": ["jdoe"], "alias": "tf-alerts", "sender": "prod", "sending": true}]}
+ "action": "open", "event": "e1", "people": ["jdoe"], "alias": "tf-alerts", "sender": "prod", "sending": true, "mentioned": ["jdoe"], "reminder_level": null}]}
 EOF
   echo '{"id": "e1", "accepted": "true", "message_id": "msg-9", "http_status": "202"}' \
     >"${SANDBOX}/results/notify-result-e1.json"

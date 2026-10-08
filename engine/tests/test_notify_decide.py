@@ -220,7 +220,7 @@ class OpenTest(unittest.TestCase):
         self.assertEqual([], decided["events"])
         self.assertEqual([{"environment": "prod", "slot": "apply", "result": "failed", "kind": "apply-failed",
                            "action": "none", "event": None, "people": [], "alias": "tf-alerts", "sender": "prod",
-                           "sending": False}],
+                           "sending": False, "mentioned": [], "reminder_level": None}],
                          [o for o in decided["observations"] if o["environment"] == "prod"])
 
     def test_a_kind_switched_off_opens_nothing(self):
@@ -303,10 +303,11 @@ class TransitionTest(unittest.TestCase):
                           "applied since 2026-10-05 08:30 UTC."],
                          decided["messages"]["e1.md"].split("\n")[:3])
 
-    def test_an_open_incident_failing_again_on_a_schedule_or_a_dispatch_sends_nothing(self):
+    def test_an_open_incident_failing_again_on_a_schedule_before_a_reminder_or_a_dispatch_sends_nothing(self):
         for event in ("schedule", "workflow_dispatch"):
             with self.subTest(event=event):
-                decided = notify_decide.decide(self.failing(event=event, state=state(prod__apply=incident())))
+                decided = notify_decide.decide(self.failing(event=event, now="2026-10-06T12:00:00Z",
+                                                            state=state(prod__apply=incident())))
                 self.assertEqual([], decided["events"])
                 self.assertEqual("none", decided["observations"][1]["action"])
 
@@ -364,7 +365,7 @@ class TransitionTest(unittest.TestCase):
         self.assertEqual([], decided["events"])
         self.assertEqual([{"environment": "qa", "slot": "apply", "result": "removed", "kind": None,
                            "action": "resolve", "event": None, "people": [], "alias": "tf-alerts", "sender": "qa",
-                           "sending": False}],
+                           "sending": False, "mentioned": [], "reminder_level": None}],
                          [o for o in decided["observations"] if o["environment"] == "qa"])
         self.assertIn("`qa`: removed from environments-yml, and its sender `qa` with it; closed without a message",
                       decided["summary"])
@@ -658,21 +659,203 @@ class IdentityTest(unittest.TestCase):
         self.assertEqual([], scheduled["events"][0]["mentions"])
 
 
+class RemindTest(unittest.TestCase):
+    """Reminders on scheduled runs (§10): an open incident in the apply slot, by working days open."""
+
+    def decide(self, now, opened_at="2026-10-05T08:30:00Z", level=None, plan_only=False, notifications=None,
+               status="open", **overrides):
+        opened = incident(status=status, opened_at=opened_at, people=("jdoe", "asmith"))
+        if level is not None:
+            opened["reminder_level"] = level
+        goals = ("init", "plan") if plan_only else ("init", "plan", "apply")
+        rows = {"dev": row("dev"), "prod": row("prod", goals=goals, notifications=notifications)}
+        prod = metadata("prod", **({} if plan_only else {"apply": "failure"}))
+        given = {"event": "schedule", "now": now, "people": None, "rows": rows,
+                 "metadata": {"dev": metadata("dev"), "prod": prod}, "state": state(prod__apply=opened), **overrides}
+        return notify_decide.decide(facts(**given))
+
+    def actions(self, decided):
+        return [(o["environment"], o["action"], o["reminder_level"]) for o in decided["observations"]
+                if o["environment"] == "prod"]
+
+    def test_a_working_day_open_is_the_first_reminder(self):
+        # Opened Monday; Tuesday passed whole by Wednesday.
+        decided = self.decide("2026-10-07T01:00:00Z")
+        self.assertEqual([("prod", "remind", 1)], self.actions(decided))
+        self.assertEqual([("remind", "msg-1", "tf-alerts", "prod", key("o/r", "4711", "1", "prod", "apply", "remind"))],
+                         [(e["action"], e["reply_to"], e["alias"], e["sender"], e["idempotency_key"])
+                          for e in decided["events"]])
+        self.assertEqual(["⏰ **Still not applied** in `prod` · o/r", "",
+                          "`prod` has not been applied for 1 working day, since the apply failed at 2026-10-05 08:30 "
+                          "UTC.", "",
+                          "The change was by jdoe and asmith.", "",
+                          f"[Open the run]({RUN_URL})", ""],
+                         decided["messages"]["e1.md"].split("\n"))
+        self.assertIn("| `prod` | reminder 1 | to `tf-alerts` as `prod` |", decided["summary"])
+
+    def test_the_day_it_opened_and_the_next_are_not_a_working_day_yet(self):
+        for now in ("2026-10-05T23:00:00Z", "2026-10-06T23:59:59Z"):
+            with self.subTest(now=now):
+                self.assertEqual([("prod", "none", None)], self.actions(self.decide(now)))
+
+    def test_a_weekend_is_no_working_day(self):
+        friday = "2026-10-09T15:00:00Z"
+        self.assertEqual([("prod", "none", None)], self.actions(self.decide("2026-10-12T01:00:00Z", opened_at=friday)))
+        self.assertEqual([("prod", "remind", 1)], self.actions(self.decide("2026-10-13T01:00:00Z", opened_at=friday)))
+        saturday = "2026-10-10T10:00:00Z"
+        self.assertEqual([("prod", "remind", 1)], self.actions(self.decide("2026-10-13T01:00:00Z",
+                                                                          opened_at=saturday)))
+
+    def test_the_levels_come_after_one_three_and_every_five_more_working_days(self):
+        # Opened Monday 2026-10-05: three working days have passed by Friday 10-09, eight by Friday 10-16,
+        # thirteen by Friday 10-23.
+        for level, now, expected in ((1, "2026-10-08T01:00:00Z", ("none", None)),
+                                     (1, "2026-10-09T01:00:00Z", ("remind", 2)),
+                                     (2, "2026-10-15T01:00:00Z", ("none", None)),
+                                     (2, "2026-10-16T01:00:00Z", ("remind", 3)),
+                                     (3, "2026-10-22T01:00:00Z", ("none", None)),
+                                     (3, "2026-10-23T01:00:00Z", ("remind", 4)),
+                                     (4, "2026-10-23T01:00:00Z", ("none", None))):
+            with self.subTest(level=level, now=now):
+                self.assertEqual([("prod", *expected)], self.actions(self.decide(now, level=level)))
+
+    def test_a_late_first_schedule_reminds_once_at_the_level_due(self):
+        decided = self.decide("2026-10-19T01:00:00Z")
+        self.assertEqual([("prod", "remind", 3)], self.actions(decided))
+        self.assertEqual("`prod` has not been applied for 9 working days, since the apply failed at 2026-10-05 08:30 "
+                         "UTC.", decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_each_kind_says_what_happened(self):
+        for kind, what in (("apply-cancelled", "the apply was cancelled"), ("held-back", "its stage was held back")):
+            with self.subTest(kind=kind):
+                opened = incident(kind=kind)
+                decided = self.decide("2026-10-07T01:00:00Z", state=state(prod__apply=opened), plan_only=True)
+                self.assertEqual(f"`prod` has not been applied for 1 working day, since {what} at 2026-10-05 08:30 "
+                                 "UTC.", decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_a_scheduled_plan_that_does_not_apply_reminds_too(self):
+        self.assertEqual([("prod", "remind", 1)], self.actions(self.decide("2026-10-07T01:00:00Z", plan_only=True)))
+
+    def test_a_clean_scheduled_plan_resolves_instead(self):
+        decided = self.decide("2026-10-07T01:00:00Z", plan_only=True,
+                              metadata={"dev": metadata("dev"), "prod": dict(metadata("prod"), steps={
+                                  "plan": {"outcome": "success", "outputs": {}},
+                                  "parse-plan": {"outcome": "success", "outputs": {
+                                      "count-total": "0", "has-output-only-changes": "false"}}})})
+        self.assertEqual([("prod", "resolve", None)], self.actions(decided))
+
+    def test_only_a_schedule_reminds(self):
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.assertNotIn("remind", [a for _, a, _ in self.actions(self.decide("2026-10-07T01:00:00Z",
+                                                                                       event=event))])
+
+    def test_a_pending_incident_or_one_with_reminders_off_is_not_reminded(self):
+        self.assertEqual([("prod", "none", None)],
+                         self.actions(self.decide("2026-10-07T01:00:00Z", status="pending", plan_only=True)))
+        for off in (False, "false"):
+            with self.subTest(off=off):
+                decided = self.decide("2026-10-07T01:00:00Z", notifications={"kinds": {"apply-failed": {"remind": off}}})
+                self.assertEqual([("prod", "none", None)], self.actions(decided))
+        decided = self.decide("2026-10-07T01:00:00Z", notifications={"kinds": {"held-back": {"remind": False}}})
+        self.assertEqual([("prod", "remind", 1)], self.actions(decided))
+
+    def test_an_environment_the_schedule_does_not_run_is_not_reminded(self):
+        decided = self.decide("2026-10-07T01:00:00Z", environments=[{"environment": "dev", "verdict": "run", "stage": 1},
+                                                                     {"environment": "prod", "verdict": "skip",
+                                                                      "stage": 1}])
+        self.assertEqual([], decided["events"])
+
+    def test_the_first_reminder_mentions_whom_the_incident_opened_mentioning_the_second_everyone_named(self):
+        identities = {"available": True, "error": None, "people": {
+            "jdoe": identity("Jane Doe", "oid-jdoe", "1@example.org"),
+            "asmith": identity("Ola Nordmann", "oid-asmith", "2@example.org")}}
+        opened = incident(people=("jdoe", "asmith"))
+        opened["mentioned"] = ["jdoe"]
+        for level, now, mentioned in ((None, "2026-10-07T01:00:00Z", ["jdoe"]),
+                                      (1, "2026-10-09T01:00:00Z", ["jdoe", "asmith"]),
+                                      (2, "2026-10-16T01:00:00Z", [])):
+            with self.subTest(level=level):
+                given = dict(opened, **({} if level is None else {"reminder_level": level}))
+                decided = self.decide(now, state=state(prod__apply=given), identities=identities)
+                self.assertEqual(mentioned, [m["login"] for m in decided["events"][0]["mentions"]])
+                self.assertEqual("The change was by Jane Doe and Ola Nordmann.",
+                                 decided["messages"]["e1.md"].split("\n")[4])
+
+    def test_a_state_from_before_reminders_mentions_everyone_named_first(self):
+        identities = {"available": True, "error": None, "people": {
+            "jdoe": identity("Jane Doe", "oid-jdoe", "1@example.org"), "asmith": None}}
+        decided = self.decide("2026-10-07T01:00:00Z", identities=identities)
+        self.assertEqual(["jdoe"], [m["login"] for m in decided["events"][0]["mentions"]])
+
+    def test_a_reminder_goes_where_the_incident_went_as_its_sender(self):
+        opened = incident(alias="tf-old", sender_name="dev")
+        decided = self.decide("2026-10-07T01:00:00Z", state=state(prod__apply=opened))
+        self.assertEqual([("remind", "tf-old", "dev")], [(e["action"], e["alias"], e["sender"]) for e in decided["events"]])
+
+    def test_an_opening_remembers_whom_it_meant_to_mention_and_nothing_else_does(self):
+        failing = {"dev": metadata("dev"), "prod": metadata("prod", apply="failure")}
+        opened = notify_decide.decide(facts(metadata=failing))
+        self.assertEqual(["jdoe"], [o for o in opened["observations"] if o["environment"] == "prod"][0]["mentioned"])
+        replied = notify_decide.decide(facts(metadata=failing, state=state(prod__apply=incident())))
+        self.assertEqual(("reply", []), [(o["action"], o["mentioned"]) for o in replied["observations"]
+                                         if o["environment"] == "prod"][0])
+
+    def test_working_days_across_a_leap_day_a_new_year_and_a_month(self):
+        for since, now, days in (("2028-02-28T09:00:00Z", "2028-03-02T01:00:00Z", 2),
+                                 ("2026-12-31T09:00:00Z", "2027-01-05T01:00:00Z", 2),
+                                 ("2026-01-30T09:00:00Z", "2026-02-03T01:00:00Z", 1),
+                                 ("2100-02-26T09:00:00Z", "2100-03-03T01:00:00Z", 2),
+                                 # Across the 400-year eras of the arithmetic, and inside the years 2000 to 2004,
+                                 # where an era of 401 years would read the same as one of 400.
+                                 ("2000-02-25T09:00:00Z", "2000-03-02T01:00:00Z", 3),
+                                 ("1999-12-30T09:00:00Z", "2000-01-04T01:00:00Z", 2),
+                                 ("2004-02-27T09:00:00Z", "2004-03-03T01:00:00Z", 2),
+                                 ("2001-06-01T09:00:00Z", "2001-06-06T01:00:00Z", 2),
+                                 ("2026-10-07T09:00:00Z", "2026-10-07T23:00:00Z", 0),
+                                 ("2026-10-07T09:00:00Z", "2026-10-06T23:00:00Z", 0)):
+            with self.subTest(since=since, now=now):
+                self.assertEqual(days, notify_decide.working_days(since, now))
+
+    def test_the_level_due_after_each_age(self):
+        self.assertEqual([0, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4],
+                         [notify_decide.reminder_due(age) for age in range(14)])
+
+    def test_people_are_named_as_a_list(self):
+        for people, line in (((), None), (("jdoe",), "The change was by jdoe."),
+                             (("a", "b", "c"), "The change was by a, b and c.")):
+            with self.subTest(people=people):
+                decided = self.decide("2026-10-07T01:00:00Z", state=state(prod__apply=incident(people=people)))
+                lines = decided["messages"]["e1.md"].split("\n")
+                self.assertEqual(line, lines[4] if len(lines) == 8 else None)
+
+
 class WantedTest(unittest.TestCase):
     def test_people_only_for_a_push_that_opens_or_repeats(self):
         failing = {"dev": metadata("dev"), "prod": metadata("prod", apply="failure")}
-        self.assertEqual({"people": True, "protection": ["prod"]},
+        self.assertEqual({"people": True, "protection": ["prod"], "reminded": []},
                          notify_decide.wanted(facts(metadata=failing, people=None, protection=None)))
-        self.assertEqual({"people": False, "protection": ["prod"]},
+        self.assertEqual({"people": False, "protection": ["prod"], "reminded": []},
                          notify_decide.wanted(facts(event="schedule", metadata=failing, people=None, protection=None)))
-        self.assertEqual({"people": False, "protection": []},
+        self.assertEqual({"people": False, "protection": [], "reminded": []},
                          notify_decide.wanted(facts(people=None, protection=None)))
-        self.assertEqual({"people": False, "protection": ["prod"]},
+        self.assertEqual({"people": False, "protection": ["prod"], "reminded": []},
                          notify_decide.wanted(facts(people=None, protection=None,
                                                     state=state(prod__apply=incident()))))
-        self.assertEqual({"people": True, "protection": ["prod"]},
+        self.assertEqual({"people": True, "protection": ["prod"], "reminded": []},
                          notify_decide.wanted(facts(metadata=failing, people=None, protection=None,
                                                     state=state(prod__apply=incident()))))
+
+    def test_the_people_a_reminder_names_are_looked_up(self):
+        failing = {"dev": metadata("dev"), "prod": metadata("prod", apply="failure")}
+        opened = incident(people=("jdoe", "asmith"))
+        self.assertEqual({"people": False, "protection": ["prod"], "reminded": ["jdoe", "asmith"]},
+                         notify_decide.wanted(facts(event="schedule", now="2026-10-07T01:00:00Z", metadata=failing,
+                                                    people=None, protection=None, state=state(prod__apply=opened))))
+        opened["mentioned"] = ["asmith"]
+        self.assertEqual(["jdoe", "asmith"], notify_decide.wanted(facts(
+            event="schedule", now="2026-10-07T01:00:00Z", metadata=failing, people=None, protection=None,
+            state=state(prod__apply=opened)))["reminded"])
 
     def test_wanted_does_not_change_the_facts(self):
         given = facts(people=None, protection=None)
