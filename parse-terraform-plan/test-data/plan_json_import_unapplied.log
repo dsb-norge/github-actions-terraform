@@ -1,0 +1,22 @@
+random_string.imported: Preparing import... [id=abcdef]
+random_string.imported: Refreshing state... [id=abcdef]
+
+Terraform will perform the following actions:
+
+  # random_string.imported will be imported
+    resource "random_string" "imported" {
+        id          = "abcdef"
+        length      = 6
+        lower       = true
+        min_lower   = 0
+        min_numeric = 0
+        min_special = 0
+        min_upper   = 0
+        number      = true
+        numeric     = true
+        result      = "abcdef"
+        special     = true
+        upper       = true
+    }
+
+Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.

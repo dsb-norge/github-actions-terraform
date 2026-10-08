@@ -1,0 +1,26 @@
+local_file.probe: Refreshing state... [id=fecdab9fb0d6fc07dfc6d1650fbd871d1f40d8e8]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # local_file.probe will be created
+  + resource "local_file" "probe" {
+      + content              = <<-EOT
+            written by terraform
+        EOT
+      + content_base64sha256 = (known after apply)
+      + content_base64sha512 = (known after apply)
+      + content_md5          = (known after apply)
+      + content_sha1         = (known after apply)
+      + content_sha256       = (known after apply)
+      + content_sha512       = (known after apply)
+      + directory_permission = "0777"
+      + file_permission      = "0777"
+      + filename             = "./probe.txt"
+      + id                   = (known after apply)
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.

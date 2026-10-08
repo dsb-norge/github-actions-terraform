@@ -81,3 +81,92 @@ function plan-json-counts {
     end
   ' "${json_file}"
 }
+
+# Classify a JSON plan (docs/Drift-detection.md §4, D3, D4)
+# =========================================================
+# For a plan plan-json-counts counted. Prints ONE tab-separated line:
+#
+#   ok <class> <count-drift> <count-drift-ignored> <has-pending-changes> <drift-addresses>
+#   unknown <reason>
+#
+# drift    an address in resource_drift (managed) also has a planned action,
+#          anything but "no-op" and "read": something changed outside Terraform
+#          that the next apply would revert
+# pending  any other change: a planned action, a move, an import, or an output
+#          change
+# clean    none
+#
+# <count-drift> counts those addresses; <count-drift-ignored> the other managed
+# entries of resource_drift: drift no planned action reverts (ignore_changes, a
+# value a provider normalises), never a finding. <has-pending-changes> is 'true'
+# when the plan has a change on an address that did not drift, or, without
+# drift, an output change: reverting drift changes the outputs that read it, so
+# beside drift an output change is not a change of the plan's own.
+# <drift-addresses> is the drifted addresses, sorted, as a compact JSON array of
+# as many as fit in 3000 bytes, under the metadata capture's 4 KiB per output.
+#
+# Exits non-zero, with jq's message on stderr, when jq fails on the file.
+_PLAN_JSON_CLASSIFY_DEFS='
+  def acting: .change.actions | map(select(. != "no-op" and . != "read"));
+  def managed($list): [ ($list // [])[] | select(.mode == "managed") ];
+  def drifted($plan):
+    managed($plan.resource_changes) as $changes
+    | [ $changes[] | select(acting | length > 0) | .address ] as $acting
+    | [ managed($plan.resource_drift)[] | .address ] | unique | map(select(IN($acting[])));
+'
+function plan-json-classify {
+  local json_file="${1}"
+  jq -r -s "${_PLAN_JSON_CLASSIFY_DEFS}"'
+    .[0] as $plan
+    | if (($plan.resource_drift // []) | type) != "array" then "unknown\tits resource_drift is not a list"
+      else
+        managed($plan.resource_changes) as $changes
+        | drifted($plan) as $drift
+        | (([ managed($plan.resource_drift)[] | .address ] | unique | length) - ($drift | length)) as $ignored
+        | [ $changes[] | select((acting | length > 0) or .change.importing != null
+                                or (.previous_address != null and .previous_address != .address)) | .address ]
+          | unique as $changed
+        | any(($plan.output_changes // {})[]; .actions != ["no-op"]) as $outputs
+        | (any($changed[]; IN($drift[]) | not) or (($drift | length) == 0 and $outputs)) as $pending
+        | (if ($drift | length) > 0 then "drift" elif ($changed | length) > 0 or $outputs then "pending" else "clean" end) as $class
+        | (reduce $drift[] as $address ({shown: [], full: false};
+             if .full then .
+             elif ((.shown + [$address]) | tojson | utf8bytelength) <= 3000 then .shown += [$address]
+             else .full = true end) | .shown) as $shown
+        | [ "ok", $class, ($drift | length), $ignored, $pending, ($shown | tojson) ] | map(tostring) | join("\t")
+      end
+  ' "${json_file}"
+}
+
+# The fingerprint of a classified JSON plan (docs/Drift-detection.md D4): the
+# SHA-256, in lowercase hex, of its sorted lines, each ending in a newline:
+#
+#   <address> <actions>               every managed change but "no-op" and "read",
+#                                     the actions joined with ','
+#   <address> moved-from <previous>   a move
+#   <address> importing               an import
+#   output <name> <actions>           an output change
+#   <address> drifted                 drift by D3
+#
+# Equal fingerprints are the same finding; an unrelated no-op changes nothing.
+function plan-json-fingerprint {
+  local json_file="${1}" lines_file
+  lines_file="$(mktemp)"
+  if ! jq -j -s "${_PLAN_JSON_CLASSIFY_DEFS}"'
+    .[0] as $plan
+    | managed($plan.resource_changes) as $changes
+    | [ $changes[] | select(acting | length > 0) | "\(.address) \(.change.actions | join(","))" ]
+      + [ $changes[] | select(.previous_address != null and .previous_address != .address)
+          | "\(.address) moved-from \(.previous_address)" ]
+      + [ $changes[] | select(.change.importing != null) | "\(.address) importing" ]
+      + [ ($plan.output_changes // {}) | to_entries[] | select(.value.actions != ["no-op"])
+          | "output \(.key) \(.value.actions | join(","))" ]
+      + [ drifted($plan)[] | "\(.) drifted" ]
+    | sort | map(. + "\n") | add // ""
+  ' "${json_file}" >"${lines_file}"; then
+    rm -f "${lines_file}"
+    return 1
+  fi
+  sha256sum "${lines_file}" | cut -d' ' -f1
+  rm -f "${lines_file}"
+}
