@@ -166,8 +166,11 @@ environment that is never applied from CI is `pending` by design and may set
   errored plan). Derived from them in one place: drift under `ignore_changes` (the planned action
   made `no-op`), an attribute changed and changed back, output changes beside drift, a data source in
   `resource_drift`, a plan without `resource_drift`, one where it is not a list, and 150 drifted
-  addresses for the cap. The fingerprint is stable under reordering and under an unrelated `no-op`
-  resource. A stub classification of every malformed shape is `unknown`.
+  addresses for the cap. Recorded with the GitHub provider against throwaway variables on a test-bed
+  repository: a value changed by hand and planned back, one changed by hand under `ignore_changes`,
+  one deleted by hand (`plan_json_drift_attributes`), and the ignored one changed alone
+  (`plan_json_drift_ignored`). The fingerprint is stable under reordering and under an unrelated
+  `no-op` resource. A stub classification of every malformed shape is `unknown`.
 - **`annotate-terraform-outcome` and `create-run-summary`:** the stopgap's annotation and marker on
   plan-only scheduled runs only, unchanged output on every other run (the existing exact-output
   assertions); with a class, drift, drift beside changes of its own, pending, clean, ignored drift,
@@ -187,10 +190,9 @@ environment that is never applied from CI is `pending` by design and may set
 
 ## 9. Open questions
 
-- Confirm D3 on attribute drift. The recorded plans confirm it for a resource deleted outside
-  Terraform (`resource_drift` says `delete`, the plan says `create`); an attribute changed by hand,
-  with and without `ignore_changes`, needs a plan against a provider that reads a real object, and
-  the suite derives those two cases from the recorded plan meanwhile.
+- None for the stopgap and the classification. D3 is confirmed on recorded plans of real drift: a
+  value changed by hand and planned back, one under `ignore_changes`, and a resource deleted by hand
+  (§8).
 
 ## 10. Implementation order
 
@@ -213,3 +215,6 @@ environment that is never applied from CI is `pending` by design and may set
 - The console says nothing about drift that the plan reverts by creating a resource again: Terraform's
   "Objects have changed outside of Terraform" note was absent from the recorded plan of a deleted
   resource. Only the JSON plan's `resource_drift` tells drift from a new resource.
+- P1 and P2 hold as written: a value changed by hand under `ignore_changes` is in `resource_drift` as
+  an `update` while the console says `No changes.` and the plan exits 0, so the exit code would call
+  it clean and `resource_drift` alone would call it drift. D3's intersection calls it ignored.
