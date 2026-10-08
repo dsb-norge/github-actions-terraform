@@ -328,7 +328,7 @@ class TransitionTest(unittest.TestCase):
             with self.subTest(event=event):
                 decided = notify_decide.decide(facts(event=event, state=state(prod__apply=incident(alias="tf-old"))))
                 self.assertEqual([("resolve", "msg-1", "tf-old", "prod")],
-                                 [(e["action"], e["reply_to"], e["alias"], e["sender"]) for e in decided["events"]])
+                                 [(e["action"], e["reply_to"], e["alias"], e["sender"]) for e in decided["events"] if e["action"] != "update"])
                 self.assertEqual(["✅ **Applied** in `prod` · o/r", "",
                                   "`prod` is applied again: the incident opened at 2026-10-05 08:30 UTC is resolved.",
                                   "", f"[Open the run]({RUN_URL})"],
@@ -357,8 +357,8 @@ class TransitionTest(unittest.TestCase):
 
     def test_an_incident_of_a_removed_environment_is_closed(self):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="dev"))))
-        self.assertEqual([("qa", "removed", "dev")], [(e["environment"], e["action"], e["sender"])
-                                                      for e in decided["events"]])
+        self.assertEqual([("qa", "removed", "dev"), ("qa", "update", "dev")],
+                         [(e["environment"], e["action"], e["sender"]) for e in decided["events"]])
         self.assertEqual(["✅ **No longer watched** `qa` · o/r", "",
                           "`qa` is no longer in environments-yml: the incident opened at 2026-10-05 08:30 UTC is "
                           "closed."], decided["messages"]["e1.md"].split("\n")[:3])
@@ -368,19 +368,19 @@ class TransitionTest(unittest.TestCase):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="dev"), qa__drift=drift)))
         self.assertEqual([("qa", "apply", "removed", key("o/r", "4711", "1", "qa", "apply", "removed")),
                           ("qa", "drift", "removed", key("o/r", "4711", "1", "qa", "drift", "removed"))],
-                         [(e["environment"], e["slot"], e["action"], e["idempotency_key"]) for e in decided["events"]])
+                         [(e["environment"], e["slot"], e["action"], e["idempotency_key"]) for e in decided["events"] if e["action"] != "update"])
         self.assertEqual(["apply", "drift"], [o["slot"] for o in decided["observations"] if o["environment"] == "qa"])
 
     def test_a_removed_environment_says_so_in_every_slot(self):
         incidents = {f"qa__{slot}": incident(kind=kind, sender_name="dev")
                      for slot, kind in (("drift", "drift"), ("schedule", "scheduled-failed"))}
         decided = notify_decide.decide(facts(state=state(**incidents)))
-        for event in decided["events"]:
+        for event in [e for e in decided["events"] if e["action"] != "update"]:
             with self.subTest(slot=event["slot"]):
                 self.assertEqual(["✅ **No longer watched** `qa` · o/r", "",
                                   "`qa` is no longer in environments-yml: the incident opened at 2026-10-05 08:30 UTC is "
                                   "closed."], decided["messages"][event["message"]].split("\n")[:3])
-        self.assertEqual(["drift", "schedule"], [e["slot"] for e in decided["events"]])
+        self.assertEqual(["drift", "schedule"], [e["slot"] for e in decided["events"] if e["action"] != "update"])
 
     def test_a_removed_environment_whose_sender_is_gone_too_is_closed_quietly(self):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="qa"))))
@@ -405,7 +405,7 @@ class TransitionTest(unittest.TestCase):
             environments=[{"environment": "Prod", "verdict": "run", "stage": 1}], rows={"Prod": row("Prod")},
             metadata={"Prod": metadata("Prod")}, senders={"Prod": sender("Prod")},
             state=state(prod__apply=incident(sender_name="Prod"))))
-        self.assertEqual(["resolve"], [e["action"] for e in decided["events"]])
+        self.assertEqual(["resolve", "update"], [e["action"] for e in decided["events"]])
 
 
 class DeliveryTest(unittest.TestCase):
@@ -542,7 +542,8 @@ class RulesTest(unittest.TestCase):
         decided = notify_decide.decide(facts(state=state(prod__apply=incident(), qa__apply=incident(sender_name="qa"))))
         self.assertEqual("\n".join(["### 📣 Teams notifications", "",
                                     "| Environment | What | Sent |", "|---|---|---|",
-                                    "| `prod` | resolved | to `tf-alerts` as `prod` |", "",
+                                    "| `prod` | resolved | to `tf-alerts` as `prod` |",
+                                    "| `prod` | first message marked resolved | to `tf-alerts` as `prod` |", "",
                                     "- `qa`: removed from environments-yml, and its sender `qa` with it; closed without "
                                     "a message", ""]), decided["summary"])
 
@@ -554,7 +555,7 @@ class RulesTest(unittest.TestCase):
                                                      state=state(prod__apply=incident(sender_name="dev",
                                                                                       alias="tf-old"))))
                 self.assertEqual([(action, "dev", "tf-old")],
-                                 [(e["action"], e["sender"], e["alias"]) for e in decided["events"]])
+                                 [(e["action"], e["sender"], e["alias"]) for e in decided["events"] if e["action"] != "update"])
                 self.assertEqual("dev", decided["deliver"][0]["sender"])
 
     def test_a_removed_environments_pending_incident_closes_quietly(self):
@@ -606,8 +607,8 @@ class IdentityTest(unittest.TestCase):
     def line(self, decided):
         return decided["messages"]["e1.md"].split("\n")[4]
 
-    def test_people_are_named_by_their_identity(self):
-        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by Jane Doe, merged by "
+    def test_people_are_named_by_their_identity_and_the_mentioned_placed_by_key(self):
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by <at>p1</at>, merged by "
                          "Ola Nordmann.", self.line(self.decide()))
 
     def test_an_identity_outside_the_people_domains_or_none_is_named_by_login(self):
@@ -624,9 +625,9 @@ class IdentityTest(unittest.TestCase):
             identities = {"available": True, "error": None, "people": {
                 "jdoe": identity(name, "oid-jdoe", "100001@example.org"), "asmith": None}}
             decided = self.decide(people=people, identities=identities)
-            self.assertEqual(f"Change: [#7](https://github.com/o/r/pull/7) by {shown}, merged by asmith.",
+            self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) by <at>p1</at>, merged by asmith.",
                              self.line(decided))
-            self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": shown}],
+            self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": shown, "key": "p1"}],
                              decided["events"][0]["mentions"])
 
     def test_identities_that_could_not_be_read_name_logins(self):
@@ -638,8 +639,24 @@ class IdentityTest(unittest.TestCase):
         self.assertEqual([], decided["events"][0]["mentions"])
 
     def test_the_author_is_mentioned_by_default(self):
-        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe"}],
+        self.assertEqual([{"login": "jdoe", "object_id": "oid-jdoe", "name": "Jane Doe", "key": "p1"}],
                          self.decide()["events"][0]["mentions"])
+
+    def test_keys_follow_the_order_of_the_mentions_and_each_is_placed_where_the_name_was(self):
+        decided = self.decide(notifications={"defaults": {"mention": ["author", "merger"]}})
+        self.assertEqual([("jdoe", "p1"), ("asmith", "p2")], [(m["login"], m["key"]) for m in decided["events"][0]["mentions"]])
+        self.assertEqual("Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by <at>p1</at>, merged by "
+                         "<at>p2</at>.", self.line(decided))
+
+    def test_only_people_the_message_names_are_mentioned(self):
+        prs = [{"number": n, "title": "", "author": "kim" if n < 11 else "jdoe", "merged_by": "lee"} for n in range(12)]
+        people = {"available": True, "error": None, "pull_requests": prs, "pusher": None}
+        identities = {"available": True, "error": None, "people": {
+            "jdoe": identity("Jane Doe", "oid-jdoe", "1@example.org"),
+            "kim": identity("Kim Lund", "oid-kim", "2@example.org"), "lee": None}}
+        decided = self.decide(people=people, identities=identities)
+        self.assertEqual(["kim"], [m["login"] for m in decided["events"][0]["mentions"]])
+        self.assertNotIn("jdoe", decided["messages"]["e1.md"])
 
     def test_the_routing_chooses_who_is_mentioned(self):
         both = self.decide(notifications={"defaults": {"mention": ["author", "merger"]}})["events"][0]["mentions"]
@@ -666,7 +683,7 @@ class IdentityTest(unittest.TestCase):
 
     def test_a_direct_push_mentions_its_pusher_as_its_author(self):
         decided = self.decide(people={"available": True, "error": None, "pull_requests": [], "pusher": "jdoe"})
-        self.assertEqual("Pushed by Jane Doe.", self.line(decided))
+        self.assertEqual("Pushed by <at>p1</at>.", self.line(decided))
         self.assertEqual(["jdoe"], [m["login"] for m in decided["events"][0]["mentions"]])
         decided = self.decide(people={"available": True, "error": None, "pull_requests": [], "pusher": "jdoe"},
                               notifications={"defaults": {"mention": "merger"}})
@@ -795,15 +812,15 @@ class RemindTest(unittest.TestCase):
             "asmith": identity("Ola Nordmann", "oid-asmith", "2@example.org")}}
         opened = incident(people=("jdoe", "asmith"))
         opened["mentioned"] = ["jdoe"]
-        for level, now, mentioned in ((None, "2026-10-07T01:00:00Z", ["jdoe"]),
-                                      (1, "2026-10-09T01:00:00Z", ["jdoe", "asmith"]),
-                                      (2, "2026-10-16T01:00:00Z", [])):
+        for level, now, mentioned, line in (
+                (None, "2026-10-07T01:00:00Z", ["jdoe"], "The change was by <at>p1</at> and Ola Nordmann."),
+                (1, "2026-10-09T01:00:00Z", ["jdoe", "asmith"], "The change was by <at>p1</at> and <at>p2</at>."),
+                (2, "2026-10-16T01:00:00Z", [], "The change was by Jane Doe and Ola Nordmann.")):
             with self.subTest(level=level):
                 given = dict(opened, **({} if level is None else {"reminder_level": level}))
                 decided = self.decide(now, state=state(prod__apply=given), identities=identities)
                 self.assertEqual(mentioned, [m["login"] for m in decided["events"][0]["mentions"]])
-                self.assertEqual("The change was by Jane Doe and Ola Nordmann.",
-                                 decided["messages"]["e1.md"].split("\n")[4])
+                self.assertEqual(line, decided["messages"]["e1.md"].split("\n")[4])
 
     def test_a_state_from_before_reminders_mentions_everyone_named_first(self):
         identities = {"available": True, "error": None, "people": {
@@ -956,12 +973,12 @@ class ScheduledFindingTest(unittest.TestCase):
     def test_a_reminder_or_a_resolution_of_drift_goes_where_the_incident_went(self):
         opened = incident(kind="drift", people=(), alias="tf-old", sender_name="dev")
         opened["fingerprint"] = "f1"
-        for prod, now, action in ((drifted(), "2026-10-13T01:00:00Z", "remind"),
-                                  (planned("prod", "clean", fingerprint=""), NOW, "resolve")):
-            with self.subTest(action=action):
+        for prod, now, actions in ((drifted(), "2026-10-13T01:00:00Z", ["remind"]),
+                                   (planned("prod", "clean", fingerprint=""), NOW, ["resolve", "update"])):
+            with self.subTest(actions=actions):
                 decided = self.decide(prod, now=now, state=state(prod__drift=opened))
-                self.assertEqual([(action, "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
-                                                              for e in decided["events"] if e["slot"] == "drift"])
+                self.assertEqual([(action, "tf-old", "dev") for action in actions],
+                                 [(e["action"], e["alias"], e["sender"]) for e in decided["events"] if e["slot"] == "drift"])
 
     def test_a_drift_incident_from_before_reminders_and_reminders_off_as_text(self):
         opened = incident(kind="drift", people=())
@@ -1019,7 +1036,7 @@ class ScheduledFindingTest(unittest.TestCase):
         for prod in (planned("prod", "clean", fingerprint=""), planned("prod", "pending", pending=True, add=1)):
             with self.subTest(plan_class=prod["steps"]["parse-plan"]["outputs"]["plan-class"]):
                 decided = self.decide(prod, state=state(prod__drift=opened))
-                drift = [e for e in decided["events"] if e["slot"] == "drift"]
+                drift = [e for e in decided["events"] if e["slot"] == "drift" and e["action"] != "update"]
                 self.assertEqual([("resolve", "msg-1")], [(e["action"], e["reply_to"]) for e in drift])
                 self.assertEqual(["✅ **No drift** in `prod` · o/r", "",
                                   "The scheduled plan of `prod` finds no drift: the drift found at 2026-10-05 08:30 UTC "
@@ -1038,7 +1055,7 @@ class ScheduledFindingTest(unittest.TestCase):
         for event in ("push", "schedule", "workflow_dispatch"):
             with self.subTest(event=event):
                 decided = notify_decide.decide(facts(event=event, now=NOW, state=state(prod__drift=opened)))
-                self.assertEqual([("drift", "resolve")], [(e["slot"], e["action"]) for e in decided["events"]])
+                self.assertEqual([("drift", "resolve")], [(e["slot"], e["action"]) for e in decided["events"] if e["action"] != "update"])
                 self.assertEqual(["✅ **No drift** in `prod` · o/r", "",
                                   "`prod` is applied, which changed back the drift found at 2026-10-05 08:30 UTC."],
                                  decided["messages"]["e1.md"].split("\n")[:3])
@@ -1223,7 +1240,7 @@ class ScheduleSlotTest(unittest.TestCase):
         decided = self.decide(self.failed(), checks=checks, incidents={"prod/schedule": opened},
                               now="2026-10-13T01:00:00Z")
         self.assertEqual([("remind", "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
-                                                        for e in decided["events"]])
+                                                        for e in decided["events"] if e["action"] != "update"])
         for off in (False, "false"):
             with self.subTest(off=off):
                 decided = self.decide(self.failed(), checks=checks, incidents={"prod/schedule": opened},
@@ -1233,7 +1250,7 @@ class ScheduleSlotTest(unittest.TestCase):
         decided = self.decide(planned("prod", "clean", fingerprint=""), checks=checks,
                               incidents={"prod/schedule": opened})
         self.assertEqual([("resolve", "tf-old", "dev")], [(e["action"], e["alias"], e["sender"])
-                                                         for e in decided["events"]])
+                                                         for e in decided["events"] if e["action"] != "update"])
 
     def test_a_resolved_incident_opens_anew_and_a_pending_one_resolves_quietly(self):
         resolved = incident(kind="scheduled-failed", people=(), status="resolved")
@@ -1287,6 +1304,64 @@ class ScheduleSlotTest(unittest.TestCase):
         decided = self.decide(self.failed(), checks={"failed": 1, "unread": 0, "seen_run": 41},
                               notifications={"kinds": {"scheduled-failed": {"off": True}}})
         self.assertEqual(([], [("none", None, {"failed": 2, "unread": 0})]), (decided["events"], self.schedule(decided)))
+
+
+class CloseUpdateTest(unittest.TestCase):
+    """Closing an incident also marks its first message (relay 2.2.0's update; Notifications.md §9)."""
+
+    def test_a_resolution_replies_and_updates_the_first_message(self):
+        decided = notify_decide.decide(facts(state=state(prod__apply=incident(alias="tf-old"))))
+        self.assertEqual([("e1", "resolve", "msg-1", None), ("e2", "update", None, "msg-1")],
+                         [(e["id"], e["action"], e["reply_to"], e["update"]) for e in decided["events"]])
+        self.assertEqual(["✅ **Resolved**: Apply failed in `prod` · o/r", "",
+                          "Opened at 2026-10-05 08:30 UTC, resolved at 2026-10-07 12:00 UTC.", "",
+                          f"[Open the run that resolved it]({RUN_URL})", ""], decided["messages"]["e2.md"].split("\n"))
+        self.assertEqual([("e1", "msg-1", ""), ("e2", "", "msg-1")],
+                         [(d["id"], d["reply-to"], d["update"]) for d in decided["deliver"]])
+        self.assertEqual(key("o/r", "4711", "1", "prod", "apply", "update"), decided["events"][1]["idempotency_key"])
+        self.assertEqual(("tf-old", []), (decided["events"][1]["alias"], decided["events"][1]["mentions"]))
+        self.assertIn("| `prod` | first message marked resolved | to `tf-old` as `prod` |", decided["summary"])
+        self.assertEqual(["e1"], [o["event"] for o in decided["observations"] if o["environment"] == "prod"])
+
+    def test_every_kind_says_what_it_was(self):
+        for kind, title in (("apply-cancelled", "Apply cancelled"), ("held-back", "Held back"),
+                            ("pending-change", "Not applied")):
+            with self.subTest(kind=kind):
+                decided = notify_decide.decide(facts(state=state(prod__apply=incident(kind=kind))))
+                self.assertEqual(f"✅ **Resolved**: {title} in `prod` · o/r", decided["messages"]["e2.md"].split("\n")[0])
+        rows = {"dev": row("dev"), "prod": row("prod", goals=PLAN_ONLY)}
+        for slot, kind, title, prod in (
+                ("drift", "drift", "Drift", planned("prod", "clean", fingerprint="")),
+                ("schedule", "scheduled-failed", "Scheduled plan failed", planned("prod", "clean", fingerprint="")),
+                ("schedule", "drift-check-failing", "Drift check failing", planned("prod", "clean", fingerprint=""))):
+            with self.subTest(kind=kind):
+                opened = incident(kind=kind, people=())
+                stored = state(**{f"prod__{slot}": opened})
+                stored["checks"] = {"prod": {"failed": 2, "unread": 0, "seen_run": 41}}
+                decided = notify_decide.decide(facts(event="schedule", people=None, rows=rows, state=stored,
+                                                     metadata={"dev": metadata("dev"), "prod": prod}))
+                updates = [e for e in decided["events"] if e["action"] == "update"]
+                self.assertEqual(f"✅ **Resolved**: {title} in `prod` · o/r",
+                                 decided["messages"][updates[0]["message"]].split("\n")[0])
+
+    def test_a_removed_environment_marks_its_first_message_closed(self):
+        decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="dev"))))
+        self.assertEqual(["removed", "update"], [e["action"] for e in decided["events"]])
+        self.assertEqual(["✅ **Closed**: Apply failed in `qa` · o/r", "",
+                          "Opened at 2026-10-05 08:30 UTC; `qa` is no longer in environments-yml.", "",
+                          f"[Open the run that closed it]({RUN_URL})", ""], decided["messages"]["e2.md"].split("\n"))
+        self.assertIn("| `qa` | first message marked closed | to `tf-alerts` as `dev` |", decided["summary"])
+
+    def test_without_a_first_message_or_a_message_at_all_nothing_is_updated(self):
+        decided = notify_decide.decide(facts(state=state(prod__apply=incident(message_id=None))))
+        self.assertEqual(["resolve"], [e["action"] for e in decided["events"]])
+        decided = notify_decide.decide(facts(state=state(prod__apply=incident(status="pending", message_id=None))))
+        self.assertEqual([], decided["events"])
+
+    def test_an_update_from_a_sender_that_cannot_send_is_not_sent_either(self):
+        decided = notify_decide.decide(facts(state=state(prod__apply=incident()), protection={"prod": True}))
+        self.assertEqual([], decided["deliver"])
+        self.assertEqual(2, decided["summary"].count("not sent: its sender `prod` has protection rules"))
 
 
 class WantedTest(unittest.TestCase):

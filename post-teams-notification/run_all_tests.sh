@@ -127,6 +127,7 @@ setup() {
   export input_update=""
   export input_idempotency_key="o/r/101/1/prod/apply/open"
   export input_dry_run="false"
+  export input_mentions_file=""
 }
 
 teardown() {
@@ -375,6 +376,51 @@ run_step
 assert "P10: reply-to and update together: no request, a warning" \
   bash -c "[ $(request_count) -eq 0 ] && grep -qxF '::warning title=Teams notification not sent::tf-alerts — reply-to and update cannot both be set; the relay takes one or the other' '${OUT_FILE}'"
 teardown
+
+# ----------------------------------------------------------------------
+# P13 — mentions travel in the body as the file has them; none, no key
+# ----------------------------------------------------------------------
+setup
+start_relay '[{"status": 202, "body": {"messageId": "msg-m"}}]'
+MENTIONS="${RUNNER_TEMP}/e1.mentions.json"
+printf '%s' '[{"key":"p1","id":"oid-1","name":"Jane Doe"},{"key":"p2","id":"oid-2","name":"Ola Nordmann"}]' >"${MENTIONS}"
+export input_mentions_file="${MENTIONS}"
+run_step
+assert "P13: the mentions are in the body as the file has them" \
+  test "$(request_field 1 '.body | fromjson | .mentions | tojson')" = '[{"key":"p1","id":"oid-1","name":"Jane Doe"},{"key":"p2","id":"oid-2","name":"Ola Nordmann"}]'
+assert "P13: and the message beside them" test "$(request_field 1 '.body | fromjson | .format')" = "text"
+teardown
+
+setup
+start_relay '[{"status": 202, "body": {"messageId": "msg-m"}}]'
+MENTIONS="${RUNNER_TEMP}/e1.mentions.json"
+printf '%s\n' '[]' >"${MENTIONS}"
+export input_mentions_file="${MENTIONS}"
+run_step
+assert "P13: an empty list: no mentions key" test "$(request_field 1 '.body | fromjson | has("mentions")')" = "false"
+teardown
+
+setup
+start_relay '[{"status": 202, "body": {"messageId": "msg-m"}}]'
+run_step
+assert "P13: no mentions file: no mentions key" test "$(request_field 1 '.body | fromjson | has("mentions")')" = "false"
+teardown
+
+for broken in missing not-json object; do
+  setup
+  start_relay '[{"status": 202, "body": {"messageId": "x"}}]'
+  MENTIONS="${RUNNER_TEMP}/e1.mentions.json"
+  case "${broken}" in
+    not-json) printf '%s' 'p1' >"${MENTIONS}" ;;
+    object) printf '%s' '{"key":"p1"}' >"${MENTIONS}" ;;
+  esac
+  export input_mentions_file="${MENTIONS}"
+  run_step
+  # A message that places <at>key</at> without its mentions is refused (400): say so before sending it.
+  assert "P13: a mentions file that is ${broken}: no request, a warning" \
+    bash -c "[ $(request_count) -eq 0 ] && grep -qxF '::warning title=Teams notification not sent::tf-alerts — the mentions file ${MENTIONS} is not a JSON list' '${OUT_FILE}'"
+  teardown
+done
 
 # ----------------------------------------------------------------------
 # P12 — a refused token says what to check; the platform's 401 has no body

@@ -32,6 +32,14 @@ inputs:
     description: A messageId the relay returned; that message is replaced by this one. Not with reply-to.
     required: false
     default: ""
+  mentions-file:
+    description: |
+      Path of a JSON list of the people the message mentions, sent as the relay's
+      `mentions`: [{"key": "p1", "id": "<Entra object ID>", "name": "<display name>"}],
+      each placed in the message as <at>key</at> (relay 2.2.0 or later). Empty, or an
+      empty list: no mentions. Anything but a JSON list is not sent.
+    required: false
+    default: ""
   idempotency-key:
     description: |
       Sent as the Idempotency-Key header, unchanged on retries; the relay
@@ -67,6 +75,7 @@ runs:
         input_update: ${{ inputs.update }}
         input_idempotency_key: ${{ inputs.idempotency-key }}
         input_dry_run: ${{ inputs.dry-run }}
+        input_mentions_file: ${{ inputs.mentions-file }}
       run: |
         # Post the message to the Teams notification relay
         set -o allexport

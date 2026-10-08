@@ -2378,6 +2378,11 @@ for job_name, job in jobs.items():
     for step in job.get("steps", []):
         if "steps.identity.outputs.token" in yaml.safe_dump(step) and step not in decides:
             problems.append(f"{job_name}: the step {step.get('name')!r} reads the identity token")
+posts = [s for s in deliver.get("steps", []) if str(s.get("uses", "")).startswith("dsb-norge/github-actions-terraform/post-teams-notification@")]
+EVENT = "${{ runner.temp }}/notify/events/${{ matrix.id }}"
+if len(posts) != 1 or posts[0].get("with", {}).get("message-file") != f"{EVENT}.md" \
+        or posts[0].get("with", {}).get("mentions-file") != f"{EVENT}.mentions.json":
+    problems.append("deliver: the post step does not send the row's event message and its mentions file")
 print("checked the three jobs of terraform-notify.yml")
 for problem in problems:
     print(f"PROBLEM {problem}")

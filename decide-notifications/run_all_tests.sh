@@ -183,8 +183,9 @@ saml 100001@example.org Jane Doe oid-jdoe >"${SANDBOX}/api/graphql__jdoe.json"
 saml github-admin@admin.example.net Ola Admin oid-asmith >"${SANDBOX}/api/graphql__asmith.json"
 run_step NOTIFY_IDENTITY_TOKEN=identity-token NOTIFY_PEOPLE_DOMAINS=example.org
 if [[ ${STEP_EXIT} -eq 0 ]] \
-  && grep -qF 'Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by Jane Doe, merged by asmith.' "${SANDBOX}/notify/events/e1.md" \
-  && [[ "$(jq -c '.mentions' "${SANDBOX}/notify/events/e1.json")" == '[{"login":"jdoe","object_id":"oid-jdoe","name":"Jane Doe"}]' ]] \
+  && grep -qF 'Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by <at>p1</at>, merged by asmith.' "${SANDBOX}/notify/events/e1.md" \
+  && [[ "$(jq -c '.mentions' "${SANDBOX}/notify/events/e1.json")" == '[{"login":"jdoe","object_id":"oid-jdoe","name":"Jane Doe","key":"p1"}]' ]] \
+  && [[ "$(jq -c '.' "${SANDBOX}/notify/events/e1.mentions.json")" == '[{"key":"p1","id":"oid-jdoe","name":"Jane Doe"}]' ]] \
   && [[ "$(grep -c '^graphql identity-token$' "${SANDBOX}/tokens")" == "2" ]] \
   && [[ "$(grep -vc ' fake-token$' "${SANDBOX}/tokens")" == "2" ]] \
   && ! grep -rqF identity-token "${SANDBOX}/notify" "${SANDBOX}/output.txt" "${SANDBOX}/summary.md" "${OUT_FILE}"; then
