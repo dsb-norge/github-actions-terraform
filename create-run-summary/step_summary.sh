@@ -63,8 +63,8 @@ function render_summary {
   declare -A destroyed_by_env=()
   declare -A tolerated_by_env=()
   # Scheduled plan-only runs whose plan has changes, or cannot be read
-  # (docs/Drift-detection.md §3); named in one line under the table.
-  local -a scheduled_changes=() scheduled_unread=()
+  # (docs/Drift-detection.md §3, §4); named in one line each under the table.
+  local -a scheduled_changes=() scheduled_unread=() scheduled_drift=() scheduled_pending=() scheduled_ignored=()
   local file env rid
   for file in "${files[@]}"; do
     if ! jq -e '.' "${file}" >/dev/null 2>&1; then
@@ -105,9 +105,15 @@ function render_summary {
       tolerated_by_env["${env}"]="true"
     fi
     case "$(scheduled_plan_state "${file}")" in
+      drift)   scheduled_drift+=("${env}") ;;
+      drift-pending) scheduled_drift+=("${env}"); scheduled_pending+=("${env}") ;;
+      pending) scheduled_pending+=("${env}") ;;
       changes) scheduled_changes+=("${env}") ;;
       unread)  scheduled_unread+=("${env}") ;;
     esac
+    local ignored
+    ignored="$(scheduled_drift_ignored "${file}")"
+    [ -n "${ignored}" ] && scheduled_ignored+=("${env}"$'\t'"${ignored}")
 
     local time_cell
     time_cell=$(sum_durations \
@@ -165,11 +171,20 @@ function print_footer {
 }
 
 # The environments whose scheduled plan has changes, or could not be read, in
-# one line each (docs/Drift-detection.md §3). Uses render_summary's
-# scheduled_changes and scheduled_unread (bash dynamic scope). Nothing on any
-# other run.
+# one line each (docs/Drift-detection.md §3, §4). Uses render_summary's
+# scheduled_* lists (bash dynamic scope). Nothing on any other run.
 function print_scheduled_plan_lines {
-  local names env
+  local names env count
+  if [ "${#scheduled_drift[@]}" -gt 0 ]; then
+    names=""
+    while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_drift[@]}" | sort)
+    printf '\n⚠️ **Drift:** %s. Changed outside Terraform; the next apply would change it back.\n' "${names}"
+  fi
+  if [ "${#scheduled_pending[@]}" -gt 0 ]; then
+    names=""
+    while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_pending[@]}" | sort)
+    printf '\n⚠️ **The default branch is not applied:** %s. The scheduled plan has changes.\n' "${names}"
+  fi
   if [ "${#scheduled_changes[@]}" -gt 0 ]; then
     names=""
     while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_changes[@]}" | sort)
@@ -179,6 +194,13 @@ function print_scheduled_plan_lines {
     names=""
     while IFS= read -r env; do names="${names:+${names}, }\`${env}\`"; done < <(printf '%s\n' "${scheduled_unread[@]}" | sort)
     printf '\n⚠️ **The scheduled plan could not be read:** %s. See the plan in the job log.\n' "${names}"
+  fi
+  if [ "${#scheduled_ignored[@]}" -gt 0 ]; then
+    names=""
+    while IFS=$'\t' read -r env count; do
+      names="${names:+${names}, }\`${env}\` (${count})"
+    done < <(printf '%s\n' "${scheduled_ignored[@]}" | sort)
+    printf '\nℹ️ **Drift the plan leaves alone:** %s. Nothing the next apply would change back, so not a finding.\n' "${names}"
   fi
 }
 

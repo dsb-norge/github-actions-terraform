@@ -657,12 +657,21 @@ environments-yml: environment 'sandbox': 'schedule-goal: apply' needs the goal '
 environments-yml: environment 'prod': 'schedule-goal' is one of default, plan, apply, destroy-plan, not 'aply'
 ```
 
-When the nightly plan of `prod` has changes, the run stays green and says so: a warning annotation, ⚠️ in front of `prod`'s plan cell in the run summary, and a line under the table ([Drift-detection.md](Drift-detection.md) §3):
+When the nightly plan of `prod` has changes, the run stays green and says which kind: a warning annotation, ⚠️ in front of `prod`'s plan cell in the run summary, and a line under the table ([Drift-detection.md](Drift-detection.md) §3, §4). Drift is a resource changed outside Terraform that the next apply would change back:
 
 ```text
-::warning title=Plan has changes::prod — the scheduled plan has 3 changes (2 to add, 1 to change): drift, or a default branch that is not applied
-⚠️ **The scheduled plan has changes:** `prod`. Drift, or a default branch that is not applied.
+::warning title=Drift::prod — the scheduled plan finds 2 resources changed outside Terraform, which the next apply would change back
+⚠️ **Drift:** `prod`. Changed outside Terraform; the next apply would change it back.
 ```
+
+Any other change means the default branch is not applied, often after a failed apply:
+
+```text
+::warning title=Default branch not applied::prod — the scheduled plan has 3 changes (2 to add, 1 to change): the default branch is not applied
+⚠️ **The default branch is not applied:** `prod`. The scheduled plan has changes.
+```
+
+Drift that no planned change reverts, such as an attribute under `ignore_changes`, is no finding; the run summary names it in a line of its own (`ℹ️ **Drift the plan leaves alone:** …`).
 
 A `schedule-goal` on an environment whose `trigger-events` lack `schedule` changes nothing, and the run warns: `The environment 'prod' sets schedule-goal: default, but its trigger-events do not hold schedule, so it has no effect.`
 

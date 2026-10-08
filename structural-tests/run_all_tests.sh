@@ -2152,7 +2152,7 @@ fi
 #
 # annotate-terraform-outcome warns when a scheduled plan-only run planned changes
 # (docs/Drift-detection.md §3), from the event, whether apply was granted, the plan's
-# outcome and parse-terraform-plan's counts. Its suite feeds those inputs itself, so a
+# outcome and parse-terraform-plan's counts and classification (§4). Its suite feeds those inputs itself, so a
 # wiring the workflow drops, misspells or points at an output parse-terraform-plan does
 # not have would leave the warning silent with every action test green. The check reads
 # the environment steps (one step list for every stage job) and parse-terraform-plan's
@@ -2179,6 +2179,9 @@ WANT = {
     "plan-count-remove": "${{ steps.parse-plan.outputs.count-remove }}",
     "plan-has-output-only-changes": "${{ steps.parse-plan.outputs.has-output-only-changes }}",
     "plan-complete": "${{ steps.parse-plan.outputs.plan-complete }}",
+    "plan-class": "${{ steps.parse-plan.outputs.plan-class }}",
+    "plan-count-drift": "${{ steps.parse-plan.outputs.count-drift }}",
+    "plan-has-pending-changes": "${{ steps.parse-plan.outputs.has-pending-changes }}",
 }
 problems = []
 path = os.environ["F30_WORKFLOW"]

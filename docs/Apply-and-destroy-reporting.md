@@ -442,7 +442,7 @@ The block itself is nonetheless rendered by `create-validation-summary`, as a si
 |---|---|
 | apply / destroy ran and succeeded | `::notice title=Apply succeeded::<env> — N added, N changed, N destroyed[, N imported] in mm:ss` (destroy: `Destroy succeeded`, `N destroyed`) |
 | apply / destroy ran and failed | `::error title=Apply failed::<env> — apply did not complete (outcome '<outcome>'); infrastructure may be partially applied` (destroy: `Destroy failed`, `partially destroyed`) |
-| a scheduled run that does not apply planned changes, or could not read them | `::warning title=Plan has changes::…` or `::warning title=Plan not read::…` ([Drift-detection.md](Drift-detection.md) §3) |
+| a scheduled run that does not apply planned changes, or could not read them | `::warning title=Drift::…`, `::warning title=Default branch not applied::…`, or, for a plan that cannot be classified, `::warning title=Plan has changes::…`; `::warning title=Plan not read::…` ([Drift-detection.md](Drift-detection.md) §3, §4) |
 | any run at all | one per-env `$GITHUB_STEP_SUMMARY` block (§8.7) |
 
 > **P11 — this is the only surface that exists on `push` / `schedule` / `workflow_dispatch` runs, on fork PRs, and for envs with `add-pr-comment: false`.** It is not a nice-to-have bolted onto a PR-comment feature; for a large class of runs it is the *entire* feature. Its `if:` must **not** carry the `github.event_name == 'pull_request'` guard the comment steps carry.

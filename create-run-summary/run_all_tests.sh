@@ -1317,8 +1317,10 @@ teardown
 # (docs/Drift-detection.md §3)
 # ----------------------------------------------------------------------
 # write_scheduled_meta <env> <event> <goals-granted json> <plan-outcome> <total> <a:c:d> [plan-complete] [output-only]
+#                      [plan-class] [count-drift] [count-drift-ignored] [has-pending-changes]
 write_scheduled_meta() {
   local env="${1}" event="${2}" goals="${3}" outcome="${4}" total="${5}" counts="${6}" complete="${7:-true}" output_only="${8:-false}"
+  local class="${9:-}" drift="${10:-}" ignored="${11:-}" pending="${12:-}"
   IFS=':' read -r a c d <<<"${counts}"
   cat >"${RUNNER_TEMP}/matrix-job-meta-${env}.json" <<JSON
 {
@@ -1328,7 +1330,7 @@ write_scheduled_meta() {
   "steps": {
     "init": {"outcome": "success", "conclusion": "success", "outputs": {}},
     "plan": {"outcome": "${outcome}", "conclusion": "${outcome}", "outputs": {"plan-time": "0:10"}},
-    "parse-plan": {"outcome": "success", "conclusion": "success", "outputs": {"count-add": "${a}", "count-change": "${c}", "count-destroy": "${d}", "count-total": "${total}", "plan-complete": "${complete}", "has-output-only-changes": "${output_only}"}}
+    "parse-plan": {"outcome": "success", "conclusion": "success", "outputs": {"count-add": "${a}", "count-change": "${c}", "count-destroy": "${d}", "count-total": "${total}", "plan-complete": "${complete}", "has-output-only-changes": "${output_only}", "plan-class": "${class}", "count-drift": "${drift}", "count-drift-ignored": "${ignored}", "has-pending-changes": "${pending}"}}
   }
 }
 JSON
@@ -1391,6 +1393,57 @@ assert "DS5: with relevance, the row carries the marker" \
 assert "DS5: and the line follows the footer" \
   grep -qxF '⚠️ **The scheduled plan has changes:** `prod`. Drift, or a default branch that is not applied.' "${GITHUB_STEP_SUMMARY}"
 unset input_relevance_file
+teardown
+
+# DSC — with the plan's class (docs/Drift-detection.md §4), the marker and the
+# line say which: drift, or a default branch that is not applied
+DRIFT_MARK='<span title="drift: changed outside Terraform, and the next apply would change it back">⚠️</span> '
+PENDING_MARK='<span title="the default branch is not applied">⚠️</span> '
+setup
+write_scheduled_meta "prod"    schedule "${PLAN_ONLY}" success 1 "0:1:0" true false drift 1 0 false
+write_scheduled_meta "staging" schedule "${PLAN_ONLY}" success 2 "2:0:0" true false pending 0 0 true
+write_scheduled_meta "dev"     schedule "${PLAN_ONLY}" success 0 "0:0:0" true false clean 0 2 false
+run_step
+assert "DSC1: exits 0" test "${LAST_EXIT}" -eq 0
+assert "DSC1: drift has its marker" row_has prod "| ${DRIFT_MARK}\`💫 0\` \`🛠️ 1\` \`💥 0\` |"
+assert "DSC1: pending changes have theirs" row_has staging "| ${PENDING_MARK}\`💫 2\` \`🛠️ 0\` \`💥 0\` |"
+assert "DSC1: a clean plan none, though drift was ignored" row_has dev "| \`💫 0\` \`🛠️ 0\` \`💥 0\` |"
+assert "DSC1: the drift line" \
+  grep -qxF '⚠️ **Drift:** `prod`. Changed outside Terraform; the next apply would change it back.' "${GITHUB_STEP_SUMMARY}"
+assert "DSC1: the not-applied line" \
+  grep -qxF '⚠️ **The default branch is not applied:** `staging`. The scheduled plan has changes.' "${GITHUB_STEP_SUMMARY}"
+assert "DSC1: drift no planned change reverts is named, as no finding" \
+  grep -qxF 'ℹ️ **Drift the plan leaves alone:** `dev` (2). Nothing the next apply would change back, so not a finding.' "${GITHUB_STEP_SUMMARY}"
+assert "DSC1: no line of the classless wording" bash -c "! grep -q 'The scheduled plan has changes:' '${GITHUB_STEP_SUMMARY}'"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${PLAN_ONLY}" success 3 "2:1:0" true false drift 2 1 true
+run_step
+assert "DSC2: drift beside changes of its own is in both lines" \
+  bash -c "grep -qxF '⚠️ **Drift:** \`prod\`. Changed outside Terraform; the next apply would change it back.' '${GITHUB_STEP_SUMMARY}' \
+    && grep -qxF '⚠️ **The default branch is not applied:** \`prod\`. The scheduled plan has changes.' '${GITHUB_STEP_SUMMARY}'"
+assert "DSC2: and its marker says both" \
+  row_has prod '| <span title="drift: changed outside Terraform, and the next apply would change it back; the default branch is not applied either">⚠️</span> `💫 2` `🛠️ 1` `💥 0` |'
+assert "DSC2: its ignored drift is named too" \
+  grep -qxF 'ℹ️ **Drift the plan leaves alone:** `prod` (1). Nothing the next apply would change back, so not a finding.' "${GITHUB_STEP_SUMMARY}"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${PLAN_ONLY}" success 1 "1:0:0" true false unknown "?" "?" "?"
+write_scheduled_meta "dev"  schedule "${PLAN_ONLY}" success 1 "1:0:0" true false drift x 0 false
+run_step
+assert "DSC3: a class that cannot be trusted keeps the stopgap's wording" \
+  grep -qxF '⚠️ **The scheduled plan has changes:** `dev`, `prod`. Drift, or a default branch that is not applied.' "${GITHUB_STEP_SUMMARY}"
+assert "DSC3: and its marker" row_has prod "| ${CHANGES_MARK}\`💫 1\` \`🛠️ 0\` \`💥 0\` |"
+teardown
+
+setup
+write_scheduled_meta "prod" schedule "${RECONCILE}" success 1 "0:1:0" true false drift 1 2 false
+write_scheduled_meta "dev"  push     "${PLAN_ONLY}" success 0 "0:0:0" true false clean 0 2 false
+run_step
+assert "DSC4: a reconcile and a push carry no marker and no line" \
+  bash -c "! grep -qE '⚠️|ℹ️' '${GITHUB_STEP_SUMMARY}'"
 teardown
 
 # ----------------------------------------------------------------------

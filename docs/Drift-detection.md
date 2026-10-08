@@ -6,9 +6,9 @@ of each environment that tells infrastructure changed outside Terraform apart fr
 that is not applied, marks either on the run, and, through [Notifications.md](Notifications.md),
 reaches the environment's Teams channel once per change rather than once per night.
 
-Status: **the scheduled plan** ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4) **and the
-stopgap (§3) are built; the rest is specified, not built.** The open questions are in §9; §11 records
-what building the stopgap changed.
+Status: **the scheduled plan** ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4), **the
+stopgap (§3) and the classification (§4) are built; the kinds and transitions (§4, §5) are specified,
+not built.** The open questions are in §9; §11 records what building changed.
 
 ## 1. Why
 
@@ -69,21 +69,45 @@ table:
 ```
 
 The "Worst outcome" cell stays as it is: nothing failed. A pull request, a push, a dispatch and a
-scheduled reconcile render exactly as before. Once the classification of §4 lands, both say "drift"
-or "default branch not applied" instead of "has changes". No workflow input, no workflow output and
-no conclusion changes.
+scheduled reconcile render exactly as before. No workflow input, no workflow output and no
+conclusion changes.
+
+With the classification of §4, both say which. The workflow hands the annotation
+`parse-terraform-plan`'s `plan-class`, `count-drift` and `has-pending-changes`; the run summary
+reads them from the metadata:
+
+```text
+::warning title=Drift::prod — the scheduled plan finds 2 resources changed outside Terraform, which the next apply would change back
+::warning title=Drift::prod — the scheduled plan finds 1 resource changed outside Terraform, which the next apply would change back, and has changes of its own: the default branch is not applied
+::warning title=Default branch not applied::prod — the scheduled plan has 3 changes (2 to add, 1 to change): the default branch is not applied
+```
+
+```text
+⚠️ **Drift:** `prod`. Changed outside Terraform; the next apply would change it back.
+⚠️ **The default branch is not applied:** `staging`. The scheduled plan has changes.
+ℹ️ **Drift the plan leaves alone:** `dev` (2). Nothing the next apply would change back, so not a finding.
+```
+
+Drift beside changes of its own is in both lines, and its plan cell's marker says both. The last
+line names `count-drift-ignored`, which is never a finding. A plan whose counts stand but that
+cannot be classified (`plan-class` `unknown` or empty), and a drift count that is not a number, keep
+the wording above.
 
 ## 4. Classification
 
-[`parse-terraform-plan`](../parse-terraform-plan/action.yml) already reads the JSON plan; it gains:
+[`parse-terraform-plan`](../parse-terraform-plan/action.yml) classifies the JSON plan it counts:
 
 | Output | Meaning |
 |---|---|
-| `plan-class` | `drift`, `pending`, `clean` or `unknown` (D3); `unknown` when the JSON cannot be read |
-| `count-drift` | addresses that are drift by D3 |
-| `count-drift-ignored` | other entries of `resource_drift`, shown in the summary and never a finding |
-| `plan-fingerprint` | D4; empty for `clean` and `unknown` |
-| `drift-addresses` | the drifted addresses, sorted, capped to stay under the metadata capture's 4 KiB per output, with `…and <n> more` |
+| `plan-class` | `drift`, `pending` or `clean` (D3); `unknown` when the counts are `?` or the plan cannot be classified (a `resource_drift` that is not a list); empty when the counts come from the console, which cannot tell drift from a change |
+| `count-drift` | managed addresses that are drift by D3 |
+| `count-drift-ignored` | the other managed entries of `resource_drift`, named in the run summary and never a finding |
+| `has-pending-changes` | `true` when the plan has a change of its own besides reverting drift: a change, move or import of an address that did not drift, or, without drift, an output change. Reverting drift changes the outputs that read it, so beside drift an output change does not count. `true` for every `pending` plan, `false` for `clean`; for `drift` it tells drift alone from drift beside an unapplied change (§5) |
+| `drift-addresses` | the drifted addresses, sorted, as a compact JSON list of as many as fit in 3000 bytes, under the metadata capture's 4 KiB per output; `count-drift` says how many there are in all |
+| `plan-fingerprint` | D4: the SHA-256, in lowercase hex, of the sorted lines, each ending in a newline, the actions joined with `,`; empty for `clean` and `unknown` |
+
+With `unknown`, the counts are `?` and the addresses and fingerprint empty. Nothing the
+classification answers is taken on trust: a value of another shape is `unknown`, with a warning.
 
 | Kind | Raised by a scheduled plan-only run when | Severity | Slot |
 |---|---|---|---|
@@ -134,28 +158,38 @@ environment that is never applied from CI is `pending` by design and may set
 
 ## 8. Tests
 
-- **`parse-terraform-plan`:** recorded JSON plans for each class: drift that a planned action
-  reverts, drift under `ignore_changes`, drift with changes of its own, changes only, output-only, an
-  unapplied `moved` and an unapplied `import`, a `clean` plan, and an unreadable file. The
-  fingerprint is stable under reordering and under an unrelated `no-op` resource.
+- **`parse-terraform-plan`:** recorded JSON plans (`plan_json_drift_deleted`,
+  `plan_json_drift_with_own_changes`, `plan_json_pending_create`, `plan_json_moved_unapplied`,
+  `plan_json_import_unapplied`, planned against a hand-written local state: a resource deleted
+  outside Terraform, the same beside a resource of its own, a new resource, an unapplied `moved` and
+  an unapplied `import`) and the earlier ones (no changes, output-only, every kind of change, an
+  errored plan). Derived from them in one place: drift under `ignore_changes` (the planned action
+  made `no-op`), an attribute changed and changed back, output changes beside drift, a data source in
+  `resource_drift`, a plan without `resource_drift`, one where it is not a list, and 150 drifted
+  addresses for the cap. The fingerprint is stable under reordering and under an unrelated `no-op`
+  resource. A stub classification of every malformed shape is `unknown`.
 - **`annotate-terraform-outcome` and `create-run-summary`:** the stopgap's annotation and marker on
   plan-only scheduled runs only, unchanged output on every other run (the existing exact-output
-  assertions).
+  assertions); with a class, drift, drift beside changes of its own, pending, clean, ignored drift,
+  and a class that cannot be trusted, byte-exact.
 - **Structural:** F30 holds the annotate step's wiring in the three stage jobs to the event, the
-  granted goals, the plan's outcome and `parse-terraform-plan`'s outputs, each of which must exist.
+  granted goals, the plan's outcome and `parse-terraform-plan`'s outputs, the classification's
+  included, each of which must exist.
 - **Engine:** the transitions of §5 as table cases.
 - **Test bed:** a scheduled plan with a resource changed by hand, then the same finding twice, then
   the change reverted; an attribute under `ignore_changes` changed by hand, which stays clean.
 
 ## 9. Open questions
 
-- None for the stopgap. For the classification: confirm on recorded plans from real drift that D3's
-  intersection keeps every out-of-band change the next apply would revert.
+- Confirm D3 on attribute drift. The recorded plans confirm it for a resource deleted outside
+  Terraform (`resource_drift` says `delete`, the plan says `create`); an attribute changed by hand,
+  with and without `ignore_changes`, needs a plan against a provider that reads a real object, and
+  the suite derives those two cases from the recorded plan meanwhile.
 
 ## 10. Implementation order
 
 1. The stopgap (§3). Built.
-2. The classification (§4), which sharpens the stopgap's wording.
+2. The classification (§4), which sharpens the stopgap's wording. Built.
 3. The kinds and transitions (§4, §5) with the state of [Notifications.md](Notifications.md) §9.
 
 ## 11. What implementation taught the spec
@@ -166,3 +200,10 @@ environment that is never applied from CI is `pending` by design and may set
   that cannot be read get a title of their own, `Plan not read`, so the two never read alike.
 - The run summary needed no new input: the event and the granted goals are already in each
   environment's metadata (`workflow.event_name`, `matrix_context.vars.goals-granted`).
+- §5 opens the `apply` incident beside the `drift` one when a drift plan has changes of its own,
+  which none of the outputs first specified could tell: `has-pending-changes` says it.
+- `drift-addresses` is a JSON list, which the decide job can read, and `count-drift` carries the
+  number in all, instead of a capped text with "…and N more".
+- The console says nothing about drift that the plan reverts by creating a resource again: Terraform's
+  "Objects have changed outside of Terraform" note was absent from the recorded plan of a deleted
+  resource. Only the JSON plan's `resource_drift` tells drift from a new resource.

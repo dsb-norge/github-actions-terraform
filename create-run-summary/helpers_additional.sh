@@ -121,21 +121,41 @@ function sum_durations {
   if [ -z "${any}" ]; then printf '—'; else printf '`%d:%02d`' $((total / 60)) $((total % 60)); fi
 }
 
-# What a scheduled plan-only run's plan says (docs/Drift-detection.md §3):
-# 'changes' when it planned changes, 'unread' when its counts could not be
-# read, empty otherwise: any other event, a run granted apply (a reconcile
-# applies what it plans), a plan that did not succeed, a clean plan.
+# What a scheduled plan-only run's plan says (docs/Drift-detection.md §3, §4):
+# 'drift' (with '-pending' when it also has changes of its own) and 'pending'
+# from parse-plan's plan-class; 'changes' when it planned changes and has no
+# class to trust; 'unread' when its counts could not be read; empty otherwise:
+# any other event, a run granted apply (a reconcile applies what it plans), a
+# plan that did not succeed, a clean plan.
 function scheduled_plan_state {
   local file="${1}"
   jq -r '
+    def count($v): ($v // "") | tostring | if test("^[0-9]+$") then tonumber else null end;
     if (.workflow.event_name // "") != "schedule" then ""
     elif ((.matrix_context.vars["goals-granted"] // []) | (type == "array" and index("apply") != null)) then ""
     elif (.steps.plan.outcome // "") != "success" then ""
     else (.steps["parse-plan"].outputs // {}) as $o
       | if ($o["plan-complete"] // "") == "?" or ($o["count-total"] // "") == "?" then "unread"
-        elif (($o["count-total"] // "0") | tostring | test("^[0-9]+$")) and (($o["count-total"] // "0") | tonumber) > 0 then "changes"
+        elif ($o["plan-class"] // "") == "drift" and (count($o["count-drift"]) // 0) > 0 then
+          (if ($o["has-pending-changes"] // "") == "true" then "drift-pending" else "drift" end)
+        elif ($o["plan-class"] // "") == "pending" then "pending"
+        elif (count($o["count-total"]) // 0) > 0 then "changes"
         elif ($o["has-output-only-changes"] // "") == "true" then "changes"
         else "" end
+    end' "${file}" 2>/dev/null || true
+}
+
+# How many resources drifted with no planned change to revert them, on a
+# scheduled plan-only run whose plan succeeded; empty when none or on any other
+# run. Never a finding, named so nobody wonders where a change went.
+function scheduled_drift_ignored {
+  local file="${1}"
+  jq -r '
+    if (.workflow.event_name // "") != "schedule" then ""
+    elif ((.matrix_context.vars["goals-granted"] // []) | (type == "array" and index("apply") != null)) then ""
+    elif (.steps.plan.outcome // "") != "success" then ""
+    else (.steps["parse-plan"].outputs["count-drift-ignored"] // "") | tostring
+      | if test("^[0-9]+$") and tonumber > 0 then . else "" end
     end' "${file}" 2>/dev/null || true
 }
 
@@ -145,6 +165,9 @@ function plan_cell {
   local file="${1}"
   local a c d marker=""
   case "$(scheduled_plan_state "${file}")" in
+    drift)   marker='<span title="drift: changed outside Terraform, and the next apply would change it back">⚠️</span> ' ;;
+    drift-pending) marker='<span title="drift: changed outside Terraform, and the next apply would change it back; the default branch is not applied either">⚠️</span> ' ;;
+    pending) marker='<span title="the default branch is not applied">⚠️</span> ' ;;
     changes) marker='<span title="the scheduled plan has changes: drift, or a default branch that is not applied">⚠️</span> ' ;;
     unread)  marker='<span title="the scheduled plan'"'"'s changes could not be read">⚠️</span> ' ;;
   esac
