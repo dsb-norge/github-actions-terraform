@@ -7,7 +7,7 @@ a merge, a stage held back, a cancelled run), a message reaches the right Teams 
 later mentions, the people whose change it was.
 
 Status: **built, with threads and mentions on a relay of 2.2.0 or later (§9, §13), but for direct
-messages and the channel's tag (D11, §10), which come next. Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
+messages (D11), which come next. Run end to end on a test bed (§19).** Teams-side behaviour this spec relies on was
 verified against a deployed instance of the relay (§19); the open questions are in §20.
 [Drift-detection.md](Drift-detection.md) specifies the drift kinds, which reuse everything here.
 
@@ -59,6 +59,8 @@ and other automation posts through it. What is missing is the pipeline reaching 
 | D21 | **GitHub logins are resolved here, not in the relay.** The decide job reads each named person's SAML identity in the organisation with an installation token of a GitHub App that holds Organization administration read and nothing else, names the person by display name, and hands the relay Entra object IDs. Without the App, messages name people by login and mention nobody. | Decided by the maintainer: the relay stays free of GitHub knowledge and accepts Teams identities only. `GITHUB_TOKEN` cannot read SAML identities, nor can an installation token with Members read alone, whatever GitHub's documentation says (P13); one with Organization administration read can. Every member's identity carries the Entra object ID (`…/claims/objectidentifier`), which survives renames, and the UPN. |
 | D22 | The relay is trusted on authentication: holding its `Notifications.Send` role is the whole permission to post, to any alias of that instance. | Decided by the maintainer: each landing zone has its own instance, and only its identities hold the role there, so one landing zone cannot post into another's channels; inside one, the posting identities are apply identities that can already change production. |
 | D23 | Notifications are **markdown text messages** (the relay's `format: text`), not Adaptive Cards. Links are markdown links. | Decided by the maintainer: a notification is a few lines, and a text message uses the channel's full width where a card is narrow and crowded. Mentions, tag mentions, replies and updates work for text as for cards, and markdown links do what buttons would, so the relay is asked for no `Action.OpenUrl`. |
+| D24 | **No team tag is mentioned.** Reminders mention the people of the change, and nobody from the third level on. | Decided by the maintainer: each landing zone or team has its own alias, so a message lands in the team's own channel, and the people of a change are resolved through SAML (D21). A tag would add the team's activity feeds for incidents nobody is named in, at the cost of a setting per landing zone holding the tag's Graph ID; following the channel does that. |
+| D25 | **Aliases have no owner in the relay and are not managed as code.** | Decided by the maintainer, by design of the relay: an alias is set up from the channel with the bot's commands. |
 
 ## 3. Who meets it
 
@@ -517,8 +519,8 @@ after the reminder is due; a run that finds several levels due sends one reminde
 | `reminder_level` | Due after | Mentions |
 |---|---|---|
 | 1 | one working day open | the people the incident opened mentioning (`mentioned`) |
-| 2 | three working days open | everyone it named (`people`), and the channel's team tag |
-| 3 and on | five more working days each (8, 13, …) | the team tag |
+| 2 | three working days open | everyone it named (`people`) |
+| 3 and on | five more working days each (8, 13, …) | nobody: the reply alone keeps the thread on top (D24) |
 
 ```markdown
 ⏰ **Still not applied** in `prod` · example-org/example-repo
@@ -539,8 +541,7 @@ the level where it was, so the next scheduled run sends it again. An environment
 gets no reminders, nor does a pending incident, which a schedule that still fails opens again;
 `remind: false` on the incident's kind turns them off. A clean plan or an apply on the schedule
 resolves instead. A schedule that runs at night posts at night; the reminder is read in the morning.
-The channel's tag is not mentioned yet: the relay needs its Graph ID from us (§13), a setting that
-comes with direct messages. Drift reminders follow
+Drift reminders follow
 [Drift-detection.md](Drift-detection.md) §5.
 
 ## 11. The relay client: `post-teams-notification`
@@ -635,13 +636,11 @@ request limit.
 | Reply to and update a message by its `messageId`, and report whether it was delivered | threads (§9) | 2.2.0: `replyTo`, `update`, `GET /v1/messages/{id}` |
 | Mentions by Entra object ID or UPN, each checked against the roster of the team being posted to, an unknown one sent as plain text | mentions (D11) | 2.2.0: `mentions` with `<at>key</at>` placements |
 | A direct message by Entra object ID or UPN, through the roster of a team the bot shares with the person | `direct` (§6.2) | 2.2.0: `/v1/send` to one person per request |
-| Mentions of a channel's tag | reminders (§10) | 2.2.0, by the tag's Graph ID, which the caller supplies |
 
 Escalation, reminders, deduplication, digests, GitHub identities (D21), per-alias authorization
-(D22) and `Action.OpenUrl` (D23) are not asked of the relay. One finding was passed on without being
-a requirement: any Teams user who can message the bot can repoint or remove any alias with its
-commands. Relay 2.2.0 documents it ("aliases have no owner"); a repointed alias sends to another
-channel without a sign on our side.
+(D22), `Action.OpenUrl` (D23) and tag mentions (D24) are not asked of the relay, which offers the
+last by the tag's Graph ID. Any Teams user who can message the bot can repoint or remove any alias
+with its commands; relay 2.2.0 documents it, and it is by design (D25).
 
 ## 14. Onboarding a landing zone
 
@@ -785,4 +784,4 @@ nested workflow and its actions included.
    state of §9. Built.
 3. `terraform-notify.yml` and the default workflow's `notify` job, built; the test bed.
 4. Reminders (§10). Built; drift's come with [Drift-detection.md](Drift-detection.md).
-5. Threads in place and mentions (relay 2.2.0). Built; direct messages and the channel's tag next.
+5. Threads in place and mentions (relay 2.2.0). Built; direct messages next.

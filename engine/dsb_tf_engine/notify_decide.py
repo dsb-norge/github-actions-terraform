@@ -220,7 +220,7 @@ def _chosen(facts, observation):
 
 def _reminded(observation):
     """Whom a reminder mentions (§10): at level 1 the people the incident opened mentioning, at level 2 everyone it
-    named, later nobody but the channel's tag. A state from before reminders mentions everyone named first."""
+    named, later nobody (D24). A state from before reminders mentions everyone named first."""
     incident = observation["incident"]
     if observation["level"] == 1:
         return incident.get("mentioned", incident["people"])
