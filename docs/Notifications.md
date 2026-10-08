@@ -521,7 +521,7 @@ Mentions and direct messages (D11) join as inputs once the relay supports them (
 The decide job renders the message (D23), paragraphs of markdown text:
 
 ```markdown
-❌ **Apply failed** in `prod` · `example-org/example-repo`
+❌ **Apply failed** in `prod` · example-org/example-repo
 
 The `apply` step failed, so the default branch is not applied in `prod`.
 
@@ -531,11 +531,14 @@ Change: [#7](https://github.com/example-org/example-repo/pull/7) `Add a storage 
 ```
 
 A first line that says what and where (`❌ Apply failed`, `🚫 Apply cancelled`, `⏸️ Held back`,
-the same `again` for a reply, `✅ Applied`, `✅ No longer watched`), why (the step that failed or was
+the same `again` for a reply, `✅ Applied`, `✅ No longer watched`), in which environment and
+repository, why (the step that failed or was
 cancelled, the stage that held it back, or that the job did not report), who (§5; on a schedule
 "Found by the scheduled run."; "Who made the change could not be read." when the people are not
-known), and the run. Links are built from numbers, never from text. Names, the repository and steps
-are written as code; a login is letters, digits and hyphens. A pull request's title, the one piece of
+known), and the run. Links are built from numbers, never from text. Environment names and steps are
+written as code; the repository is plain text, because Teams draws every code span as a box and an
+`owner/name` is letters, digits, `.`, `-` and `_`, none of which starts markup inside a word; a login is
+letters, digits and hyphens. A pull request's title, the one piece of
 free text, is a code span with every `` ` `` made `'`, `<` and `>` made `‹` and `›` and whitespace
 collapsed, cut to 100 characters: inside a code span nothing is markup, and nothing in it can end the
 span, so a title can carry neither a link nor a mention, without relying on backslash escapes. At

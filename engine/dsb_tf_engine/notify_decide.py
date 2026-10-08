@@ -229,7 +229,9 @@ def _reason(observation):
 
 
 def render(facts, observation):
-    """The message, markdown text (D23): a first line that says what and where, why, who, and the run."""
+    """The message, markdown text (D23): a first line that says what and where, why, who, and the run.
+    The repository is plain text: Teams draws a code span as a box, and an owner/name is letters, digits,
+    '.', '-' and '_', none of which starts markup inside a word."""
     name, repository = observation["environment"], facts["repository"]
     run = facts["run"]
     link = f"[Open the run]({facts['server_url']}/{repository}/actions/runs/{run['id']}/attempts/{run['attempt']})"
@@ -237,13 +239,13 @@ def render(facts, observation):
     if action == "resolve":
         since = _when(observation["incident"]["opened_at"])
         if observation["result"] == "removed":
-            lines = [f"✅ **No longer watched** `{name}` · `{repository}`",
+            lines = [f"✅ **No longer watched** `{name}` · {repository}",
                      f"`{name}` is no longer in environments-yml: the incident opened at {since} is closed."]
         elif observation["result"] == "clean":
-            lines = [f"✅ **Applied** `{name}` · `{repository}`",
+            lines = [f"✅ **Applied** in `{name}` · {repository}",
                      f"A plan of `{name}` has no changes: the incident opened at {since} is resolved."]
         else:
-            lines = [f"✅ **Applied** `{name}` · `{repository}`",
+            lines = [f"✅ **Applied** in `{name}` · {repository}",
                      f"`{name}` is applied again: the incident opened at {since} is resolved."]
         return "\n\n".join(lines + [link]) + "\n"
     icon, title = HEADERS[observation["kind"]]
@@ -251,7 +253,7 @@ def render(facts, observation):
     if action == "reply":
         title += " again"
         reason += f" It has not been applied since {_when(observation['incident']['opened_at'])}."
-    return "\n\n".join([f"{icon} **{title}** in `{name}` · `{repository}`", reason, _people_line(facts), link]) + "\n"
+    return "\n\n".join([f"{icon} **{title}** in `{name}` · {repository}", reason, _people_line(facts), link]) + "\n"
 
 
 def _identity_complete(sender):

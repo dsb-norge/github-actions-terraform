@@ -151,7 +151,7 @@ class OpenTest(unittest.TestCase):
                            "alias": "tf-alerts", "reply_to": None, "update": None, "sender": "prod",
                            "idempotency_key": key("o/r", "4711", "1", "prod", "apply", "open"), "message": "e1.md"}],
                          decided["events"])
-        self.assertEqual(["❌ **Apply failed** in `prod` · `o/r`",
+        self.assertEqual(["❌ **Apply failed** in `prod` · o/r",
                           "",
                           "The `apply` step failed, so the default branch is not applied in `prod`.",
                           "",
@@ -172,14 +172,14 @@ class OpenTest(unittest.TestCase):
 
     def test_the_messages_of_each_kind(self):
         cases = (
-            ({"plan": "failure", "apply": "skipped"}, "❌ **Apply failed** in `prod` · `o/r`",
+            ({"plan": "failure", "apply": "skipped"}, "❌ **Apply failed** in `prod` · o/r",
              "The `plan` step failed, so `apply` did not run and the default branch is not applied in `prod`."),
-            ({"apply": "cancelled"}, "🚫 **Apply cancelled** in `prod` · `o/r`",
+            ({"apply": "cancelled"}, "🚫 **Apply cancelled** in `prod` · o/r",
              "The `apply` step was cancelled, so `prod` may be partly applied."),
-            ({"lint": "cancelled", "plan": "skipped", "apply": "skipped"}, "🚫 **Apply cancelled** in `prod` · `o/r`",
+            ({"lint": "cancelled", "plan": "skipped", "apply": "skipped"}, "🚫 **Apply cancelled** in `prod` · o/r",
              "The job was cancelled at the `lint` step, so `apply` did not run and the default branch is not applied "
              "in `prod`."),
-            ({"apply": "skipped"}, "❌ **Apply failed** in `prod` · `o/r`",
+            ({"apply": "skipped"}, "❌ **Apply failed** in `prod` · o/r",
              "`apply` did not run, and no step says why, so the default branch is not applied in `prod`."),
         )
         for outcomes, header, body in cases:
@@ -205,7 +205,7 @@ class OpenTest(unittest.TestCase):
                 self.assertEqual(["apply-failed" if result == "failure" else "apply-cancelled", "held-back"],
                                  [event["kind"] for event in decided["events"]])
                 self.assertEqual(dev_body, decided["messages"]["e1.md"].split("\n")[2])
-                self.assertEqual("⏸️ **Held back** in `prod` · `o/r`", decided["messages"]["e2.md"].split("\n")[0])
+                self.assertEqual("⏸️ **Held back** in `prod` · o/r", decided["messages"]["e2.md"].split("\n")[0])
                 self.assertEqual(prod_body, decided["messages"]["e2.md"].split("\n")[2])
 
     def test_a_schedule_opens_and_names_nobody(self):
@@ -296,7 +296,7 @@ class TransitionTest(unittest.TestCase):
         decided = notify_decide.decide(self.failing(state=state(prod__apply=incident(alias="tf-old"))))
         self.assertEqual([("reply", "msg-1", "tf-old", key("o/r", "4711", "1", "prod", "apply", "reply"))],
                          [(e["action"], e["reply_to"], e["alias"], e["idempotency_key"]) for e in decided["events"]])
-        self.assertEqual(["❌ **Apply failed again** in `prod` · `o/r`", "",
+        self.assertEqual(["❌ **Apply failed again** in `prod` · o/r", "",
                           "The `apply` step failed, so the default branch is not applied in `prod`. It has not been "
                           "applied since 2026-10-05 08:30 UTC."],
                          decided["messages"]["e1.md"].split("\n")[:3])
@@ -323,7 +323,7 @@ class TransitionTest(unittest.TestCase):
                 decided = notify_decide.decide(facts(event=event, state=state(prod__apply=incident(alias="tf-old"))))
                 self.assertEqual([("resolve", "msg-1", "tf-old", "prod")],
                                  [(e["action"], e["reply_to"], e["alias"], e["sender"]) for e in decided["events"]])
-                self.assertEqual(["✅ **Applied** `prod` · `o/r`", "",
+                self.assertEqual(["✅ **Applied** in `prod` · o/r", "",
                                   "`prod` is applied again: the incident opened at 2026-10-05 08:30 UTC is resolved.",
                                   "", f"[Open the run]({RUN_URL})"],
                                  decided["messages"]["e1.md"].split("\n")[:-1])
@@ -335,8 +335,9 @@ class TransitionTest(unittest.TestCase):
             "count-total": "0", "has-output-only-changes": "false", "plan-complete": "true"}}
         decided = notify_decide.decide(facts(event="schedule", rows=rows, metadata={"dev": metadata("dev"), "prod": clean},
                                              state=state(prod__apply=incident())))
-        self.assertEqual("A plan of `prod` has no changes: the incident opened at 2026-10-05 08:30 UTC is resolved.",
-                         decided["messages"]["e1.md"].split("\n")[2])
+        self.assertEqual(["✅ **Applied** in `prod` · o/r", "",
+                          "A plan of `prod` has no changes: the incident opened at 2026-10-05 08:30 UTC is resolved."],
+                         decided["messages"]["e1.md"].split("\n")[:3])
 
     def test_an_open_incident_without_a_message_id_resolves_with_a_new_post(self):
         decided = notify_decide.decide(facts(state=state(prod__apply=incident(message_id=None))))
@@ -352,7 +353,7 @@ class TransitionTest(unittest.TestCase):
         decided = notify_decide.decide(facts(state=state(qa__apply=incident(sender_name="dev"))))
         self.assertEqual([("qa", "removed", "dev")], [(e["environment"], e["action"], e["sender"])
                                                       for e in decided["events"]])
-        self.assertEqual(["✅ **No longer watched** `qa` · `o/r`", "",
+        self.assertEqual(["✅ **No longer watched** `qa` · o/r", "",
                           "`qa` is no longer in environments-yml: the incident opened at 2026-10-05 08:30 UTC is "
                           "closed."], decided["messages"]["e1.md"].split("\n")[:3])
 

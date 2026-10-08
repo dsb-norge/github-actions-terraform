@@ -404,7 +404,7 @@ Dependabot updates a provider only where `required_providers` gives it the block
 When an environment on the default branch is left unapplied with nobody watching, a message goes to Microsoft Teams ([Notifications.md](Notifications.md)): its apply failed, or a step before it failed, it was cancelled, or an earlier stage held it back. A push that fails again posts again; the next apply, or a clean scheduled or dispatched plan, posts that it is applied. A dispatch never opens one. The message names the authors and the merger of the pull requests the push merged:
 
 ```markdown
-❌ **Apply failed** in `prod` · `example-org/example-repo`
+❌ **Apply failed** in `prod` · example-org/example-repo
 
 The `apply` step failed, so the default branch is not applied in `prod`.
 

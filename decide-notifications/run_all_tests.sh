@@ -150,7 +150,7 @@ make_sandbox
 run_step
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output deliver-count)" == "1" ]] \
   && [[ "$(step_output deliver-matrix-json | jq -r '.include[0] | [.id, .sender, .alias] | join(",")')" == "e1,prod,tf-alerts" ]] \
-  && [[ "$(head -n 1 "${SANDBOX}/notify/events/e1.md")" == '❌ **Apply failed** in `prod` · `o/r`' ]] \
+  && [[ "$(head -n 1 "${SANDBOX}/notify/events/e1.md")" == '❌ **Apply failed** in `prod` · o/r' ]] \
   && grep -qF 'Change: [#7](https://github.com/o/r/pull/7) `Add a storage account` by jdoe, merged by asmith.' "${SANDBOX}/notify/events/e1.md" \
   && [[ "$(jq -r '.observations[0].action' "${SANDBOX}/notify/observations.json")" == "open" ]] \
   && grep -qF '| `prod` | apply failed | to `tf-alerts` as `prod` |' "${SANDBOX}/summary.md"; then
@@ -169,7 +169,7 @@ jq '.steps.apply.outcome = "success"' "${SANDBOX}/ws/matrix-job-meta-prod.json" 
   && mv "${SANDBOX}/meta" "${SANDBOX}/ws/matrix-job-meta-prod.json"
 run_step
 if [[ ${STEP_EXIT} -eq 0 ]] && [[ "$(step_output deliver-matrix-json | jq -r '.include[0]["reply-to"]')" == "msg-1" ]] \
-  && [[ "$(head -n 1 "${SANDBOX}/notify/events/e1.md")" == '✅ **Applied** `prod` · `o/r`' ]]; then
+  && [[ "$(head -n 1 "${SANDBOX}/notify/events/e1.md")" == '✅ **Applied** in `prod` · o/r' ]]; then
   pass
 else
   fail "exit ${STEP_EXIT}, deliver-matrix-json '$(step_output deliver-matrix-json)'"
