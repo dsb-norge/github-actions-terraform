@@ -6,6 +6,14 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.14.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.13.0...v1.14.0) (2026-10-08)
+
+
+### Features
+
+* mention people and mark closed incidents in Teams threads ([5264669](https://github.com/dsb-norge/github-actions-terraform/commit/52646698da54d748223b21fffcc0693def5c1c0e))
+* send an incident's opening to its people directly ([b78b5d8](https://github.com/dsb-norge/github-actions-terraform/commit/b78b5d88c042a0e223614b7867b1c3edd1124892))
+
 ## [1.13.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.12.0...v1.13.0) (2026-10-08)
 
 
