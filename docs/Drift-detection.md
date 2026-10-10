@@ -33,7 +33,7 @@ only in the run summary.
 | D3 | The plan is classified from the JSON plan, inside the environment job: **drift** when an address in `resource_drift` also has a planned action in `resource_changes` (anything but `no-op` and `read`): something changed outside Terraform that the next apply would revert. Otherwise **pending** when the plan has changes as `parse-terraform-plan` counts them (`count-total` above zero, or output-only changes). Otherwise **clean**. The exit code plays no part. | Drift that changes no planned action (attributes under `ignore_changes`, values a provider normalises) is noise for this purpose; intersecting with the planned actions leaves exactly what Terraform would undo, without heuristics. Exit code 2 also means output-only changes and unapplied `moved` and `import` blocks, and has meant "no changes" in several Terraform releases (P1). |
 | D4 | A **fingerprint** of the finding: SHA-256 over the sorted lines `<address> <actions>` for every resource change but `no-op` and `read`, `<address> moved-from <previous_address>` and `<address> importing` for moves and imports, `output <name> <action>` for changed outputs, and `<address> drifted` for the drift of D3. | Equal fingerprints mean the same finding, so the same finding is never sent twice; an unrelated `no-op` resource does not change it. |
 | D5 | Notify on **transitions**: a new finding, a changed finding, a resolved finding. Reminders follow [Notifications.md](Notifications.md) §10 and are not transitions. | The approach of the tools that keep state (HCP Terraform, Terramate, tfaction); the ones without post every night and are muted. |
-| D6 | A failed scheduled plan-only run (login, init, plan) is `scheduled-failed`, raised on the **second** failed run in a row and resolved by the next successful plan. A plan that ran but whose changes cannot be read is not a finding: three in a row are `drift-check-failing`. | A broken check must not look like "no drift", and one transient error must not page anyone. |
+| D6 | A failed scheduled plan-only run (login, init, plan) is `scheduled-failed`, raised on the **second** failed run in a row and resolved by the next successful plan. A plan that ran but whose changes cannot be read, or whose job succeeded and reported nothing (P5), is not a finding: three in a row are `drift-check-failing`. | A broken check must not look like "no drift", and one transient error must not page anyone. |
 | D7 | **pending** is the `pending-change` kind in the environment's `apply` slot ([Notifications.md](Notifications.md) §4): an apply incident already open there takes the finding as its reminder's evidence; a `pending-change` incident open there becomes `apply-failed` if a later push fails to apply. | It is one fact, the default branch not applied, seen from two runs; one slot keeps it to one thread. |
 | D8 | No refresh-only plan. | It also reports attributes `ignore_changes` covers, which the configuration deliberately ignores, and needs a second plan per environment. |
 | D9 | Drift runs with the environment's apply identity. | Decided by the maintainer; the engine's schedule cap keeps it a plan ([Dispatch-and-triggers.md](Dispatch-and-triggers.md) §4.4, D12; [Decision-engine.md](Decision-engine.md) I25). |
@@ -177,7 +177,8 @@ plan found changes".
 
 The `schedule` slot counts, per environment, the scheduled plan-only runs in a row that failed (a
 step failed, or the job failed without reporting its steps) and that ran but could not be read
-(`plan-class` `unknown`, or counts of `?` from a parser without `plan-class`). A failure resets the
+(`plan-class` `unknown`, counts of `?` from a parser without `plan-class`, or a job that succeeded
+and left no metadata, P5). A failure resets the
 row of unread plans, and a read plan both; a cancelled run counts nothing. The counts live in the
 state beside the incidents ([Notifications.md](Notifications.md) §9). The messages say what the run
 cannot see:
@@ -190,7 +191,8 @@ The scheduled plan of `prod` failed 2 times in a row, the last at the `plan` ste
 Found by the scheduled run.
 ```
 
-`⚠️ Drift check failing` says it "could not be read 3 times in a row"; `✅ Scheduled plan works`
+`⚠️ Drift check failing` says it "could not be read 3 times in a row", and adds "the last because
+its job did not report" when the last run left no metadata; `✅ Scheduled plan works`
 resolves either; `⏰ Scheduled plan still failing` is the weekly reminder. A plan without `plan-class`, as from an earlier parser, keeps the earlier rule:
 clean only when it changes nothing at all, and never pending.
 
@@ -210,6 +212,7 @@ environment that is never applied from CI is `pending` by design and may set
 | P2 | `resource_drift` lists changes to attributes the configuration ignores, and values a provider normalises. | A permanent drift finding nothing will ever change. | D3 counts only drift a planned action would revert. |
 | P3 | GitHub delays scheduled runs at the top of the hour and drops some under load. | A missing night. | Cron off the hour; a missing run is absence, out of scope here ([Notifications.md](Notifications.md) §15). |
 | P4 | A provider schema upgrade can show as drift. | A one-time finding after a provider bump. | Accepted: one message, resolved on the next apply. |
+| P5 | The environment job's metadata artifact can fail to upload while the job stays green (`Failed to FinalizeArtifact: Unable to make request: ECONNRESET`, seen on the first night of a production rollout). | A night the decide job knows nothing about; repeated, a drift check that has gone quiet. | D6: a job that succeeded without metadata ran, so it counts as unread. One such night sends nothing; three in a row, or mixed with plans that cannot be read, open `drift-check-failing`. Its drift and pending findings stay unknown for that night, and the next night that reports catches up. |
 
 ## 8. Tests
 
@@ -286,6 +289,9 @@ environment that is never applied from CI is `pending` by design and may set
   open.
 - A cancelled scheduled run counts neither as failed nor as read: somebody stopped it, and it says
   nothing about the check.
+- A scheduled plan-only job that succeeded but whose metadata never arrived first counted nothing,
+  like a cancelled run. It ran, and nothing it found reached the decide job, so it counts as unread
+  (P5): otherwise a check whose reports keep getting lost would never say so.
 - P1 and P2 hold as written: a value changed by hand under `ignore_changes` is in `resource_drift` as
   an `update` while the console says `No changes.` and the plan exits 0, so the exit code would call
   it clean and `resource_drift` alone would call it drift. D3's intersection calls it ignored.

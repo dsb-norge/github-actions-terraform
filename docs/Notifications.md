@@ -331,7 +331,7 @@ The result of an environment in the `apply` slot, from its metadata:
 | not due to apply, on a schedule or dispatch, its plan `success` and read whole: no change, no output-only change | clean |
 | due to apply, no metadata, its stage `skipped` after an earlier stage failed or was cancelled | held back |
 | due to apply, no metadata, its stage `failure` or `cancelled` | failed or cancelled, the job unreported |
-| anything else | nothing; without metadata, unknown, and nothing is said |
+| anything else | nothing; without metadata, unknown, and nothing is said (a scheduled plan-only job that succeeded without metadata still counts in the `schedule` slot, [Drift-detection.md](Drift-detection.md) P5) |
 
 The core writes:
 
