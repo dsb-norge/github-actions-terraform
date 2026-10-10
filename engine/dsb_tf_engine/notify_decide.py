@@ -292,7 +292,9 @@ def _health(content, entry, stage_results):
     """How a scheduled plan-only run's plan went: ('failed', the step or None), ('unread', None) when it ran but
     its changes cannot be read, ('read', None), or (None, None) when it did not run, a cancelled run included."""
     if content is None:
-        return ("failed" if stage_results.get(str(entry["stage"])) == "failure" else None), None
+        # A job that succeeded without metadata ran, but what it found never arrived: an artifact upload that fails
+        # leaves the job green. Unread, so a check that keeps reporting nothing does not go quiet (Drift-detection P5).
+        return {"failure": "failed", "success": "unread"}.get(stage_results.get(str(entry["stage"]))), None
     for step in STEPS_BEFORE_APPLY:
         if _outcome(content, step) == "failure":
             return "failed", step
@@ -339,7 +341,8 @@ def _schedule(facts, name, row, entry, content):
     later = action in ("resolve", "remind")
     return {"environment": name, "slot": SCHEDULE_SLOT, "result": health, "kind": kind if action == "open" else None,
             "action": action, "incident": incident, "level": level, "age": age,
-            "detail": {"step": step, "counts": counts}, "fingerprint": None, "checks": counts,
+            "detail": {"step": step, "counts": counts, "reported": content is not None}, "fingerprint": None,
+            "checks": counts,
             "alias": incident["alias"] if later else route.get("alias", facts["target"]["alias"]),
             "sender": incident["sender"] if later else deliver_as or name}
 
@@ -552,8 +555,9 @@ def _render_schedule(facts, observation, link):
                  f"The scheduled plan of `{name}` failed {detail['counts']['failed']} times in a row, the last {where}: "
                  f"{unseen}", "Found by the scheduled run."]
     else:
+        last = "" if detail["reported"] else ", the last because its job did not report"
         lines = [f"⚠️ **Drift check failing** in `{name}` · {repository}",
-                 f"The scheduled plan of `{name}` could not be read {detail['counts']['unread']} times in a row: "
+                 f"The scheduled plan of `{name}` could not be read {detail['counts']['unread']} times in a row{last}: "
                  f"{unseen}", "Found by the scheduled run."]
     return "\n\n".join(lines + [link]) + "\n"
 

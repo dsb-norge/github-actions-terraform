@@ -1283,12 +1283,43 @@ class ScheduleSlotTest(unittest.TestCase):
                               incidents={"prod/schedule": opened}, now="2026-10-13T01:00:00Z")
         self.assertEqual([("remind", None, {"failed": 0, "unread": 4})], self.schedule(decided))
 
-    def test_a_reconcile_or_a_job_that_did_not_report_and_did_not_fail_counts_nothing(self):
+    def test_a_reconcile_counts_nothing(self):
         rows = {"dev": row("dev"), "prod": row("prod")}
         self.assertEqual([], self.schedule(self.decide(self.failed(), rows=rows)))
-        self.assertEqual([], self.schedule(self.decide(None, checks={"failed": 1, "unread": 0, "seen_run": 41},
-                                                       stage_results={"1": "success", "2": "skipped",
-                                                                      "3": "skipped"})))
+        self.assertEqual([], self.schedule(self.decide(None, rows=rows, checks={"failed": 0, "unread": 2, "seen_run": 41})))
+
+    def test_a_job_that_succeeded_without_reporting_could_not_be_read(self):
+        # Its metadata never arrived, as when the artifact's upload fails and leaves the job green (P5).
+        self.assertEqual([("none", None, {"failed": 0, "unread": 1})],
+                         self.schedule(self.decide(None, checks={"failed": 1, "unread": 0, "seen_run": 41})))
+        decided = self.decide(None, checks={"failed": 0, "unread": 2, "seen_run": 41})
+        self.assertEqual([("open", "drift-check-failing", {"failed": 0, "unread": 3})], self.schedule(decided))
+        self.assertEqual(["⚠️ **Drift check failing** in `prod` · o/r", "",
+                          "The scheduled plan of `prod` could not be read 3 times in a row, the last because its job "
+                          "did not report: drift and a default branch that is not applied go unseen.", "",
+                          "Found by the scheduled run.", "",
+                          f"[Open the run]({RUN_URL})", ""], decided["messages"]["e1.md"].split("\n"))
+        unread = planned("prod", "unknown", fingerprint="")
+        decided = self.decide(unread, checks={"failed": 0, "unread": 2, "seen_run": 41})
+        self.assertEqual("The scheduled plan of `prod` could not be read 3 times in a row: drift and a default branch "
+                         "that is not applied go unseen.", decided["messages"]["e1.md"].split("\n")[2])
+
+    def test_a_job_that_did_not_report_and_was_skipped_or_cancelled_counts_nothing(self):
+        for result in ("skipped", "cancelled", ""):
+            with self.subTest(result=result):
+                self.assertEqual([], self.schedule(self.decide(None, checks={"failed": 1, "unread": 1, "seen_run": 41},
+                                                               stage_results={"1": result, "2": "skipped",
+                                                                              "3": "skipped"})))
+
+    def test_a_job_that_did_not_report_resolves_nothing_and_reminds(self):
+        opened = incident(kind="drift-check-failing", people=())
+        incidents = {"prod/schedule": opened}
+        self.assertEqual([("none", None, {"failed": 0, "unread": 4})],
+                         self.schedule(self.decide(None, checks={"failed": 0, "unread": 3, "seen_run": 41},
+                                                   incidents=incidents)))
+        self.assertEqual([("remind", None, {"failed": 0, "unread": 4})],
+                         self.schedule(self.decide(None, checks={"failed": 0, "unread": 3, "seen_run": 41},
+                                                   incidents=incidents, now="2026-10-13T01:00:00Z")))
 
     def test_a_cancelled_plan_counts_nothing(self):
         cancelled = metadata("prod", plan="cancelled", apply="skipped")
