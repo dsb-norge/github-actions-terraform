@@ -14,7 +14,8 @@ which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the m
 records what implementation and the test bed taught the spec.
 
 **Version holds (§4.6, D23 to D31) are specified, not yet built**: the text describes them as they
-will be, and §18 lists what only a run can answer.
+will be. The two questions about Dependabot they raised were answered on the test bed and from public
+pull requests (§18).
 
 ## 1. Why
 
@@ -450,9 +451,9 @@ before any job runs it ([what the admission checks](<link to this spec>)).
 retrying a dropped connection to Azure Resource Manager, which fails the plan; 4.12.0 retries again.
 Lift when the landing-zone module allows azurerm 4. When that no longer applies, remove or narrow the
 hold on `hashicorp/azurerm` in `dependabot-admission-yml` in the calling workflow on the default
-branch, then comment `@dependabot rebase` on this pull request (`@dependabot recreate` once it is 30
-days old). Until then leave this pull request open: closing it makes Dependabot skip 3.117.1 even
-after the hold is lifted. It counts towards Dependabot's limit of open pull requests (5 by default).
+branch, then comment `@dependabot rebase` on this pull request. Until then leave this pull request
+open: closing it makes Dependabot skip 3.117.1 even after the hold is lifted. It counts towards
+Dependabot's limit of open pull requests (5 by default).
 ```
 
 The last paragraph of the first example is left out when every failed check is `hold`: a hold is
@@ -802,9 +803,9 @@ not a hold that does nothing.
 | P35 | `versions` is the versions kept out, where a Terraform constraint is the versions allowed. | `versions: "3.116.0"`, meant as "keep 3.116.0", holds 3.116.0 and lets 3.117 through. | The audit warns that a hold covers what a committed lock records (D27); every example comments the key. |
 | P36 | The admission head's last paragraph invites running the pull request once with a person's commit. | For a held version, it invites running what the repository decided against. | Left out when every failed check is `hold` (§7). |
 | P37 | A pull request's run reads the calling workflow from its merge commit, and a re-run keeps that commit. | A hold, or a lifted one, does not reach an open pull request until its next new run; one that is green already stays mergeable by a person, and one refused as too new, re-run as the `age` help says, is admitted at a held version. | After adding or lifting a hold, `@dependabot rebase` (§4.6); auto-merge's base pin refuses the merge of a run older than the hold; R9. |
-| P38 | Dependabot stops rebasing a pull request that has not been merged for 30 days. | A long-held pull request is no longer rebased on its own. | The help names `@dependabot recreate` for an old pull request. |
+| P38 | Dependabot stops rebasing a pull request on its own once it has been open for 30 days, and says so in its body ("Automatic rebases have been disabled on this pull request as it has been open for over 30 days"). The `@dependabot rebase` command still works at any age: on public pull requests 32 to 819 days old, every such command in October 2026 was answered with a rebase within minutes, or with "up-to-date" or "edited by someone other than Dependabot", never with a refusal for age. | A long-held pull request falls behind its base and stays there. | Nothing needed: the help's `@dependabot rebase` is the way back at any age (§18). |
 | P39 | A refused pull request counts towards Dependabot's limit of open pull requests, five per configuration entry unless the configuration says otherwise. | A held pull request takes a slot for as long as it is open. | Accepted with D31; the help says so. |
-| P40 | Closing a Dependabot pull request makes Dependabot skip that version ("OK, I won't notify you again about this release"); reopening undoes it. | A held pull request closed by hand keeps that version away after the hold is lifted. | D31; the help says so. |
+| P40 | Closing a Dependabot pull request makes Dependabot delete its branch and answer "OK, I won't notify you again about this release, but will get in touch when a new version is available". Every later update job lists the closed pull request among its existing pull requests, by dependency and version but not by directory, and opens none for that version ("Pull request #<n> already exists for <dependency> with latest version <version>"). It is not an ignore condition: the job's `ignore-conditions` stay empty, so `@dependabot show … ignore conditions` does not list it. | A held pull request closed by hand keeps that version away after the hold is lifted, in every directory: on the test bed, a pull request closed six days before, for a directory since removed, kept its version out of a new directory. A newer version gets a pull request of its own. | D31; the help says so. A close is undone by restoring the branch at the pull request's head, reopening it and commenting `@dependabot rebase`: reopening alone drew no reaction, the command rebased it onto the base within a minute (§18). |
 | P41 | Heads are found by a substring of their marker. | A reason holding `<!-- tf:head:` would match another head. | `<` in a reason is escaped (§7). |
 | P42 | Holds are per calling workflow (D24). | In a repository with two calling workflows, one without the hold admits the pull request and plans it, and merges it where only its conclusion is required. | Declare the hold in each calling workflow. |
 | P43 | The module workflow's docs commit starts a run the admission does not judge (D22). | A hold landing between Dependabot's admitted run and the docs commit is on the base the App's run merges against. | Module auto-merge's rule 8 applies it (D30); the App's run still validates and tests the held version (R7), and only the merge is stopped. |
@@ -872,6 +873,8 @@ module workflow opted in, and an admitted module pull request's README committed
 For holds: a held provider bump refused with its reason; the same provider bumped outside the hold
 admitted; the hold lifted and `@dependabot rebase` admitting the pull request; the audit's warnings
 on the pull request that adds a hold without the pin; a held called module in the module workflow.
+Already run there (§18): what Dependabot does when a refused pull request is closed, reopened and
+rebased.
 
 **What tests cannot cover**: whether an admitted release is benign (R1).
 
@@ -880,14 +883,25 @@ on the pull request that adds a hold without the pin; a held called module in th
 What a local Terraform, the live registry, 119 real Dependabot pull requests and a probe on the test
 bed could answer is answered in the text above: `-lockfile=readonly` and a new provider (P8), the
 shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and the registry's load
-(§8). None remain for the admission as built. For holds, two answers need a run on the test bed:
+(§8). None remain for the admission as built.
 
-1. Does closing a Dependabot pull request still make Dependabot skip that version (P40)? GitHub's
-   documentation said so for the retired `@dependabot close` command ("You can achieve the same
-   result by closing the pull request manually"), and Dependabot's comment on a closed pull request
-   says so; the current documentation does not. The help's warning against closing depends on it.
-2. Does `@dependabot rebase` still act on a pull request older than 30 days (P38), or only
-   `@dependabot recreate`? The help names both; it should name the one that works.
+The two questions holds raised were answered on 2026-10-12, and none remain:
+
+1. **Closing a Dependabot pull request still makes Dependabot skip that version** (P40), which the
+   current documentation no longer says. On the test bed, a Dependabot pull request refused by the
+   admission was closed: Dependabot answered that it would not notify about this release again and
+   deleted its branch. Its next update job, whose log lists the closed pull request among the
+   existing ones, opened none for that version, and a pull request closed six days before, in a
+   directory since removed, kept its version out of a new directory. Reopening the pull request,
+   with its branch restored, drew no reaction from Dependabot within seven minutes; `@dependabot
+   rebase` then started an update job that rebased it onto the base within a minute.
+2. **`@dependabot rebase` works on a pull request of any age** (P38). The 30-day rule stops
+   automatic rebases only
+   ([GitHub changelog, 2023-04-13](https://github.blog/changelog/2023-04-13-automatic-rebases-on-dependabot-pull-requests-stop-after-30-days-of-inactivity/):
+   "You will still be able to manually rebase and merge the pull request"). Public pull requests 32
+   to 819 days old, whose bodies said automatic rebases were disabled, were rebased within minutes
+   of the command in October 2026; no answer to it mentioned their age. The help therefore names
+   `@dependabot rebase` alone.
 
 ## 19. Implementation order
 
