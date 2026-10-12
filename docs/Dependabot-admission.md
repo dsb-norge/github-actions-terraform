@@ -13,7 +13,11 @@ and refused pull requests, the admission head, and the README committed to an ad
 which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the minimum age. §20
 records what implementation and the test bed taught the spec.
 
-**Version holds (§4.6, D23 to D31) are built**, and not yet run on a test bed. The two questions about
+**Version holds (§4.6, D23 to D31) are built, and validated on a test bed**: in the project workflow, a
+held provider bump refused with its reason, the audit's two warnings on a person's pull request, and
+the lifted hold admitting the bump, which then planned and merged itself; in the module workflow, a
+held called module refused, rule 8 refusing the merge in the run the docs commit started after the
+hold had returned to the base, and the lifted hold merging the bump. The two questions about
 Dependabot they raised were answered on the test bed and from public pull requests (§18).
 
 ## 1. Why
@@ -287,8 +291,10 @@ event, lists the dependencies the repository uses in its committed files (§8) a
 
 On a run the admission judges, the audit leaves out the dependencies the pull request changes: their
 held versions are in the merge commit because the pull request brings them, and the admission's
-verdict says so. The warnings are the engine's, `::warning` annotations of the `create-matrix` job
-like its other warnings, and never change a verdict. `hold:` left empty, or `hold: []`, sets no hold:
+verdict says so. The run a module's docs commit starts is not judged, so there the audit warns about
+a held version the pull request brings in, beside rule 8's notice (D30). The warnings are the engine's,
+`::warning` annotations of the `create-matrix` job like its other warnings, and never change a
+verdict. `hold:` left empty, or `hold: []`, sets no hold:
 no audit, and no error with the admission off.
 
 **When a hold takes effect.** A pull request's run reads the calling workflow from the pull request's
