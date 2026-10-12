@@ -194,9 +194,13 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
   The module CI workflow gathers the same test facts through the same adapter in mode `module`
   (§3.3); `create-tftest-matrix` is retired.
 - gathering the admission's facts (`admission_facts.py`, Dependabot-admission.md §8) for a
-  Dependabot pull request the admission applies to, and, for module auto-merge's rule 7, in the
-  run the docs commit starts on Dependabot's pull request, where a failure leaves them out
+  Dependabot pull request the admission applies to, and, for module auto-merge's rules 7 and 8, in
+  the run the docs commit starts on Dependabot's pull request, where a failure leaves them out
   instead of failing the step (Module-auto-merge.md §4).
+- listing the dependencies the repository's committed files use, for the audit of the admission's
+  holds (`admission_facts.py`, Dependabot-admission.md §8, D27), on every event when the parsed
+  `dependabot-admission-yml` sets `hold`; a file that cannot be read is left out and named in a
+  warning, never failing the step (specified with the holds, not yet built).
 - listing a module pull request's commits and each commit's files (`automerge_facts.py`,
   Module-auto-merge.md §4), only where module auto-merge's rule reads them: the switch on, a pull
   request from the repository against the default branch, by a listed author.
@@ -350,6 +354,12 @@ The features extend it; the full document, as they specify it:
   lock. The adapter gathers it only for a Dependabot pull request the admission applies to, and a document
   without it on such a run is a fault (exit 1). `event.pull_request.author` (`pull_request.user.login`) tells
   the comments whose pull request it is, which a person's push does not change.
+- `dependency_inventory` is what the audit of the admission's holds reads
+  ([Dependabot-admission.md](Dependabot-admission.md) §8, D27): each committed lock file's
+  providers and versions, each `required_providers` entry's source, and each `module` block's source
+  and `version`, by file. It is present on every event when the parsed policy sets `hold`, and kept
+  apart from `admission`, so that I28 holds; it changes `warnings` only (specified with the holds,
+  not yet built).
 - `automerge` is a module pull request's commits ([Module-auto-merge.md](Module-auto-merge.md) §4):
   `available`, `reason`, the head branch and commit count the event gives, and each commit's SHA,
   parent count, author and committer logins, `verified`, subject (`message`) and files (name,
@@ -539,7 +549,7 @@ not evaluated:
 | 1 | Validation of the configuration: an entry's keys, goals (a list of known goal names, a single name written alone being that one goal, each with its prerequisite), init directories, variables, the auto-merge actors and limits, names, types, globs, lane keys, environment-name patterns and collisions. A failure is an error for the whole run, not a skip. | Configuration-validation.md, and each spec's validation section | `error: …` |
 | 2 | Trigger events: the current event is in the environment's resolved `trigger-events`. A run event outside the vocabulary (`merge_group`, `pull_request_target`, `release`, …) is an error for the whole run, never a quiet skip. | Dispatch-and-triggers.md | `trigger-events: <event> not enabled` |
 | 3 | Dispatch filter: on `workflow_dispatch` with a named environment, only that environment continues. A name that matches nothing, or an environment that rule 2 already dropped, is an error. | Dispatch-and-triggers.md | `dispatch: not the requested environment` |
-| 3a | Admission: on a run by `dependabot[bot]` with `dependabot-admission-enabled` on, a pull request every dependency of whose change passes the checks continues; one that does not, and a Dependabot push, drops every environment rules 2 and 3 kept. Relevance is still computed for each (rule 4), and the lock check reads it. Facts that cannot be gathered fail the step before the engine runs. | Dependabot-admission.md | `admission: not admitted` · `admission: Dependabot push run` |
+| 3a | Admission: on a run by `dependabot[bot]` with `dependabot-admission-enabled` on, a pull request every dependency of whose change passes the checks (the repository's holds among them, once built) continues; one that does not, and a Dependabot push, drops every environment rules 2 and 3 kept. Relevance is still computed for each (rule 4), and the lock check reads it. Facts that cannot be gathered fail the step before the engine runs. | Dependabot-admission.md | `admission: not admitted` · `admission: Dependabot push run` |
 | 4 | Relevance: mode `all`, or at least one changed file matches. | Path-relevance.md | `relevance: <rule>` or `relevance: no changed file matches` |
 | 5 | Goals: expand the environment's `goals`, a list of known names by rule 1, to the eight-goal vocabulary for this event, ref and branch as the workflow's gates do today (`apply` on push, dispatch and schedule on the default branch, `destroy` on push and dispatch on the default branch, the `-on-pr` goals on a pull request against it, `destroy-plan` anywhere); then apply the dispatch `goal`, or on a schedule the environment's `schedule-goal` (`plan` where it sets none), as a cap that only removes; then the errors of Dispatch-and-triggers.md §4.3, a `schedule-goal`'s on every event. | Dispatch-and-triggers.md | `schedule-goal: …` on a schedule, then `goals: …` |
 | 6 | Ordering: validate the declared `depends-on` graph (unknown name, self-reference, cycle, depth over the cap are errors); assign each surviving environment one more stage than its highest dependency still in the run, 1 when it has none; move an environment with neither dependencies nor dependents to the last stage in use; collapse every environment to stage 1 when no environment is granted `apply` or `destroy`, and on a dispatch naming one environment. | Environment-ordering.md | `ordering: stage <n>` · `ordering: depends-on '<name>' not in this run (<their reason>)` · `ordering: single-environment dispatch, stage 1` · `error: …` |
@@ -593,8 +603,9 @@ test rows agree, with every slug unique.
 | I25 | On `schedule`, a running environment's granted goals are exactly the goals the workflow's gates let through on the default branch for its raw goals, less `destroy`, intersected with its `schedule-goal`'s cap (`plan`: `init` to `plan`; `apply`: those and `apply`; `destroy-plan`: `init` and `destroy-plan`; `default`: no cap), `plan` where it sets none. Derived apart from `triggers.py`, from the declared `schedule-goal` and the raw goals. |
 | I26 | The `admission` block's `applies` is true only when the actor is `dependabot[bot]`, `dependabot-admission-enabled` is on and the event is `pull_request` or `push`. |
 | I27 | When the admission refuses a run, or the run is Dependabot's push, no environment has verdict `run` and the test matrix is empty. |
-| I28 | When the admission does not apply, the output equals the output of the same document without its `admission` facts. |
+| I28 | When the admission does not apply, the output equals the output of the same document without its `admission` facts; in module mode, but for the `automerge` block, whose rules 7 and 8 read the facts in the CI App's run (Module-auto-merge.md §4). |
 | I29 | When the admission admits a pull request, every environment's verdict and every stage matrix equal those of the same document with the admission switched off. |
+| I30 | When the admission applies to a pull request and a hold covers a dependency's new version, or names it and cannot read that version, that dependency's `hold` check fails and the pull request is not admitted; without `hold`, every `hold` check passes (Dependabot-admission.md §4.6; specified, not yet built). |
 
 I5 of the first draft restated rule 2 and is folded into it.
 
