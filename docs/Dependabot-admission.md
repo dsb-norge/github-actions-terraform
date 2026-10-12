@@ -408,21 +408,22 @@ before any job runs it ([what the admission checks](<link to this spec>)).
 |---|---|---|
 | provider `hashicorp/azurerm` | 4.41.0 → 4.42.0 | ✅ admitted |
 | provider `cyrilgdn/postgresql` | 1.25.0 → 1.26.0 | ❌ `cyrilgdn` is not on the allow list |
-| module `Azure/naming/azurerm` | 0.4.3 → 0.4.4 | ❌ published 1 day ago; the minimum is 3 days |
+| module `Azure/naming/azurerm` | 0.4.3 → 0.4.4 | ❌ published 1 day ago; the minimum is 3 days, reached at 2026-09-23 14:13 UTC |
 
 <details><summary>Files</summary>
 
-- `envs/dev/.terraform.lock.hcl`, `envs/prod/.terraform.lock.hcl`: `hashicorp/azurerm`
-- `envs/prod/.terraform.lock.hcl`: `cyrilgdn/postgresql`
-- `main/naming.tf`: `Azure/naming/azurerm`
+- `envs/dev/.terraform.lock.hcl`, `envs/prod/.terraform.lock.hcl`: provider `hashicorp/azurerm`
+- `envs/prod/.terraform.lock.hcl`: provider `cyrilgdn/postgresql`
+- `main/naming.tf`: module `Azure/naming/azurerm`
 
 </details>
 
-**If you trust `cyrilgdn/postgresql` and the update is intended:** add `cyrilgdn/postgresql` (or
-`cyrilgdn`) to `allow` in `dependabot-admission-yml` in the calling workflow on the default branch,
-then comment `@dependabot rebase` on this pull request.
+**If you trust provider `cyrilgdn/postgresql` and the update is intended:** add `cyrilgdn/postgresql`
+(or `cyrilgdn`) to `allow` in `dependabot-admission-yml` in the calling workflow on the default
+branch, then comment `@dependabot rebase` on this pull request.
 
-**`Azure/naming/azurerm` 0.4.4 is too new:** re-run all jobs of this run after 2026-10-04 12:00 UTC.
+**module `Azure/naming/azurerm` 0.4.4 is too new:** published 1 day ago; the minimum is 3 days,
+reached at 2026-09-23 14:13 UTC. Then re-run all jobs of this run.
 
 **To run this pull request once without changing the policy:** push a commit to its branch. That run
 is yours and is not judged; Dependabot stops rebasing the pull request.
