@@ -57,8 +57,9 @@ calls, the Azure Verified Modules among them, are 0.x; a 0.x minor is therefore 
   start with `fix(deps)`, which release-please releases as a patch. The configuration is the same
   in every module repository (§6).
 - **The [Dependabot admission](Dependabot-admission.md)** judges each of its pull requests before
-  anything runs it: an allowed publisher, at least three days old, and a provider signed as the
-  version before it. A refused pull request runs nothing and gets a comment saying why.
+  anything runs it: an allowed publisher, at least three days old, a provider signed as the
+  version before it, and no hold of the repository's on the new version (§4). A refused pull
+  request runs nothing and gets a comment saying why.
 - **CI** validates the module and runs every test, credentialed lanes included, and commits the
   regenerated README to the pull request.
 - **[Auto-merge](Module-auto-merge.md)** merges an admitted, green Dependabot pull request that
@@ -80,7 +81,9 @@ calls, the Azure Verified Modules among them, are 0.x; a 0.x minor is therefore 
 | A Dependabot pull request is refused by the admission | The admission comment says which check failed and what to do. A release that is only too new is admitted when re-run after its age is reached. |
 | A Dependabot pull request proposes a provider | It should not happen (§6); auto-merge refuses a provider major. Close it. |
 | A called module releases a new major | Read its upgrade notes, change the pin by hand in a pull request, and release as the change to callers warrants. |
-| The weekly scheduled run is red | A provider release, or Azure, broke the module or its tests. Fix the module in a pull request (`fix:`). If that takes time, cap the range below the release that breaks it (`>= 4.0.0, < 4.82.0`) as a `fix:` release, and lift the cap with the fix. |
+| A called module's release must not be taken (it breaks the module, or needs work first) | (Holds are specified, not yet released; until then `hold` is an unknown key.) **Hold** it: add a hold on the module to `dependabot-admission-yml` in the calling workflow, with the versions kept out and the reason ([Dependabot-admission.md §4.6](Dependabot-admission.md#46-holds)), `module: Azure/avm-res-network-virtualnetwork/azurerm`, `versions: ">= 0.17.2"`. Dependabot's pull requests into the range are refused and stay open, red, with the reason; leave them open, since closing one makes Dependabot skip that version, even after the hold is lifted, unless it is reopened. Lift the hold when the reason is gone and comment `@dependabot rebase`. |
+| A Dependabot pull request is refused as held | The repository decided against that version; the comment gives the reason. Leave it open until the hold is lifted. |
+| The weekly scheduled run is red | A provider release, or Azure, broke the module or its tests. Fix the module in a pull request (`fix:`). If that takes time, cap the range below the release that breaks it (`>= 4.0.0, < 4.82.0`) as a `fix:` release, and lift the cap with the fix. A hold does not help here: every run installs the newest release the range allows, and Dependabot proposes no provider (§6). |
 | A provider's next major is released | Nothing happens on its own. When callers are moving, decide per module: **widen** the range (`>= 4.0.0, < 6.0.0`) when the module works with both majors, a `feat:` release; or **move** it (`>= 5.0.0, < 6.0.0`) when the module needs the new major, a `feat!:` release with a `BREAKING CHANGE:` footer. CI tests only the newest release in the range, so after widening, test the older major by hand before the release. |
 | The module needs a newer provider feature | Raise the floor in the same pull request as the change that needs it, a `feat:` release; callers update the provider within the major. |
 | A release pull request waits | It changes more than `CHANGELOG.md` and the manifest; review and merge it. |
