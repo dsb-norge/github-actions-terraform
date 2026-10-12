@@ -13,6 +13,9 @@ and refused pull requests, the admission head, and the README committed to an ad
 which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the minimum age. §20
 records what implementation and the test bed taught the spec.
 
+**Version holds (§4.6, D23 to D31) are specified, not yet built**: the text describes them as they
+will be, and §18 lists what only a run can answer.
+
 ## 1. Why
 
 A Dependabot pull request runs code nobody has looked at. `terraform init` downloads the provider
@@ -60,6 +63,16 @@ the merge, an accepted version runs on the default branch with the apply identit
 on the pull request, so the admission is the decision to accept a version: the same verdict gates
 the pull request's credentialed run and, through the conclusion, its auto-merge.
 
+That decision is also where a repository says which versions it does not accept, whoever publishes
+them. A provider release can be sound and still wrong for one repository: a project that must stay
+on azurerm 3 because a module it calls requires it, while azurerm 3.117 stopped retrying a dropped
+connection to Azure Resource Manager, which fails the plan, until 4.12.0 retried again
+([go-azure-sdk #1123](https://github.com/hashicorp/go-azure-sdk/pull/1123)). The bump to 3.117 plans
+with no changes, passes every plan limit and merges itself overnight. Nothing else in the repository
+stops it: Dependabot rewrites the version constraint that would (P30), its `ignore` lives in a
+configuration shared by every repository and does not bound the lock (P31), and its comment commands
+keep their state out of sight. A **hold** (§4.6) says it where the version is judged.
+
 ## 2. Decisions
 
 | # | Decision | Rationale |
@@ -86,6 +99,15 @@ the pull request's credentialed run and, through the conclusion, its auto-merge.
 | D20 | On an admitted Dependabot run, the test stage drops no lane for `secrets unavailable`: a credentialed lane runs as on a person's run. Its credentials reach a Dependabot run only as plain values in the lane's `extra-envs-yml` (the IDs, with OIDC through the lane's GitHub Environment) or as Dependabot secrets; a lane that keeps them as environment secrets fails there. No setting selects the lanes, and nothing detects which lanes would succeed. Fork runs and runs with the admission off keep today's rule. | Decided by the maintainer: callers move the lane IDs to plain values, as D18 does for environments, and a lane that has not moved fails visibly rather than being skipped. A behaviour change for callers on v1 with credentialed lanes, accepted while few callers are on v1 (§13). |
 | D21 | The module workflow posts the admission head too: the engine's module output carries it, and a copy of the project workflow's seed job posts it on a refused run and purges it on a later run of the pull request that is not refused. The copy runs on pull requests Dependabot opened only. | Found on the test bed: a refused module pull request showed no comment at all, while its conclusion said "see the admission comment". |
 | D22 | On a Dependabot pull request, the module workflow's docs job commits the regenerated README when `create-matrix` judged and admitted the run (`admission-admitted`), and in no other run on that pull request, whoever started it (P26). It commits only on top of the commit the run evaluated (P23), with `[dependabot skip]` in the message so Dependabot keeps rebasing (P24), using the organisation App, whose key must then also be an organisation Dependabot secret. The run the commit starts is the App's: it is not judged, as a person's push is not, and it reads the repository's Actions secrets (R7); with the module workflow's auto-merge on, that run also merges the pull request ([Module-auto-merge.md](Module-auto-merge.md) M2). | Decided by the maintainer: module repositories move to Dependabot, and the template's README lists the providers' constraints and the modules' versions, so nearly every bump made the README stale and the docs check red (P25). Without the admission, or on a refused run, a commit would hand a change nobody judged to a run that reads every secret, so the README is checked as before. |
+| D23 | A repository can **hold** a dependency: refuse every Dependabot pull request that moves it into a range of versions, with a reason. A held pull request is not admitted (D4): nothing runs, the conclusion is red, auto-merge does not run, and the admission head gives the hold and its reason. | Decided by the maintainer. What hurts is not the proposal but its merge: a bump whose plan shows no changes passes every plan limit and merges unseen. A constraint in the code does not hold (P30); Dependabot's `ignore` is in the shared configuration and does not bound the lock (P31); its comment commands keep their state out of the repository. The admission already judges the version that runs, the lock's (P16), and its verdict already stops auto-merge. |
+| D24 | Holds are declared under `hold` in `dependabot-admission-yml`, per calling workflow. | Decided by the maintainer: the admission's policy in one place and validated with it; a hold reaches the default branch through a pull request, like any other change to the caller. A repository with several calling workflows declares it in each that judges the pull request (P42). |
+| D25 | A hold names its dependency with an explicit kind, `provider` or `module`: a provider as a `required_providers` source or a lock file writes it, a module as its package, a registry source or a GitHub repository without subdirectory or ref; `versions` is **one** Terraform constraint, the versions the hold keeps out; `reason` is required. | Decided by the maintainer. An explicit kind turns a malformed name into a validation error: read from the number of parts, `Azure/naming` (the allow list's form) would be a provider hold that matches nothing. The polarity is that of Dependabot's `ignore`, Gradle's `reject`, Maven's `bannedDependencies` and cargo-deny's `deny`: the versions refused, not the ones kept. One string, not a list: a list read as "any of" turns `[">= 3.117.0", "< 4.0.0"]` into a hold on every version; two ranges are two holds. |
+| D26 | A hold is matched against the version the admission judges (§4.2 to §4.4), with two departures from Terraform's reading, both towards holding: a pre-release is held when either its place in version order or its release is in the range (`4.0.0-beta1` by `>= 4.0.0`, `4.12.0-rc1` by `< 4.12.0`), and a version that cannot be read is held. | Terraform's ranges never select a pre-release, so read as Terraform reads it, every range would let every pre-release through (P32); a moving tag such as `v3` may point at a held 3.x (P33). A hold that guesses fails open. |
+| D27 | When holds are set and the admission is on, every run **audits** them against the repository and warns about a hold that matches nothing the repository uses, and about a committed lock or exact module version that a hold covers. Warnings, never errors. | Decided by the maintainer. A misspelt hold fails open, an inverted one (`versions: "3.116.0"`, meant as "keep 3.116.0") holds the version the repository runs (P35), and a hold added after the version arrived leaves it running. Warnings, because an error on every event would stop the default branch's applies on a false positive. |
+| D28 | A hold carries no date. | Decided by the maintainer. The reason says when to lift it, and the refused pull request, left open, is the reminder (D31). The security scanners' expiry (OSV-Scanner, Snyk, Trivy) lapses, which for a hold fails open: on the day after, the held bump is admitted and may merge unseen. |
+| D29 | `hold` with `dependabot-admission-enabled: false` is a validation error. | The hold would be validated and never applied, silently; the module workflow's admission is off by default (D13). |
+| D30 | Module auto-merge refuses a Dependabot pull request that a hold covers, in the run its docs commit starts too ([Module-auto-merge.md](Module-auto-merge.md) rule 8). | The admission does not judge that run (D22, R7). A hold that lands between Dependabot's admitted run and the docs commit is on the base the App's run merges against, and only the rule sees it (P43). |
+| D31 | A held pull request is left open; nothing closes it. | The open, red pull request is the reminder that the hold exists. Closing it makes Dependabot skip that version even after the hold is lifted (P40); the help says so. |
 
 ## 3. Who meets the admission
 
@@ -103,7 +125,7 @@ person, while the run keeps Dependabot's privileges.
 
 ## 4. The rule
 
-A Dependabot pull request is admitted when every check of §4.1 to §4.5 passes. The checks judge the
+A Dependabot pull request is admitted when every check of §4.1 to §4.6 passes. The checks judge the
 change from the merge commit's first parent to the merge commit, read through git in the
 `create-matrix` checkout (D5): that is exactly the tree every job of the run checks out.
 
@@ -156,6 +178,7 @@ in.
 | Check | Passes when | Fact (§8) |
 |---|---|---|
 | `host` | the address is on `registry.terraform.io` | the address |
+| `hold` | no hold of the repository covers the new version, or names the dependency and cannot read it (§4.6); listed only when the policy sets `hold` | the policy and the new version |
 | `allow` | its namespace, or namespace and type, is on the allow list | the address |
 | `age` | the new version was published at least `min-age-days` before the run, or the namespace is exempt | the version's publication time |
 | `key` | the new version's signing key IDs share one with the base version's, or a new key is HashiCorp's own or carries a partner trust signature that verifies against HashiCorp's partner key | each version's signing keys and their trust signatures |
@@ -172,6 +195,7 @@ an exact `=`).
 | Check | Passes when | Fact (§8) |
 |---|---|---|
 | `source` | a registry module on `registry.terraform.io`, or a GitHub source; any other source kind fails (D12) | the source |
+| `hold` | no hold of the repository covers the new version, or names the dependency and cannot read it (§4.6); listed only when the policy sets `hold` | the policy and the new version |
 | `allow` | the registry namespace or GitHub owner, or namespace and name, owner and repository, is on the allow list | the source |
 | `age` | the new version was published at least `min-age-days` before the run, or the namespace is exempt | registry: the version's publication time; GitHub: the publication time of the tag's release |
 
@@ -184,7 +208,99 @@ no release fails `age` unless the owner is exempt.
 Every environment the change is relevant to has a committed `.terraform.lock.hcl` in its project
 directory. With D10, the lock is then the complete list of what that environment's `init` may install.
 
-### 4.6 Facts that cannot be gathered
+### 4.6 Holds
+
+A hold keeps Dependabot from moving one dependency into a range of versions, and says why (D23). It
+is declared in `dependabot-admission-yml` (§6):
+
+```yaml
+        hold:
+          - provider: hashicorp/azurerm
+            versions: "> 3.116.0, < 4.12.0"   # the versions Dependabot may not bring in
+            reason: >-
+              azurerm 3.117 stopped retrying a dropped connection to Azure Resource Manager, which
+              fails the plan; 4.12.0 retries again. Lift when the landing-zone module allows azurerm 4.
+```
+
+**What a hold names.** Exactly one of two keys; names compare without case:
+
+| Key | Names | Matches |
+|---|---|---|
+| `provider` | `<namespace>/<type>`, or `registry.terraform.io/<namespace>/<type>` as a lock file writes it | the provider with that address, in a lock file or a `required_providers` entry |
+| `module` | `<namespace>/<name>/<provider>`, with or without `registry.terraform.io/` | the registry module, called directly or through a `//<subdirectory>` of it: the package is held |
+| `module` | `github.com/<owner>/<repo>`, or the same repository as `git::https://github.com/<owner>/<repo>.git`, `git::ssh://git@github.com/<owner>/<repo>.git` or `git@github.com:<owner>/<repo>.git` | every GitHub source of that repository, whatever its form, subdirectory or ref |
+
+A hold names the package, never a subdirectory or a ref; any other source kind is a validation
+error, since the admission refuses every other kind anyway (`host`, `source`).
+
+**Which versions it holds.** `versions` is one Terraform version constraint: conditions separated by
+commas, each `=`, `!=`, `>`, `>=`, `<`, `<=` or `~>` followed by a version written without `v`; a
+bare version is `=`. A version is held when it satisfies every condition, read as Terraform reads
+them, so `~> 3.117` holds every 3.x from 3.117.0 on.
+
+The version judged is the new version the other checks judge: a locked provider's version in the
+lock; in a directory without a lock, the newest version the new constraint allows (§4.3); a registry
+module's exact version, or the newest its constraint allows; a GitHub module's new ref, read as
+`<major>.<minor>.<patch>` with an optional `v` and an optional pre-release. Two departures from
+Terraform's reading, both towards holding (D26):
+
+- **A pre-release is held when its place in version order or its release is in the range.**
+  `4.0.0-beta1` is held by `>= 4.0.0` through its release, `4.12.0-rc1` by `< 4.12.0` through its
+  order; Terraform's ranges never select a pre-release at all (P32). A hold's own conditions name
+  releases only.
+- **A version that cannot be read is held.** A GitHub ref that is not `<major>.<minor>.<patch>`
+  (`v3`, a moving tag that may point at a held version (P33); `release-1.2.3`; a branch) cannot be
+  compared, and a module a hold names fails `hold` with such a ref.
+
+Several holds may name one dependency. It is held when any of them covers its version, and the report
+gives every hold that does. A dependency no hold names passes `hold`. A policy without holds lists no
+`hold` check, so nothing in the output changes (I30).
+
+**What a hold does not do.**
+
+- It judges Dependabot's pull requests, nothing else (§3). A person who runs `terraform init
+  -upgrade`, opens a pull request or pushes to Dependabot's branch is not held; the audit warns when a
+  held version reaches a committed lock or module pin.
+- It does not change what `init` installs. In a project's environments the lock decides (D10); where
+  nothing locks a version, in a module repository or a directory without a lock, `init` installs the
+  newest version the constraint allows, held or not, and the constraint is what keeps a version out
+  there (R8; [Module-dependencies.md](Module-dependencies.md) §4).
+- It holds the dependency it names. A module bump whose new version requires a held provider version
+  is not held: under D10 its `init` fails (P8), and the fix is not to move the lock into the hold
+  (P44).
+- It refuses the whole pull request, as every check does. Where Dependabot's groups use
+  `group-by: dependency-name`, each dependency has a pull request of its own, so a hold refuses only
+  that dependency's.
+- It does not stop Dependabot from opening the pull request, which stays open and red (D31, §12).
+
+**The audit (D27).** When `hold` is set, which needs the admission on (D29), every run, whatever its
+event, lists the dependencies the repository uses in its committed files (§8) and warns:
+
+- about a hold that matches nothing: no committed lock file records the provider and no
+  `required_providers` entry names it, or no `module` block's source names the module. A misspelt
+  hold, or one left behind when the dependency went, holds nothing;
+- about a committed lock that records a held version, or a `module` block whose exact version, or
+  GitHub ref read as `<major>.<minor>.<patch>`, is held. The repository already runs what the hold
+  keeps out: the hold was added after the version arrived and the pin is missing, the range is
+  inverted (P35), or a person moved into it. A ref it cannot read is not warned about; a move to one
+  is refused all the same (D26).
+
+On a run the admission judges, the audit leaves out the dependencies the pull request changes: their
+held versions are in the merge commit because the pull request brings them, and the admission's
+verdict says so. The warnings are the engine's, `::warning` annotations of the `create-matrix` job
+like its other warnings, and never change a verdict. `hold:` left empty, or `hold: []`, sets no hold:
+no audit, and no error with the admission off.
+
+**When a hold takes effect.** A pull request's run reads the calling workflow from the pull request's
+merge commit, and a re-run keeps that commit
+([GitHub](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)).
+A hold on the default branch therefore applies to each Dependabot pull request's next new run, a
+rebase, a recreate or a newer version, and **never to a re-run** of a run made before it (P37). The
+hold and the pin can land in one pull request: from then on, every new Dependabot run of that
+dependency is judged with the hold. After adding or lifting a hold, comment `@dependabot rebase` on
+the dependency's open pull requests.
+
+### 4.7 Facts that cannot be gathered
 
 When a fact of §8 cannot be gathered, `create-matrix` fails with an error annotation naming the fact
 and the dependency, and no verdict is published (D11). The engine's adapter otherwise turns every
@@ -236,26 +352,42 @@ environment (D17).
         min-age-days: 3                    # default
         min-age-exempt:                    # added to: dsb-norge
           - my-other-org
+        hold:                              # none by default
+          - provider: hashicorp/azurerm
+            versions: "> 3.116.0, < 4.12.0"   # the versions Dependabot may not bring in
+            reason: >-
+              azurerm 3.117 stopped retrying a dropped connection to Azure Resource Manager, which
+              fails the plan; 4.12.0 retries again. Lift when the landing-zone module allows azurerm 4.
+          - module: my-other-org/network/azurerm
+            versions: ">= 2.0.0"
+            reason: 2.0.0 replaces the subnets the environments use; we move by hand.
 ```
 
 - Both inputs are workflow-wide: an environment may not set them. `dependabot-admission-yml` joins
   the `*-yml` inputs that are parsed and never forwarded into a row, so no row changes.
-- `dependabot-admission-yml` is empty (the defaults) or a mapping with the keys `allow`,
+- `dependabot-admission-yml` is empty (the defaults) or a mapping with the keys `allow`, `hold`,
   `min-age-days` and `min-age-exempt`.
 - `allow` and `min-age-exempt` are lists of strings, a single string being one item. Each entry is
   `<namespace>` or `<namespace>/<name>`, each part matching `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
 - `min-age-days` is an integer from 0 to 90.
+- `hold` is a list of holds (§4.6). Each is a mapping with exactly one of `provider` and `module`,
+  and `versions` and `reason`, and no other key:
+  - `provider` is `<namespace>/<type>`, optionally prefixed with `registry.terraform.io/`;
+  - `module` is `<namespace>/<name>/<provider>`, optionally prefixed with `registry.terraform.io/`, or
+    a GitHub repository in one of the forms of §4.6, without a subdirectory or a ref; each part
+    matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`;
+  - `versions` is a string: a Terraform version constraint of releases, without `v`, that at least
+    one release satisfies. A YAML number is refused rather than read (`3.10` would be `3.1`): quote it;
+  - `reason` is a string that is not blank.
+- A non-empty `hold` needs `dependabot-admission-enabled: true` (D29); `hold:` left empty and
+  `hold: []` set no hold.
 - The settings are validated on every event, whether or not the run is a Dependabot run, so a mistake
-  shows on the pull request that makes it.
+  shows on the pull request that makes it. The audit's warnings (D27) are not validation: they
+  report the repository, not the settings.
 
-The literal messages, written into [Configuration-validation.md](Configuration-validation.md) as a
-new §3 subsection when this is built:
-
-- `dependabot-admission-yml must be a mapping with the keys allow, min-age-days and min-age-exempt; it holds <type>.`
-- `dependabot-admission-yml holds the unknown key '<key>'; the keys are allow, min-age-days and min-age-exempt.`
-- `dependabot-admission-yml: allow holds '<value>', which is not a namespace or namespace/name, for example 'elastic' or 'cyrilgdn/postgresql'.` (and the same for `min-age-exempt`)
-- `dependabot-admission-yml: min-age-days must be a whole number from 0 to 90; it holds '<value>'.`
-- An environment setting either input gets the existing message for a workflow-only input.
+Every message, in the order they are reported, is in
+[Configuration-validation.md](Configuration-validation.md) §3.9. An environment setting either input
+gets the existing message for a workflow-only input.
 
 ## 7. Reporting
 
@@ -296,10 +428,42 @@ then comment `@dependabot rebase` on this pull request.
 is yours and is not judged; Dependabot stops rebasing the pull request.
 ```
 
+A held pull request (§4.6):
+
+```markdown
+### 🚫 Dependabot pull request not admitted
+
+No Terraform ran. Every dependency a Dependabot pull request changes must pass the admission
+before any job runs it ([what the admission checks](<link to this spec>)).
+
+| Dependency | Change | Result |
+|---|---|---|
+| provider `hashicorp/azurerm` | 3.116.0 → 3.117.1 | ❌ held by this repository: `> 3.116.0, < 4.12.0` |
+
+<details><summary>Files</summary>
+
+- `envs/dev/.terraform.lock.hcl`, `envs/prod/.terraform.lock.hcl`: provider `hashicorp/azurerm`
+
+</details>
+
+**provider `hashicorp/azurerm` 3.117.1 is held by this repository.** Reason: azurerm 3.117 stopped
+retrying a dropped connection to Azure Resource Manager, which fails the plan; 4.12.0 retries again.
+Lift when the landing-zone module allows azurerm 4. When that no longer applies, remove or narrow the
+hold on `hashicorp/azurerm` in `dependabot-admission-yml` in the calling workflow on the default
+branch, then comment `@dependabot rebase` on this pull request (`@dependabot recreate` once it is 30
+days old). Until then leave this pull request open: closing it makes Dependabot skip 3.117.1 even
+after the hold is lifted. It counts towards Dependabot's limit of open pull requests (5 by default).
+```
+
+The last paragraph of the first example is left out when every failed check is `hold`: a hold is
+the repository's decision against that version, and the paragraph would invite running it anyway
+(P36). The reason is shown as written, its whitespace collapsed and `<` escaped (P41).
+
 What each failed check tells the reader:
 
 | Check | Help |
 |---|---|
+| `hold` | in the table, the range of every hold that covers the version, a `~>` with its reading (`~> 3.117` (`>= 3.117.0, < 4.0.0`)), or that the version cannot be compared (`the ref v3 is not a version a hold can compare`); below it, each hold's reason, how to lift it, and why to leave the pull request open (D31) |
 | `allow` | add the namespace, or namespace and name, to `allow` on the default branch, then `@dependabot rebase` |
 | `age` | the date and time it becomes old enough; then "Re-run all jobs", since the verdict is decided in `create-matrix` |
 | `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); a new key HashiCorp does not vouch for, a self-signed one, is lock-file maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a commit of their own |
@@ -321,14 +485,16 @@ module workflow has no environment or group heads to add.
 
 ## 8. Facts and where they come from
 
-The `create-matrix` adapter gathers these only when the admission applies (§3), and hands the core
-parsed inventories, never file contents; the log of the input document leaves them out, as it leaves
-out `changed_files`.
+The `create-matrix` adapter gathers these only when the admission applies (§3), in the run a docs
+commit starts on Dependabot's pull request for module auto-merge's rules 7 and 8, and, for the audit's
+inventory, on every event when holds are set. It hands the core parsed inventories, never file
+contents; the log of the input document leaves them out, as it leaves out `changed_files`.
 
 | Fact | Source | On failure |
 |---|---|---|
 | the change | `git diff --raw -z -M HEAD^1 HEAD` (statuses, renames, mode changes) and `git show <rev>:<path>`, in the `create-matrix` checkout (fetch depth 2); a `.tf` file's changed lines are paired, a lock file is parsed before and after | `create-matrix` fails |
 | where a changed line belongs | a scan of the `.tf` file that skips strings, comments and heredocs and maps each `version` or `source` argument to its `module` block or `required_providers` entry, written on several lines or on one | — |
+| a module's package | its source classified: a registry module's namespace, name and provider; a GitHub repository's owner and name, `.git` dropped without case; never the subdirectory or the ref. A hold matches it (§4.6) | — |
 | the directories with a committed lock | `git ls-files` | `create-matrix` fails |
 | the time of the run | the adapter's clock, in UTC, once per run (the core reads no clock) | — |
 | a provider version's publication time | `GET https://registry.terraform.io/v1/providers/<ns>/<type>/<version>` → `published_at` | `create-matrix` fails |
@@ -338,6 +504,7 @@ out `changed_files`.
 | a registry module version's publication time | `GET https://registry.terraform.io/v1/modules/<ns>/<name>/<provider>/<version>` → `published_at` | `create-matrix` fails |
 | a GitHub module tag's release | `gh api repos/<owner>/<repo>/releases/tags/<tag>` → `published_at`; a 404 is the fact "no release" | other errors: `create-matrix` fails |
 | the environments' committed locks | the merge commit, as the test stage already reads them | — |
+| the repository's dependencies, for the audit (D27) | on **every event** when the parsed policy sets `hold`: `git ls-files -z -- '*.tf' '*.terraform.lock.hcl'` in the checkout, each lock's provider addresses and versions, each `required_providers` entry's source, and each `module` block's source and `version`, with the file they are in, read with the scans that read the change. Local reads only, no API call (P12) | a file that cannot be read or parsed is left out, and a warning names it; never fails the step |
 
 The registry calls must not depend on IPv6 (P17): the adapter calls the registry through `curl`, which
 tries IPv4 and IPv6 side by side, with a timeout and one retry. Measured: the calls for a grouped pull
@@ -352,11 +519,18 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   the admission applies to: the time of the run, the changed files (a `.tf` file's changed lines, a
   lock file parsed), the dependencies with their facts, and the directories with a committed lock.
   The policy is read from the inputs, as every other setting. `event.pull_request.author` is new too.
+  A module dependency carries its package (§8), `provider` included. A second optional key,
+  `dependency_inventory`, is the audit's inventory (§8), present on every event when the parsed
+  policy sets `hold`; it is kept apart from `admission` so that I28 holds as written.
   `model.check` validates their shape; `schema_version` stays 1, as for the earlier optional keys.
 - **Core**: a new module, `admission.py`, pure like the rest of the core: the checks of §4 over the
   facts, giving the `admission` block of the output:
   `{"applies", "admitted", "push_run", "dependencies": [{"kind", "address", "from", "to", "files",
-  "checks": [{"check", "ok", "detail"}]}], "refused_count", "total"}`.
+  "checks": [{"check", "ok", "detail"}]}], "refused_count", "total"}`. For holds it also reads
+  `hold` in `settings()`, with a reader of hold ranges that reads every condition and refuses what §6
+  refuses (`allows()` stops at the first condition a version fails, so a later unreadable one goes
+  unseen, and it allows every release for an empty constraint, P34); the `hold` check; and the audit,
+  whose warnings join `warnings`.
 - **Placement**: a rule between rules 3 and 4 of [Decision-engine.md](Decision-engine.md) §6,
   numbered 3a so the numbers other specs cite stay valid. It drops environments through the same
   path as rules 2 and 3, so rule 4 still computes relevance for each; the lock check of §4.5 reads
@@ -372,13 +546,21 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
   - **I26**: the admission block's `applies` is true only when the actor is `dependabot[bot]`, the
     switch is on and the event is `pull_request` or `push`.
   - **I27**: when the admission refuses, no environment has verdict `run` and no test row exists.
-  - **I28**: with the switch off, the output equals the output of the same document without the
-    `admission` key.
+  - **I28**: when the admission does not apply, the output equals the output of the same document
+    without the `admission` key.
   - **I29**: when the admission admits, every environment's verdict and row equal those of the same
     document without the `admission` key.
+  - **I30**: when the admission applies to a pull request and a hold covers a dependency's new
+    version, or names it and cannot read that version, the dependency's `hold` check fails and the
+    pull request is not admitted; without `hold`, no dependency lists a `hold` check.
+
+  I28 does not cover module mode's `automerge` block, which reads the admission's facts in the CI
+  App's run, where the admission does not apply, for rules 7 and 8 of
+  [Module-auto-merge.md](Module-auto-merge.md).
 - **Module mode**: `_module` applies the admission before the test stage; a refusal lists every test
   file as not run and publishes `admission-refused`. Its output carries `comments`, the admission
-  head alone (D21), and `create-matrix` publishes `admission-admitted` in both modes (D22).
+  head alone (D21), and `create-matrix` publishes `admission-admitted` in both modes (D22). Module
+  auto-merge's rule 8 applies the run's holds to the admission's facts (D30).
 - **The test stage**: `tests.py`'s secrets-unavailable rule drops credentialed rows for a fork, and for
   a Dependabot run only when the admission does not apply (D20).
 
@@ -406,6 +588,10 @@ Module workflow:
   evaluated; the push needs both (D22, P23).
   The terraform-docs action gains a `commit-message` input, `[dependabot skip]` on Dependabot runs.
 
+Holds (§4.6) change no job in either workflow: they are policy the engine reads, and their verdict
+travels the admission's paths. The two workflows' descriptions of `dependabot-admission-yml` name
+the `hold` key.
+
 Structural tests in `structural-tests/run_all_tests.sh` change with them: F11
 (create-matrix's outputs), F20 (the shared test jobs and the seed job stay equal), F21 (the module
 conclusion and `validate`'s needs), F24 (the App check names the Dependabot secret on a Dependabot
@@ -426,6 +612,13 @@ are plain values. A refused run runs nothing, `validate` included (D16).
 
 Module repositories usually commit no lock file, so their providers are judged at the newest
 version their constraints allow (§4.3), and D10 does not apply.
+
+Holds work in a module repository as in a project, for what Dependabot moves there: a called
+module's pin. A provider hold judges only a Dependabot change to a provider's constraint, which the
+module dependency strategy does not let Dependabot make; every run installs the newest release the
+range allows, held or not, so a provider release that breaks the module is kept out by capping the
+range ([Module-dependencies.md](Module-dependencies.md) §4). With the admission off, `hold` is a
+validation error (D29).
 
 A Dependabot bump usually makes the README stale, since terraform-docs lists the providers'
 constraints and the modules' versions (P25). On an admitted run the docs job commits the
@@ -448,6 +641,23 @@ pull requests green.
 - **Credential-free checks for a refused run**: possible in a job that references no secret, has no
   GitHub Environment and only read permissions, but a refused run is red and a person acts on it
   anyway.
+- **Keeping Dependabot from opening a held pull request.** That is Dependabot's `ignore`, which lives
+  in the `.github/dependabot.yml` the organisation's configuration writes for every repository.
+  A later central step can write each hold into it; the hold stays the guarantee, since `ignore`
+  chooses the version Dependabot reports, not the one the lock records (P31). A hold maps to one
+  `ignore` entry, Dependabot's names compared without case and its `*` matching any characters:
+
+  | Hold | `ignore` entry |
+  |---|---|
+  | `provider: hashicorp/azurerm`, `versions: "> 3.116.0, < 4.12.0"` | `dependency-name: "hashicorp/azurerm"`, `versions: ["> 3.116.0, < 4.12.0"]` |
+  | `module: Azure/naming/azurerm` | `dependency-name: "azure/naming/azurerm"`, the same `versions` |
+  | `module: github.com/<owner>/<repo>` | `dependency-name: "*::github::<owner>/<repo>::*"`: Dependabot names a GitHub module `<module label>::github::<owner>/<repo>::<ref>` |
+
+  A provider declared without `source` is named by its local name in Dependabot (`azurerm`), and
+  needs a second entry.
+- **Holding a person's change.** A hold is for the automation; a person's upgrade is a decision of
+  its own (§3). The audit warns when one reaches a committed lock or pin (D27).
+- **A date on a hold** (D28).
 
 ## 13. Compatibility and migration
 
@@ -494,6 +704,11 @@ user guide gain:
 A caller that keeps secret IDs is still protected: an admitted run fails on the missing secret, as
 it does today, and a refused run runs nothing.
 
+**Holds** (§4.6) ship in a minor release of their own (`feat:`). Without `hold` nothing changes: no
+fact is gathered, no verdict differs, and only the two messages that list the policy's keys name
+`hold` too. A caller pinned to a release before holds that sets `hold` gets the unknown-key error,
+not a hold that does nothing.
+
 ## 14. Residual risks
 
 | # | Risk | Why it stays |
@@ -505,6 +720,9 @@ it does today, and a refused run runs nothing.
 | R5 | The registry's version detail endpoints are undocumented. | A change in their shape fails `create-matrix` (D11) rather than admitting. |
 | R6 | An admitted Dependabot run's credentialed test lanes run the pull request's dependencies with the lanes' identities. | The same decision as for the environments (D3); a lane identity reaches a sandbox only, by the isolation preconditions of Terraform-tests.md §3.6. |
 | R7 | The run a docs commit starts on an admitted Dependabot pull request is the App's, not Dependabot's: it reads the repository's Actions secrets, and the admission does not judge it (D22). | It carries the admitted change and the generated README only (P23), whose dependencies the admission judged minutes before, and the admitted run already held the App's key as a Dependabot secret; a module repository's other Actions secrets are what an admitted release reaches beyond R1. The key itself reaches what the App can write, so the App is installed on the module repositories alone. With auto-merge on, the key also merges ([Module-auto-merge.md](Module-auto-merge.md) R2). |
+| R8 | A hold does not change what `init` installs: where nothing locks a dependency, a held release inside its constraint runs without any pull request (§4.6). | The constraint keeps it out there ([Module-dependencies.md](Module-dependencies.md) §4); in a project's environments the lock does (D10). |
+| R9 | A pull request whose run predates the hold, re-runs of that run included, stays mergeable by a person until its next new run (P37). | Auto-merge pins its merge to the base the run saw ([Auto-merge.md](Auto-merge.md) §6), and module auto-merge applies the hold in the App's run (D30), so only a person's merge is left; after adding a hold, rebase the dependency's open pull requests. |
+| R10 | A person's change is not held. | The hold is for the automation (§12); the audit warns when a held version reaches a committed lock or pin (D27). |
 
 ## 15. Examples
 
@@ -527,6 +745,21 @@ it does today, and a refused run runs nothing.
 | the same with the lane's IDs still environment secrets | admitted; the lane fails its credential check | D20, P19 |
 | a refused run with `dependabot-admission-enabled: false` in the caller | not judged | D14 |
 | the registry answers 503 for one version | `create-matrix` fails naming the fact | D11 |
+| `hashicorp/azurerm` 3.116.0 → 3.117.1 in two environments' locks, with the hold `provider: hashicorp/azurerm`, `versions: "> 3.116.0, < 4.12.0"` | not admitted | `hold`; the report gives the range and the reason |
+| a lock-only bump of `hashicorp/azuread` in the same repository | admitted | no hold names it (§4.6, I30) |
+| the hold and the pin back to 3.116.0 in one pull request of a person's; Dependabot proposes 3.117.1 the next night | not admitted | the next run's merge commit carries the hold (§4.6) |
+| `Azure/naming/azurerm` 0.4.4 → 0.5.0, called as `Azure/naming/azurerm//modules/x`, with the hold `module: azure/naming/azurerm`, `versions: ">= 0.5.0"` | not admitted | the package is held, without case |
+| `git::https://github.com/<org>/<repo>.git?ref=v1.4.0` → `v2.0.0`, with the hold `module: github.com/<org>/<repo>`, `versions: ">= 2.0.0"` | not admitted | every GitHub source form is the repository |
+| the same module from `?ref=v1` to `?ref=v2`, with the same hold | not admitted | `v2` is not a version a hold can compare (D26) |
+| a pre-release `4.0.0-beta1`, with the hold `versions: ">= 4.0.0"` | not admitted | its release is in the range (D26) |
+| a pre-release `4.12.0-rc1`, with the hold `versions: "> 3.116.0, < 4.12.0"` | not admitted | its place in version order is in the range (D26) |
+| two holds on `hashicorp/azurerm`, `">= 4.0.0, < 4.12.0"` and `"= 3.117.1"`, and a bump to 3.117.1 | not admitted | the second covers it; the report gives that one |
+| `hold` set with `dependabot-admission-enabled: false` | `create-matrix` fails | D29 |
+| `versions: [">= 3.117.0", "< 4.0.0"]`, `versions: 3.117` or `versions: ""` | `create-matrix` fails | one string, quoted, naming a version (§6) |
+| the hold `provider: hashicorp/azurem` (a typo) | every run warns: it matches nothing | D27 |
+| `versions: "3.116.0"`, meant as "keep 3.116.0", while the locks record 3.116.0 | every run warns: the locks record a held version | D27, P35 |
+| a person's pull request moves a lock to 3.117.1 | not judged; its run, and every run after, warns | D27, R10 |
+| a pull request refused as too new before the hold landed, then re-run with "Re-run all jobs" | admitted: the re-run reads the calling workflow of its old merge commit | P37, R9 |
 
 ## 16. Pitfalls
 
@@ -561,6 +794,21 @@ it does today, and a refused run runs nothing.
 | P27 | The Dependabot runner type is **Labeled runner** (repository or organization setting) with no runner of that label, or a runner group the repository has no access to. | Every update job stays queued for a day and is cancelled, so Dependabot never opens a pull request, and nothing reports it: the admission never has anything to judge (seen in several calling repositories). | The runner type set to **Standard GitHub runner**, which the update job needs nothing beyond; [Migration-v0-to-v1.md](Migration-v0-to-v1.md) §2.13. |
 | P28 | A registry module named with a subdirectory, `<namespace>/<name>/<provider>//<subdirectory>`, was not recognised as a registry source. | Its every bump was refused as "neither a registry.terraform.io module nor a GitHub source", so no such pull request could be admitted (seen in a calling repository, on a firewall policy module's rule collection groups). | The registry source takes an optional subdirectory, as the GitHub sources did; the package is judged (§4.2). |
 | P29 | Dependabot rewrites a lock only for a provider it bumps. A module's new version that changes a provider constraint leaves the environment's lock recording the old constraints. | The lock check failed with `Lock file out of date` on every such pull request, so none could pass, admitted or not, until a person committed the line (seen on a key vault module's bump in a calling repository). | The check warns on a constraints-only difference and the step succeeds; the versions and hashes stay strict ([Terraform-tests.md](Terraform-tests.md) §9.10, D23). |
+| P30 | Dependabot's Terraform updater picks the newest version without reading the constraint, then rewrites a constraint the new version does not satisfy: it replaces an exact version, moves a `~>`, raises a `<` or `<=` and drops `!=` ([`requirements_updater.rb`](https://github.com/dependabot/dependabot-core/blob/main/terraform/lib/dependabot/terraform/requirements_updater.rb)). | A cap written into the code is rewritten by the pull request it should stop. | Holds (D23). |
+| P31 | Dependabot's `ignore` and cooldown choose the version it reports; the lock is regenerated by `terraform providers lock`, which takes the newest version the constraints allow (P16). | An ignored version can still land in the lock. | The hold judges the lock's version (§4.6). |
+| P32 | Terraform's range operators never select a pre-release. | Read as Terraform reads it, a hold would let every pre-release through, and Dependabot proposes pre-releases to a repository already on one. Judged by its release alone, `4.12.0-rc1` would pass `< 4.12.0`. | A pre-release is held when its place in version order or its release is in the range (D26). |
+| P33 | A ref such as `v3` is a moving tag, and Dependabot updates refs of that shape. | Read as 3.0.0, it escapes `>= 3.117.0` while pointing at 3.117.1. | A ref that is not `X.Y.Z` cannot be compared, and a held module with one is held (D26). |
+| P34 | The admission's constraint reader, `allows()`, allows every release for an empty constraint, stops at the first condition a version fails, so a later unreadable condition goes unseen, and accepts the `v` prefix Terraform refuses. | A hold read with it could hold nothing, or hold differently from what Terraform's reading of the same text says. | Holds have a reader of their own that reads every condition; validation refuses an empty, unreadable or `v`-prefixed range, a pre-release in a condition, a YAML number and a range no release satisfies (§6). |
+| P35 | `versions` is the versions kept out, where a Terraform constraint is the versions allowed. | `versions: "3.116.0"`, meant as "keep 3.116.0", holds 3.116.0 and lets 3.117 through. | The audit warns that a hold covers what a committed lock records (D27); every example comments the key. |
+| P36 | The admission head's last paragraph invites running the pull request once with a person's commit. | For a held version, it invites running what the repository decided against. | Left out when every failed check is `hold` (§7). |
+| P37 | A pull request's run reads the calling workflow from its merge commit, and a re-run keeps that commit. | A hold, or a lifted one, does not reach an open pull request until its next new run; one that is green already stays mergeable by a person, and one refused as too new, re-run as the `age` help says, is admitted at a held version. | After adding or lifting a hold, `@dependabot rebase` (§4.6); auto-merge's base pin refuses the merge of a run older than the hold; R9. |
+| P38 | Dependabot stops rebasing a pull request that has not been merged for 30 days. | A long-held pull request is no longer rebased on its own. | The help names `@dependabot recreate` for an old pull request. |
+| P39 | A refused pull request counts towards Dependabot's limit of open pull requests, five per configuration entry unless the configuration says otherwise. | A held pull request takes a slot for as long as it is open. | Accepted with D31; the help says so. |
+| P40 | Closing a Dependabot pull request makes Dependabot skip that version ("OK, I won't notify you again about this release"); reopening undoes it. | A held pull request closed by hand keeps that version away after the hold is lifted. | D31; the help says so. |
+| P41 | Heads are found by a substring of their marker. | A reason holding `<!-- tf:head:` would match another head. | `<` in a reason is escaped (§7). |
+| P42 | Holds are per calling workflow (D24). | In a repository with two calling workflows, one without the hold admits the pull request and plans it, and merges it where only its conclusion is required. | Declare the hold in each calling workflow. |
+| P43 | The module workflow's docs commit starts a run the admission does not judge (D22). | A hold landing between Dependabot's admitted run and the docs commit is on the base the App's run merges against. | Module auto-merge's rule 8 applies it (D30); the App's run still validates and tests the held version (R7), and only the merge is stopped. |
+| P44 | A module's new version can require a provider version the lock does not have. | Under D10 `init` fails (P8); moving the lock to satisfy it can move it into a hold, which no admission judges, since the change is a person's. | The audit warns on that person's pull request (D27). |
 
 ## 17. Tests
 
@@ -577,7 +825,8 @@ it does today, and a refused run runs nothing.
   resolution over a version list (each operator, pre-releases, a constraint nothing satisfies).
 - Engine, invariants I26 to I29, each with a broken output it catches (`test_invariants.py`), and the
   mutation gate over `admission.py`.
-- Engine, validation: every message of §6, and the inputs refused per environment.
+- Engine, validation: every message of [Configuration-validation.md](Configuration-validation.md)
+  §3.9, and the inputs refused per environment.
 - Adapter: each fact of §8 answered, missing, mistyped and erroring; the trust signature verified
   with `gpg` against recorded registry answers, valid and tampered; a 404 for a release read as "no
   release"; the diff read from a two-commit checkout; the input-document log free of inventories.
@@ -587,6 +836,25 @@ it does today, and a refused run runs nothing.
 - Renderers: the admission head, the `not-admitted` environment and group bodies, the run summary
   section, and the admission head deleted on a later run, in both modes; in module mode no head where
   the seed does not run (a push, a fork, `add-pr-comment: false`).
+- Holds, engine: each matching form of §4.6 (a provider with and without `registry.terraform.io/`, a
+  registry module called through a subdirectory, each GitHub source form, mixed case, `.GIT`), and a
+  hold that names another dependency passing; each condition operator at its boundary, `~>` with
+  one, two and three segments, a pre-release held through its release and through its order, a ref
+  that is not `X.Y.Z` held;
+  two holds on one dependency, each reported; every hold message of Configuration-validation.md
+  §3.9, the YAML number and the list among them, and `hold:` empty; `hold` with the switch off; I30
+  with a broken output it catches; the reader of hold ranges and the `hold` check under the mutation
+  gate. Literal expected values, never the module's own constants.
+- Holds, audit: each warning; none without `hold`; none for the dependencies a judged pull request
+  changes; a provider without `source` that a lock records matched through the lock; a file that
+  cannot be read named in a warning and the step green; the verdicts of a run equal with and without
+  the inventory.
+- Holds, renderers: no `hold` check listed without holds, and the port and admission goldens
+  unchanged; the row with one range, two, a `~>` reading and an unreadable version; the help
+  with the reason collapsed and `<` escaped; the last paragraph left out when every failed check is
+  `hold` and kept when another check fails too.
+- Holds, module auto-merge: rule 8 in Dependabot's run and in the App's run (Module-auto-merge.md
+  §9).
 
 **Should:**
 
@@ -601,6 +869,9 @@ it does today, and a refused run runs nothing.
 **On the test bed**, when built: admitted and refused Dependabot pull requests, a push run, a
 re-run after the minimum age, a module bump needing a new provider under `-lockfile=readonly`, the
 module workflow opted in, and an admitted module pull request's README committed by the docs job.
+For holds: a held provider bump refused with its reason; the same provider bumped outside the hold
+admitted; the hold lifted and `@dependabot rebase` admitting the pull request; the audit's warnings
+on the pull request that adds a hold without the pin; a held called module in the module workflow.
 
 **What tests cannot cover**: whether an admitted release is benign (R1).
 
@@ -609,7 +880,14 @@ module workflow opted in, and an admitted module pull request's README committed
 What a local Terraform, the live registry, 119 real Dependabot pull requests and a probe on the test
 bed could answer is answered in the text above: `-lockfile=readonly` and a new provider (P8), the
 shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and the registry's load
-(§8). None remain.
+(§8). None remain for the admission as built. For holds, two answers need a run on the test bed:
+
+1. Does closing a Dependabot pull request still make Dependabot skip that version (P40)? GitHub's
+   documentation said so for the retired `@dependabot close` command ("You can achieve the same
+   result by closing the pull request manually"), and Dependabot's comment on a closed pull request
+   says so; the current documentation does not. The help's warning against closing depends on it.
+2. Does `@dependabot rebase` still act on a pull request older than 30 days (P38), or only
+   `@dependabot recreate`? The help names both; it should name the one that works.
 
 ## 19. Implementation order
 
@@ -625,15 +903,30 @@ shapes Dependabot writes (§4.1), two checks of one name on one commit (P5) and 
    Workflow-pr-comments.md, Terraform-tests.md §4.7.
 7. Test bed: the cases of §17.
 
+Holds (§4.6) follow in the same order, in a release of their own:
+
+1. Engine: `hold` in `settings()` and its messages, the reader of hold ranges, the `hold` check, I30,
+   the audit, tests and the mutation gate; the module record's `provider`; I28's check in
+   `engine/tests/invariants.py` leaving out module mode's `automerge` block, as Decision-engine.md
+   states it.
+2. Adapter: the module's package (§8) and the audit's inventory.
+3. Renderers: the row, the help and the last paragraph's rule.
+4. Module auto-merge's rule 8.
+5. The two workflows' input descriptions.
+6. Documentation: this spec's status line, Configuration-validation.md §3.9, the user guides, Module-dependencies.md,
+   Module-auto-merge.md, Decision-engine.md.
+7. Test bed: the cases of §17 and the questions of §18.
+
 ### Where each piece lives
 
 | Piece | Place |
 |---|---|
-| the checks | `engine/dsb_tf_engine/admission.py` |
+| the checks, `hold` included, and the audit | `engine/dsb_tf_engine/admission.py` |
 | the rule's placement and the drop | `engine/dsb_tf_engine/decide.py`, `triggers.py` |
-| the facts | `engine/dsb_tf_engine/adapter.py` |
-| the input's validation | `engine/dsb_tf_engine/environments.py` |
+| the facts, the audit's inventory included | `engine/dsb_tf_engine/admission_facts.py`, called from `adapter.py` |
+| the input's validation | `engine/dsb_tf_engine/admission.py` (`settings()`); the workflow-only rule in `environments.py` |
 | the heads | `engine/dsb_tf_engine/comments.py`, the seed job, `aggregate-validation-summaries/` |
+| module auto-merge's rule 8 | `engine/dsb_tf_engine/automerge.py` |
 | the run summary | `create-run-summary/` |
 | the conclusion | the `conclusion` job of both workflows |
 

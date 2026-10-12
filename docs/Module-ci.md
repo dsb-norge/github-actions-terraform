@@ -58,7 +58,7 @@ results. Module CI takes that stage over instead of keeping a second one.
 | `terraform-test-lanes-yml` | string | `""` | Lanes, exactly as in the project workflow ([Terraform-tests.md §3.2](Terraform-tests.md)). |
 | `terraform-test-exclude-paths-yml` | string | `""` | Globs of test files discovery ignores. |
 | `dependabot-admission-enabled` | boolean | `false` | The Dependabot admission ([Dependabot-admission.md §11](Dependabot-admission.md)). |
-| `dependabot-admission-yml` | string | `""` | The admission's policy, added to its built-in one. |
+| `dependabot-admission-yml` | string | `""` | The admission's policy: publishers and exemptions added to the built-in ones, and holds (specified, not yet built). |
 | `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green ([Module-auto-merge.md](Module-auto-merge.md)). |
 | `pr-auto-merge-from-actors-yml` | string | `"[]"` | The bots whose pull requests may merge, by the pull request's author. |
 | `path-relevance-enabled` | boolean | `true` | Skip validation and the tests on a change that touches only ignored files (§5.1); `false` runs everything. |

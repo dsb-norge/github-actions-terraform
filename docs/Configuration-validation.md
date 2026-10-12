@@ -297,14 +297,40 @@ mistake is reported, in this order:
 |---|---|
 | the switch is not a boolean (`1` is not) | `The input 'dependabot-admission-enabled' is 'yes'; it must be true or false!` |
 | the policy does not parse | `The specification for input 'dependabot-admission-yml' is not valid yaml!` |
-| the policy is not a mapping | `dependabot-admission-yml must be a mapping with the keys allow, min-age-days and min-age-exempt; it holds a list.` (or `a string`, `a number`, `a boolean`) |
-| an unknown key, each in turn | `dependabot-admission-yml holds the unknown key 'allows'; the keys are allow, min-age-days and min-age-exempt.` |
+| the policy is not a mapping | `dependabot-admission-yml must be a mapping with the keys allow, hold, min-age-days and min-age-exempt; it holds a list.` (or `a string`, `a number`, `a boolean`) |
+| an unknown key, each in turn | `dependabot-admission-yml holds the unknown key 'allows'; the keys are allow, hold, min-age-days and min-age-exempt.` |
 | `allow` or `min-age-exempt` is neither a list nor a string | `dependabot-admission-yml: allow must be a list of namespaces; it holds a mapping.` |
 | an entry that is not `<namespace>` or `<namespace>/<name>`, each in turn | `dependabot-admission-yml: allow holds 'not ok!', which is not a namespace or namespace/name, for example 'elastic' or 'cyrilgdn/postgresql'.` |
 | `min-age-days` is not a whole number from 0 to 90 | `dependabot-admission-yml: min-age-days must be a whole number from 0 to 90; it holds 100.` |
+| `hold` is not a list | `dependabot-admission-yml: hold must be a list of holds, each with provider or module, versions and reason; it is a mapping.` (or `a string`, `a number`, `a boolean`) |
+| a hold is not a mapping, each in turn | `dependabot-admission-yml: hold entry 2 must be a mapping with provider or module, versions and reason; it is a string.` |
+| a hold has an unknown key, each in turn | `dependabot-admission-yml: hold entry 2 has the unknown key 'version'; a hold has provider or module, versions and reason.` |
+| a hold names neither a provider nor a module, or both | `dependabot-admission-yml: hold entry 2 must name either a provider or a module.` |
+| a provider that is not `<namespace>/<type>` | `dependabot-admission-yml: hold entry 2: provider 'Azure/naming/azurerm' is not a provider; a provider is '<namespace>/<type>', for example 'hashicorp/azurerm'.` |
+| a module that is neither a registry module nor a GitHub repository | `dependabot-admission-yml: hold entry 2: module 'Azure/naming' is not a module a hold can name; a registry module is '<namespace>/<name>/<provider>', for example 'Azure/naming/azurerm', and a GitHub module 'github.com/<owner>/<repo>'.` |
+| a module with a subdirectory or a ref | `dependabot-admission-yml: hold entry 2: module 'github.com/example-org/network//subnets?ref=v1.2.0' names a subdirectory or a ref; a hold names the package, 'github.com/example-org/network'.` |
+| `versions` missing | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' has no versions; write the versions Dependabot may not bring in, for example '> 3.116.0'.` |
+| `versions` not a string (a YAML number, a list) | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' sets versions to 3.117, which is not a string; write one constraint in quotes, for example '> 3.116.0'.` |
+| `versions` empty or blank | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' sets versions to '', which names no version; write the versions Dependabot may not bring in, for example '> 3.116.0'.` |
+| `versions` not a Terraform constraint of releases (a condition that does not read, a `v` prefix, a pre-release) | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' sets versions to '>= v3.117.0', which is not a Terraform version constraint of releases, for example '> 3.116.0, < 4.12.0'.` |
+| `versions` that no release satisfies | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' sets versions to '> 4.0.0, < 3.0.0', which no release satisfies.` |
+| `reason` missing, not a string, or blank | `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' has no reason; say why the versions are held.` |
+| `hold` set while the admission is off | `dependabot-admission-yml sets hold, but the Dependabot admission is off, so no hold is applied. Switch dependabot-admission-enabled on, or remove hold.` |
 
 An empty policy is the built-in one; a string written alone in a list is its one item; each part of an
-entry matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
+entry matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. Holds are checked entry by entry, each entry's mistakes
+in the order of the rows; a hold is named by its position (`hold entry 2`, counted from 1) until its
+dependency reads, and by its dependency after that, as written. `hold:` left empty and `hold: []` set
+no hold. Holds are described in [Dependabot-admission.md](Dependabot-admission.md) §4.6; the messages
+about `hold` and the audit's warnings are specified with them and not yet built, and until they are,
+the two messages that list the keys leave `hold` out.
+
+The holds' **audit** (Dependabot-admission.md D27) is not validation: it reports the repository, not
+the settings, and warns without failing. With `hold` set and the admission on, every run may warn:
+
+- `dependabot-admission-yml: the hold on provider 'hashicorp/azurem' matches nothing in the repository: no committed lock file, required_providers entry or module block names it.`
+- `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' covers 3.117.1, which envs/dev/.terraform.lock.hcl and envs/prod/.terraform.lock.hcl record; a hold names the versions Dependabot may not bring in.` (for a module, `which main/network.tf pins`)
+- `dependabot-admission-yml: the holds were not audited against 'main/broken.tf', which cannot be read.`
 
 ### 3.10 Notification settings
 

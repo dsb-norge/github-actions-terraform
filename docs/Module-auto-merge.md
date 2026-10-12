@@ -6,6 +6,9 @@ a module repository merge without review, from what evidence, and how the merge 
 evidence. The project workflow's auto-merge is [Auto-merge.md](Auto-merge.md); this spec reuses its
 merge, and differs where a module differs.
 
+Status: built, but for **rule 8 (M14), which is specified, not yet built**, with the holds of
+[Dependabot-admission.md](Dependabot-admission.md) §4.6.
+
 ## 1. Why
 
 A module repository's routine pull requests come from two bots. Dependabot bumps a module the
@@ -44,6 +47,7 @@ The project workflow's auto-merge cannot be reused as it stands, for three reaso
 | M11 | A commit listing that fails, is cut short, or does not end with the evaluated head makes the run **not eligible**, with a notice; it never fails the run. | Auto-merge is the run's last, optional step: failing closed costs a person's click, failing the run would turn a green change red. (The admission fails the run instead, D11 there, because it gates whether code runs at all.) |
 | M12 | The rule is the decision engine's, in module mode; the adapter gathers the commits. The CI App's identity, which only the merge job's token knows, is confirmed there. | Every decision is a rule in the engine's pure core, under its coverage and mutation gates (Decision-engine.md D13); the App's slug is an output of its token step. |
 | M13 | **Dependabot's pull request merges only within each dependency's major**: a provider or a called module whose version changes major, or, below 1.0, minor, is merged by a person. | Decided by the maintainer: people choose the majors a module supports (Module-dependencies.md). Dependabot's `ignore` of majors does not hold when it rewrites a provider range: a module repository got `~> 4.20` → `~> 5.7` despite it, which the admission would have admitted once old enough and auto-merge would have released as a patch that drops azurerm 4. Below 1.0 semver lets any minor break, and the Azure Verified Modules are all 0.x. |
+| M14 | **Dependabot's pull request merges only outside every hold**: no dependency's new version is one a hold of the run's policy covers ([Dependabot-admission.md](Dependabot-admission.md) §4.6), in Dependabot's own run and in the run its docs commit starts. | The admission refuses a held pull request in Dependabot's own run, but does not judge the App's run (Dependabot-admission.md D22). A hold that lands on the default branch between Dependabot's admitted run and the docs commit is on the base of the App's run, which the base pin then accepts (Dependabot-admission.md P43). |
 
 The repositories also get a ruleset requiring `tf / Terraform conclusion` on the default branch,
 without required reviews, so that a person cannot merge a pull request the run refused, and the
@@ -88,6 +92,11 @@ hold, and the notice names the first that does not:
    project workflow's auto-merge applies the rule through the same function
    (`automerge.leaves_major`) but for the 0.x minor, which its plan limits judge there instead
    ([Auto-merge.md](Auto-merge.md) D15).
+8. **Dependabot's pull request moves no dependency into a hold** (M14): no hold in the run's
+   `dependabot-admission-yml` covers a dependency's new version, as the admission reads it, or
+   names a dependency whose new version cannot be read (Dependabot-admission.md D26). Facts that
+   were not gathered are not eligible, as in rule 7. The notice names the dependency, its version
+   and the hold's range: `auto-merge: not eligible: it moves module Azure/naming/azurerm to 0.4.4, which a hold keeps out (>= 0.4.4); a person decides that`.
 
 Why a signature, and why GitHub's: a commit's author is whatever its maker says, so anyone with
 write access can author a commit as `dependabot[bot]`. Dependabot's commits are signed by GitHub
@@ -119,6 +128,7 @@ author; such an App is trusted that far already (R3).
 | Dependabot's, refused, with a docs commit a person's run made before M4 | the one that docs commit started | no: rule 5 |
 | Dependabot's, a person pushed or pressed "Update branch" | the person's | no: rules 3 to 5 |
 | Dependabot's, a provider's major, or a 0.x module's minor | any | no: rule 7 |
+| Dependabot's, held by a hold that landed after its admitted run | the one the docs commit starts | no: rule 8 |
 | release-please's | the App's own push | yes |
 | a person's | the person's | no: rule 1 |
 | from a fork, or against another branch | any | no: rule 1 |
@@ -139,10 +149,10 @@ request's commits and each commit's files:
 
 Only when rule 1 holds: an unlisted author, a fork or another base is ruled out without a call.
 
-For Dependabot's pull request, rule 7 reads the admission's facts (Dependabot-admission.md §8):
+For Dependabot's pull request, rules 7 and 8 read the admission's facts (Dependabot-admission.md §8):
 each dependency the change touches, with its version before and after. Dependabot's own run
 gathers them for the admission; in the run the docs commit starts, which the admission does not
-judge, the adapter gathers them for rule 7 alone. A fact it cannot gather there leaves them out,
+judge, the adapter gathers them for rules 7 and 8 alone. A fact it cannot gather there leaves them out,
 and the run is not eligible (M11), where the admission would fail Dependabot's own run (D11
 there).
 
@@ -216,6 +226,7 @@ changelog.
 | P8 | A module that reads its README through `file()` or `templatefile()`. | A docs commit changes what the module does. | Not detected; such a module should not list the bots. |
 | P9 | A docs commit made on a Dependabot pull request before M4, in a person's run, sits on a head nobody admitted. Seen on the test bed: a person reopened a refused bump, the run used the merge commit GitHub had not yet recomputed, and with it the docs job from before the fix, which committed; the App's run that followed, on the new workflow, ruled the pull request eligible and merged it. | A refused bump merges. | Rule 5: on Dependabot's pull request a docs commit counts only with the message of Dependabot's own, admitted run. |
 | P10 | Dependabot's `ignore` with `update-types: ["version-update:semver-major"]` did not hold for a provider range: a module repository got `~> 4.20` → `~> 5.7`. | A provider major merges and is released as a patch. | Rule 7; the module repositories' Dependabot updates modules only (Module-dependencies.md). |
+| P11 | The admission does not judge the run a docs commit starts (Dependabot-admission.md D22). | A hold that landed after Dependabot's admitted run would not stop the App's run from merging the held version. | Rule 8 (M14). |
 
 ## 9. Tests
 
@@ -226,7 +237,8 @@ changelog.
   admitted run's message, and one on a release without it; the configs; author case; a listing
   that fails, is capped, is short of the event's count or ends elsewhere; a release on another
   branch or with another file; a provider and a module within and past their major, a 0.x minor,
-  an unreadable version, missing and empty dependency facts;
+  an unreadable version, missing and empty dependency facts; rule 8 with a held and an unheld
+  dependency, a ref that cannot be read, and no `hold`, in Dependabot's run and in the App's;
   the switch off; a non-`pull_request` event, a closing one, a fork and another base; the
   validation messages; the notice and the step outputs. The mutation gate over the new code.
 - Adapter: the commit and file listings answered, paginated, failing and capped, and the calls made
