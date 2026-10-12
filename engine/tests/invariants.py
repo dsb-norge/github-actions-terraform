@@ -49,8 +49,33 @@ def _refused(output):
     return admission["applies"] and not admission["push_run"] and not admission["admitted"]
 
 
+def _hold_invariants(document, admission):
+    """I30, derived apart from admission.py for a provider moving to a release: the hold's name without its host
+    and case, its range read by allows(), which a release satisfies alike in both readings."""
+    from dsb_tf_engine.admission import allows
+    violations = []
+    result = document["yaml"]["inputs"].get("dependabot-admission-yml", {"value": None})
+    holds = result["value"].get("hold") if isinstance(result["value"], dict) else None
+    holds = holds if isinstance(holds, list) else []
+    checks = [check for dependency in admission["dependencies"] for check in dependency["checks"]]
+    if not holds and any(check["check"] == "hold" for check in checks):
+        violations.append("I30: a hold check where the policy sets no hold")
+    held = [dependency for dependency in admission["dependencies"]
+            if any(check["check"] == "hold" and not check["ok"] for check in dependency["checks"])]
+    if held and (admission["admitted"] or any(dependency["admitted"] for dependency in held)):
+        violations.append("I30: a held dependency is admitted")
+    for fact in document["admission"]["dependencies"]:
+        name = fact["address"].removeprefix("registry.terraform.io/").casefold()
+        covered = fact["kind"] == "provider" and re.fullmatch(r"\d+\.\d+\.\d+", fact["to"]) and any(
+            str(hold.get("provider", "")).casefold().removeprefix("registry.terraform.io/") == name
+            and allows(hold["versions"], fact["to"]) for hold in holds)
+        if covered and admission["admitted"]:
+            violations.append(f"I30: {fact['address']} {fact['to']} is inside a hold and admitted")
+    return violations
+
+
 def _admission_invariants(document, output):
-    """I26-I29 (docs/Dependabot-admission.md §9)."""
+    """I26-I30 (docs/Dependabot-admission.md §9)."""
     from dsb_tf_engine import decide
     violations = []
     admission = output.get("admission")
@@ -67,8 +92,15 @@ def _admission_invariants(document, output):
         violations.append("I27: a refused or Dependabot push run runs an environment or a test")
     if not admission["applies"] and "admission" in document:
         without = {key: value for key, value in document.items() if key != "admission"}
-        if decide.decide(without) != output:
+        # Module auto-merge's rules 7 and 8 read the facts in the CI App's run, which the admission does not judge:
+        # its block and its notice are left out.
+        def judged(decided):
+            return {**{key: value for key, value in decided.items() if key != "automerge"},
+                    "notices": [notice for notice in decided["notices"] if not notice.startswith("auto-merge: ")]}
+        if judged(decide.decide(without)) != judged(output):
             violations.append("I28: the admission's facts change a run it does not apply to")
+    if admission["applies"] and not admission["push_run"]:
+        violations += _hold_invariants(document, admission)
     if admission["applies"] and admission["admitted"] and not admission["push_run"] and output.get("mode") != "module":
         off = {**document, "workflow_inputs": {**document["workflow_inputs"], "dependabot-admission-enabled": False}}
         other = decide.decide(off)

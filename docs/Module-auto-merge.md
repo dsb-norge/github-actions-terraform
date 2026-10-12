@@ -6,8 +6,8 @@ a module repository merge without review, from what evidence, and how the merge 
 evidence. The project workflow's auto-merge is [Auto-merge.md](Auto-merge.md); this spec reuses its
 merge, and differs where a module differs.
 
-Status: built, but for **rule 8 (M14), which is specified, not yet built**, with the holds of
-[Dependabot-admission.md](Dependabot-admission.md) §4.6.
+Status: built. Rule 8 (M14) applies the holds of [Dependabot-admission.md](Dependabot-admission.md)
+§4.6.
 
 ## 1. Why
 

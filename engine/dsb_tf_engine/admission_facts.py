@@ -362,6 +362,56 @@ def _tf_dependencies(tools, path, old_text, new_text, locked_dirs, dependencies)
     return unmapped
 
 
+INVENTORY_PATTERNS = ("*.tf", f"*{LOCK_NAME}", LOCK_NAME)
+
+
+def _uses(path, text):
+    """The required_providers sources and module sources a .tf file names, each once."""
+    providers, modules, seen = [], [], set()
+    for kind, _, source, version in dependency_lines(text).values():
+        if (kind, source, version) in seen:
+            continue
+        seen.add((kind, source, version))
+        if kind == "provider":
+            providers.append({"path": path, "address": provider_address(source)})
+            continue
+        source_kind, namespace, name, ref = classify_source(source)
+        modules.append({"path": path, "source_kind": source_kind, "namespace": namespace, "name": name,
+                        "provider": REGISTRY_SOURCE.fullmatch(source).group(3) if source_kind == "registry" else "",
+                        "version": ref if source_kind == "github" else version})
+    return providers, modules
+
+
+def inventory(tools):
+    """What the repository's committed files use, for the audit of the admission's holds (docs/Dependabot-admission.md
+    §8, D27), read from the checkout. Never raises: the audit only warns, so a listing that fails is the fact
+    `available: false`, and a file that cannot be read or parsed is named in `unreadable`."""
+    result = {"available": False, "locks": [], "providers": [], "modules": [], "unreadable": []}
+    try:
+        code, stdout, _ = tools.run(("git", "ls-files", "-z", "--", *INVENTORY_PATTERNS))
+    except OSError:
+        return result
+    if code != 0:
+        return result
+    result["available"] = True
+    for path in sorted(path for path in stdout.split("\0") if path):
+        text = tools.read_text(path)
+        if text is None:
+            result["unreadable"].append(path)
+        elif path.endswith(LOCK_NAME):
+            blocks = parse_lock_blocks(text)
+            if blocks is None:
+                result["unreadable"].append(path)
+            else:
+                result["locks"].append({"path": path, "providers": {address: block["version"]
+                                                                    for address, block in blocks.items()}})
+        else:
+            providers, modules = _uses(path, text)
+            result["providers"] += providers
+            result["modules"] += modules
+    return result
+
+
 def gather(tools, now=None):
     """The `admission` facts of the input document (docs/Dependabot-admission.md §8)."""
     locks = [path for path in _run(tools, ("git", "ls-files", "-z", "--", f"*{LOCK_NAME}", LOCK_NAME),
@@ -402,7 +452,7 @@ def gather(tools, now=None):
             facts = module_facts(tools, dependency["source_kind"], dependency["namespace"], dependency["name"],
                                  dependency["provider"], dependency["to"])
             gathered.append({key: dependency[key] for key in ("kind", "address", "from", "to", "files", "source_kind",
-                                                             "namespace", "name")} | {"facts": facts})
+                                                             "namespace", "name", "provider")} | {"facts": facts})
     return {"now": int(time.time()) if now is None else now, "files": files,
             "dependencies": sorted(gathered, key=lambda item: (item["kind"], item["address"], item["to"])),
             "locks": {directory: True for directory in sorted(locked_dirs)}}

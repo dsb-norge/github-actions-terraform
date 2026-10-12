@@ -217,7 +217,7 @@ For a module repository whose dependencies Dependabot keeps current:
          #     - cloudposse/label
    ```
 
-   A called module's release that the module must not take is **held** in the same policy (specified, not yet released), as in the [project workflow](Workflow-terraform-ci-default.md#holding-a-version): `hold: [{module: Azure/naming/azurerm, versions: ">= 0.5.0", reason: …}]`; Dependabot's pull requests into the range are then refused. A provider release that breaks the module is kept out by capping the range instead ([Module-dependencies.md §4](Module-dependencies.md#4-when-and-what-to-do)): every run installs the newest release the range allows, whatever a hold says.
+   A called module's release that the module must not take is **held** in the same policy, as in the [project workflow](Workflow-terraform-ci-default.md#holding-a-version): `hold: [{module: Azure/naming/azurerm, versions: ">= 0.5.0", reason: …}]`; Dependabot's pull requests into the range are then refused. A provider release that breaks the module is kept out by capping the range instead ([Module-dependencies.md §4](Module-dependencies.md#4-when-and-what-to-do)): every run installs the newest release the range allows, whatever a hold says.
 
 3. **Lane IDs as plain values.** A credentialed lane reads its IDs from its `extra-envs-yml` on a Dependabot run, since a Dependabot run reads no environment secret; the IDs are not secret, the GitHub Environment's OIDC subject is what the identity trusts:
 

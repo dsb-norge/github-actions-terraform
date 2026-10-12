@@ -17,7 +17,11 @@ TOP_LEVEL_KEYS = ("schema_version", "caller", "event", "workflow_inputs", "yaml"
 # admission: the facts of a Dependabot run the admission judges (docs/Dependabot-admission.md §8).
 # automerge: a module pull request's commits, for its auto-merge (docs/Module-auto-merge.md §4).
 # notify_target: the notification target the workflow read from its variables (docs/Notifications.md §6.1).
-OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission", "automerge", "notify_target")
+# dependency_inventory: what the repository's committed files use, for the audit of the admission's holds
+# (docs/Dependabot-admission.md §8, D27).
+OPTIONAL_KEYS = ("changed_files", "run", "tests", "mode", "admission", "automerge", "notify_target",
+                 "dependency_inventory")
+INVENTORY_KEYS = ("available", "locks", "providers", "modules", "unreadable")
 NOTIFY_TARGET_KEYS = ("bot_url", "bot_audience", "alias")
 # Absent means the project workflow's decision; a module decides its test stage alone (docs/Module-ci.md §5).
 MODES = ("project", "module")
@@ -104,8 +108,9 @@ def _is_published(value):
 
 
 def _is_module(item):
-    return (set(item) == {"kind", "address", "from", "to", "files", "facts", "source_kind", "namespace", "name"}
-            and all(isinstance(item[key], str) for key in ("source_kind", "namespace", "name"))
+    return (set(item) == {"kind", "address", "from", "to", "files", "facts", "source_kind", "namespace", "name",
+                          "provider"}
+            and all(isinstance(item[key], str) for key in ("source_kind", "namespace", "name", "provider"))
             and set(item["facts"]) == {"published"} and _is_published(item["facts"]["published"]))
 
 
@@ -130,6 +135,21 @@ def _is_admission(value):
             and isinstance(value["files"], list) and all(_is_admission_file(item) for item in value["files"])
             and isinstance(value["dependencies"], list) and all(_is_dependency(item) for item in value["dependencies"])
             and isinstance(value["locks"], dict) and all(isinstance(v, bool) for v in value["locks"].values()))
+
+
+def _is_inventory(value):
+    def entries(items, keys):
+        return isinstance(items, list) and all(isinstance(item, dict) and set(item) == set(keys)
+                                               and all(isinstance(item[key], str) for key in keys) for item in items)
+    return (isinstance(value, dict) and set(value) == set(INVENTORY_KEYS) and isinstance(value["available"], bool)
+            and isinstance(value["locks"], list)
+            and all(isinstance(lock, dict) and set(lock) == {"path", "providers"} and isinstance(lock["path"], str)
+                    and isinstance(lock["providers"], dict)
+                    and all(isinstance(version, str) for version in lock["providers"].values())
+                    for lock in value["locks"])
+            and entries(value["providers"], ("path", "address"))
+            and entries(value["modules"], ("path", "source_kind", "namespace", "name", "provider", "version"))
+            and _is_strings(value["unreadable"]))
 
 
 AUTOMERGE_KEYS = ("available", "reason", "head_ref", "count", "commits")
@@ -227,6 +247,10 @@ def check(document):
         _require(_is_admission(document["admission"]),
                  "input document: 'admission' needs exactly 'now', 'files', 'dependencies' and 'locks', shaped as "
                  "docs/Dependabot-admission.md §8 describes")
+    if "dependency_inventory" in document:
+        _require(_is_inventory(document["dependency_inventory"]),
+                 "input document: 'dependency_inventory' needs exactly 'available', 'locks', 'providers', 'modules' and "
+                 "'unreadable', shaped as docs/Dependabot-admission.md §8 describes")
     if "automerge" in document:
         _require(_is_automerge(document["automerge"]),
                  "input document: 'automerge' needs exactly 'available', 'reason', 'head_ref', 'count' and 'commits', "

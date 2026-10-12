@@ -288,12 +288,39 @@ class AdmissionFactsTest(unittest.TestCase):
             {key: value for key, value in provider.items() if key != "locked"},
             {**module, "locked": True}, {**module, "source_kind": 5}, {**module, "namespace": None},
             {**module, "name": 1}, {**module, "facts": {"published": "x"}}, {**module, "facts": {}},
-            {**module, "facts": {"published": 1, "x": 2}},
+            {**module, "facts": {"published": 1, "x": 2}}, {**module, "provider": 5},
+            {key: value for key, value in module.items() if key != "provider"},
         ]
         for bad in bad_dependencies:
             with self.subTest(bad=bad):
                 self.assertDocumentError(self.facts(dependencies=[bad]), ADMISSION_MESSAGE)
         model.check(self.facts(dependencies=[{**module, "facts": {"published": None}}]))
+
+    def test_the_dependency_inventory(self):
+        """The holds' audit's facts (docs/Dependabot-admission.md §8): absent is fine, present must be whole."""
+        message = ("input document: 'dependency_inventory' needs exactly 'available', 'locks', 'providers', 'modules' "
+                   "and 'unreadable', shaped as docs/Dependabot-admission.md §8 describes")
+        document = support.document()
+        document["dependency_inventory"] = support.inventory(modules=[support.inventory_module()], unreadable=["x.tf"])
+        model.check(document)
+        whole = document["dependency_inventory"]
+        lock, provider, module = whole["locks"][0], whole["providers"][0], whole["modules"][0]
+        bad_inventories = [
+            [], {key: value for key, value in whole.items() if key != "unreadable"}, {**whole, "x": 1},
+            {**whole, "available": "yes"}, {**whole, "locks": {}}, {**whole, "locks": ["x"]},
+            {**whole, "locks": [{**lock, "x": 1}]}, {**whole, "locks": [{"path": "l"}]},
+            {**whole, "locks": [{**lock, "path": 5}]}, {**whole, "locks": [{**lock, "providers": []}]},
+            {**whole, "locks": [{**lock, "providers": {"a": 1}}]},
+            {**whole, "providers": {}}, {**whole, "providers": ["x"]}, {**whole, "providers": [{"path": "p"}]},
+            {**whole, "providers": [{**provider, "address": 5}]}, {**whole, "providers": [{**provider, "x": "y"}]},
+            {**whole, "modules": "x"}, {**whole, "modules": [{**module, "version": None}]},
+            {**whole, "modules": [{**module, "x": "y"}]},
+            {**whole, "unreadable": "x.tf"}, {**whole, "unreadable": [1]},
+        ]
+        for bad in bad_inventories:
+            with self.subTest(bad=bad):
+                document["dependency_inventory"] = bad
+                self.assertDocumentError(document, message)
 
     def test_the_pull_request_s_author_is_a_string(self):
         document = support.dependabot_pull_request(support.document())
