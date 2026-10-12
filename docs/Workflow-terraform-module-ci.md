@@ -99,7 +99,7 @@ Require the check **`tf / Terraform conclusion`** in the branch protection of `m
 | `terraform-test-lanes-yml` | string (YAML list) | `""` | Which test files run with which credentials, runner, Terraform version and GitHub Environment, see [credentials](#credentials-lanes). Empty: every file runs without credentials. |
 | `terraform-test-exclude-paths-yml` | string (YAML list) | `""` | Glob patterns of test files that do not run ([Terraform-tests.md §4.4](Terraform-tests.md)). |
 | `dependabot-admission-enabled` | boolean | `false` | Judge a Dependabot pull request before validation and the tests run it; an admitted one runs every lane, credentialed ones included, and gets its regenerated README committed. See [Dependabot pull requests](#dependabot-pull-requests). |
-| `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy, added to the built-in one ([Dependabot-admission.md §6](Dependabot-admission.md)). |
+| `dependabot-admission-yml` | string (YAML) | `""` | The admission's policy: publishers and exemptions added to the built-in ones, and [holds](Workflow-terraform-ci-default.md#holding-a-version) ([Dependabot-admission.md §6](Dependabot-admission.md)). |
 | `pr-auto-merge-enabled` | boolean | `false` | Merge a listed bot's pull request once its run is green. See [auto-merge](#auto-merge). |
 | `pr-auto-merge-from-actors-yml` | string (YAML list) | `"[]"` | The bots whose pull requests may merge, by the pull request's author: bots only, and `dependabot[bot]` only with the admission on. |
 | `path-relevance-enabled` | boolean | `true` | Skip validation and the tests on a pull request or push that changes only ignored files. `false` runs everything. |
@@ -196,7 +196,7 @@ A fork's run has no secrets, so a credentialed lane cannot run there; a Dependab
 
 Without the admission, a Dependabot pull request validates and runs the tests that need no credentials; its credentialed lanes are listed as "secrets unavailable". It reaches no cloud identity, which is why the admission is off by default here and on in the project workflow.
 
-With `dependabot-admission-enabled: true`, a run Dependabot starts first meets the admission ([Dependabot-admission.md](Dependabot-admission.md)): every provider and module the pull request changes must come from an allowed namespace (built in `dsb-norge`, `hashicorp`, `microsoft`, `Azure`), be old enough and, for a provider, be signed as the version before it. An admitted pull request validates and runs **every** lane, credentialed ones included, so all its tests run; a lane's IDs must then be plain values in its `extra-envs-yml`, since a Dependabot run reads no environment secret. A refused pull request runs neither validation nor tests, the conclusion is red with the reason, and the admission comment lists every dependency with its result and what to do, as in the [project workflow](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission).
+With `dependabot-admission-enabled: true`, a run Dependabot starts first meets the admission ([Dependabot-admission.md](Dependabot-admission.md)): every provider and module the pull request changes must come from an allowed namespace (built in `dsb-norge`, `hashicorp`, `microsoft`, `Azure`), be old enough and, for a provider, be signed as the version before it, and no hold of the repository's may cover its new version. An admitted pull request validates and runs **every** lane, credentialed ones included, so all its tests run; a lane's IDs must then be plain values in its `extra-envs-yml`, since a Dependabot run reads no environment secret. A refused pull request runs neither validation nor tests, the conclusion is red with the reason, and the admission comment lists every dependency with its result and what to do, as in the [project workflow](Workflow-terraform-ci-default.md#dependabot-pull-requests-the-admission).
 
 A Dependabot bump usually changes the README too, since terraform-docs lists the providers' constraints and the modules' versions. On an admitted pull request the docs job commits the regenerated README to Dependabot's branch, as it does on a person's pull request; the commit message carries `[dependabot skip]`, so Dependabot keeps rebasing and updating the pull request, and a rebase drops the commit and the next admitted run makes it again. The commit starts a run of its own, which is the App's, not Dependabot's: it is not judged, as a person's push is not, and it reads the repository's Actions secrets. It carries nothing the admission has not admitted, because the docs job commits only on top of the commit its run evaluated; when Dependabot has pushed since, it commits nothing and that newer commit's own run decides. With the admission off, a Dependabot pull request's README is checked and a stale one fails, since a commit would hand a change nobody judged to a run that reads every secret.
 
@@ -212,10 +212,12 @@ For a module repository whose dependencies Dependabot keeps current:
 
    ```yaml
          dependabot-admission-enabled: true
-         # dependabot-admission-yml: |   # only for publishers outside the built-in allow list
+         # dependabot-admission-yml: |   # only for publishers outside the built-in allow list, and holds
          #   allow:
          #     - cloudposse/label
    ```
+
+   A called module's release that the module must not take is **held** in the same policy (specified, not yet released), as in the [project workflow](Workflow-terraform-ci-default.md#holding-a-version): `hold: [{module: Azure/naming/azurerm, versions: ">= 0.5.0", reason: …}]`; Dependabot's pull requests into the range are then refused. A provider release that breaks the module is kept out by capping the range instead ([Module-dependencies.md §4](Module-dependencies.md#4-when-and-what-to-do)): every run installs the newest release the range allows, whatever a hold says.
 
 3. **Lane IDs as plain values.** A credentialed lane reads its IDs from its `extra-envs-yml` on a Dependabot run, since a Dependabot run reads no environment secret; the IDs are not secret, the GitHub Environment's OIDC subject is what the identity trusts:
 

@@ -334,6 +334,7 @@ A pull request Dependabot opens runs code nobody has looked at: a new provider r
 - it changes only what Dependabot writes: `version` arguments and git `ref` values in `.tf` files, and lock entries;
 - every provider and module it changes comes from an allowed namespace, built in `dsb-norge`, `hashicorp`, `microsoft` and `Azure`, compared without case;
 - each new version was published at least three days before the run (`dsb-norge` is exempt), and a provider's new version is signed with the key of the version before it, or with one HashiCorp vouches for, and its lock hashes are the publisher's;
+- no [hold](#holding-a-version) of the repository's covers a new version;
 - every environment it concerns has a committed `.terraform.lock.hcl`, which `init` then reads only, so a provider the lock does not record never runs.
 
 Because `init` reads the lock only, it cannot add the runners' `linux_amd64` checksums to the lock either; a lock made on another platform passes `init` and fails `validate` on Dependabot's runs alone. `verify-lock-file`, on by default, keeps those checksums in the lock.
@@ -398,6 +399,40 @@ No Terraform ran. Every dependency a Dependabot pull request changes must pass t
 A Dependabot push to its branch, on a caller that triggers on every branch, runs nothing and is green; the pull request's own run judges the change. Grant the calling job the permissions the workflow's header lists and nothing more: `permissions: write-all` raises a Dependabot run's token to write.
 
 Dependabot updates a provider only where `required_providers` gives it the block form, `source` and `version` on lines of their own. Written on one line, `random = { source = "hashicorp/random", version = "3.5.1" }`, the update fails in Dependabot's job with "Content didn't change!" and no pull request is opened.
+
+##### Holding a version
+
+Holds are specified ([Dependabot-admission.md §4.6](Dependabot-admission.md#46-holds)) and not yet released; until they are, `hold` is an unknown key and fails the configuration.
+
+When a repository must not take a range of versions of one dependency, whoever publishes them, say so with a **hold**: Dependabot's pull requests into that range are then not admitted, so nothing runs them and nothing merges them. A version constraint in the code does not do this, because Dependabot rewrites the constraint in the same pull request; and `.github/dependabot.yml` is written for every repository by the organisation's configuration. A hold is part of the admission's policy:
+
+```yaml
+      dependabot-admission-yml: |
+        hold:
+          - provider: hashicorp/azurerm
+            versions: "> 3.116.0, < 4.12.0"   # the versions Dependabot may not bring in
+            reason: >-
+              azurerm 3.117 stopped retrying a dropped connection to Azure Resource Manager, which
+              fails the plan; 4.12.0 retries again. Lift when the landing-zone module allows azurerm 4.
+```
+
+- **`provider`** is `<namespace>/<type>`; a **`module`** is `<namespace>/<name>/<provider>` for a registry module, or `github.com/<owner>/<repo>` for every GitHub source of that repository. Names compare without case; a hold names the package, never a subdirectory or a ref.
+- **`versions`** is one Terraform constraint, in quotes: the versions **kept out**, not the ones kept. To keep 3.116.0, hold `> 3.116.0`, not `3.116.0`. For two ranges, write two holds.
+- **`reason`** is required, and shown on the pull request it refuses.
+
+Land the hold together with the pin it protects, in one pull request: move the lock (and an exact constraint, where you have one) back to the version you keep. From the next Dependabot run on, a bump into the range is refused:
+
+```markdown
+| Dependency | Change | Result |
+|---|---|---|
+| provider `hashicorp/azurerm` | 3.116.0 → 3.117.1 | ❌ held by this repository: `> 3.116.0, < 4.12.0` |
+```
+
+The admission comment gives the reason and how to lift the hold. **Leave the refused pull request open**: it is the reminder that the hold exists, and closing it makes Dependabot skip that version even after the hold is lifted. It takes one of Dependabot's open pull request slots (five by default). **To lift the hold**, remove or narrow it on the default branch, then comment `@dependabot rebase` on the pull request (`@dependabot recreate` on one older than 30 days). The same comment is needed after adding a hold: a pull request's run judges it with the calling workflow of its own merge commit, so one opened before the hold stays as it was until its next new run: "Re-run all jobs" reuses the old merge commit and does not apply the hold, and one already green stays mergeable by hand.
+
+While holds are set, every run checks them against the repository and warns, without failing, about a hold that matches nothing in it (a misspelt name, or a dependency since removed), and about a committed lock or module pin that records a held version: the pin is missing, the range is inverted, or a person moved into it. A hold judges Dependabot's pull requests only; a person's change is the person's.
+
+A hold needs the admission on: with `dependabot-admission-enabled: false` it is a configuration error. It does not change what `init` installs where nothing locks the version; in an environment the lock does. A repository with several calling workflows declares the hold in each of them. The full rules are in [Dependabot-admission.md §4.6](Dependabot-admission.md#46-holds).
 
 #### Teams notifications
 
