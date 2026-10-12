@@ -172,18 +172,29 @@ def leaves_major(dependencies, minor_below_one=True):
     return None
 
 
-def _dependency_problem(facts):
-    """Why Dependabot's pull request leaves a dependency's major, or None (rule 7)."""
+def _dependency_problem(facts, holds):
+    """Why Dependabot's pull request leaves a dependency's major (rule 7), or moves one into a hold (rule 8), or
+    None. Rule 8 reads the run's own holds: the run the docs commit starts is one the admission does not judge,
+    and a hold that landed since Dependabot's run is on its base (docs/Module-auto-merge.md M14)."""
     if facts is None:
         return "its dependency changes could not be read"
     if not facts["dependencies"]:
         return "it changes no dependency the admission recognised"
     move = leaves_major(facts["dependencies"])
-    return f"it moves {move}, past its major (below 1.0, its minor); a person decides that" if move else None
+    if move:
+        return f"it moves {move}, past its major (below 1.0, its minor); a person decides that"
+    for dependency in facts["dependencies"]:
+        covering = admission.holds_on(holds, dependency)[1]
+        if covering:
+            name = dependency["address"].removeprefix(admission.REGISTRY + "/")
+            return (f"it moves {dependency['kind']} {name} to {dependency['to']}, which a hold keeps out "
+                    f"({' and '.join(hold['versions'] for hold in covering)}); a person decides that")
+    return None
 
 
-def judge(document, policy, admitted):
-    """The verdict on this run: does it merge (docs/Module-auto-merge.md §3, §5)."""
+def judge(document, policy, admitted, holds=()):
+    """The verdict on this run: does it merge (docs/Module-auto-merge.md §3, §5). `holds` are the admission policy's,
+    which rule 8 applies."""
     if not _applies(document, policy):
         return NOT_APPLYING
     event = document["event"]
@@ -236,7 +247,7 @@ def judge(document, policy, admitted):
                                                  and admitted["admitted"]):
         return refused("the Dependabot admission did not admit this run")
     if author.casefold() == DEPENDABOT:
-        problem = _dependency_problem(document.get("admission"))
+        problem = _dependency_problem(document.get("admission"), holds)
     else:
         problem = _release_problem(document, facts, facts["commits"][:own])
     if problem:

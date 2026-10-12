@@ -104,7 +104,9 @@ on:
         type: boolean
         default: false
       dependabot-admission-yml:
-        description: "The admission's policy, added to its built-in one (docs/Dependabot-admission.md §6)."
+        description: |
+          The admission's policy (docs/Dependabot-admission.md §6): publishers and exemptions added to the built-in
+          ones, and holds, the versions of a called module Dependabot may not bring in, with the reason (§4.6).
         type: string
         default: ""
       pr-auto-merge-enabled:

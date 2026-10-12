@@ -22,11 +22,17 @@ HC = {"key_id": "34365D9472D7468F", "ascii_armor": "", "trust_signature": ""}
 class Tools:
     """Answers {argv: (code, stdout, stderr)}; a prefix tuple ending in '*' matches any longer argv."""
 
-    def __init__(self, answers=None, gpg_verify=0, missing=()):
+    def __init__(self, answers=None, gpg_verify=0, missing=(), files=None):
         self.answers = answers or {}
         self.gpg_verify = gpg_verify
         self.missing = missing
         self.calls = []
+        # read_text: {path: text}; unlisted paths cannot be read.
+        self.files = files or {}
+
+    def read_text(self, path):
+        self.calls.append(("read", path))
+        return self.files.get(path)
 
     def run(self, argv, stdin=""):
         argv = tuple(argv)
@@ -415,10 +421,10 @@ class GatherTest(unittest.TestCase):
                            ["envs/env-a/.terraform.lock.hcl"])],
                          [(d["kind"], d["address"], d["from"], d["to"], d["files"]) for d in gathered["dependencies"]])
         naming, git, azapi, azurerm = gathered["dependencies"]
-        self.assertEqual(("registry", "Azure", "naming", {"published": support.NOW - 10 * support.DAY}),
-                         (naming["source_kind"], naming["namespace"], naming["name"], naming["facts"]))
-        self.assertEqual(("github", "dsb-norge", "x", {"published": None}),
-                         (git["source_kind"], git["namespace"], git["name"], git["facts"]))
+        self.assertEqual(("registry", "Azure", "naming", "azurerm", {"published": support.NOW - 10 * support.DAY}),
+                         (naming["source_kind"], naming["namespace"], naming["name"], naming["provider"], naming["facts"]))
+        self.assertEqual(("github", "dsb-norge", "x", "", {"published": None}),
+                         (git["source_kind"], git["namespace"], git["name"], git["provider"], git["facts"]))
         self.assertEqual((False, [], []), (azapi["locked"], azapi["facts"]["zh"], azapi["facts"]["shasums"]))
         self.assertEqual((True, ["aa"], ["aa", "bb"]), (azurerm["locked"], azurerm["facts"]["zh"],
                                                          azurerm["facts"]["shasums"]))
@@ -444,7 +450,7 @@ class GatherTest(unittest.TestCase):
         gathered = facts.gather(Tools(answers), now=support.NOW)
         self.assertEqual([{"kind": "module", "address": "Azure/naming/azurerm//modules/rules", "from": "0.4.3",
                            "to": "0.4.4", "files": ["main/rules.tf"], "source_kind": "registry",
-                           "namespace": "Azure", "name": "naming",
+                           "namespace": "Azure", "name": "naming", "provider": "azurerm",
                            "facts": {"published": support.NOW - 10 * support.DAY}}], gathered["dependencies"])
 
     def test_a_provider_on_another_host_asks_nothing(self):
@@ -613,6 +619,79 @@ class ZoneAndRootTest(unittest.TestCase):
                                                     dependencies))
         self.assertEqual({}, dependencies)
 
+
+
+INVENTORY_LS = ("git", "ls-files", "-z", "--", "*.tf", "*.terraform.lock.hcl", ".terraform.lock.hcl")
+VERSIONS_TF = """terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.116"
+    }
+    random = { source = "registry.terraform.io/hashicorp/random", version = "3.9.1" }
+    legacy = {
+      version = "1.0.0"
+    }
+  }
+}
+"""
+MODULES_TF = """module "naming" {
+  source  = "Azure/naming/azurerm//modules/x"
+  version = "0.4.4"
+}
+module "net" {
+  source = "git::https://github.com/Example-Org/network.git//subnets?ref=v1.2.0"
+}
+module "local" {
+  source = "./modules/local"
+}
+"""
+LOCK_TEXT = """provider "registry.terraform.io/hashicorp/azurerm" {
+  version     = "3.117.1"
+  constraints = "~> 3.116"
+  hashes = ["zh:aa"]
+}
+"""
+
+
+class InventoryTest(unittest.TestCase):
+    """The holds' audit reads what the committed files use (docs/Dependabot-admission.md §8, D27)."""
+
+    def test_what_the_committed_files_use(self):
+        tools = Tools({INVENTORY_LS: "envs/prod/versions.tf\0main/modules.tf\0envs/prod/.terraform.lock.hcl\0"
+                                     "broken.tf\0bad/.terraform.lock.hcl\0.terraform.lock.hcl\0gone/.terraform.lock.hcl\0"},
+                      files={"envs/prod/versions.tf": VERSIONS_TF, "main/modules.tf": MODULES_TF,
+                             "envs/prod/.terraform.lock.hcl": LOCK_TEXT, "bad/.terraform.lock.hcl": "provider {",
+                             ".terraform.lock.hcl": ""})
+        self.assertEqual({"available": True,
+                          "locks": [{"path": ".terraform.lock.hcl", "providers": {}},
+                                    {"path": "envs/prod/.terraform.lock.hcl",
+                                     "providers": {"registry.terraform.io/hashicorp/azurerm": "3.117.1"}}],
+                          "providers": [{"path": "envs/prod/versions.tf",
+                                         "address": "registry.terraform.io/hashicorp/azurerm"},
+                                        {"path": "envs/prod/versions.tf",
+                                         "address": "registry.terraform.io/hashicorp/random"}],
+                          "modules": [{"path": "main/modules.tf", "source_kind": "registry", "namespace": "Azure",
+                                       "name": "naming", "provider": "azurerm", "version": "0.4.4"},
+                                      {"path": "main/modules.tf", "source_kind": "github", "namespace": "Example-Org",
+                                       "name": "network", "provider": "", "version": "v1.2.0"},
+                                      {"path": "main/modules.tf", "source_kind": "other", "namespace": "", "name": "",
+                                       "provider": "", "version": ""}],
+                          "unreadable": ["bad/.terraform.lock.hcl", "broken.tf", "gone/.terraform.lock.hcl"]},
+                         facts.inventory(tools))
+        self.assertEqual(INVENTORY_LS, tools.calls[0])
+
+    def test_a_listing_that_fails_is_a_fact(self):
+        empty = {"available": False, "locks": [], "providers": [], "modules": [], "unreadable": []}
+        self.assertEqual(empty, facts.inventory(Tools({INVENTORY_LS: (128, "", "fatal: not a git repository")})))
+        self.assertEqual(empty, facts.inventory(Tools(missing=("git",))))
+
+    def test_it_is_a_valid_input_document_key(self):
+        tools = Tools({INVENTORY_LS: "main/modules.tf\0"}, files={"main/modules.tf": MODULES_TF})
+        document = support.document()
+        document["dependency_inventory"] = facts.inventory(tools)
+        from dsb_tf_engine import model
+        model.check(document)
 
 if __name__ == "__main__":
     unittest.main()

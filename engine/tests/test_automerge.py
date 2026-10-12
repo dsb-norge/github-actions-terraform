@@ -380,6 +380,50 @@ class MajorTest(unittest.TestCase):
         self.assertTrue(decide.decide(doc)["automerge"]["eligible"])
 
 
+class HoldTest(unittest.TestCase):
+    """Rule 8: Dependabot's pull request moves no dependency into a hold, in the App's run too
+    (docs/Module-auto-merge.md M14, docs/Dependabot-admission.md D30)."""
+
+    def decided(self, holds, *dependencies, app_run=True):
+        facts = support.admission_facts(list(dependencies), locks={})
+        doc = document([commit("a" * 40), docs(HEAD)] if app_run else None, actor=APP if app_run else None,
+                       admission_facts=facts)
+        doc["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": holds})
+        output = decide.decide(doc)
+        self.assertEqual([], output["errors"])
+        return output["automerge"]
+
+    def test_a_held_module_in_the_app_s_run(self):
+        result = self.decided([{"module": "Azure/naming/azurerm", "versions": ">= 0.4.4", "reason": "r"}],
+                              support.module_dependency())
+        self.assertEqual((False, "it moves module Azure/naming/azurerm to 0.4.4, which a hold keeps out (>= 0.4.4); a "
+                                 "person decides that"), (result["eligible"], result["reason"]))
+
+    def test_a_held_provider_and_every_hold_that_covers_it(self):
+        result = self.decided([{"provider": "hashicorp/azurerm", "versions": "= 4.42.0", "reason": "a"},
+                               {"provider": "HashiCorp/AzureRM", "versions": ">= 4.42.0, < 5.0.0", "reason": "b"},
+                               {"provider": "hashicorp/azurerm", "versions": ">= 5.0.0", "reason": "c"}],
+                              support.module_dependency(old="0.4.3", new="0.4.4"), support.provider_dependency())
+        self.assertEqual("it moves provider hashicorp/azurerm to 4.42.0, which a hold keeps out (= 4.42.0 and >= 4.42.0, "
+                         "< 5.0.0); a person decides that", result["reason"])
+
+    def test_outside_every_hold_it_merges(self):
+        result = self.decided([{"module": "Azure/naming/azurerm", "versions": ">= 0.5.0", "reason": "r"},
+                               {"provider": "hashicorp/azurerm", "versions": ">= 4.42.0", "reason": "r"}],
+                              support.module_dependency())
+        self.assertEqual((True, True), (result["eligible"], result["confirm_app"]))
+
+    def test_rule_7_speaks_first(self):
+        result = self.decided([{"module": "Azure/naming/azurerm", "versions": ">= 0.5.0", "reason": "r"}],
+                              support.module_dependency(old="0.4.3", new="0.5.0"))
+        self.assertIn("past its major", result["reason"])
+
+    def test_dependabot_s_own_run_is_refused_by_the_admission(self):
+        result = self.decided([{"module": "Azure/naming/azurerm", "versions": ">= 0.4.4", "reason": "r"}],
+                              support.module_dependency(), app_run=False)
+        self.assertEqual("the Dependabot admission did not admit this run", result["reason"])
+
+
 class ReleaseTest(unittest.TestCase):
     """Rule 6: another bot's pull request is a release."""
 

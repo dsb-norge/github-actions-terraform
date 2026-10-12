@@ -344,3 +344,62 @@ class GoalInvariantTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HoldInvariantTest(unittest.TestCase):
+    """I30 (docs/Dependabot-admission.md §9), and I28 leaving out module auto-merge's block."""
+
+    HOLD = {"provider": "hashicorp/azurerm", "versions": "> 3.116.0, < 4.12.0", "reason": "r"}
+
+    def held(self, holds=True):
+        document = support.document()
+        support.dependabot_pull_request(document, support.admission_facts(
+            [support.provider_dependency(old="3.116.0", new="3.117.1")]))
+        if holds:
+            document["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [self.HOLD]})
+        return document, decide.decide(document)
+
+    def assertViolation(self, document, output, fragment):
+        violations = invariants.check(document, output)
+        self.assertTrue(any(fragment in violation for violation in violations),
+                        f"expected a violation containing {fragment!r}, got {violations}")
+
+    def test_a_sound_held_run(self):
+        self.assertEqual([], invariants.check(*self.held()))
+        self.assertEqual([], invariants.check(*self.held(holds=False)))
+
+    def test_a_held_dependency_admitted(self):
+        document, output = self.held()
+        broken = copy.deepcopy(output)
+        broken["admission"]["admitted"] = True
+        self.assertViolation(document, broken, "I30")
+        broken = copy.deepcopy(output)
+        broken["admission"]["dependencies"][0]["admitted"] = True
+        self.assertViolation(document, broken, "I30")
+
+    def test_a_held_version_whose_hold_check_passes(self):
+        document, output = self.held()
+        broken = copy.deepcopy(output)
+        broken["admission"]["admitted"] = True
+        broken["admission"]["dependencies"][0]["admitted"] = True
+        broken["admission"]["dependencies"][0]["checks"] = [
+            check for check in broken["admission"]["dependencies"][0]["checks"] if check["check"] != "hold"]
+        self.assertViolation(document, broken, "I30")
+
+    def test_a_hold_check_without_holds(self):
+        document, output = self.held(holds=False)
+        broken = copy.deepcopy(output)
+        broken["admission"]["dependencies"][0]["checks"].append({"check": "hold", "ok": True,
+                                                                 "detail": "no hold names it", "holds": []})
+        self.assertViolation(document, broken, "I30")
+
+    def test_module_auto_merge_reads_the_facts_where_the_admission_does_not_apply(self):
+        import test_automerge
+        document = test_automerge.document([test_automerge.commit("a" * 40), test_automerge.docs(test_automerge.HEAD)],
+                                           actor=test_automerge.APP)
+        output = decide.decide(document)
+        self.assertEqual(([], False), (invariants._admission_invariants(document, output),
+                                       output["admission"]["applies"]))
+        broken = copy.deepcopy(output)
+        broken["tests"]["count"] += 1
+        self.assertTrue(any("I28" in violation for violation in invariants._admission_invariants(document, broken)))

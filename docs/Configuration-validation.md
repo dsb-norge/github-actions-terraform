@@ -321,9 +321,7 @@ An empty policy is the built-in one; a string written alone in a list is its one
 entry matches `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. Holds are checked entry by entry, each entry's mistakes
 in the order of the rows; a hold is named by its position (`hold entry 2`, counted from 1) until its
 dependency reads, and by its dependency after that, as written. `hold:` left empty and `hold: []` set
-no hold. Holds are described in [Dependabot-admission.md](Dependabot-admission.md) §4.6; the messages
-about `hold` and the audit's warnings are specified with them and not yet built, and until they are,
-the two messages that list the keys leave `hold` out.
+no hold. Holds are described in [Dependabot-admission.md](Dependabot-admission.md) §4.6.
 
 The holds' **audit** (Dependabot-admission.md D27) is not validation: it reports the repository, not
 the settings, and warns without failing. With `hold` set and the admission on, every run may warn:
@@ -331,6 +329,7 @@ the settings, and warns without failing. With `hold` set and the admission on, e
 - `dependabot-admission-yml: the hold on provider 'hashicorp/azurem' matches nothing in the repository: no committed lock file, required_providers entry or module block names it.`
 - `dependabot-admission-yml: the hold on provider 'hashicorp/azurerm' covers 3.117.1, which envs/dev/.terraform.lock.hcl and envs/prod/.terraform.lock.hcl record; a hold names the versions Dependabot may not bring in.` (for a module, `which main/network.tf pins`)
 - `dependabot-admission-yml: the holds were not audited against 'main/broken.tf', which cannot be read.`
+- `dependabot-admission-yml: the holds were not audited: the repository's committed files could not be listed.`, alone
 
 ### 3.10 Notification settings
 

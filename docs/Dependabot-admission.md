@@ -13,9 +13,8 @@ and refused pull requests, the admission head, and the README committed to an ad
 which Dependabot then rebased (P24). Not yet on a test bed: a re-run after the minimum age. §20
 records what implementation and the test bed taught the spec.
 
-**Version holds (§4.6, D23 to D31) are specified, not yet built**: the text describes them as they
-will be. The two questions about Dependabot they raised were answered on the test bed and from public
-pull requests (§18).
+**Version holds (§4.6, D23 to D31) are built**, and not yet run on a test bed. The two questions about
+Dependabot they raised were answered on the test bed and from public pull requests (§18).
 
 ## 1. Why
 
@@ -464,7 +463,7 @@ What each failed check tells the reader:
 
 | Check | Help |
 |---|---|
-| `hold` | in the table, the range of every hold that covers the version, a `~>` with its reading (`~> 3.117` (`>= 3.117.0, < 4.0.0`)), or that the version cannot be compared (`the ref v3 is not a version a hold can compare`); below it, each hold's reason, how to lift it, and why to leave the pull request open (D31) |
+| `hold` | in the table, the range of every hold that covers the version, joined by "and", a `~>` with its reading (`~> 3.117` (`>= 3.117.0, < 4.0.0`)), or that the version cannot be compared (`` `v3` is not a version a hold can compare ``); below it, the hold's reason (with several, `Reason for <range>:` each), how to lift it, and why to leave the pull request open (D31) |
 | `allow` | add the namespace, or namespace and name, to `allow` on the default branch, then `@dependabot rebase` |
 | `age` | the date and time it becomes old enough; then "Re-run all jobs", since the verdict is decided in `create-matrix` |
 | `key` | the old and new key IDs and how Terraform authenticates each ("signed by a HashiCorp partner", "self-signed"); a new key HashiCorp does not vouch for, a self-signed one, is lock-file maintenance for a maintainer: verify the key with the publisher, then update the lock by hand in a commit of their own |
@@ -505,7 +504,7 @@ contents; the log of the input document leaves them out, as it leaves out `chang
 | a registry module version's publication time | `GET https://registry.terraform.io/v1/modules/<ns>/<name>/<provider>/<version>` → `published_at` | `create-matrix` fails |
 | a GitHub module tag's release | `gh api repos/<owner>/<repo>/releases/tags/<tag>` → `published_at`; a 404 is the fact "no release" | other errors: `create-matrix` fails |
 | the environments' committed locks | the merge commit, as the test stage already reads them | — |
-| the repository's dependencies, for the audit (D27) | on **every event** when the parsed policy sets `hold`: `git ls-files -z -- '*.tf' '*.terraform.lock.hcl'` in the checkout, each lock's provider addresses and versions, each `required_providers` entry's source, and each `module` block's source and `version`, with the file they are in, read with the scans that read the change. Local reads only, no API call (P12) | a file that cannot be read or parsed is left out, and a warning names it; never fails the step |
+| the repository's dependencies, for the audit (D27) | on **every event** when the parsed policy sets `hold`: `git ls-files -z -- '*.tf' '*.terraform.lock.hcl'` in the checkout, each lock's provider addresses and versions, each `required_providers` entry's source, and each `module` block's source and `version` (a GitHub source's ref), with the file they are in, read with the scans that read the change. Local reads only, no API call (P12) | a file that cannot be read or parsed is left out, and a warning names it; a listing that fails is the fact `available: false`, and one warning says the holds were not audited; never fails the step |
 
 The registry calls must not depend on IPv6 (P17): the adapter calls the registry through `curl`, which
 tries IPv4 and IPv6 side by side, with a timeout and one retry. Measured: the calls for a grouped pull
@@ -988,3 +987,14 @@ Holds (§4.6) follow in the same order, in a release of their own:
   a run Dependabot started read a repository variable and an organisation variable. The docs job's App
   ID therefore comes from its organisation variable on every run, and only the key needs to be a
   Dependabot secret as well (D22).
+- **A held check carries its holds.** The `hold` check lists the holds that cover the version, each with
+  its name, range and reason, so the admission head renders the reason from the verdict alone, without
+  reading the policy again; the run summary and the aggregator read `checks` by `ok` and `detail` and
+  pass the extra key by.
+- **The module record lacked its provider.** The adapter computed a registry module's provider, the third
+  part of its source, and dropped it; a hold names the package with it, so the record carries it now.
+- **I28 was never checked where module auto-merge reads the facts.** Its check compares the whole output,
+  and the CI App's run, where the admission does not apply, carries an auto-merge block and notice that
+  read the admission's facts for rule 7. The checker leaves both out now, which the run the docs commit
+  starts needs for rule 8 as much as for rule 7; it never failed, since no test ran the checker on that
+  run.

@@ -36,7 +36,7 @@ def messages(policy=None, switch=None, ok=True):
 class SettingsTest(unittest.TestCase):
     def test_the_defaults(self):
         self.assertEqual({"enabled": True, "allow": ["dsb-norge", "hashicorp", "microsoft", "Azure"],
-                          "exempt": ["dsb-norge"], "min_age_days": 3}, settings())
+                          "exempt": ["dsb-norge"], "min_age_days": 3, "holds": []}, settings())
         self.assertEqual(False, settings(default=False)["enabled"])
         self.assertEqual(settings(), settings(None))
         self.assertEqual(settings(), settings(""))
@@ -58,16 +58,16 @@ class SettingsTest(unittest.TestCase):
         for value, kind in ((["elastic"], "a list"), ("elastic", "a string"), (3, "a number"), (2.5, "a number"),
                             (True, "a boolean")):
             with self.subTest(value=value):
-                self.assertEqual([f"dependabot-admission-yml must be a mapping with the keys allow, min-age-days and "
-                                  f"min-age-exempt; it holds {kind}."], messages(value))
+                self.assertEqual([f"dependabot-admission-yml must be a mapping with the keys allow, hold, min-age-days "
+                                  f"and min-age-exempt; it holds {kind}."], messages(value))
 
     def test_unknown_keys_are_named_in_order(self):
-        self.assertEqual(["dependabot-admission-yml holds the unknown key 5; the keys are allow, min-age-days and "
-                          "min-age-exempt.",
-                          "dependabot-admission-yml holds the unknown key 'allows'; the keys are allow, min-age-days "
+        self.assertEqual(["dependabot-admission-yml holds the unknown key 5; the keys are allow, hold, min-age-days "
                           "and min-age-exempt.",
-                          "dependabot-admission-yml holds the unknown key 'zzz'; the keys are allow, min-age-days and "
-                          "min-age-exempt."],
+                          "dependabot-admission-yml holds the unknown key 'allows'; the keys are allow, hold, "
+                          "min-age-days and min-age-exempt.",
+                          "dependabot-admission-yml holds the unknown key 'zzz'; the keys are allow, hold, min-age-days "
+                          "and min-age-exempt."],
                          messages({"zzz": 1, "allows": [], 5: 1}))
 
     def test_the_lists_add_to_the_built_in_ones(self):
@@ -110,8 +110,8 @@ class SettingsTest(unittest.TestCase):
         with self.assertRaises(ConfigError) as caught:
             admission.settings(doc, True)
         self.assertEqual(["The input 'dependabot-admission-enabled' is 'on'; it must be true or false!",
-                          "dependabot-admission-yml holds the unknown key 'x'; the keys are allow, min-age-days and "
-                          "min-age-exempt.",
+                          "dependabot-admission-yml holds the unknown key 'x'; the keys are allow, hold, min-age-days "
+                          "and min-age-exempt.",
                           "dependabot-admission-yml: allow must be a list of namespaces; it holds a number.",
                           "dependabot-admission-yml: min-age-days must be a whole number from 0 to 90; it holds 100."],
                          caught.exception.messages)
@@ -729,6 +729,535 @@ class ModuleModeTest(unittest.TestCase):
         with self.assertRaises(DocumentError):
             decide.decide(doc)
 
+
+
+# Holds (docs/Dependabot-admission.md §4.6, Configuration-validation.md §3.9).
+
+REASON = ("azurerm 3.117 stopped retrying a dropped connection to Azure Resource Manager, which fails the plan; "
+          "4.12.0 retries again.")
+AZURERM_HOLD = {"provider": "hashicorp/azurerm", "versions": "> 3.116.0, < 4.12.0", "reason": REASON}
+HELD = {"name": "hashicorp/azurerm", "versions": "> 3.116.0, < 4.12.0", "reason": REASON}
+PREFIX = "dependabot-admission-yml: "
+
+
+def hold_policy(*holds):
+    return settings({"hold": list(holds)})
+
+
+def hold(name="hashicorp/azurerm", versions="> 3.116.0, < 4.12.0", reason=REASON, kind="provider"):
+    return {kind: name, "versions": versions, "reason": reason}
+
+
+class HoldSettingsTest(unittest.TestCase):
+    def test_no_holds(self):
+        self.assertEqual([], settings()["holds"])
+        self.assertEqual([], settings({"hold": None})["holds"])
+        self.assertEqual([], settings({"hold": []})["holds"])
+        # An empty hold sets nothing, so the admission may be off.
+        self.assertEqual([], settings({"hold": []}, switch=False)["holds"])
+        self.assertEqual([], settings({"hold": None}, switch="false")["holds"])
+
+    def test_a_provider_hold(self):
+        self.assertEqual([{"kind": "provider", "name": "hashicorp/azurerm", "key": "hashicorp/azurerm",
+                           "versions": "> 3.116.0, < 4.12.0",
+                           "conditions": [(">", (3, 116, 0, "", 3)), ("<", (4, 12, 0, "", 3))], "reason": REASON}],
+                         hold_policy(AZURERM_HOLD)["holds"])
+
+    def test_the_names_a_hold_takes(self):
+        cases = [("provider", "hashicorp/azurerm", "hashicorp/azurerm"),
+                 ("provider", "registry.terraform.io/HashiCorp/AzureRM", "hashicorp/azurerm"),
+                 ("provider", "cyrilgdn/postgresql", "cyrilgdn/postgresql"),
+                 ("module", "Azure/naming/azurerm", "azure/naming/azurerm"),
+                 ("module", "registry.terraform.io/Azure/naming/azurerm", "azure/naming/azurerm"),
+                 ("module", "github.com/Example-Org/Network", "github.com/example-org/network"),
+                 ("module", "github.com/example-org/network.git", "github.com/example-org/network"),
+                 ("module", "github.com/example-org/net.work.GIT", "github.com/example-org/net.work"),
+                 ("module", "git::https://github.com/example-org/network.git", "github.com/example-org/network"),
+                 ("module", "git::https://github.com/example-org/network", "github.com/example-org/network"),
+                 ("module", "git::ssh://git@github.com/example-org/network.git", "github.com/example-org/network"),
+                 ("module", "git@github.com:example-org/network.git", "github.com/example-org/network")]
+        for kind, name, key in cases:
+            with self.subTest(name=name):
+                held = hold_policy(hold(name, kind=kind))["holds"][0]
+                self.assertEqual((kind, name, key), (held["kind"], held["name"], held["key"]))
+
+    def test_the_conditions(self):
+        cases = [("3.117.1", [("", (3, 117, 1, "", 3))]), ("= 3.117.1", [("=", (3, 117, 1, "", 3))]),
+                 ("!=3.117.1", [("!=", (3, 117, 1, "", 3))]), (">= 4", [(">=", (4, 0, 0, "", 1))]),
+                 ("  ~> 3.117 ", [("~>", (3, 117, 0, "", 2))]), ("<= 1.2.3", [("<=", (1, 2, 3, "", 3))]),
+                 (">= 0", [(">=", (0, 0, 0, "", 1))])]
+        for versions, conditions in cases:
+            with self.subTest(versions=versions):
+                self.assertEqual(conditions, hold_policy(hold(versions=versions))["holds"][0]["conditions"])
+
+    def test_the_shape_of_hold(self):
+        for value, kind in (({"provider": "x"}, "a mapping"), ("x", "a string"), (3, "a number"), (True, "a boolean")):
+            with self.subTest(value=value):
+                self.assertEqual([f"{PREFIX}hold must be a list of holds, each with provider or module, versions and "
+                                  f"reason; it is {kind}."], messages({"hold": value}))
+        self.assertEqual([f"{PREFIX}hold entry 1 must be a mapping with provider or module, versions and reason; it "
+                          "is a string.",
+                          f"{PREFIX}hold entry 3 must be a mapping with provider or module, versions and reason; it "
+                          "is a list."], messages({"hold": ["x", AZURERM_HOLD, [1]]}))
+
+    def test_unknown_keys(self):
+        self.assertEqual([f"{PREFIX}hold entry 1 has the unknown key 5; a hold has provider or module, versions and "
+                          "reason.",
+                          f"{PREFIX}hold entry 1 has the unknown key 'version'; a hold has provider or module, versions "
+                          "and reason."], messages({"hold": [{**AZURERM_HOLD, "version": "1", 5: 1}]}))
+
+    def test_neither_or_both_kinds(self):
+        neither = {"versions": "> 1.0.0", "reason": "r"}
+        both = {"provider": "a/b", "module": "a/b/c", "versions": "> 1.0.0", "reason": "r"}
+        for entry in (neither, both):
+            with self.subTest(entry=entry):
+                self.assertEqual([f"{PREFIX}hold entry 1 must name either a provider or a module."],
+                                 messages({"hold": [entry]}))
+        # Until its dependency reads, a hold is named by its position.
+        self.assertEqual([f"{PREFIX}hold entry 1 must name either a provider or a module.",
+                          f"{PREFIX}hold entry 1 has no versions; write the versions Dependabot may not bring in, for "
+                          "example '> 3.116.0'.",
+                          f"{PREFIX}hold entry 1 has no reason; say why the versions are held."],
+                         messages({"hold": [{}]}))
+
+    def test_a_provider_that_is_not_one(self):
+        for name in ("Azure/naming/azurerm", "hashicorp", "registry.opentofu.org/hashicorp/azurerm", "a b/c", 5,
+                     "hashicorp/", "/azurerm", "registry.terraform.io/x"):
+            with self.subTest(name=name):
+                self.assertEqual([f"{PREFIX}hold entry 1: provider {admission.shown(name)} is not a provider; a "
+                                  "provider is '<namespace>/<type>', for example 'hashicorp/azurerm'."],
+                                 messages({"hold": [hold(name)]}))
+
+    def test_a_module_that_is_not_one(self):
+        for name in ("Azure/naming", "s3::https://bucket/x.zip", "gitlab.com/a/b", "bitbucket.org/a/b", 7,
+                     "Azure/naming/azurerm/x", "github.com/owner", "./modules/x", "app.terraform.io/a/b/c"):
+            with self.subTest(name=name):
+                self.assertEqual([f"{PREFIX}hold entry 1: module {admission.shown(name)} is not a module a hold can "
+                                  "name; a registry module is '<namespace>/<name>/<provider>', for example "
+                                  "'Azure/naming/azurerm', and a GitHub module 'github.com/<owner>/<repo>'."],
+                                 messages({"hold": [hold(name, kind="module")]}))
+
+    def test_a_module_with_a_subdirectory_or_a_ref(self):
+        for name, package in (("github.com/example-org/network//subnets?ref=v1.2.0", "github.com/example-org/network"),
+                              ("git::https://github.com/example-org/network.git?ref=v1", "github.com/example-org/network"),
+                              ("Azure/naming/azurerm//modules/x", "Azure/naming/azurerm"),
+                              ("registry.terraform.io/Azure/naming/azurerm//x", "Azure/naming/azurerm")):
+            with self.subTest(name=name):
+                self.assertEqual([f"{PREFIX}hold entry 1: module {admission.shown(name)} names a subdirectory or a "
+                                  f"ref; a hold names the package, {admission.shown(package)}."],
+                                 messages({"hold": [hold(name, kind="module")]}))
+
+    def test_versions_mistakes(self):
+        on = "the hold on provider 'hashicorp/azurerm'"
+        self.assertEqual([f"{PREFIX}{on} has no versions; write the versions Dependabot may not bring in, for example "
+                          "'> 3.116.0'."], messages({"hold": [{"provider": "hashicorp/azurerm", "reason": "r"}]}))
+        for value in (3.117, [">= 3.117.0", "< 4.0.0"], True, None, {"a": 1}):
+            with self.subTest(value=value):
+                self.assertEqual([f"{PREFIX}{on} sets versions to {admission.shown(value)}, which is not a string; "
+                                  "write one constraint in quotes, for example '> 3.116.0'."],
+                                 messages({"hold": [hold(versions=value)]}))
+        for value in ("", "   "):
+            with self.subTest(value=value):
+                self.assertEqual([f"{PREFIX}{on} sets versions to {admission.shown(value)}, which names no version; "
+                                  "write the versions Dependabot may not bring in, for example '> 3.116.0'."],
+                                 messages({"hold": [hold(versions=value)]}))
+        for value in (">= v3.117.0", ">= 3.117.0-rc1", "3.117.0+b", ">> 1", "1.0.0,", ", 1.0.0", "1.2.3.4", "~>",
+                      "abc", ">= 1.0.0,, < 2.0.0", "> 1.0.0 < 2.0.0", "=< 1.0.0", "1.x"):
+            with self.subTest(value=value):
+                self.assertEqual([f"{PREFIX}{on} sets versions to {admission.shown(value)}, which is not a Terraform "
+                                  "version constraint of releases, for example '> 3.116.0, < 4.12.0'."],
+                                 messages({"hold": [hold(versions=value)]}))
+        for value in ("> 4.0.0, < 3.0.0", "> 1.0.0, < 1.0.1", "= 1.0.0, = 1.0.1", "< 0.0.0", "~> 1.2, >= 2.0.0",
+                      "= 1.0.0, != 1.0.0", "> 1.2, < 1.2.1", "<= 0.0.0, != 0.0.0"):
+            with self.subTest(value=value):
+                self.assertEqual([f"{PREFIX}{on} sets versions to {admission.shown(value)}, which no release "
+                                  "satisfies."], messages({"hold": [hold(versions=value)]}))
+
+    def test_ranges_some_release_satisfies(self):
+        for value in (">= 1.0.0, != 1.0.0, != 1.0.1, < 1.0.3", "!= 0.0.0", "> 1.9.9, < 2.0.0", "~> 1.2, != 1.2.0",
+                      ">= 0", "> 1, < 2", "<= 0.0.0", "= 0.0.0", "~> 0.0.1", "> 1.2, < 1.2.2", "~> 2", "< 0.0.1",
+                      "< 0.1, != 0.0.1"):
+            with self.subTest(value=value):
+                self.assertEqual(1, len(hold_policy(hold(versions=value))["holds"]))
+
+    def test_reason_mistakes(self):
+        for entry in ({"provider": "hashicorp/azurerm", "versions": "> 1.0.0"}, hold(reason=5), hold(reason=""),
+                      hold(reason=" \n "), hold(reason=None)):
+            with self.subTest(entry=entry):
+                self.assertEqual([f"{PREFIX}the hold on provider 'hashicorp/azurerm' has no reason; say why the "
+                                  "versions are held."], messages({"hold": [entry]}))
+
+    def test_a_hold_needs_the_admission_on(self):
+        message = (f"{PREFIX[:-2]} sets hold, but the Dependabot admission is off, so no hold is applied. Switch "
+                   "dependabot-admission-enabled on, or remove hold.")
+        for switch in (False, "false"):
+            with self.subTest(switch=switch):
+                self.assertEqual([message], messages({"hold": [AZURERM_HOLD]}, switch=switch))
+        # Off by default in the module workflow.
+        doc = support.document()
+        doc["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [AZURERM_HOLD]})
+        with self.assertRaises(ConfigError) as caught:
+            admission.settings(doc, False)
+        self.assertEqual([message], caught.exception.messages)
+        # An invalid switch says so alone.
+        self.assertEqual(["The input 'dependabot-admission-enabled' is 'yes'; it must be true or false!"],
+                         messages({"hold": [AZURERM_HOLD]}, switch="yes"))
+        # A hold that is not a list is set too.
+        self.assertEqual(2, len(messages({"hold": "x"}, switch=False)))
+
+    def test_every_hold_mistake_in_reporting_order(self):
+        self.assertEqual(
+            [f"{PREFIX}min-age-days must be a whole number from 0 to 90; it holds 100.",
+             f"{PREFIX}hold entry 1 has the unknown key 'x'; a hold has provider or module, versions and reason.",
+             f"{PREFIX}hold entry 1: module 'Azure/naming' is not a module a hold can name; a registry module is "
+             "'<namespace>/<name>/<provider>', for example 'Azure/naming/azurerm', and a GitHub module "
+             "'github.com/<owner>/<repo>'.",
+             f"{PREFIX}hold entry 1 sets versions to '', which names no version; write the versions Dependabot may "
+             "not bring in, for example '> 3.116.0'.",
+             f"{PREFIX}hold entry 1 has no reason; say why the versions are held.",
+             f"{PREFIX}the hold on provider 'cyrilgdn/postgresql' sets versions to '> 2, < 1', which no release "
+             "satisfies.",
+             f"{PREFIX[:-2]} sets hold, but the Dependabot admission is off, so no hold is applied. Switch "
+             "dependabot-admission-enabled on, or remove hold."],
+            messages({"min-age-days": 100, "hold": [{"module": "Azure/naming", "versions": "", "x": 1},
+                                                     hold("cyrilgdn/postgresql", versions="> 2, < 1"),
+                                                     AZURERM_HOLD]}, switch=False))
+
+    def test_the_keys_name_hold(self):
+        self.assertEqual(["dependabot-admission-yml holds the unknown key 'holds'; the keys are allow, hold, "
+                          "min-age-days and min-age-exempt."], messages({"holds": []}))
+        self.assertEqual(["dependabot-admission-yml must be a mapping with the keys allow, hold, min-age-days and "
+                          "min-age-exempt; it holds a list."], messages([1]))
+
+
+def held_checks(dependency, *holds):
+    return [(check["check"], check["ok"], check["detail"], check.get("holds"))
+            for check in judged([dependency], policy=hold_policy(*holds))["dependencies"][0]["checks"]]
+
+
+def hold_check(dependency, *holds):
+    return next(check for check in held_checks(dependency, *holds) if check[0] == "hold")
+
+
+class DependencyKeyTest(unittest.TestCase):
+    def test_the_key_a_hold_names_a_dependency_by(self):
+        cases = [(support.provider_dependency(), "hashicorp/azurerm"),
+                 (support.provider_dependency(address="registry.terraform.io/Azure/AzAPI"), "azure/azapi"),
+                 (support.provider_dependency(address="registry.example.com/hashicorp/azurerm"), None),
+                 (support.provider_dependency(address="registry.terraform.io/hashicorp"), None),
+                 (support.provider_dependency(address="registry.terraform.io/a/b/c"), None),
+                 (support.module_dependency(), "azure/naming/azurerm"),
+                 (support.module_dependency(provider="AWS"), "azure/naming/aws"),
+                 (support.module_dependency(source_kind="github", namespace="O", name="R.Git"), "github.com/o/r"),
+                 (support.module_dependency(source_kind="github", namespace="o", name="git"), "github.com/o/git"),
+                 (support.module_dependency(source_kind="other", namespace="o", name="r"), None)]
+        for dependency, key in cases:
+            with self.subTest(address=dependency["address"], source_kind=dependency.get("source_kind")):
+                self.assertEqual(key, admission.dependency_key(dependency))
+
+
+class HoldCheckTest(unittest.TestCase):
+    def test_a_held_provider(self):
+        block = judged([support.provider_dependency(old="3.116.0", new="3.117.1")], policy=hold_policy(AZURERM_HOLD))
+        self.assertEqual((False, 1, 1), (block["admitted"], block["refused_count"], block["total"]))
+        self.assertEqual([("host", True), ("hold", False), ("allow", True), ("age", True), ("key", True),
+                          ("hashes", True)], [(check["check"], check["ok"]) for check in block["dependencies"][0]["checks"]])
+        self.assertEqual({"check": "hold", "ok": False, "detail": "held by this repository: `> 3.116.0, < 4.12.0`",
+                          "holds": [HELD]}, block["dependencies"][0]["checks"][1])
+
+    def test_a_version_outside_the_hold_passes(self):
+        for version in ("3.116.0", "4.12.0", "4.81.0", "3.0.0"):
+            with self.subTest(version=version):
+                self.assertEqual(("hold", True, f"no hold covers {version}", []),
+                                 hold_check(support.provider_dependency(new=version), AZURERM_HOLD))
+
+    def test_another_dependency_passes(self):
+        dependency = support.provider_dependency(address="registry.terraform.io/hashicorp/azuread", new="3.117.1")
+        self.assertEqual(("hold", True, "no hold names it", []), hold_check(dependency, AZURERM_HOLD))
+        module = support.module_dependency(new="3.117.1")
+        self.assertEqual([("source", True, "registry module", None), ("hold", True, "no hold names it", []),
+                          ("allow", True, "`Azure` is on the allow list", None),
+                          ("age", True, "published 10 days ago", None)], held_checks(module, AZURERM_HOLD))
+
+    def test_names_compare_without_case_and_host(self):
+        dependency = support.provider_dependency(new="3.117.1")
+        for name in ("HashiCorp/AzureRM", "registry.terraform.io/hashicorp/azurerm"):
+            with self.subTest(name=name):
+                self.assertEqual(False, hold_check(dependency, hold(name))[1])
+
+    def test_a_held_registry_module_through_a_subdirectory(self):
+        dependency = support.module_dependency(address="Azure/naming/azurerm//modules/x", new="0.5.0")
+        self.assertEqual(("hold", False, "held by this repository: `>= 0.5.0`",
+                          [{"name": "azure/naming/azurerm", "versions": ">= 0.5.0", "reason": "r"}]),
+                         hold_check(dependency, hold("azure/naming/azurerm", ">= 0.5.0", "r", "module")))
+        self.assertEqual(("hold", True, "no hold names it", []),
+                         hold_check(dependency, hold("Azure/naming/aws", ">= 0.5.0", "r", "module")))
+        other = support.module_dependency(address="registry.terraform.io/Azure/naming/azurerm", new="0.5.0")
+        self.assertEqual(False, hold_check(other, hold("Azure/naming/azurerm", ">= 0.5.0", "r", "module"))[1])
+
+    def test_a_held_github_module(self):
+        dependency = support.module_dependency(address="git::https://github.com/Example-Org/Network.GIT?ref=v2.0.0",
+                                               source_kind="github", namespace="Example-Org", name="Network.GIT",
+                                               old="v1.4.0", new="v2.0.0")
+        self.assertEqual(("hold", False, "held by this repository: `>= 2.0.0`",
+                          [{"name": "github.com/example-org/network", "versions": ">= 2.0.0", "reason": "r"}]),
+                         hold_check(dependency, hold("github.com/example-org/network", ">= 2.0.0", "r", "module")))
+        self.assertEqual(("hold", True, "no hold covers v1.9.0", []),
+                         hold_check({**dependency, "to": "v1.9.0"},
+                                    hold("github.com/example-org/network", ">= 2.0.0", "r", "module")))
+
+    def test_a_version_that_cannot_be_read_is_held(self):
+        github = support.module_dependency(address="github.com/o/r?ref=v2", source_kind="github", namespace="o",
+                                           name="r", old="v1", new="v2")
+        for to in ("v2", "release-1.2.3", "main", "1.2", "0123abc"):
+            with self.subTest(to=to):
+                self.assertEqual(("hold", False, f"held by this repository: `{to}` is not a version a hold can compare",
+                                  [{"name": "github.com/o/r", "versions": ">= 9.0.0", "reason": "r"}]),
+                                 hold_check({**github, "to": to}, hold("github.com/o/r", ">= 9.0.0", "r", "module")))
+        provider = support.provider_dependency(new="~> 4.0", locked=False, zh=())
+        self.assertEqual(False, hold_check(provider, AZURERM_HOLD)[1])
+
+    def test_a_pre_release_is_held_through_its_release_or_its_order(self):
+        for version, versions, held in (("4.0.0-beta1", ">= 4.0.0", True), ("4.12.0-rc1", "> 3.116.0, < 4.12.0", True),
+                                        ("4.12.1-rc1", "> 3.116.0, < 4.12.0", False),
+                                        ("3.116.0-rc1", "> 3.116.0, < 4.12.0", False),
+                                        ("v4.0.0-rc.1", "= 4.0.0", True), ("4.0.0+build.5", ">= 4.0.0", True),
+                                        ("4.0.0-beta1", "!= 4.0.0", True)):
+            with self.subTest(version=version, versions=versions):
+                self.assertEqual(not held, hold_check(support.provider_dependency(new=version),
+                                                      hold(versions=versions))[1])
+
+    def test_every_hold_that_covers_the_version(self):
+        holds = (hold(versions="= 3.117.1", reason="a"), hold(versions=">= 3.117.0, < 4.0.0", reason="b"),
+                 hold(versions=">= 5.0.0", reason="c"))
+        self.assertEqual(("hold", False, "held by this repository: `= 3.117.1` and `>= 3.117.0, < 4.0.0`",
+                          [{"name": "hashicorp/azurerm", "versions": "= 3.117.1", "reason": "a"},
+                           {"name": "hashicorp/azurerm", "versions": ">= 3.117.0, < 4.0.0", "reason": "b"}]),
+                         hold_check(support.provider_dependency(new="3.117.1"), *holds))
+
+    def test_a_pessimistic_constraint_is_shown_as_read(self):
+        for versions, reading in (("~> 3.117", "`~> 3.117` (`>= 3.117.0, < 4.0.0`)"),
+                                  ("~> 3.117.1", "`~> 3.117.1` (`>= 3.117.1, < 3.118.0`)"),
+                                  ("~> 3", "`~> 3` (`>= 3.0.0, < 4.0.0`)"),
+                                  (">= 3.0, ~> 3.117", "`>= 3.0, ~> 3.117` (`>= 3.0, >= 3.117.0, < 4.0.0`)")):
+            with self.subTest(versions=versions):
+                self.assertEqual(f"held by this repository: {reading}",
+                                 hold_check(support.provider_dependency(new="3.117.1"), hold(versions=versions))[2])
+
+    def test_a_held_dependency_refuses_a_grouped_pull_request(self):
+        block = judged([support.provider_dependency(new="3.117.1"),
+                        support.provider_dependency(address="registry.terraform.io/hashicorp/azuread")],
+                       policy=hold_policy(AZURERM_HOLD))
+        self.assertEqual((False, 1, 2, [False, True]),
+                         (block["admitted"], block["refused_count"], block["total"],
+                          [dependency["admitted"] for dependency in block["dependencies"]]))
+
+    def test_a_held_run_is_not_admitted(self):
+        doc, output = decided(support.admission_facts([support.provider_dependency(old="3.116.0", new="3.117.1")]),
+                              inputs={})
+        self.assertEqual(True, output["admission"]["admitted"])
+        doc["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [AZURERM_HOLD]})
+        output = decide.decide(doc)
+        self.assertEqual([], invariants.check(doc, output))
+        self.assertEqual((False, ["admission: not admitted"]),
+                         (output["admission"]["admitted"], output["environments"][0]["reasons"]))
+        self.assertEqual("admission: not admitted: 1 of 1 dependencies failed", output["notices"][0])
+
+
+def audited(holds, inventory, document=None):
+    doc = document or support.document()
+    if inventory is not None:
+        doc["dependency_inventory"] = inventory
+    return admission.audit(doc, hold_policy(*holds) if holds else settings(), _applying(doc))
+
+
+def _applying(doc):
+    return {"applies": True, "push_run": False} if "admission" in doc else admission.NOT_APPLYING
+
+
+AUDIT = "dependabot-admission-yml: the hold on "
+
+
+class AuditTest(unittest.TestCase):
+    def test_nothing_without_holds_or_an_inventory(self):
+        self.assertEqual([], audited([], support.inventory()))
+        self.assertEqual([], audited([AZURERM_HOLD], None))
+
+    def test_a_hold_that_matches_nothing(self):
+        self.assertEqual([f"{AUDIT}provider 'hashicorp/azurem' matches nothing in the repository: no committed lock "
+                          "file, required_providers entry or module block names it."],
+                         audited([hold("hashicorp/azurem")], support.inventory()))
+        self.assertEqual([f"{AUDIT}module 'github.com/o/r' matches nothing in the repository: no committed lock "
+                          "file, required_providers entry or module block names it."],
+                         audited([hold("github.com/o/r", kind="module")], support.inventory()))
+
+    def test_what_a_hold_matches(self):
+        through_a_lock = support.inventory(providers=[])
+        through_an_entry = support.inventory(locks=[])
+        for inventory in (through_a_lock, through_an_entry):
+            with self.subTest(inventory=inventory):
+                self.assertEqual([], audited([AZURERM_HOLD], inventory))
+        modules = support.inventory(modules=[
+            support.inventory_module(),
+            support.inventory_module(path="main/net.tf", source_kind="github", namespace="Example-Org",
+                                     name="network.git", provider="", version="v1.0.0")])
+        self.assertEqual([], audited([hold("azure/naming/azurerm", ">= 0.5.0", "r", "module"),
+                                      hold("github.com/example-org/network", ">= 2.0.0", "r", "module")], modules))
+
+    def test_a_module_of_another_source_kind_matches_no_hold(self):
+        other = support.inventory(modules=[support.inventory_module(source_kind="other", namespace="", name="",
+                                                                    provider="", version="")])
+        self.assertEqual([f"{AUDIT}module 'Azure/naming/azurerm' matches nothing in the repository: no committed "
+                          "lock file, required_providers entry or module block names it."],
+                         audited([hold("Azure/naming/azurerm", ">= 0.5.0", "r", "module")], other))
+
+    def test_another_host_or_source_kind_matches_no_hold(self):
+        elsewhere = support.inventory(locks=[{"path": "a/.terraform.lock.hcl",
+                                              "providers": {"registry.example.com/hashicorp/azurerm": "3.117.1"}}],
+                                      providers=[{"path": "a/v.tf", "address": "registry.example.com/hashicorp/azurerm"}])
+        self.assertEqual([f"{AUDIT}provider 'hashicorp/azurerm' matches nothing in the repository: no committed lock "
+                          "file, required_providers entry or module block names it."],
+                         audited([AZURERM_HOLD], elsewhere))
+        other = support.inventory(modules=[support.inventory_module(source_kind="other", namespace="o", name="r",
+                                                                    provider="", version="v1.0.0")])
+        self.assertEqual([f"{AUDIT}module 'github.com/o/r' matches nothing in the repository: no committed lock file, "
+                          "required_providers entry or module block names it."],
+                         audited([hold("github.com/o/r", ">= 1.0.0", "r", "module")], other))
+
+    def test_a_lock_that_records_a_held_version(self):
+        locks = [{"path": f"envs/{env}/.terraform.lock.hcl",
+                  "providers": {"registry.terraform.io/hashicorp/azurerm": version}}
+                 for env, version in (("dev", "3.117.1"), ("prod", "3.117.1"), ("test", "3.117.0"), ("x", "4.81.0"))]
+        self.assertEqual(
+            [f"{AUDIT}provider 'hashicorp/azurerm' covers 3.117.1, which envs/dev/.terraform.lock.hcl and "
+             "envs/prod/.terraform.lock.hcl record; a hold names the versions Dependabot may not bring in.",
+             f"{AUDIT}provider 'hashicorp/azurerm' covers 3.117.0, which envs/test/.terraform.lock.hcl records; a hold "
+             "names the versions Dependabot may not bring in."],
+            audited([AZURERM_HOLD], support.inventory(locks=locks)))
+        three = [{"path": f"{name}/.terraform.lock.hcl", "providers": {"registry.terraform.io/hashicorp/azurerm": "3.117.1"}}
+                 for name in ("a", "b", "c")]
+        self.assertEqual([f"{AUDIT}provider 'hashicorp/azurerm' covers 3.117.1, which a/.terraform.lock.hcl, "
+                          "b/.terraform.lock.hcl and c/.terraform.lock.hcl record; a hold names the versions Dependabot "
+                          "may not bring in."], audited([AZURERM_HOLD], support.inventory(locks=three)))
+
+    def test_an_inverted_range(self):
+        self.assertEqual([f"{AUDIT}provider 'hashicorp/azurerm' covers 3.116.0, which envs/prod/.terraform.lock.hcl "
+                          "records; a hold names the versions Dependabot may not bring in."],
+                         audited([hold(versions="3.116.0")], support.inventory()))
+
+    def test_a_module_pin_that_records_a_held_version(self):
+        modules = [support.inventory_module(path="a.tf", version="0.5.0"),
+                   support.inventory_module(path="b.tf", version="0.5.0"),
+                   support.inventory_module(path="c.tf", version="~> 0.5"),
+                   support.inventory_module(path="d.tf", source_kind="github", namespace="o", name="r", provider="",
+                                            version="v3"),
+                   support.inventory_module(path="e.tf", source_kind="github", namespace="o", name="r", provider="",
+                                            version="v3.1.0")]
+        self.assertEqual([f"{AUDIT}module 'Azure/naming/azurerm' covers 0.5.0, which a.tf and b.tf pin; a hold names "
+                          "the versions Dependabot may not bring in.",
+                          f"{AUDIT}module 'github.com/o/r' covers v3.1.0, which e.tf pins; a hold names the versions "
+                          "Dependabot may not bring in."],
+                         audited([hold("Azure/naming/azurerm", ">= 0.5.0", "r", "module"),
+                                  hold("github.com/o/r", ">= 3.0.0", "r", "module")],
+                                 support.inventory(modules=modules)))
+
+    def test_a_judged_pull_request_s_own_dependencies_are_left_out(self):
+        doc = support.dependabot_pull_request(support.document(), support.admission_facts(
+            [support.provider_dependency(old="3.116.0", new="3.117.1")]))
+        locks = [{"path": "envs/prod/.terraform.lock.hcl",
+                  "providers": {"registry.terraform.io/hashicorp/azurerm": "3.117.1",
+                                "registry.terraform.io/hashicorp/random": "3.9.1"}}]
+        self.assertEqual([f"{AUDIT}provider 'hashicorp/random' covers 3.9.1, which envs/prod/.terraform.lock.hcl "
+                          "records; a hold names the versions Dependabot may not bring in."],
+                         audited([AZURERM_HOLD, hold("hashicorp/random", ">= 3.9.0")],
+                                 support.inventory(locks=locks), doc))
+
+    def test_files_that_cannot_be_read(self):
+        self.assertEqual(["dependabot-admission-yml: the holds were not audited against 'main/broken.tf', which "
+                          "cannot be read."],
+                         audited([AZURERM_HOLD], support.inventory(unreadable=["main/broken.tf"])))
+        self.assertEqual(["dependabot-admission-yml: the holds were not audited: the repository's committed files "
+                          "could not be listed."],
+                         audited([hold("hashicorp/azurem")], support.inventory(locks=[], providers=[],
+                                                                                available=False)))
+
+    def test_the_audit_warns_in_both_modes(self):
+        doc = support.document()
+        doc["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [hold("hashicorp/azurem")]})
+        doc["dependency_inventory"] = support.inventory()
+        output = decide.decide(doc)
+        self.assertEqual([], invariants.check(doc, output))
+        self.assertEqual(f"{AUDIT}provider 'hashicorp/azurem' matches nothing in the repository: no committed lock "
+                         "file, required_providers entry or module block names it.", output["warnings"][-1])
+        module = ModuleModeTest().document()
+        module["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [hold("hashicorp/azurem")]})
+        module["dependency_inventory"] = support.inventory()
+        self.assertEqual(output["warnings"][-1], decide.decide(module)["warnings"][-1])
+
+
+HELD_FACTS = support.admission_facts([support.provider_dependency(old="3.116.0", new="3.117.1")])
+
+
+class ReasonTest(unittest.TestCase):
+    def test_the_reason_as_the_comment_shows_it(self):
+        from dsb_tf_engine import comments
+        for text, shown in (("Done!", "Done!"), ("Why?", "Why?"), ("It is.", "It is."), ("x", "x."),
+                            (" a\n  < b ", "a &lt; b.")):
+            with self.subTest(text=text):
+                self.assertEqual(shown, comments._reason(text))
+
+
+class HoldCommentTest(unittest.TestCase):
+    def body(self, facts=HELD_FACTS, *holds):
+        doc = support.document(inputs={"add-pr-comment": True})
+        support.dependabot_pull_request(doc, facts)
+        doc["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": list(holds or [AZURERM_HOLD])})
+        doc["run"] = {"id": 4711, "attempt": 2}
+        output = decide.decide(doc)
+        self.assertEqual([], output["errors"])
+        return output["comments"]["heads"][0]["body"]
+
+    def test_the_held_head(self):
+        self.assertEqual(
+            "### 🚫 Dependabot pull request not admitted\n\n"
+            "No Terraform ran. Every dependency a Dependabot pull request changes must pass the admission before any "
+            "job runs it ([what the admission checks](https://github.com/dsb-norge/github-actions-terraform/blob/main/"
+            "docs/Dependabot-admission.md)).\n\n"
+            "| Dependency | Change | Result |\n|---|---|---|\n"
+            "| provider `hashicorp/azurerm` | 3.116.0 → 3.117.1 | ❌ held by this repository: `> 3.116.0, < 4.12.0` |\n\n"
+            "<details><summary>Files</summary>\n\n"
+            "- `envs/env-a/.terraform.lock.hcl`: provider `hashicorp/azurerm`\n\n</details>\n\n"
+            "**provider `hashicorp/azurerm` 3.117.1 is held by this repository.** Reason: " + REASON + " When that no "
+            "longer applies, remove or narrow the hold on `hashicorp/azurerm` in `dependabot-admission-yml` in the "
+            "calling workflow on the default branch, then comment `@dependabot rebase` on this pull request. Until then "
+            "leave this pull request open: closing it makes Dependabot skip 3.117.1 even after the hold is lifted. It "
+            "counts towards Dependabot's limit of open pull requests (5 by default).", self.body())
+
+    def test_several_holds_give_each_reason(self):
+        body = self.body(HELD_FACTS, hold(versions="= 3.117.1", reason="first"),
+                         hold("HashiCorp/AzureRM", ">= 3.117.0, < 4.0.0", "second\n  line <!-- x -->"))
+        self.assertIn("**provider `hashicorp/azurerm` 3.117.1 is held by this repository.** Reason for `= 3.117.1`: "
+                      "first. Reason for `>= 3.117.0, < 4.0.0`: second line &lt;!-- x -->. When that no longer applies, "
+                      "remove or narrow the holds on `hashicorp/azurerm` in", body)
+
+    def test_the_last_paragraph_stays_when_another_check_fails(self):
+        self.assertNotIn("To run this pull request once", self.body())
+        refused = support.admission_facts([support.provider_dependency(old="3.116.0", new="3.117.1", published=NOW)])
+        self.assertIn("**To run this pull request once without changing the policy:**", self.body(refused))
+        problem = support.admission_facts([support.provider_dependency(old="3.116.0", new="3.117.1")],
+                                          [{"path": "x.tf.json", "status": "modified", "kind": "other"}])
+        self.assertIn("**To run this pull request once without changing the policy:**", self.body(problem))
+
+    def test_a_version_that_cannot_be_read(self):
+        facts = support.admission_facts([support.module_dependency(address="github.com/dsb-norge/r?ref=v2",
+                                                                   source_kind="github", namespace="dsb-norge",
+                                                                   name="r", old="v1", new="v2")])
+        body = self.body(facts, hold("github.com/dsb-norge/r", ">= 2.0.0", "r", "module"))
+        self.assertIn("| module `github.com/dsb-norge/r?ref=v2` | v1 → v2 | ❌ held by this repository: `v2` is not a "
+                      "version a hold can compare |", body)
+        self.assertIn("**module `github.com/dsb-norge/r?ref=v2` v2 is held by this repository.** Reason: r. When that "
+                      "no longer applies, remove or narrow the hold on `github.com/dsb-norge/r` in", body)
+        self.assertNotIn("To run this pull request once", body)
 
 if __name__ == "__main__":
     unittest.main()

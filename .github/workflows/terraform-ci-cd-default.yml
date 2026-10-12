@@ -396,11 +396,18 @@ on:
                             dsb-norge, hashicorp, microsoft and Azure; compared without case
             min-age-days    how long a new version must have been published, 0 to 90 (default 3)
             min-age-exempt  namespaces exempt from the minimum age, besides the built-in dsb-norge
+            hold            a list of holds, each a provider or a module, the versions Dependabot may not bring in
+                            (one Terraform constraint) and the reason; a held pull request is not admitted
+                            (docs/Dependabot-admission.md §4.6)
           Example:
             dependabot-admission-yml: |
               allow:
                 - elastic
                 - cyrilgdn/postgresql
+              hold:
+                - provider: hashicorp/azurerm
+                  versions: "> 3.116.0, < 4.12.0"
+                  reason: 3.117 does not retry a dropped connection to ARM; 4.12.0 does.
         required: false
         default: ""
       trigger-events-yml:

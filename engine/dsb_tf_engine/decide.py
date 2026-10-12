@@ -107,9 +107,10 @@ def _module(document):
         relevant = relevance.decide_module_relevance(document)
         tests_block, warnings, notices = tests.decide_tests(
             document, [], tests.MODULE_TEST_EVENTS, admitted, None if relevant["affected"] else relevance.NOT_AFFECTED)
+        warnings += admission.audit(document, policy, admitted)
     except environments.ConfigError as error:
         return _failed(error.messages)
-    merge = automerge.judge(document, merge_policy, admitted)
+    merge = automerge.judge(document, merge_policy, admitted, policy["holds"])
     merge_notice = automerge.notice(merge)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -151,7 +152,8 @@ def decide(document):
         # Rule 6: before the goals reason, so an entry's reasons read in the rules' order.
         staged = ordering.assign(document, declared, rows, entries, granted)
         tests_block, warnings, notices = tests.decide_tests(document, rows, admission=admitted)
-        warnings = environments.setting_warnings(document, rows) + triggers.setting_warnings(declared, events) + warnings
+        warnings = (environments.setting_warnings(document, rows) + triggers.setting_warnings(declared, events)
+                    + warnings + admission.audit(document, policy, admitted))
     except environments.ConfigError as error:
         return _failed(error.messages)
     notify, notify_warnings = notifications.decide(document, rows)

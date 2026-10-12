@@ -402,8 +402,6 @@ Dependabot updates a provider only where `required_providers` gives it the block
 
 ##### Holding a version
 
-Holds are specified ([Dependabot-admission.md §4.6](Dependabot-admission.md#46-holds)) and not yet released; until they are, `hold` is an unknown key and fails the configuration.
-
 When a repository must not take a range of versions of one dependency, whoever publishes them, say so with a **hold**: Dependabot's pull requests into that range are then not admitted, so nothing runs them and nothing merges them. A version constraint in the code does not do this, because Dependabot rewrites the constraint in the same pull request; and `.github/dependabot.yml` is written for every repository by the organisation's configuration. A hold is part of the admission's policy:
 
 ```yaml

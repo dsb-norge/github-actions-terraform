@@ -76,9 +76,12 @@ def provider_dependency(address="registry.terraform.io/hashicorp/azurerm", old="
 
 
 def module_dependency(address="Azure/naming/azurerm", old="0.4.3", new="0.4.4", source_kind="registry",
-                      namespace="Azure", name="naming", published=NOW - 10 * DAY, files=None):
+                      namespace="Azure", name="naming", published=NOW - 10 * DAY, files=None, provider=None):
+    # A registry module's provider is its source's third part; any other source kind has none.
+    provider = ("azurerm" if source_kind == "registry" else "") if provider is None else provider
     return {"kind": "module", "address": address, "from": old, "to": new, "files": list(files or ["main/naming.tf"]),
-            "source_kind": source_kind, "namespace": namespace, "name": name, "facts": {"published": published}}
+            "source_kind": source_kind, "namespace": namespace, "name": name, "provider": provider,
+            "facts": {"published": published}}
 
 
 def admission_facts(dependencies=None, files=None, locks=None, now=NOW):
@@ -95,3 +98,21 @@ def dependabot_pull_request(doc, facts=None, author="dependabot[bot]"):
     doc["event"].pop("push", None)
     doc["admission"] = admission_facts() if facts is None else facts
     return doc
+
+
+def inventory(locks=None, providers=None, modules=None, unreadable=None, available=True):
+    """The audit's inventory of the repository's dependencies (docs/Dependabot-admission.md §8, D27): by default
+    one lock recording azurerm 3.116.0 and the required_providers entry that names it."""
+    return {"available": available,
+            "locks": [{"path": "envs/prod/.terraform.lock.hcl",
+                       "providers": {"registry.terraform.io/hashicorp/azurerm": "3.116.0"}}] if locks is None else locks,
+            "providers": [{"path": "envs/prod/versions.tf", "address": "registry.terraform.io/hashicorp/azurerm"}]
+            if providers is None else providers,
+            "modules": [] if modules is None else modules,
+            "unreadable": [] if unreadable is None else unreadable}
+
+
+def inventory_module(path="main/naming.tf", source_kind="registry", namespace="Azure", name="naming",
+                     provider="azurerm", version="0.4.4"):
+    return {"path": path, "source_kind": source_kind, "namespace": namespace, "name": name, "provider": provider,
+            "version": version}

@@ -482,7 +482,31 @@ def build_document(inputs, facts, tools, isdir, module=False):
             document["admission"] = admission_facts.gather(tools)
         except admission_facts.FactError:
             pass
+    if _holds_set(document):
+        # The holds' audit, on every event: local reads only, and it never fails the step (D27).
+        document["dependency_inventory"] = admission_facts.inventory(tools)
     return document
+
+
+def _holds_set(document):
+    """Whether the parsed policy sets holds: the audit's inventory is gathered only then, whether or not the policy
+    is valid, which the engine reports."""
+    result = document["yaml"]["inputs"].get(admission.POLICY)
+    return bool(result and result["ok"] and isinstance(result["value"], dict)
+                and result["value"].get("hold") not in (None, []))
+
+
+def _inventory_lines(inventory):
+    """The audit's inventory as the log lists it, one dependency per line."""
+    if not inventory["available"]:
+        return ["the committed files could not be listed"]
+    lines = [f"{lock['path']}: provider {address} {version}"
+             for lock in inventory["locks"] for address, version in lock["providers"].items()]
+    lines += [f"{entry['path']}: module {entry['namespace']}/{entry['name']}"
+              f"{'/' + entry['provider'] if entry['provider'] else ''} {entry['version']}".rstrip()
+              for entry in inventory["modules"]]
+    lines += [f"{entry['path']}: provider {entry['address']}" for entry in inventory["providers"]]
+    return lines + [f"{path}: cannot be read" for path in inventory["unreadable"]]
 
 
 def _automerge_applies(document):
@@ -577,6 +601,12 @@ def run(inputs_file, environ, stream, tools, isdir, module=False, notify_target_
                for item in facts["dependencies"]]))
         shown = {**shown, "admission": f"{len(facts['files'])} files and {len(facts['dependencies'])} dependencies, "
                                       "listed in the group 'admission facts'"}
+    if "dependency_inventory" in document:
+        inventory = document["dependency_inventory"]
+        log.group("dependency inventory", "\n".join(_inventory_lines(inventory)))
+        shown = {**shown, "dependency_inventory": f"{len(inventory['locks'])} lock files, {len(inventory['providers'])} "
+                                                 f"provider entries and {len(inventory['modules'])} module blocks, "
+                                                 "listed in the group 'dependency inventory'"}
     log.group("decision engine input document", json.dumps(shown, indent=2, sort_keys=True, ensure_ascii=False))
     output = decide.decide(document)
     if output["errors"]:

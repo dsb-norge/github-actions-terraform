@@ -1273,3 +1273,71 @@ class AdmissionTest(unittest.TestCase):
                 self.assertEqual((0, gathered), (code, len(calls)))
                 self.assertEqual("false", runner.outputs()["admission-refused"])
                 self.assertEqual("false" if switch is None else "true", runner.outputs()["admission-admitted"])
+
+
+
+INVENTORY_PATTERNS = ("*.tf", "*.terraform.lock.hcl", ".terraform.lock.hcl")
+HOLD_POLICY = json.dumps({"hold": [{"provider": "hashicorp/azurem", "versions": "> 1.0.0", "reason": "r"}]})
+
+
+class InventoryAdapterTest(unittest.TestCase):
+    """The holds' audit reads the repository's committed files, on every event, only when holds are set
+    (docs/Dependabot-admission.md §8, D27)."""
+
+    def run_with(self, policy=HOLD_POLICY, listing=None):
+        runner = Runner(self, inputs={**DEFAULT_INPUTS, "path-relevance-enabled": False,
+                                      **({} if policy is None else {"dependabot-admission-yml": policy})})
+        tools = FakeTools(git={INVENTORY_PATTERNS: listing or (0, "envs/prod/.terraform.lock.hcl\0main/x.tf\0gone.tf\0",
+                                                               "")},
+                          files={"envs/prod/.terraform.lock.hcl": 'provider "registry.terraform.io/hashicorp/azurerm" {\n'
+                                                                  '  version = "3.117.1"\n}\n',
+                                 "main/x.tf": 'module "n" {\n  source  = "Azure/naming/azurerm"\n  version = "0.4.4"\n}\n'
+                                              'module "g" {\n  source = "github.com/o/r?ref=v1.0.0"\n}\n'
+                                              'terraform {\n  required_providers {\n    azurerm = {\n'
+                                              '      source = "hashicorp/azurerm"\n    }\n  }\n}\n'})
+        return runner.run(tools), runner, tools
+
+    def test_holds_audit_the_committed_files(self):
+        code, runner, tools = self.run_with()
+        self.assertEqual(0, code)
+        self.assertIn((("git", "ls-files", "-z", "--") + INVENTORY_PATTERNS, ""), tools.calls)
+        log = runner.log.getvalue()
+        self.assertIn("::warning title=create-tf-vars-matrix::dependabot-admission-yml: the hold on provider "
+                      "'hashicorp/azurem' matches nothing in the repository: no committed lock file, required_providers "
+                      "entry or module block names it.\n", log)
+        self.assertIn("::warning title=create-tf-vars-matrix::dependabot-admission-yml: the holds were not audited "
+                      "against 'gone.tf', which cannot be read.\n", log)
+        start = log.index("::group::create-tf-vars-matrix: dependency inventory\n")
+        self.assertEqual(["envs/prod/.terraform.lock.hcl: provider registry.terraform.io/hashicorp/azurerm 3.117.1",
+                          "main/x.tf: module Azure/naming/azurerm 0.4.4",
+                          "main/x.tf: module o/r v1.0.0",
+                          "main/x.tf: provider registry.terraform.io/hashicorp/azurerm",
+                          "gone.tf: cannot be read"],
+                         log[start:log.index("::endgroup::", start)].splitlines()[2:-1])
+        self.assertIn('"dependency_inventory": "1 lock files, 1 provider entries and 2 module blocks, listed in the group '
+                      "'dependency inventory'\"", log)
+
+    def test_a_listing_that_fails_is_said_in_the_group(self):
+        _, runner, _ = self.run_with(listing=(128, "", "fatal"))
+        log = runner.log.getvalue()
+        start = log.index("::group::create-tf-vars-matrix: dependency inventory\n")
+        self.assertEqual(["the committed files could not be listed"],
+                         log[start:log.index("::endgroup::", start)].splitlines()[2:-1])
+
+    def test_nothing_is_read_without_holds(self):
+        for policy in (None, json.dumps({"allow": ["elastic"]}), json.dumps({"hold": []}), "{bad"):
+            with self.subTest(policy=policy):
+                _, runner, tools = self.run_with(policy)
+                self.assertNotIn(INVENTORY_PATTERNS, [argv[4:] for argv, _ in tools.calls if argv[0] == "git"])
+                self.assertNotIn("dependency inventory", runner.log.getvalue())
+
+    def test_whether_holds_are_set(self):
+        document = support.document()
+        self.assertIs(False, adapter._holds_set(document))
+        for value, expected in (({"hold": [{}]}, True), ({"hold": "x"}, True), ({"hold": None}, False),
+                                ({"hold": []}, False), ({"allow": []}, False), (["hold"], False)):
+            with self.subTest(value=value):
+                document["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed(value)
+                self.assertIs(expected, adapter._holds_set(document))
+        document["yaml"]["inputs"]["dependabot-admission-yml"] = support.parsed({"hold": [{}]}, ok=False)
+        self.assertIs(False, adapter._holds_set(document))

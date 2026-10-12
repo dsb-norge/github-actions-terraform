@@ -68,9 +68,31 @@ def _label(dependency):
     return f"module `{dependency['address']}`"
 
 
+def _reason(text):
+    """A hold's reason as the comment shows it: on one line, `<` escaped, since heads are found by a substring of
+    their marker (docs/Dependabot-admission.md P41), and ending in a stop."""
+    text = " ".join(text.split()).replace("<", "&lt;")
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _hold_help(label, version, holds):
+    """A held version: the repository's reason, how to lift the hold, and why the pull request stays open (D31)."""
+    if len(holds) == 1:
+        reasons = f"Reason: {_reason(holds[0]['reason'])}"
+    else:
+        reasons = " ".join(f"Reason for `{hold['versions']}`: {_reason(hold['reason'])}" for hold in holds)
+    return (f"**{label} {version} is held by this repository.** {reasons} When that no longer applies, remove or narrow "
+            f"the hold{'s' if len(holds) > 1 else ''} on `{holds[0]['name']}` in `dependabot-admission-yml` in the "
+            "calling workflow on the default branch, then comment `@dependabot rebase` on this pull request. Until then "
+            f"leave this pull request open: closing it makes Dependabot skip {version} even after the hold is lifted. "
+            "It counts towards Dependabot's limit of open pull requests (5 by default).")
+
+
 def _help(dependency, check):
     """What to do when the change is trusted and intended, per failed check (docs/Dependabot-admission.md §7)."""
     label, version = _label(dependency), dependency["to"]
+    if check["check"] == "hold":
+        return _hold_help(label, version, check["holds"])
     name = dependency["address"].removeprefix(admission_rule.REGISTRY + "/").split("/")
     namespace = name[0]
     entry = "/".join(name[:2])
@@ -121,8 +143,12 @@ def _admission_body(admitted):
     if files:
         parts.append("<details><summary>Files</summary>\n\n" + "\n".join(files) + "\n\n</details>")
     parts += helps
-    parts.append("**To run this pull request once without changing the policy:** push a commit to its branch. That "
-                 "run is yours and is not judged; Dependabot stops rebasing the pull request.")
+    # Left out when only holds refused it: a hold is the repository's decision against the version (P36).
+    failed = [check["check"] for dependency in admitted["dependencies"] for check in dependency["checks"]
+              if not check["ok"]]
+    if admitted["problems"] or any(check != "hold" for check in failed):
+        parts.append("**To run this pull request once without changing the policy:** push a commit to its branch. "
+                     "That run is yours and is not judged; Dependabot stops rebasing the pull request.")
     return "\n\n".join(parts)
 
 
