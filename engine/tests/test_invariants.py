@@ -403,3 +403,57 @@ class HoldInvariantTest(unittest.TestCase):
         broken = copy.deepcopy(output)
         broken["tests"]["count"] += 1
         self.assertTrue(any("I28" in violation for violation in invariants._admission_invariants(document, broken)))
+
+
+class AdmissionInvariantTest(unittest.TestCase):
+    """I26 to I29 (docs/Dependabot-admission.md §9): each check fires on an output broken in exactly one way."""
+
+    REFUSED = support.admission_facts([support.provider_dependency(published=support.NOW)])
+
+    def decided(self, facts=None, actor="dependabot[bot]"):
+        document = support.dependabot_pull_request(support.document(), facts)
+        document["event"]["actor"] = actor
+        output = decide.decide(document)
+        self.assertEqual([], invariants._admission_invariants(document, output))
+        return document, output
+
+    def assertViolation(self, document, output, fragment):
+        violations = invariants._admission_invariants(document, output)
+        self.assertTrue(any(violation.startswith(fragment) for violation in violations),
+                        f"expected a violation starting {fragment!r}, got {violations}")
+
+    def test_i26_the_admission_applying_to_a_person_s_run(self):
+        document, output = self.decided()
+        person = copy.deepcopy(document)
+        person["event"]["actor"] = "octocat"
+        self.assertViolation(person, output, "I26")
+        off = copy.deepcopy(document)
+        off["workflow_inputs"]["dependabot-admission-enabled"] = False
+        self.assertViolation(off, output, "I26")
+
+    def test_i27_a_refused_run_that_runs_an_environment_or_a_test(self):
+        document, output = self.decided(self.REFUSED)
+        self.assertEqual(False, output["admission"]["admitted"])
+        running = copy.deepcopy(output)
+        running["environments"][0]["verdict"] = "run"
+        self.assertViolation(document, running, "I27")
+        testing = copy.deepcopy(output)
+        testing["tests"]["matrix"]["include"].append({"slug": "x"})
+        self.assertViolation(document, testing, "I27")
+
+    def test_i28_facts_that_change_a_run_the_admission_does_not_apply_to(self):
+        document, output = self.decided(actor="octocat")
+        self.assertEqual(False, output["admission"]["applies"])
+        broken = copy.deepcopy(output)
+        broken["notices"].append("admission: admitted (1 dependency)")
+        self.assertViolation(document, broken, "I28")
+
+    def test_i29_an_admitted_run_decided_otherwise_than_with_the_admission_off(self):
+        document, output = self.decided()
+        self.assertEqual(True, output["admission"]["admitted"])
+        skipped = copy.deepcopy(output)
+        skipped["environments"][0]["verdict"] = "skip"
+        self.assertViolation(document, skipped, "I29")
+        rows = copy.deepcopy(output)
+        rows["matrices"]["1"]["include"] = []
+        self.assertViolation(document, rows, "I29")
