@@ -327,6 +327,28 @@ def problems(*files, locks=None, relevant=None):
     return [problem["detail"] for problem in judged([], list(files), locks, relevant)["problems"]]
 
 
+class AllowEntryTest(unittest.TestCase):
+    """The allow check carries the entry it compared, which its help names (docs/Dependabot-admission.md P45)."""
+
+    def allow(self, dependency):
+        checks = judged([dependency], locks={})["dependencies"][0]["checks"]
+        return next(check for check in checks if check["check"] == "allow")
+
+    def test_the_entry_is_what_the_check_compares(self):
+        cases = [(support.provider_dependency(address="registry.terraform.io/cyrilgdn/postgresql"), "cyrilgdn/postgresql"),
+                 (support.module_dependency(address="cloudposse/label/null//x", namespace="cloudposse", name="label"),
+                  "cloudposse/label"),
+                 (support.module_dependency(address="git::https://github.com/Acme/R.GIT?ref=v1", source_kind="github",
+                                            namespace="Acme", name="R.GIT"), "Acme/R.GIT")]
+        for dependency, entry in cases:
+            with self.subTest(address=dependency["address"]):
+                self.assertEqual({"check": "allow", "ok": False,
+                                  "detail": f"`{entry.split('/')[0]}` is not on the allow list", "entry": entry},
+                                 self.allow(dependency))
+        self.assertEqual({"check": "allow", "ok": True, "detail": "`hashicorp` is on the allow list",
+                          "entry": "hashicorp/azurerm"}, self.allow(support.provider_dependency()))
+
+
 class ShapeTest(unittest.TestCase):
     def test_dependabot_s_changes_pass(self):
         files = [{"path": "main/versions.tf", "status": "modified", "kind": "tf", "unmapped": [], "lines": [
@@ -538,6 +560,18 @@ class CommentsTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(text, body)
         self.assertNotIn("<details>", self.manifest(support.admission_facts([], [], {}))["heads"][0]["body"])
+
+    def test_the_allow_help_for_a_github_source_names_the_owner_and_repository(self):
+        for address, owner, name in (("github.com/acme/x?ref=v1.3.0", "acme", "x"),
+                                     ("git::https://github.com/acme/r.git?ref=v1", "acme", "r"),
+                                     ("git::ssh://git@github.com/acme/r.git//sub?ref=v1", "acme", "r"),
+                                     ("git@github.com:acme/r.git?ref=v1", "acme", "r")):
+            with self.subTest(address=address):
+                facts = support.admission_facts([support.module_dependency(address=address, source_kind="github",
+                                                                           namespace=owner, name=name)])
+                body = self.manifest(facts)["heads"][0]["body"]
+                self.assertIn(f"**If you trust module `{address}` and the update is intended:** add `{owner}/{name}` "
+                              f"(or `{owner}`) to `allow` in `dependabot-admission-yml`", body)
 
     def test_the_head_s_title_and_a_string_switch(self):
         heads = self.manifest(inputs={"add-pr-comment": "true"}, comment="true")["heads"]

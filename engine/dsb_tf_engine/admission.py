@@ -367,8 +367,10 @@ def _age_check(namespace, name, published, now, policy):
 
 
 def _allow_check(namespace, name, policy):
+    """The entry it compared goes with it: a source's text does not always show it (a GitHub source's host, P45)."""
     ok = _listed(policy["allow"], namespace, name)
-    return _check("allow", ok, f"`{namespace}` is on the allow list" if ok else f"`{namespace}` is not on the allow list")
+    return {**_check("allow", ok, f"`{namespace}` is on the allow list" if ok else
+                     f"`{namespace}` is not on the allow list"), "entry": f"{namespace}/{name}"}
 
 
 def comparable(text):

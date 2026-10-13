@@ -93,13 +93,10 @@ def _help(dependency, check):
     label, version = _label(dependency), dependency["to"]
     if check["check"] == "hold":
         return _hold_help(label, version, check["holds"])
-    name = dependency["address"].removeprefix(admission_rule.REGISTRY + "/").split("/")
-    namespace = name[0]
-    entry = "/".join(name[:2])
     if check["check"] == "allow":
-        return (f"**If you trust {label} and the update is intended:** add `{entry}` (or `{namespace}`) to `allow` in "
-                "`dependabot-admission-yml` in the calling workflow on the default branch, then comment "
-                "`@dependabot rebase` on this pull request.")
+        return (f"**If you trust {label} and the update is intended:** add `{check['entry']}` (or "
+                f"`{check['entry'].partition('/')[0]}`) to `allow` in `dependabot-admission-yml` in the calling "
+                "workflow on the default branch, then comment `@dependabot rebase` on this pull request.")
     if check["check"] == "age":
         return f"**{label} {version} is too new:** {check['detail']}. Then re-run all jobs of this run."
     if check["check"] == "key":

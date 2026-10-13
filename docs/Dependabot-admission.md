@@ -533,7 +533,8 @@ is checked for the fields read, and a missing or mistyped field is a failed fact
 - **Core**: a new module, `admission.py`, pure like the rest of the core: the checks of §4 over the
   facts, giving the `admission` block of the output:
   `{"applies", "admitted", "push_run", "dependencies": [{"kind", "address", "from", "to", "files",
-  "checks": [{"check", "ok", "detail"}]}], "refused_count", "total"}`. For holds it also reads
+  "checks": [{"check", "ok", "detail"}]}], "refused_count", "total"}`; an `allow` check also carries
+  `entry`, the namespace and name it compared, which its help names (P45). For holds it also reads
   `hold` in `settings()`, with a reader of hold ranges that reads every condition and refuses what §6
   refuses (`allows()` stops at the first condition a version fails, so a later unreadable one goes
   unseen, and it allows every release for an empty constraint, P34); the `hold` check; and the audit,
@@ -816,6 +817,7 @@ not a hold that does nothing.
 | P42 | Holds are per calling workflow (D24). | In a repository with two calling workflows, one without the hold admits the pull request and plans it, and merges it where only its conclusion is required. | Declare the hold in each calling workflow. |
 | P43 | The module workflow's docs commit starts a run the admission does not judge (D22). | A hold landing between Dependabot's admitted run and the docs commit is on the base the App's run merges against. | Module auto-merge's rule 8 applies it (D30); the App's run still validates and tests the held version (R7), and only the merge is stopped. |
 | P44 | A module's new version can require a provider version the lock does not have. | Under D10 `init` fails (P8); moving the lock to satisfy it can move it into a hold, which no admission judges, since the change is a person's. | The audit warns on that person's pull request (D27). |
+| P45 | The `allow` help named what to add by splitting the dependency's source on `/`. | For a GitHub source it said to add `github.com/<owner>` (or `git::https:/`), an entry that passes validation but matches nothing, so the pull request stayed refused after the reader did as told. | The `allow` check carries the entry it compared, the owner and repository the adapter read, and the help names that (§9). |
 
 ## 17. Tests
 
