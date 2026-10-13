@@ -69,7 +69,10 @@ installs nothing.
 
 `source = "../../shared"` records `Dir` equal to the source path and unpacks
 nothing under `.terraform/modules`. So a local module costs no download and
-takes no space in the cache.
+takes no space in the cache, but for one thing: its entry in `modules.json`
+(the `local` line in §2.1). That entry is part of every cached tree, and §2.6
+applies to it like any other: a call removed from the configuration keeps it.
+So every local call is part of what the key has to cover (§4.4.1).
 
 It does **not** follow that a local module is irrelevant to the cache. What a
 local module declares lands in the *consuming* directory's tree. With
@@ -302,8 +305,9 @@ For each included directory, the audit collects the module declarations
    relative to the declaring directory and recurse into it, collecting its
    declarations under the dot-path prefix of the label — matching how terraform
    itself keys them (`shared` → `shared.net`, §2.3).
-3. Remote declarations from step 1 and every level of step 2 form the reachable
-   set for both the digest and the §4.5 classification.
+3. Every declaration from step 1 and every level of step 2, local or remote,
+   forms the reachable set the digest is over. Its remote members are what the
+   §4.5 classification judges.
 
 The walk is confined to `$GITHUB_WORKSPACE` — a local source resolving outside
 it is skipped with a logged warning, since terraform would fail on it anyway —
@@ -316,10 +320,18 @@ Feed the normalised result to `sha256sum`:
 <normalized-dir>\t<module-dot-path>\t<source>\t<version-constraint-or-empty>
 ```
 
-one line per reachable remote module, sorted, over the included directories only.
-Editing a `resource` block, a variable, or an output does not move the digest.
-Bumping a module pin does — including one bumped inside a local module the
-directory consumes.
+one line per reachable module call, local or remote, sorted, over the included
+directories only. Editing a `resource` block, a variable, or an output does not
+move the digest, inside a local module or out. Bumping a module pin does —
+including one bumped inside a local module the directory consumes — and so does
+adding, removing, renaming or moving a local module call.
+
+The local calls are in the digest for their manifest entries (§2.3), not for
+any download. Without them, a call removed under an unchanged digest kept its
+entry in every restored tree, pointing at a directory that may no longer exist;
+`terraform-fmt` and `lint-with-tflint` take their directories from that
+manifest, and both failed on it. Init accepts the stale entry, so `validate` and
+`plan` did not notice, and §4.4.2 could not see it either.
 
 Result: exact hits on the overwhelming majority of runs, and a genuine miss
 exactly when the reachable module set changed.
@@ -346,6 +358,11 @@ the resolved module set changed while the key did not:
 
 The comparison runs only for directories that were included in the cache, so an
 excluded directory legitimately downloading on every run does not trip it.
+
+It sees a module the configuration gained, never one it lost. Init adds an
+entry for a new call but leaves a removed call's entry in place (§2.6), so a
+removal leaves the manifest byte-identical before and after init. The check is
+no substitute for a complete digest: a removal the digest misses is silent.
 
 The two post-init jobs are not equally important, and the code says so. This one
 is a diagnostic: if the before-image is unavailable for any reason — the cache
@@ -379,7 +396,7 @@ defined in §4.4.1 — not merely the blocks written in the init directory itsel
 
 | `source` shape | Class | Rationale |
 |---|---|---|
-| begins `./` or `../` | **local** | never downloaded (§2.3); not cached and not disqualifying, but **walked into** — what it declares counts |
+| begins `./` or `../` | **local** | never downloaded (§2.3) and not disqualifying, but in the digest for its manifest entry (§4.4.1), and **walked into** — what it declares counts |
 | registry (`[<host>/]<ns>/<name>/<provider>`) with an exact `version` (`"1.2.3"` or `"= 1.2.3"`) | immutable | resolves to exactly one release |
 | registry with a range (`~>`, `>=`, `<`, `,`) or no `version` | **mutable** | an upstream release changes the resolution |
 | `?ref=` a 40-character hex sha | immutable | content-addressed |
@@ -656,6 +673,7 @@ So:
 | First run of a PR that changes no module pins | exact hit off the default-branch entry — warm |
 | Second and later pushes to that PR | exact hit off the entry saved by the PR's own first run, or still the default-branch one — warm |
 | PR that changes any reachable module pin | miss; the job cold-inits its directories and saves a fresh entry. Later pushes to that PR hit it |
+| PR that adds, removes, renames or moves a local module call | the same miss: the call's manifest entry is in the digest (§4.4.1) |
 | Merge to default branch | the default-branch entry for the new digest is written, warming every subsequent PR |
 | Brand-new environment added | cold once, then warm |
 | Any reachable module resolves through a moving git ref, at any depth | the entry is never written (§4.5.2) — that environment inits cold on every run, with a warning naming the directory and the source |
@@ -689,6 +707,12 @@ restored under a key that matches its reachable module set exactly; a hit skips
 the save; therefore every entry that is ever *written* was built by init into an
 empty `.terraform/modules` on a fresh runner. Orphans are not detected and
 removed — they cannot be created.
+
+That argument holds only while the key covers every entry the manifest can
+hold. While the digest was over remote calls alone, a removed local call kept
+the key unchanged, and the restored tree carried the call's entry into a
+configuration that no longer had it: an orphan by the other door. Local calls
+are in the digest for that reason (§4.4.1).
 
 The cost is the third row of the table above: when the module set changes, that
 job cold-inits instead of downloading only the module that moved. Bounded, as
@@ -777,8 +801,10 @@ than merely imperfect:
    produced them. §5.
 5. **Everything in `cache-paths` must be represented in the digest.** A directory
    whose module set can change without moving the key becomes a permanently
-   stale entry (§4.4.2). This is why the digest walks local sources, and why the
-   completeness check exists.
+   stale entry (§4.4.2). This is why the digest walks local sources, why every
+   local call is in it for its manifest entry, and why the completeness check
+   exists. The check is no stand-in for the digest: it sees an added call, never
+   a removed one (§4.4.2).
 6. **Cache `<dir>/.terraform/modules`, never `<dir>/.terraform`.** §4.3.
 7. **The cache key is computed exactly once**, in the resolve step, and consumed
    by both the restore and the save step. §4.2.
@@ -826,6 +852,10 @@ The local-source walk (§4.4.1) — the part most likely to be got wrong:
 | `t15_local_cycle` | local modules referencing each other → terminates, no infinite recursion |
 | `t16_local_escapes_workspace` | `../../../elsewhere` → skipped with a logged warning, no crash, no read outside `$GITHUB_WORKSPACE` |
 | `t17_digest_follows_local` | bumping a pin **inside** `main` changes the consuming dir's digest |
+| `t47_local_call_removed` | `main` calls two local modules that reach nothing remote; removing one call and its directory changes the digest, and the dir stays included |
+| `t48_local_call_moved` | moving one of them to another directory under a new label changes the digest |
+| `t49_local_call_added` | adding a local call changes the digest |
+| `t50_local_contents_edited` | editing the resources inside a local module leaves the digest alone |
 
 Key and paths:
 

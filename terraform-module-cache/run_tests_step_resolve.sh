@@ -13,7 +13,7 @@ run_walk() {
     export GITHUB_ACTION_PATH="${_this_script_dir}"
     source "${_this_script_dir}/helpers.sh"
     reset-walk-state
-    walk-remote-modules "${WORK_DIR}/${1}"
+    walk-reachable-modules "${WORK_DIR}/${1}"
   ) >"${STEP_LOG}" 2>&1
 }
 
@@ -270,6 +270,117 @@ export input_project_dir="envs/dev"
 run_resolve
 assert "t17 digest follows a pin bump inside a local module" \
   test "$(out_value cache-key)" != "${T11_KEY}"
+
+# t47-t50: local module calls that reach nothing remote. Each still has an
+# entry in the cached 'modules.json', and init never removes the entry of a
+# call that left the configuration (§2.6). Under an unchanged key, a removed
+# call's entry is restored with it, pointing at a directory that may be gone,
+# and fmt and tflint read their directories from that manifest.
+local_calls_fixture() {
+  setup_workspace
+  write_tf "envs/dev/main.tf" <<'TF'
+module "shared" {
+  source = "../../main"
+}
+TF
+  write_tf "main/main.tf" <<'TF'
+module "naming" {
+  source  = "Azure/naming/azurerm"
+  version = "0.4.2"
+}
+
+module "project_a" {
+  source = "./project_a"
+}
+
+module "project_b" {
+  source = "./project_b"
+}
+TF
+  write_tf "main/project_a/main.tf" <<'TF'
+resource "terraform_data" "a" {}
+TF
+  write_tf "main/project_b/main.tf" <<'TF'
+resource "terraform_data" "b" {}
+TF
+  export input_project_dir="envs/dev"
+}
+
+# t47 removing a local call and its directory moves the key
+local_calls_fixture
+run_resolve
+T47_KEY="$(out_value cache-key)"
+write_tf "main/main.tf" <<'TF'
+module "naming" {
+  source  = "Azure/naming/azurerm"
+  version = "0.4.2"
+}
+
+module "project_a" {
+  source = "./project_a"
+}
+TF
+rm -rf "${WORK_DIR}/main/project_b"
+run_resolve
+assert_eq "t47 the directory stays cached" "true" "$(out_value cache-enabled)"
+assert_log_has "t47 the local calls are not counted as remote" "1 reachable remote module(s)"
+assert "t47 removing a local module call moves the key" \
+  test "$(out_value cache-key)" != "${T47_KEY}"
+
+# t48 moving a local module to another directory under a new label moves the key
+local_calls_fixture
+run_resolve
+T48_KEY="$(out_value cache-key)"
+write_tf "main/main.tf" <<'TF'
+module "naming" {
+  source  = "Azure/naming/azurerm"
+  version = "0.4.2"
+}
+
+module "project_a" {
+  source = "./project_a"
+}
+
+module "group_b" {
+  source = "./group/b"
+}
+TF
+mv "${WORK_DIR}/main/project_b" "${WORK_DIR}/main/group_b_tmp"
+mkdir -p "${WORK_DIR}/main/group"
+mv "${WORK_DIR}/main/group_b_tmp" "${WORK_DIR}/main/group/b"
+run_resolve
+assert "t48 moving a local module under a new label moves the key" \
+  test "$(out_value cache-key)" != "${T48_KEY}"
+
+# t49 adding a local call moves the key, so the completeness check does not
+# warn on every exact hit that follows
+local_calls_fixture
+run_resolve
+T49_KEY="$(out_value cache-key)"
+write_tf "main/extra.tf" <<'TF'
+module "project_c" {
+  source = "./project_a"
+}
+TF
+run_resolve
+assert "t49 adding a local module call moves the key" \
+  test "$(out_value cache-key)" != "${T49_KEY}"
+
+# t50 the key is over declarations, not contents: editing what a local module
+# holds leaves it alone
+local_calls_fixture
+run_resolve
+T50_KEY="$(out_value cache-key)"
+write_tf "main/project_b/main.tf" <<'TF'
+resource "terraform_data" "b" {
+  input = "changed"
+}
+
+resource "terraform_data" "b2" {}
+TF
+run_resolve
+assert_eq "t50 editing a local module's resources leaves the key alone" \
+  "${T50_KEY}" "$(out_value cache-key)"
 
 # ---------------------------------------------------------------------------
 # Key and paths
