@@ -6,6 +6,13 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.15.1](https://github.com/dsb-norge/github-actions-terraform/compare/v1.15.0...v1.15.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* key the module cache on local module calls too ([69b1f3f](https://github.com/dsb-norge/github-actions-terraform/commit/69b1f3f4ea4bfd7daaa2b75143387786a49c5bb5))
+
 ## [1.15.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.14.1...v1.15.0) (2026-10-13)
 
 
