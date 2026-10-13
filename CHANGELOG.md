@@ -6,6 +6,18 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.15.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.14.1...v1.15.0) (2026-10-13)
+
+
+### Features
+
+* hold versions in the Dependabot admission ([28fa934](https://github.com/dsb-norge/github-actions-terraform/commit/28fa934433c7c63b5d576f3d71110248f8c4cf82))
+
+
+### Bug Fixes
+
+* name the owner and repository in the allow help of a GitHub module ([f645398](https://github.com/dsb-norge/github-actions-terraform/commit/f6453980629fd6adb5057cb26f294edba8d78a06))
+
 ## [1.14.1](https://github.com/dsb-norge/github-actions-terraform/compare/v1.14.0...v1.14.1) (2026-10-10)
 
 
