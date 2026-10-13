@@ -88,7 +88,7 @@ function main {
 
     reset-walk-state
     : >"${decls_file}"
-    walk-remote-modules "${abs}" >"${decls_file}"
+    walk-reachable-modules "${abs}" >"${decls_file}"
     # Init installs the run-block modules of every test file in the root into
     # the same '.terraform/modules', whatever '-filter' later names, so they are
     # part of what this directory's tree holds (Terraform-tests.md P37).
@@ -107,8 +107,8 @@ function main {
     fi
 
     # Any mutable source anywhere in the reachable set disqualifies the whole
-    # directory. It then inits exactly as it does today (§3). Local lines, which
-    # only the run-block declarations contribute, count towards neither.
+    # directory. It then inits exactly as it does today (§3). Local lines count
+    # towards neither: they are there for the key (§4.4.1).
     mutable_found=''
     remote_count=0
     while IFS=$'\t' read -r dot_path src ver; do

@@ -162,10 +162,12 @@ function read-module-blocks {
 # The local-source walk
 # ---------------------------------------------------------------------------
 
-# walk-remote-modules <dir> [dot-path-prefix]
+# walk-reachable-modules <dir> [dot-path-prefix]
 #
-# Emits one '<dot-path>\t<source>\t<version>' line for every REMOTE module
-# reachable from <dir>, following local sources recursively (§4.4.1).
+# Emits one '<dot-path>\t<source>\t<version>' line for every module call
+# reachable from <dir>, following local sources recursively (§4.4.1): each
+# remote call, and each local call ahead of what it reaches. Local lines are for
+# the key only; the caller counts and classifies the remote ones.
 #
 # STDOUT IS THE DATA CHANNEL — the caller parses it. Every diagnostic goes to
 # stderr, and no workflow command is emitted from here; step_resolve.sh owns
@@ -185,7 +187,7 @@ function read-module-blocks {
 declare -gA _WALK_MEMO=()
 declare -gA _WALK_CHAIN=()
 
-function walk-remote-modules {
+function walk-reachable-modules {
   local dir="${1}" prefix="${2:-}"
   local abs label src ver child
   abs="$(cd "${dir}" 2>/dev/null && pwd)" || return 0
@@ -205,6 +207,12 @@ function walk-remote-modules {
     case "$(classify-source config "${src}" "${ver}")" in
     local)
       [ -z "${src}" ] && continue
+      # Nothing is downloaded for a local call, but its entry is in the cached
+      # 'modules.json', and init never removes the entry of a call that left
+      # the configuration (§2.6). Left out of the key, a removed call's entry
+      # came back on every hit, pointing at a directory that may be gone, and
+      # fmt and tflint read their directories from that manifest.
+      printf '%s%s\t%s\t%s\n' "${prefix}" "${label}" "${src}" "${ver}"
       # Resolved lexically ('realpath -m'), not by entering it: a source that
       # escapes the workspace must be reported as escaping whether or not
       # anything happens to exist at that path.
@@ -217,7 +225,7 @@ function walk-remote-modules {
         log-warn "local module source '${src}' in '$(ws-path "${abs}")' does not exist, skipping" >&2
         continue
       fi
-      walk-remote-modules "${child}" "${prefix}${label}."
+      walk-reachable-modules "${child}" "${prefix}${label}."
       ;;
     *)
       printf '%s%s\t%s\t%s\n' "${prefix}" "${label}" "${src}" "${ver}"
@@ -351,9 +359,9 @@ function read-test-run-modules {
 # The run-block declarations of read-test-run-modules, each followed by what a
 # local one reaches: every declaration itself (local or registry, since they
 # are what the key is over and a local one's manifest entry changes with it
-# too), then, for a local source, every remote module reachable from it under
+# too), then, for a local source, every module call reachable from it under
 # the declaration's dot-path. Same line format and same stdout contract as
-# walk-remote-modules.
+# walk-reachable-modules.
 #
 # A local source is relative to <dir>, the root 'terraform test' runs in, and
 # NOT to the test file: '../module' from a root-level 'tests/' directory means
@@ -383,7 +391,7 @@ function walk-test-run-modules {
       log-warn "run-block module source '${src}' of '${dot_path}' does not exist, skipping" >&2
       continue
     fi
-    walk-remote-modules "${child}" "${dot_path}."
+    walk-reachable-modules "${child}" "${dot_path}."
   done < <(read-test-run-modules "${abs}" "${test_dir}")
 }
 
