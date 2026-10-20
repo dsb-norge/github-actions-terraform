@@ -61,6 +61,10 @@ function main {
     done
     if [ ! -f "${path_to_use}" ]; then
       log-error "could not find a TFLint config file to use, unable to perform linting!"
+      # CI never supplies one: that would mean writing to the repository. The
+      # developer tooling does, as a step of bringing a repository up
+      # (docs/Linting.md).
+      log-error "supply one with the dsb CLI (https://github.com/dsb-norge/terraform-helpers): run 'tf-lint' for this directory, which writes the default '.tflint.hcl' into it, and commit that file."
       return 1
     fi
   fi

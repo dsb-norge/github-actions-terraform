@@ -109,6 +109,8 @@ run_step
 assert "No config: step exits non-zero" test "${LAST_EXIT}" -ne 0
 assert "No config: error explains what is missing" \
   grep -q "could not find a TFLint config file to use" "${OUT_FILE}"
+assert "No config: error names the tool that supplies one" \
+  grep -q "supply one with the dsb CLI .*run 'tf-lint' for this directory" "${OUT_FILE}"
 assert "No config: no 'file' output published" \
   test -z "$(get_output file)"
 

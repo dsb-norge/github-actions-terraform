@@ -12,6 +12,15 @@ inputs:
       If not specified, the action will attempt to locate a config file to use.
     required: false
     default: ""
+  examples:
+    description: |
+      'true' also lints each 'examples/*/' directory under the working
+      directory that holds '.tf' files: each is a root of its own, linted with
+      the same config and covering only the directories inside it, so the
+      module itself is linted once. For module repositories; see
+      docs/Linting.md.
+    required: false
+    default: "false"
   github-token:
     description: |
       GitHub token to use for downloading tflint plugins from GitHub during init.
@@ -67,6 +76,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         input_working_directory: ${{ inputs.working-directory }}
         input_config_file: ${{ steps.get-config.outputs.file }}
+        input_examples: ${{ inputs.examples }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         # Run 'tflint' on the terraform project
