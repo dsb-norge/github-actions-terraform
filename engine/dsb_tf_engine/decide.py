@@ -152,7 +152,8 @@ def decide(document):
         # Rule 6: before the goals reason, so an entry's reasons read in the rules' order.
         staged = ordering.assign(document, declared, rows, entries, granted)
         tests_block, warnings, notices = tests.decide_tests(document, rows, admission=admitted)
-        warnings = (environments.setting_warnings(document, rows) + triggers.setting_warnings(declared, events)
+        warnings = (environments.setting_warnings(document, rows) + environments.deprecation_warnings(document, declared)
+                    + triggers.setting_warnings(declared, events)
                     + warnings + admission.audit(document, policy, admitted))
     except environments.ConfigError as error:
         return _failed(error.messages)

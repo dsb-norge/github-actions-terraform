@@ -75,7 +75,6 @@
           "pr-comment-group": "",
           "project-dir": "./envs/env-a",
           "runs-on": "runner-a",
-          "terraform-init-additional-dirs": [],
           "terraform-version": "1.15.x",
           "tflint-version": "latest",
           "url": "https://example.com/a",

@@ -11,11 +11,12 @@ the `.terraform.lock.hcl` verification, and caching anything else under
 ## 1. Why
 
 Every job in the default workflow runs `terraform init` in the environment's
-`project-dir` plus every directory in `terraform-init-additional-dirs`. Each of
-those inits downloads every remote module from scratch, on every run, in every
-matrix job. A calling repo with six environments and three additional dirs pays
-that download 24 times per workflow run, for module trees that changed in none
-of them.
+`project-dir`. That init downloads every remote module from scratch, on every
+run, in every matrix job. A calling repo with six environments pays that
+download six times per workflow run, for module trees that changed in none of
+them. (Additional directories were initialised and cached too while
+`terraform-init-additional-dirs-yml` was in use; it is deprecated, and the lint
+needs no init outside the environment's directory, [Linting.md](Linting.md).)
 
 Providers already avoid this. Modules do not, and the reason is structural:
 
@@ -215,7 +216,7 @@ The workflow does an explicit **restore → init → save**, with no `restore-ke
 ```mermaid
 flowchart TD
     setup["📥 Setup Terraform<br>(terraform on PATH)"]
-    resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, additional-dirs-json, environment, test-directory<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
+    resolve["🗄️ terraform-module-cache (phase - resolve)<br>in - project-dir, environment, test-directory<br>out - cache-enabled, cache-paths, cache-key, excluded-dirs-file"]
     restore["🚀 actions/cache/restore@v6<br>path = cache-paths, key = cache-key, no restore-keys"]
     snap["📸 terraform-module-cache (phase - snapshot)<br>copies each included dir's modules.json to RUNNER_TEMP"]
     init["⚙️ terraform-init<br>(unchanged)"]
@@ -252,11 +253,12 @@ Four reasons, all load-bearing:
 
 ### 4.3 Cache paths
 
-Derived, never hardcoded. This workflow is consumed by many repos; the init
-directory list lives in `matrix.vars` and is different for each of them.
+Derived, never hardcoded. This workflow is consumed by many repos; the
+directory lives in `matrix.vars` and is different for each of them.
 
-For each directory in `[project-dir] + terraform-init-additional-dirs` that
-passes the §4.5 audit, emit one line:
+For the project directory, when it passes the §4.5 audit, emit one line (the
+deprecated `additional-dirs-json` input is ignored, with a log line when it
+lists anything):
 
 ```
 <normalized-dir>/.terraform/modules
@@ -684,13 +686,7 @@ proposed to make misses rarer: nothing here can be slower than the status quo.
 
 Repository cache quota is 10 GB with LRU eviction, and entries unused for 7 days
 are evicted. Budget: one entry per environment per reachable-module generation,
-covering `project-dir` plus every included additional dir.
-
-Every environment's entry contains its own copy of the *shared* additional dirs,
-so that content is stored once per environment rather than once. Accepted: for a
-six-environment caller at the observed ~18 MB per directory this is a few hundred
-MB against a 10 GB quota. §11 records the shape that would fix it and the trigger
-for wanting to.
+covering `project-dir`.
 
 ### 7.1 Why orphans cannot accumulate
 
@@ -838,7 +834,7 @@ Classification and inclusion:
 | `t06_git_branch_ref` | `?ref=main` → excluded — the §3 hazard |
 | `t07_git_no_ref` | no `?ref=` → excluded |
 | `t08_no_modules` | no `module` blocks → excluded |
-| `t09_mixed_dirs` | one cacheable dir + one branch-ref dir → `cache-paths` has one line; digest covers only the included dir |
+| `t09_mixed_dirs` | a branch-ref dir listed in the deprecated `additional-dirs-json` is ignored: `cache-paths` is the project dir alone, and the log says the input is ignored |
 | `t10_override_file` | `_override.tf` repoints a pinned module at `?ref=main` → excluded (§4.5.1 over-read is safe) |
 
 The local-source walk (§4.4.1) — the part most likely to be got wrong:
@@ -861,12 +857,12 @@ Key and paths:
 
 | Fixture | Expectation |
 |---|---|
-| `t18_path_normalization` | `./main` and `main` yield one identical path and digest |
+| `t18_path_normalization` | listed additional dirs, however spelled, add no path and nothing to the digest |
 | `t19_digest_stability` | editing a `resource` block leaves the digest unchanged; bumping a module `version` changes it |
 | `t20_env_key_sanitization` | environment name with `/`, `.` and `,` produces a key in the permitted character set |
 | `t21_no_restore_keys` | the action emits no restore-keys output at all — guards invariant 8.2 against a well-meaning re-addition |
 | `t22_empty_additional_dirs` | `[]` and `""` both handled; project-dir alone |
-| `t23_missing_dir` | a declared additional dir that does not exist → excluded with a notice, no crash |
+| `t23_missing_dir` | a listed additional dir that does not exist is ignored, not audited, no crash |
 
 Runtime checks:
 
@@ -1024,9 +1020,7 @@ Rejected, with reasons, because each is a plausible-sounding change to propose:
 Genuine follow-ups:
 
 - **One cache entry per init directory**, keyed on the directory path and its own
-  digest. A pin bump would then cold-init only the directory that changed, and
-  the shared additional dirs would deduplicate to one entry across the whole
-  matrix instead of one per environment — retiring the redundancy noted in §7.
+  digest. A pin bump would then cold-init only the directory that changed.
   Blocked on ergonomics: Actions cannot iterate `uses:` steps, so it needs either
   a capped set of repeated `if:`-guarded cache steps (with a caller-visible cliff
   when the cap is exceeded) or hand-rolled calls to the undocumented cache API,

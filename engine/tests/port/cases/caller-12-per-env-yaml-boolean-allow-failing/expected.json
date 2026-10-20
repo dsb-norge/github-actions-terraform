@@ -79,15 +79,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-a",
           "runs-on": "runner-a",
-          "terraform-init-additional-dirs": [
-            "./main",
-            "./modules/mod-a",
-            "./modules/mod-b",
-            "./modules/mod-c",
-            "./modules/mod-d",
-            "./modules/mod-e",
-            "./modules/mod-f"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/a",
@@ -166,15 +157,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-b",
           "runs-on": "runner-b",
-          "terraform-init-additional-dirs": [
-            "./main",
-            "./modules/mod-a",
-            "./modules/mod-b",
-            "./modules/mod-c",
-            "./modules/mod-d",
-            "./modules/mod-e",
-            "./modules/mod-f"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/b",
@@ -253,15 +235,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-c",
           "runs-on": "runner-c",
-          "terraform-init-additional-dirs": [
-            "./main",
-            "./modules/mod-a",
-            "./modules/mod-b",
-            "./modules/mod-c",
-            "./modules/mod-d",
-            "./modules/mod-e",
-            "./modules/mod-f"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/c",

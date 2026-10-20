@@ -37,6 +37,7 @@ once, under the kind of document it is.
 | [V1-changes.md](V1-changes.md) | Every change a caller meets from v0.33 to v1, breaking or not, with the reason. |
 | [Migration-v0-to-v1.md](Migration-v0-to-v1.md) | Moving a project repository to `@v1`, step by step, with validation, rollback and pitfalls. |
 | [Migration-v0-to-v1-modules.md](Migration-v0-to-v1-modules.md) | The same for a module repository. |
+| [Deprecations.md](Deprecations.md) | What v1 still accepts but no longer uses: what replaces each, and the major version that removes it. |
 
 ## Specs
 

@@ -46,6 +46,7 @@ module "tracks_a_branch" {
 TF
 
 export input_project_dir="./envs/sandbox"
+# Deprecated and ignored; set it to see the log line that says so.
 export input_additional_dirs_json='["./main", "modules/floating"]'
 export input_environment="sandbox-env"
 

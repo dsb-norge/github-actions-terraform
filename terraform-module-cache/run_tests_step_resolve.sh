@@ -122,9 +122,10 @@ module "bad" {
 TF
 export input_project_dir="env" input_additional_dirs_json='["floating"]'
 run_resolve
-assert_eq "t09 mixed dirs: only the safe one is cached" "env/.terraform/modules" "$(out_value cache-paths)"
-assert_eq "t09 mixed dirs: caching stays enabled" "true" "$(out_value cache-enabled)"
-assert_eq "t09 digest covers only the included dir" "${T01_KEY}" "$(out_value cache-key)"
+assert_eq "t09 a listed additional dir is ignored: only project-dir is cached" "env/.terraform/modules" "$(out_value cache-paths)"
+assert_eq "t09 and its mutable module does not disable caching" "true" "$(out_value cache-enabled)"
+assert_eq "t09 the digest covers project-dir alone" "${T01_KEY}" "$(out_value cache-key)"
+assert_log_has "t09 the log says the input is ignored" "input 'additional-dirs-json' is deprecated and ignored"
 
 # t10 an override file repoints a pinned module at a branch. Over-reading is
 # safe: both blocks are read, so the mutable one is seen (§4.5.1).
@@ -402,13 +403,12 @@ module "naming" {
 TF
 export input_project_dir="env" input_additional_dirs_json='["./main", "main", "./main/"]'
 run_resolve
-assert_eq "t18 duplicate spellings collapse to one path" \
-  "env/.terraform/modules
-main/.terraform/modules" "$(out_value cache-paths)"
+assert_eq "t18 listed additional dirs add no cache path" \
+  "env/.terraform/modules" "$(out_value cache-paths)"
 T18_KEY="$(out_value cache-key)"
-export input_additional_dirs_json='["main"]'
+export input_additional_dirs_json='[]'
 run_resolve
-assert_eq "t18 and to one digest" "${T18_KEY}" "$(out_value cache-key)"
+assert_eq "t18 nor anything to the digest" "${T18_KEY}" "$(out_value cache-key)"
 
 # t19 digest stability
 setup_workspace
@@ -495,9 +495,9 @@ module "naming" {
 TF
 export input_project_dir="env" input_additional_dirs_json='["nope"]'
 run_resolve
-assert_eq "t23 a missing directory does not crash the step" "0" "${LAST_EXIT}"
-assert_log_has "t23 and is reported as excluded" "not caching nope"
-assert_eq "t23 while the real directory is still cached" "env/.terraform/modules" "$(out_value cache-paths)"
+assert_eq "t23 a listed directory that does not exist does not crash the step" "0" "${LAST_EXIT}"
+assert_log_lacks "t23 and is not audited" "not caching nope"
+assert_eq "t23 while the project directory is cached" "env/.terraform/modules" "$(out_value cache-paths)"
 
 # ---------------------------------------------------------------------------
 # Source classification, the long tail
@@ -667,10 +667,8 @@ TF
 done
 export input_project_dir="env" input_additional_dirs_json='["beta","alpha"]'
 run_resolve
-assert_eq "k04 cache paths keep project-dir first, then declared order" \
-  "env/.terraform/modules
-beta/.terraform/modules
-alpha/.terraform/modules" "$(out_value cache-paths)"
+assert_eq "k04 listed additional dirs are ignored: only project-dir is cached" \
+  "env/.terraform/modules" "$(out_value cache-paths)"
 
 # ---------------------------------------------------------------------------
 # Block boundaries

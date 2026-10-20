@@ -72,7 +72,6 @@
           "some-future-input": "x",
           "some-null": "",
           "some-number": "5",
-          "terraform-init-additional-dirs": [],
           "terraform-version": "latest",
           "tflint-version": "latest",
           "url": "",

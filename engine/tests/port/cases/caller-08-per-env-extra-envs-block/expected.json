@@ -74,10 +74,6 @@
           "pr-comment-group": "",
           "project-dir": "./envs/env-a",
           "runs-on": "runner-a",
-          "terraform-init-additional-dirs": [
-            "./main",
-            "./modules/mod-a"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/a",

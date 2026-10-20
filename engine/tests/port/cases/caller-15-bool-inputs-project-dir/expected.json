@@ -69,7 +69,6 @@
           "pr-comment-group": "",
           "project-dir": "./examples",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [],
           "terraform-version": "latest",
           "tflint-version": "latest",
           "url": "https://example.com/a",

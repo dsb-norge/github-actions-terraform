@@ -33,7 +33,9 @@ export TF_BIN="${STUB_DIR}/terraform"
 
 export input_working_directory="${WORK_DIR}"
 export input_environment_name="sandbox"
+# Deprecated and ignored; set it to see the log line that says so.
 export input_additional_dirs_json="[\"${EXTRA_DIR_REL}\"]"
+export input_examples="false"
 export input_plugin_cache_directory=""
 
 # Every input at its default. Try 'false', 'readonly-if-present' and 'true'

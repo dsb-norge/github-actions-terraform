@@ -2,23 +2,25 @@
 #
 # Source for the terraform-init main step.
 #
-# Runs 'terraform init' in the working directory (and any additional
-# directories), tees the combined stdout/stderr to a single console-output
-# file so downstream steps (parse-terraform-warnings, validation summary)
-# can scan it for diagnostics.
+# Runs 'terraform init' in the working directory (and, with 'examples', in
+# each module example), tees the combined stdout/stderr to a single
+# console-output file so downstream steps (parse-terraform-warnings,
+# validation summary) can scan it for diagnostics.
 #
 # Outputs:
 #   tf-init-console-output-file - Path of file with captured stdout/stderr
-#                                 across the project init + any additional
-#                                 init invocations. Additional dirs append
-#                                 (tee -a) so warnings from every init call
-#                                 are scannable from one place.
+#                                 across the project init + any example
+#                                 inits. Examples append (tee -a) so warnings
+#                                 from every init call are scannable from one
+#                                 place.
 #
 # Required environment variables:
 #   input_working_directory     - Where to invoke 'terraform init'.
-#   input_additional_dirs_json  - JSON array of extra directories (relative
-#                                 to GITHUB_WORKSPACE) to also init. Empty
-#                                 array or empty string skips the loop.
+#
+# Deprecated environment variables:
+#   input_additional_dirs_json  - Ignored, with a log line when it lists
+#                                 anything: the lint prepares module
+#                                 directories itself (docs/Linting.md).
 #
 # Optional environment variables:
 #   input_extra_envs_file - Path of a JSON file with environment variables
@@ -28,9 +30,12 @@
 #                                 to empty (file becomes
 #                                 'tf-init-console-output-.txt' — ugly but
 #                                 functional).
-#   input_plugin_cache_directory - When set, exported as TF_PLUGIN_CACHE_DIR
-#                                  during the additional-dirs loop so
-#                                  providers are reused across envs.
+#   input_examples               - 'true' also initialises each
+#                                  'examples/*/' holding '.tf' files, with
+#                                  '-backend=false'. Default 'false'.
+#   input_plugin_cache_directory - The plugin cache directory, exported as
+#                                  TF_PLUGIN_CACHE_DIR for the project init when
+#                                  'plugin-cache-may-break-lock-file' asks.
 #   input_backend                - 'false' adds '-backend=false' to the
 #                                  project init. Default 'true'.
 #   input_lockfile_mode          - 'default' (the default), 'readonly' or
@@ -74,6 +79,11 @@ function main {
   local may_break="${input_plugin_cache_may_break_lock_file:-false}"
   if [ ! "${may_break}" == 'true' ] && [ ! "${may_break}" == 'false' ]; then
     log-error "input 'plugin-cache-may-break-lock-file' must be 'true' or 'false', got '${may_break}'!"
+    return 1
+  fi
+  local examples="${input_examples:-false}"
+  if [ ! "${examples}" == 'true' ] && [ ! "${examples}" == 'false' ]; then
+    log-error "input 'examples' must be 'true' or 'false', got '${examples}'!"
     return 1
   fi
 
@@ -154,47 +164,37 @@ function main {
   fi
   end-group
 
-  # Additional dirs init — parse JSON array, iterate, tee -a so each
-  # invocation's output is appended to the same console file.
-  local more_dirs_json="${input_additional_dirs_json:-[]}"
-  # One element per NUL-terminated item: a directory holding a space, or any
-  # other character bash would split on, stays one directory.
-  local -a more_dirs=()
-  local extra_dir
-  while IFS= read -r -d '' extra_dir; do
-    more_dirs+=("${extra_dir}")
-  done < <(printf '%s' "${more_dirs_json}" | jq -j '.[]? | tostring, "\u0000"' 2>/dev/null)
+  # Deprecated: the lint prepares module directories itself, from the
+  # project's own modules manifest (docs/Linting.md), so nothing else is
+  # initialised. A workflow release from before that still passes the input.
+  local more_dirs_json="${input_additional_dirs_json:-}"
+  if [ -n "${more_dirs_json}" ] && [ ! "${more_dirs_json}" == '[]' ] && [ ! "${more_dirs_json}" == 'null' ]; then
+    log-info "input 'additional-dirs-json' is deprecated and ignored: the lint prepares module directories itself (docs/Linting.md)."
+  fi
 
-  if [ "${#more_dirs[@]}" -eq 0 ]; then
-    log-info "no additional directories to init specified"
-  else
-    log-info "additional directories to init specified"
-
-    if [ -n "${input_plugin_cache_directory:-}" ]; then
-      export TF_PLUGIN_CACHE_DIR="${input_plugin_cache_directory}"
-      # ref. https://developer.hashicorp.com/terraform/cli/config/config-file#allowing-the-provider-plugin-cache-to-break-the-dependency-lock-file
-      export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE="true"
-    fi
-
-    for extra_dir in "${more_dirs[@]}"; do
-      start-group "additional init directory '${extra_dir}'"
-      local abs_dir="${GITHUB_WORKSPACE}/${extra_dir}"
-      log-info "looking for directory ..."
-      if [ -d "${abs_dir}" ]; then
-        log-info "found it. Running terraform init now ..."
-        set -o pipefail
-        set +e
-        "${tf_bin}" -chdir="${abs_dir}" init -input=false -reconfigure 2>&1 | tee -a "${console_file}"
-        local extra_exit=${?}
-        set +o pipefail
-        TF_INIT_RESULTS["${abs_dir}"]="${extra_exit}"
-        if [ ! "${extra_exit}" == "0" ]; then
-          log-error "init exited with code '${extra_exit}'!"
-        fi
-      else
-        log-error "additional init directory '${extra_dir}' does not exist!"
-        end-group
-        return 1
+  # Module examples (module CI): each 'examples/*/' holding '.tf' files is
+  # initialised after the project, appending to the same console file, so it
+  # can be validated and linted. Never with a backend, and never letting the
+  # plugin cache break the lock: an example has no lock to start from, and that
+  # would record one platform's checksum and warn of an incomplete lock on
+  # every run.
+  if [ "${examples}" == 'true' ]; then
+    local example
+    for example in "$(pwd)"/examples/*/; do
+      example="${example%/}"
+      [ -d "${example}" ] || continue
+      # A directory without '.tf' files (a README, shared fixtures) is not an example.
+      compgen -G "${example}/*.tf" >/dev/null || continue
+      start-group "running 'terraform init' in example '$(ws-path "${example}")' ..."
+      set -o pipefail
+      set +e
+      env -u TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE \
+        "${tf_bin}" -chdir="${example}" init -input=false -backend=false 2>&1 | tee -a "${console_file}"
+      local example_exit=${?}
+      set +o pipefail
+      TF_INIT_RESULTS["${example}"]="${example_exit}"
+      if [ ! "${example_exit}" == "0" ]; then
+        log-error "init exited with code '${example_exit}'!"
       fi
       end-group
     done
