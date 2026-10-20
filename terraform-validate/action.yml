@@ -14,6 +14,15 @@ inputs:
       console-output file ('tf-validate-console-output-<env>.txt').
     required: false
     default: ""
+  examples:
+    description: |
+      Optional: 'true' also runs 'terraform validate' in each 'examples/*/'
+      directory under working-directory that holds '.tf' files, after the
+      project and into the same console file. The examples must be
+      initialised, as terraform-init's 'examples' does. For module
+      repositories.
+    required: false
+    default: "false"
   extra-envs-file:
     description: |
       Path to a JSON file with environment variables to apply to this action's
@@ -60,6 +69,7 @@ runs:
       env:
         input_working_directory: ${{ inputs.working-directory }}
         input_environment_name: ${{ inputs.environment-name }}
+        input_examples: ${{ inputs.examples }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
       run: |
         # Run 'terraform validate' on the terraform project
