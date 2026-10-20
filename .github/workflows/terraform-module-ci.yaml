@@ -431,6 +431,9 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-init@v1
         with:
           working-directory: ${{ github.workspace }}
+          # The examples too, so they are validated and linted as the dsb CLI checks them
+          # (docs/Linting.md); each without a backend and without letting the cache break its lock.
+          examples: true
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           # Authenticates terraform's remote-module clones, which are otherwise charged to a per-IP
           # budget shared by every runner behind the same NAT address.
@@ -450,6 +453,7 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-validate@v1
         with:
           working-directory: ${{ github.workspace }}
+          examples: true
         continue-on-error: true # evaluated by the gates below
 
       - name: "🧹 Lint with TFLint"
@@ -457,6 +461,8 @@ jobs:
         uses: dsb-norge/github-actions-terraform/lint-with-tflint@v1
         with:
           working-directory: ${{ github.workspace }}
+          # Each example as a root of its own with the module's config, covering only what is inside it
+          examples: true
         continue-on-error: true # evaluated by the gates below
 
       - name: "⚠️ Parse init warnings"

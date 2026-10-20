@@ -32,8 +32,8 @@ setup_workdir() {
   export input_working_directory="${WORK_DIR}"
   export input_environment_name="testenv"
 
-  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_ENV_FILE
-  unset input_extra_envs_file
+  unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_ENV_FILE MOCK_TF_ARGV_FILE MOCK_TF_FAIL_CHDIR
+  unset input_extra_envs_file input_examples
 }
 
 install_stub_terraform() {
@@ -46,8 +46,15 @@ install_stub_terraform() {
 if [ -n "${MOCK_ENV_FILE:-}" ]; then
   env -0 >"${MOCK_ENV_FILE}"
 fi
+if [ -n "${MOCK_TF_ARGV_FILE:-}" ]; then
+  printf '%s\n' "$*" >>"${MOCK_TF_ARGV_FILE}"
+fi
 if [ -n "${MOCK_TF_STDOUT:-}" ]; then
   printf '%s\n' "${MOCK_TF_STDOUT}"
+fi
+if [ -n "${MOCK_TF_FAIL_CHDIR:-}" ] && [ "${1}" = "-chdir=${MOCK_TF_FAIL_CHDIR}" ]; then
+  echo "Error: invalid example"
+  exit 1
 fi
 exit "${MOCK_TF_EXIT:-0}"
 STUB
@@ -398,6 +405,58 @@ assert "negative: the error names the directory" \
   grep -q 'could not be entered' "${_test_output}"
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+
+
+# ----------------------------------------------------------------------
+# Test: examples — each examples/*/ holding .tf files is validated after the
+# project, into the same console file (module CI, docs/Linting.md).
+# ----------------------------------------------------------------------
+setup_examples() {
+  setup_workdir
+  install_stub_terraform
+  mkdir -p "${WORK_DIR}/examples/01-basic" "${WORK_DIR}/examples/02-no-tf" "${WORK_DIR}/examples/03-full"
+  touch "${WORK_DIR}/examples/01-basic/main.tf" "${WORK_DIR}/examples/03-full/main.tf" \
+    "${WORK_DIR}/examples/02-no-tf/README.md"
+  export MOCK_TF_EXIT=0
+  export MOCK_TF_STDOUT="Success! The configuration is valid."
+  export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
+}
+
+setup_examples
+export input_examples='true'
+run_step
+assert "Examples: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Examples: the project and two examples are validated" \
+  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 3 ]]"
+assert "Examples: an example is validated in its own directory" \
+  grep -qFx -- "-chdir=${WORK_DIR}/examples/01-basic validate" "${MOCK_TF_ARGV_FILE}"
+assert "Examples: the other example too" \
+  grep -qFx -- "-chdir=${WORK_DIR}/examples/03-full validate" "${MOCK_TF_ARGV_FILE}"
+assert "Examples: a directory without .tf files is not an example" \
+  bash -c "! grep -qF -- 'examples/02-no-tf' '${MOCK_TF_ARGV_FILE}'"
+_cf="$(get_output tf-validate-console-output-file)"
+assert "Examples: the console file holds every validation's output" \
+  bash -c "[[ \$(grep -c 'The configuration is valid' '${_cf}') -eq 3 ]]"
+
+setup_examples
+export input_examples='true'
+export MOCK_TF_FAIL_CHDIR="${WORK_DIR}/examples/03-full"
+run_step
+assert "Examples: a failing example fails the step" test "${LAST_EXIT}" -ne 0
+assert "Examples: the failure is logged" \
+  grep -q "validate exited with code '1' in 'work/examples/03-full'" "${_test_output}"
+
+setup_examples
+run_step
+assert "Examples off: only the project is validated" \
+  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 1 ]]"
+
+setup_examples
+export input_examples='yes'
+run_step
+assert "Examples: a value other than true or false fails the step" test "${LAST_EXIT}" -ne 0
+assert "Examples: the error names the input" \
+  grep -q "input 'examples' must be 'true' or 'false'" "${_test_output}"
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"

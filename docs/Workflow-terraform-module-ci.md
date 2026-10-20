@@ -3,7 +3,7 @@
 The reusable CI workflow for a Terraform **module** repository: one module at the repository root, its examples under `examples/`, and its `terraform test` files. On every run it:
 
 1. keeps the README's generated documentation current with terraform-docs: on a pull request from the repository it commits the regenerated README, on Dependabot's only once the admission admitted it, and anywhere else a README that needs regenerating fails the check;
-2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint;
+2. validates the module: `terraform init` without a backend, `terraform fmt -check`, `terraform validate` and TFLint, of the module and of each example under `examples/` (each example linted with the module's `.tflint.hcl`, [Linting.md](Linting.md) §4);
 3. runs every committed test file as its own job, in parallel with validation, with the credentials its lane gives it; a module needs at least one test file;
 4. reports on the pull request (a validation comment and one tests comment) and on the run page (one run summary for the whole run, and a step summary from every job);
 5. ends in one check to require, `Terraform conclusion`;
