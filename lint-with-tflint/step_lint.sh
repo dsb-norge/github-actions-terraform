@@ -2,14 +2,17 @@
 #
 # Source for the lint-with-tflint lint step.
 #
-# Registers the TFLint problem matcher, determines which directories to lint —
-# every module directory terraform recorded in
-# '<project-dir>/.terraform/modules/modules.json' during init, or just the
-# project directory when there is no modules file — then runs 'tflint --init'
-# followed by 'tflint' in each.
+# Implements the lint contract of docs/Linting.md. Registers the TFLint problem
+# matcher, then lints each root: the working directory, and with 'examples'
+# every module example too. A root is linted first, then every local module
+# directory its '.terraform/modules/modules.json' records, each as a root of its
+# own; a root without a modules file is linted alone. A module directory is
+# linted against a manifest derived from the root's, through TF_DATA_DIR, so it
+# needs no init of its own. The root is linted once per var file it holds
+# (other than the ones tflint loads itself); a module directory never gets one.
 #
-# Exits with the sum of the per-directory exit codes so a failure anywhere
-# surfaces as a failing step.
+# Exits with the sum of the per-run exit codes so a failure anywhere surfaces as
+# a failing step.
 #
 # Required environment variables:
 #   input_working_directory - From what directory to run TFLint.
@@ -17,6 +20,9 @@
 #                             step_get_config.sh.
 #
 # Optional environment variables:
+#   input_examples        - 'true' also lints each 'examples/*/' directory that
+#                           holds '.tf' files, as a root covering only the
+#                           directories inside it. Anything else: not.
 #   input_extra_envs_file - Path of a JSON file with environment variables
 #                           to apply to this step only. Empty or unset is a
 #                           no-op.
@@ -26,51 +32,72 @@
 
 set +o nounset
 
-# Load helpers (provides read-terraform-module-dirs via helpers_additional.sh)
+# Load helpers (provides read-terraform-module-dirs, write-derived-manifest and
+# read-root-var-files via helpers_additional.sh)
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
-function main {
-  # Applied first, before this action's own exports — see
-  # docs/Per-goal-environment-variables.md §6.3.
-  apply-extra-envs "${input_extra_envs_file}" || return 1
+# One entry per tflint run, in order, for the summary and the exit code.
+declare -a _run_labels=()
+declare -a _run_codes=()
 
-  local tflint_bin="${TFLINT_BIN:-tflint}"
+function record-run {
+  _run_labels+=("${1}")
+  _run_codes+=("${2}")
+}
 
-  # Guarded: an unguarded 'cd' that fails leaves the step running in whatever
-  # directory it was invoked from and operating on the wrong tree. The runner's
-  # errexit catches it in production, but only there — the test harness and the
-  # local runners do not set it, so the failure mode is invisible where it would
-  # be caught.
-  if ! cd "${input_working_directory}"; then
-    log-error "the working directory '${input_working_directory}' could not be entered!"
-    return 1
-  fi
+# Lint one root and the module directories its manifest records.
+#   $1 - the root's absolute path
+#   $2 - 'all' lints every local module directory; 'inside' only the ones
+#        inside the root (a module example: the module itself is linted once,
+#        by its own root)
+function lint-root {
+  local root="${1}" scope="${2}"
+  local modules_file="${root}/.terraform/modules/modules.json"
+  local -a dirs=() keys=() var_files=()
 
-  # Decoration in github
-  echo "::add-matcher::${GITHUB_ACTION_PATH}/tflint_matcher.json"
-
-  # Dirs
-  local modules_file="$(pwd)/.terraform/modules/modules.json"
-  local lint_dirs=()
-  log-info "looking for terraform modules file at '$(ws-path "${modules_file}")'"
+  # Not ws-path: realpath fails on a file that does not exist, which is the
+  # common case for a root without module calls.
+  log-info "looking for terraform modules file at '${modules_file#"${GITHUB_WORKSPACE}/"}'"
   if [ -f "${modules_file}" ]; then
     log-info "found it, parsing directories to lint"
-    read-terraform-module-dirs lint_dirs "${modules_file}" "$(pwd)/" || return 1
+    read-terraform-module-dirs dirs keys "${modules_file}" "${root}" || return 1
   else
-    log-info "no modules file found, linting will only be performed in '$(ws-path "$(pwd)")'"
-    lint_dirs=("$(pwd)")
+    log-info "no modules file found, linting will only be performed in '$(ws-path "${root}")'"
+    dirs=("${root}")
+    keys=("")
+  fi
+
+  if [ "${scope}" == 'inside' ]; then
+    local -a inside_dirs=() inside_keys=()
+    local i canonical_root canonical_dir
+    canonical_root="$(realpath -m "${root}")"
+    for i in "${!dirs[@]}"; do
+      canonical_dir="$(realpath -m "${dirs[i]}")"
+      if [ "${canonical_dir}" == "${canonical_root}" ] || [[ "${canonical_dir}" == "${canonical_root}/"* ]]; then
+        inside_dirs+=("${dirs[i]}")
+        inside_keys+=("${keys[i]}")
+      fi
+    done
+    dirs=("${inside_dirs[@]}")
+    keys=("${inside_keys[@]}")
   fi
 
   # Linting nothing must not report success.
-  if [ ${#lint_dirs[@]} -eq 0 ]; then
+  if [ ${#dirs[@]} -eq 0 ]; then
     log-error "no directories to lint were found!"
     return 1
   fi
 
-  # Lint
-  declare -A lint_results
-  local lint_dir
-  for lint_dir in "${lint_dirs[@]}"; do
+  read-root-var-files var_files "${root}"
+
+  # Each run's exit code is taken on the line after the run: '$?' read inside
+  # an argument list that also holds a command substitution is that
+  # substitution's code, not tflint's.
+  local i lint_dir key label lint_exit
+  for i in "${!dirs[@]}"; do
+    lint_dir="${dirs[i]}"
+    key="${keys[i]}"
+    label="./$(ws-path "${lint_dir}")"
     start-group "directory '$(ws-path "${lint_dir}")'"
 
     # Array-built invocations so a directory path containing a space or a
@@ -90,33 +117,101 @@ function main {
     # the log then shows which directories were reached.
     if [ ! "${init_exit}" == "0" ]; then
       log-error "TFLint init exited with code '${init_exit}', skipping linting of this directory!"
-      lint_results["${lint_dir}"]=${init_exit}
+      record-run "${label}" "${init_exit}"
       end-group
       continue
     fi
 
-    log-info "linting ..."
-    log-info "command string is '${lint_cmd[*]@Q}'"
-    set +e
-    "${lint_cmd[@]}"
-    lint_results["${lint_dir}"]=${?}
+    if [ -z "${key}" ]; then
+      # The root: once per var file, or once without when it holds none.
+      if [ ${#var_files[@]} -eq 0 ]; then
+        log-info "linting ..."
+        log-info "command string is '${lint_cmd[*]@Q}'"
+        set +e
+        "${lint_cmd[@]}"
+        lint_exit=${?}
+        record-run "${label}" "${lint_exit}"
+      else
+        local var_file
+        for var_file in "${var_files[@]}"; do
+          local var_cmd=("${lint_cmd[@]}" "--var-file=${var_file}")
+          log-info "linting with '$(basename "${var_file}")' ..."
+          log-info "command string is '${var_cmd[*]@Q}'"
+          set +e
+          "${var_cmd[@]}"
+          lint_exit=${?}
+          record-run "${label} ($(basename "${var_file}"))" "${lint_exit}"
+        done
+      fi
+    else
+      # A module directory: against the manifest derived from the root's.
+      local data_dir
+      data_dir="$(mktemp -d)"
+      if ! write-derived-manifest "${modules_file}" "${key}" "${root}" "${data_dir}"; then
+        log-error "failed to derive the modules manifest for '$(ws-path "${lint_dir}")' (key '${key}')!"
+        rm -rf "${data_dir}"
+        record-run "${label}" 1
+        end-group
+        continue
+      fi
+      log-info "linting against the modules '${key}' reaches in the root's manifest ..."
+      log-info "command string is 'TF_DATA_DIR=${data_dir@Q} ${lint_cmd[*]@Q}'"
+      set +e
+      TF_DATA_DIR="${data_dir}" "${lint_cmd[@]}"
+      lint_exit=${?}
+      record-run "${label}" "${lint_exit}"
+      rm -rf "${data_dir}"
+    fi
 
     end-group
   done
+  return 0
+}
+
+function main {
+  # Applied first, before this action's own exports — see
+  # docs/Per-goal-environment-variables.md §6.3.
+  apply-extra-envs "${input_extra_envs_file}" || return 1
+
+  tflint_bin="${TFLINT_BIN:-tflint}"
+
+  # Guarded: an unguarded 'cd' that fails leaves the step running in whatever
+  # directory it was invoked from and operating on the wrong tree. The runner's
+  # errexit catches it in production, but only there — the test harness and the
+  # local runners do not set it, so the failure mode is invisible where it would
+  # be caught.
+  if ! cd "${input_working_directory}"; then
+    log-error "the working directory '${input_working_directory}' could not be entered!"
+    return 1
+  fi
+
+  # Decoration in github
+  echo "::add-matcher::${GITHUB_ACTION_PATH}/tflint_matcher.json"
+
+  lint-root "$(pwd)" all || return 1
+
+  if [ "${input_examples:-false}" == 'true' ]; then
+    local example
+    for example in "$(pwd)"/examples/*/; do
+      example="${example%/}"
+      [ -d "${example}" ] || continue
+      # A directory without '.tf' files (a README, shared fixtures) is not an example.
+      compgen -G "${example}/*.tf" >/dev/null || continue
+      log-info "module example '$(ws-path "${example}")'"
+      lint-root "${example}" inside || return 1
+    done
+  fi
 
   # Summary
   log-info "summary:"
-  for lint_dir in "${lint_dirs[@]}"; do
-    log-info "  - $([[ ${lint_results["${lint_dir}"]} -ne 0 ]] && echo 'failure ->' || echo 'success ->') ./$(ws-path "${lint_dir}")"
+  local i sum_exit_codes=0
+  for i in "${!_run_labels[@]}"; do
+    log-info "  - $([[ ${_run_codes[i]} -ne 0 ]] && echo 'failure ->' || echo 'success ->') ${_run_labels[i]}"
+    sum_exit_codes=$((sum_exit_codes + _run_codes[i]))
   done
 
-  # Exit code — sum of all per-directory codes, matching the legacy
-  # action's behaviour.
-  local sum_exit_codes=0
-  local v
-  for v in "${lint_results[@]}"; do
-    sum_exit_codes=$((sum_exit_codes + v))
-  done
+  # Exit code — sum of all per-run codes, matching the legacy action's
+  # behaviour.
   return ${sum_exit_codes}
 }
 

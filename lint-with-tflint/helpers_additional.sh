@@ -4,12 +4,18 @@
 # Auto-loaded by helpers.sh.
 #
 
-# Read the module directories terraform recorded in
-# '<project-dir>/.terraform/modules/modules.json' into the array named by $1.
+# Read the local module directories terraform recorded in a root's
+# '.terraform/modules/modules.json', and the key each is reached through, into
+# the arrays named by $1 and $2. The root comes first; the rest follow sorted.
 #
-#   $1 - name of the array variable to populate
-#   $2 - path to modules.json
-#   $3 - prefix to prepend to each relative directory (usually "$(pwd)/")
+#   $1 - name of the array variable to populate with directories
+#   $2 - name of the array variable to populate with their keys ("" for the root)
+#   $3 - path to modules.json
+#   $4 - the root's absolute path; relative 'Dir' values are resolved against it
+#
+# A directory reached through several keys (a module called from two places)
+# is listed once, with its shortest key: lint-with-tflint derives that
+# directory's manifest from the entries at and below that key.
 #
 # NUL-delimited (jq --raw-output0 + read -d '') rather than newline-joined into
 # a single string: the previous form iterated that string as '${DIRS[*]}', which
@@ -18,11 +24,13 @@
 # that does. Requires jq 1.7, ref. docs/Per-goal-environment-variables.md §9.2.
 function read-terraform-module-dirs {
   local -n _dirs_out="${1}"
-  local _modules_file="${2}"
-  local _prefix="${3}"
-  local _dir _out_file _err_file
+  local -n _keys_out="${2}"
+  local _modules_file="${3}"
+  local _root="${4}"
+  local _dir _key _out_file _err_file
 
   _dirs_out=()
+  _keys_out=()
   _out_file="$(mktemp)"
   _err_file="$(mktemp)"
 
@@ -30,8 +38,13 @@ function read-terraform-module-dirs {
   # an unparseable modules.json, or one without a '.Modules' array, otherwise
   # yields zero directories and the caller reports success having checked
   # nothing at all.
-  if ! jq --raw-output0 --arg pwd "${_prefix}" \
-    '[ .Modules[].Dir | select( startswith(".terraform") | not) ] | unique | sort | $pwd + .[]' \
+  if ! jq --raw-output0 --arg root "${_root}" '
+    [ .Modules[] | select(.Dir | startswith(".terraform") | not) ]
+    | group_by(.Dir)
+    | map({dir: .[0].Dir, key: (map(.Key // "") | min_by(length))})
+    | sort_by(.key != "", .dir)
+    | .[]
+    | (if .dir == "." then $root elif (.dir | startswith("/")) then .dir else $root + "/" + .dir end), .key' \
     "${_modules_file}" >"${_out_file}" 2>"${_err_file}"; then
     log-error "failed to read directories from the terraform modules file '${_modules_file}':"
     log-error "$(cat "${_err_file}")"
@@ -39,12 +52,53 @@ function read-terraform-module-dirs {
     return 1
   fi
 
-  while IFS= read -r -d '' _dir; do
+  while IFS= read -r -d '' _dir && IFS= read -r -d '' _key; do
     _dirs_out+=("${_dir}")
+    _keys_out+=("${_key}")
   done <"${_out_file}"
 
   rm -f "${_out_file}" "${_err_file}"
   return 0
+}
+
+# Write the manifest a module directory is linted against: the root's entries
+# at and below the directory's key, that prefix stripped, every 'Dir' made
+# absolute. tflint reads it through TF_DATA_DIR, so a module directory is
+# inspected against exactly the modules the root installed, without an init of
+# its own (docs/Linting.md).
+#
+#   $1 - path to the root's modules.json
+#   $2 - the directory's key
+#   $3 - the root's absolute path
+#   $4 - the data directory to write '<dir>/modules/modules.json' into
+function write-derived-manifest {
+  local _modules_file="${1}" _key="${2}" _root="${3}" _data_dir="${4}"
+  mkdir -p "${_data_dir}/modules" || return 1
+  jq --arg key "${_key}" --arg root "${_root}" '
+    {Modules: [ .Modules[]
+      | select(.Key == $key or (.Key | startswith($key + ".")))
+      | .Key |= (if . == $key then "" else ltrimstr($key + ".") end)
+      | .Dir |= (if startswith("/") then . else $root + "/" + . end) ]}' \
+    "${_modules_file}" >"${_data_dir}/modules/modules.json"
+}
+
+# The var files a root is linted with, into the array named by $1: every
+# '*.tfvars' directly in the root except 'terraform.tfvars' and '*.auto.tfvars',
+# which tflint loads by itself. Sorted, absolute.
+#
+#   $1 - name of the array variable to populate
+#   $2 - the root's absolute path
+function read-root-var-files {
+  local -n _var_files_out="${1}"
+  local _root="${2}" _file _name
+  _var_files_out=()
+  for _file in "${_root}"/*.tfvars; do
+    [ -f "${_file}" ] || continue
+    _name="$(basename "${_file}")"
+    [ "${_name}" == 'terraform.tfvars' ] && continue
+    [[ "${_name}" == *.auto.tfvars ]] && continue
+    _var_files_out+=("${_file}")
+  done
 }
 
 # Apply a JSON environment-variable map to the current shell

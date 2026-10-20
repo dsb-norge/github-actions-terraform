@@ -56,6 +56,7 @@ Stages and features:
 |---|---|
 | [Terraform-tests.md](Terraform-tests.md) | The `terraform test` stage: discovery, lanes, credentials, provider sets and the summary. |
 | [Module-ci.md](Module-ci.md) | The module workflow's design: the engine's module mode and the jobs shared with the default workflow. |
+| [Linting.md](Linting.md) | The lint contract shared with the dsb CLI: which directories TFLint inspects, how each is prepared without an init of its own, the config, the version, var files and module examples. |
 | [Terraform-module-cache.md](Terraform-module-cache.md) | Caching downloaded Terraform modules across runs. |
 | [Per-goal-environment-variables.md](Per-goal-environment-variables.md) | Environment variables and secrets that apply to one goal only. |
 | [Auto-merge.md](Auto-merge.md) | Merging a pull request automatically when its plan stays within limits. |

@@ -47,8 +47,12 @@ setup_workdir() {
   : >"${ARGS_FILE}"
   export MOCK_TFLINT_ARGS_FILE="${ARGS_FILE}"
 
-  unset MOCK_TFLINT_EXIT MOCK_TFLINT_FAIL_DIR MOCK_TFLINT_INIT_FAIL_DIR MOCK_ENV_FILE
-  unset input_extra_envs_file
+  MANIFEST_DIR="${RUNNER_TEMP}/manifests"
+  mkdir -p "${MANIFEST_DIR}"
+  export MOCK_MANIFEST_DIR="${MANIFEST_DIR}"
+
+  unset MOCK_TFLINT_EXIT MOCK_TFLINT_FAIL_DIR MOCK_TFLINT_INIT_FAIL_DIR MOCK_ENV_FILE MOCK_TFLINT_FAIL_VARFILE
+  unset input_extra_envs_file input_examples
 }
 
 # Write a fake modules.json. Each argument is a module 'Dir' value. The
@@ -56,7 +60,8 @@ setup_workdir() {
 # runs, and ws-path (realpath) needs them to exist to render log lines.
 write_modules_file() {
   local dirs_json dir
-  dirs_json="$(printf '%s\n' "${@}" | jq -Rsc 'split("\n") | map(select(length > 0)) | map({Dir: .})')"
+  dirs_json="$(printf '%s\n' "${@}" | jq -Rsc 'split("\n") | map(select(length > 0))
+    | to_entries | map({Key: (if .value == "." then "" else "m\(.key)" end), Dir: .value})')"
   for dir in "${@}"; do
     mkdir -p "${WORK_DIR}/${dir}"
   done
@@ -77,14 +82,28 @@ if [ -n "${MOCK_ENV_FILE:-}" ]; then
 fi
 _is_init=0
 _chdir=""
+_var_file=""
 for arg in "${@}"; do
   [ "${arg}" = "--init" ] && _is_init=1
   case "${arg}" in --chdir=*) _chdir="${arg#--chdir=}" ;; esac
+  case "${arg}" in --var-file=*) _var_file="${arg#--var-file=}" ;; esac
 done
 
 if [ -n "${MOCK_TFLINT_ARGS_FILE:-}" ]; then
   printf 'INVOCATION %s\n' "${#}" >>"${MOCK_TFLINT_ARGS_FILE}"
   printf '%s\n' "${@}" >>"${MOCK_TFLINT_ARGS_FILE}"
+  printf 'DATADIR %s\n' "${TF_DATA_DIR:--}" >>"${MOCK_TFLINT_ARGS_FILE}"
+fi
+
+# Keep the manifest a lint run was handed: the step removes its temporary data
+# directories before the assertions run.
+if [ "${_is_init}" -eq 0 ] && [ -n "${TF_DATA_DIR:-}" ] && [ -n "${MOCK_MANIFEST_DIR:-}" ]; then
+  cp "${TF_DATA_DIR}/modules/modules.json" "${MOCK_MANIFEST_DIR}/$(basename "${_chdir}").json"
+fi
+
+if [ -n "${MOCK_TFLINT_FAIL_VARFILE:-}" ] && [ "${_var_file}" = "${MOCK_TFLINT_FAIL_VARFILE}" ]; then
+  echo "main.tf:1:1: Error - invalid value (rule)"
+  exit 2
 fi
 
 if [ "${_is_init}" -eq 1 ]; then
@@ -546,6 +565,165 @@ assert "negative: the error names the directory" \
   grep -q 'could not be entered' "${_test_output}"
 assert "negative: the tool was never invoked" \
   bash -c "[ ! -s '${MOCK_ENV_FILE}' ]"
+
+
+# ======================================================================
+# The lint contract (docs/Linting.md): module directories are linted against
+# a manifest derived from the root's, var files go to the root only, and
+# module examples are roots of their own.
+# ======================================================================
+
+# Write a manifest from a JSON array of {Key, Dir} into the given root
+# (default: the working directory), creating the local directories.
+write_manifest() {
+  local root="${2:-${WORK_DIR}}" dir
+  while IFS= read -r dir; do
+    mkdir -p "${root}/${dir}"
+  done < <(jq -r '.[].Dir' <<<"${1}")
+  mkdir -p "${root}/.terraform/modules"
+  jq -n --argjson mods "${1}" '{Modules: $mods}' >"${root}/.terraform/modules/modules.json"
+}
+
+# The recorded lint invocation (not init) for one --chdir, as a block of lines.
+lint_block() {
+  awk -v chdir="--chdir=${1}" '
+    /^INVOCATION / { if (block != "" && lint && match_) printf "%s", block; block = ""; lint = 0; match_ = 0 }
+    { block = block $0 "\n" }
+    $0 == "--format=compact" { lint = 1 }
+    $0 == chdir { match_ = 1 }
+    END { if (block != "" && lint && match_) printf "%s", block }
+  ' "${ARGS_FILE}"
+}
+lint_count_for() { lint_block "${1}" | grep -c '^INVOCATION '; }
+# The keys of the manifest a module directory was linted with, sorted, comma-joined.
+manifest_keys() { jq -r '[.Modules[].Key] | sort | join(",")' "${MANIFEST_DIR}/${1}.json"; }
+manifest_dir() { jq -r --arg k "${2}" '.Modules[] | select(.Key == $k) | .Dir' "${MANIFEST_DIR}/${1}.json"; }
+
+# ----------------------------------------------------------------------
+# A module directory gets a manifest derived from the root's, through
+# TF_DATA_DIR; the root is linted with its own.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_tflint
+write_manifest '[{"Key":"","Dir":"."},{"Key":"main","Dir":"../../main"},
+  {"Key":"main.net","Dir":"../../modules/net"},{"Key":"main.naming","Dir":".terraform/modules/main.naming"}]'
+run_step
+assert "Derived: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Derived: root, main and modules/net are linted" test "$(lint_invocations)" -eq 3
+assert "Derived: the root's lint has no TF_DATA_DIR" \
+  test "$(lint_block "${WORK_DIR}" | grep '^DATADIR ')" = "DATADIR -"
+assert "Derived: main's lint has a TF_DATA_DIR" \
+  test "$(lint_block "${WORK_DIR}/../../main" | grep '^DATADIR ')" != "DATADIR -"
+assert "Derived: main's manifest holds main and what it calls, prefix stripped" \
+  test "$(manifest_keys main)" = ",naming,net"
+assert "Derived: main's own entry points at main, absolute" \
+  test "$(manifest_dir main '')" = "${WORK_DIR}/../../main"
+assert "Derived: a remote module of main points into the root's .terraform" \
+  test "$(manifest_dir main naming)" = "${WORK_DIR}/.terraform/modules/main.naming"
+assert "Derived: modules/net's manifest holds only itself" \
+  test "$(manifest_keys net)" = ""
+assert "Derived: the temporary data directories are removed" \
+  bash -c "for d in \$(grep '^DATADIR /' '${ARGS_FILE}' | cut -d' ' -f2-); do [ ! -e \"\${d}\" ] || exit 1; done"
+
+# ----------------------------------------------------------------------
+# A directory reached through several keys is linted once, with the
+# manifest of its shortest key.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_tflint
+write_manifest '[{"Key":"","Dir":"."},{"Key":"main","Dir":"../../main"},
+  {"Key":"main.a","Dir":"../../modules/a"},{"Key":"main.a.x","Dir":".terraform/modules/main.a.x"},
+  {"Key":"main.b","Dir":"../../modules/b"},{"Key":"main.b.a","Dir":"../../modules/a"},
+  {"Key":"main.b.a.x","Dir":".terraform/modules/main.b.a.x"}]'
+run_step
+assert "Two keys: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Two keys: modules/a is linted once" test "$(lint_count_for "${WORK_DIR}/../../modules/a")" -eq 1
+assert "Two keys: its manifest is the shortest key's" \
+  test "$(manifest_dir a x)" = "${WORK_DIR}/.terraform/modules/main.a.x"
+
+# ----------------------------------------------------------------------
+# Var files: the root once per explicit var file, never a module directory;
+# terraform.tfvars and *.auto.tfvars are tflint's own to load.
+# ----------------------------------------------------------------------
+setup_workdir
+install_stub_tflint
+write_manifest '[{"Key":"","Dir":"."},{"Key":"main","Dir":"../../main"}]'
+touch "${WORK_DIR}/env.dev.tfvars" "${WORK_DIR}/env.prod.tfvars" \
+  "${WORK_DIR}/terraform.tfvars" "${WORK_DIR}/extra.auto.tfvars"
+run_step
+assert "Var files: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Var files: the root is linted once per explicit var file" \
+  test "$(lint_count_for "${WORK_DIR}")" -eq 2
+assert "Var files: env.dev.tfvars is passed" \
+  bash -c "grep -Fxq -- '--var-file=${WORK_DIR}/env.dev.tfvars' '${ARGS_FILE}'"
+assert "Var files: env.prod.tfvars is passed" \
+  bash -c "grep -Fxq -- '--var-file=${WORK_DIR}/env.prod.tfvars' '${ARGS_FILE}'"
+assert "Var files: terraform.tfvars is not passed" \
+  bash -c "! grep -q -- '--var-file=.*terraform.tfvars' '${ARGS_FILE}'"
+assert "Var files: *.auto.tfvars is not passed" \
+  bash -c "! grep -q -- '--var-file=.*auto.tfvars' '${ARGS_FILE}'"
+assert "Var files: the module directory is linted once" \
+  test "$(lint_count_for "${WORK_DIR}/../../main")" -eq 1
+assert "Var files: the module directory never gets a var file" \
+  test -z "$(lint_block "${WORK_DIR}/../../main" | grep -- '^--var-file=')"
+assert "Var files: the summary names each var file run" \
+  grep -q "success -> ./envs/sandbox (env.prod.tfvars)" "${OUT_FILE}"
+
+setup_workdir
+install_stub_tflint
+touch "${WORK_DIR}/env.dev.tfvars" "${WORK_DIR}/env.prod.tfvars"
+export MOCK_TFLINT_FAIL_VARFILE="${WORK_DIR}/env.prod.tfvars"
+run_step
+assert "Var files: a failing var-file run fails the step" test "${LAST_EXIT}" -eq 2
+assert "Var files: the summary marks the failing run" \
+  grep -q "failure -> ./envs/sandbox (env.prod.tfvars)" "${OUT_FILE}"
+assert "Var files: the other run still passes" \
+  grep -q "success -> ./envs/sandbox (env.dev.tfvars)" "${OUT_FILE}"
+
+# ----------------------------------------------------------------------
+# Module examples: with 'examples', each examples/*/ holding .tf files is a
+# root of its own, linted with the same config, covering only directories
+# inside it; the module itself is linted once, by the root.
+# ----------------------------------------------------------------------
+setup_examples() {
+  setup_workdir
+  install_stub_tflint
+  WORK_DIR="${GITHUB_WORKSPACE}"
+  export input_working_directory="${WORK_DIR}"
+  write_manifest '[{"Key":"","Dir":"."},{"Key":"sub","Dir":"modules/sub"}]'
+  EX1="${WORK_DIR}/examples/01-basic"
+  mkdir -p "${EX1}" "${WORK_DIR}/examples/02-no-tf" "${WORK_DIR}/examples/03-not-initialised"
+  touch "${EX1}/main.tf" "${WORK_DIR}/examples/03-not-initialised/main.tf" "${WORK_DIR}/examples/02-no-tf/README.md"
+  write_manifest '[{"Key":"","Dir":"."},{"Key":"this","Dir":"../.."},
+    {"Key":"this.sub","Dir":"../../modules/sub"},{"Key":"local","Dir":"local"}]' "${EX1}"
+}
+
+setup_examples
+export input_examples="true"
+run_step
+assert "Examples: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Examples: root, submodule, two example roots and one example module are linted" \
+  test "$(lint_invocations)" -eq 5
+assert "Examples: an initialised example is linted" test "$(lint_count_for "${EX1}")" -eq 1
+assert "Examples: a module directory inside the example is linted" \
+  test "$(lint_count_for "${EX1}/local")" -eq 1
+assert "Examples: the module is not linted again through the example" \
+  test "$(lint_count_for "${EX1}/../..")" -eq 0
+assert "Examples: nor its submodule" \
+  test "$(lint_count_for "${EX1}/../../modules/sub")" -eq 0
+assert "Examples: an example without a manifest is linted as its root alone" \
+  test "$(lint_count_for "${WORK_DIR}/examples/03-not-initialised")" -eq 1
+assert "Examples: a directory without .tf files is not an example" \
+  test "$(lint_count_for "${WORK_DIR}/examples/02-no-tf")" -eq 0
+assert "Examples: every run uses the module's config" \
+  test "$(grep -c -- '^--config=' "${ARGS_FILE}")" -eq "$(grep -Fxc -- "--config=${CONFIG_FILE}" "${ARGS_FILE}")"
+assert "Examples: the example's module gets the example's derived manifest" \
+  test "$(manifest_dir local '')" = "${EX1}/local"
+
+setup_examples
+run_step
+assert "Examples off: only the module and its submodule are linted" \
+  test "$(lint_invocations)" -eq 2
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"
