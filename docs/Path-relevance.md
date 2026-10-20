@@ -82,12 +82,13 @@ expands to:
 - `envs/prod/**`
 - `main/**`
 - `modules/**`
-- `<dir>/**` for each entry of the environment's resolved `terraform-init-additional-dirs-yml`
 - `/.tflint.hcl`: the repository root's only, anchored (§3.3). The lint step reads the
   environment's own `.tflint.hcl` when it has one, which `envs/prod/**` covers, and the root's
   otherwise; another environment's `.tflint.hcl` is never this one's.
 
-with the implied ignore `**/*.md`. `project-dir` and each additional dir are normalised by
+with the implied ignore `**/*.md`. The deprecated `terraform-init-additional-dirs-yml` adds
+nothing: the module directories it listed are under `main/` or `modules/` in the standard layout,
+and it has no effect ([Deprecations.md](Deprecations.md)). `project-dir` is normalised by
 dropping trailing slashes and a leading `./`; `.` becomes `**`. A directory the grammar cannot
 express (`../x`) or an absolute one (`/srv/x`, a path on the runner no changed file lies under) is
 a validation error naming it, and only for an environment
@@ -231,7 +232,7 @@ Permissions used by `create-matrix`: `pull-requests: read` for the pull request 
 
 The decision engine, called by `create-tf-vars-matrix`, receives the adapter's facts and the
 changed-file path, derives the mode and reason of §4.2, and for each environment resolves `paths`
-(expanding `auto` with the environment's normalised `project-dir` and additional dirs) and
+(expanding `auto` with the environment's normalised `project-dir`) and
 `paths-ignore`, then:
 
 - mode `all`: every environment is affected, matched rule `all:<reason>`, except one an earlier rule
@@ -626,7 +627,7 @@ All follow [Action-implementation-guide.md](Action-implementation-guide.md).
   file, a 100-per-page pagination, a pull request at the cap, a compare at 300 files, a forced push
   payload, a created branch compared against the default branch, a moved head, an API error; every
   case asserts the facts, and the core's tests the mode and reason.
-- **`create-tf-vars-matrix`**: §5. Fixtures: `auto` expansion with and without additional dirs,
+- **`create-tf-vars-matrix`**: §5. Fixtures: `auto` expansion, the deprecated additional dirs adding nothing,
   `project-dir` normalisation, `auto` plus extras, replacement lists, implied and explicit ignore,
   `paths-ignore: []`, renamed files, mode `all`, all-unaffected, the `relevance.json` shape, validation
   errors for a bad glob and a non-list `paths`.

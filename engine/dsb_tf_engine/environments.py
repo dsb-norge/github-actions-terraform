@@ -34,9 +34,16 @@ YML_INPUTS = (
     "notifications-yml",
     "pr-auto-merge-from-actors-yml",
     "pr-auto-merge-limits-yml",
-    "terraform-init-additional-dirs-yml",
     "trigger-events-yml",
 )
+
+# Deprecated inputs: still known, so a caller setting one, globally or in an environment, is warned
+# rather than refused, and of no effect. Never parsed, forwarded or validated, and removed from every
+# row (docs/Deprecations.md).
+DEPRECATED_INPUTS = ("terraform-init-additional-dirs-yml",)
+DEPRECATION_REASON = {
+    "terraform-init-additional-dirs-yml": "the lint works out the module directories itself (docs/Linting.md)",
+}
 
 # The test stage's inputs: read by tests.py for the test rows, never forwarded into an environment's.
 TEST_INPUTS = (
@@ -52,7 +59,7 @@ TEST_INPUTS = (
 ADMISSION_INPUTS = ("dependabot-admission-enabled", "dependabot-admission-yml")
 # The list settings, replaced per environment: the environment's value, else the global one, a plain
 # string written alone being its one item and none an empty list.
-REPLACE_FIELDS = ("goals-yml", "pr-auto-merge-from-actors-yml", "terraform-init-additional-dirs-yml")
+REPLACE_FIELDS = ("goals-yml", "pr-auto-merge-from-actors-yml")
 
 # Merged per environment: the environment's value merged into the global one.
 MERGE_FIELDS = (
@@ -89,7 +96,8 @@ PER_GOAL_FIELDS = ("extra-envs-from-secrets-per-goal", "extra-envs-per-goal")
 ENTRY_KEYS = ("environment", "project-dir", "github-environment", "url", "paths", "paths-ignore", "trigger-events",
               "schedule-goal", "depends-on", "allow-failing-terraform-operations")
 # Workflow inputs an environment may override. A new input is in exactly one of this list, the YAML
-# settings (REPLACE_FIELDS, MERGE_FIELDS) or WORKFLOW_ONLY_INPUTS; a test holds the workflow to it.
+# settings (REPLACE_FIELDS, MERGE_FIELDS), WORKFLOW_ONLY_INPUTS or DEPRECATED_INPUTS; a test holds the
+# workflow to it.
 PER_ENVIRONMENT_INPUTS = ("add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
                           "format-check-in-root-dir", "pr-auto-merge-enabled", "pr-comment-group", "runs-on",
                           "terraform-version", "tflint-version", "verify-lock-file")
@@ -115,8 +123,7 @@ REQUIRED_FIELDS = (
     "caller-repo-is-on-default-branch", "environment", "extra-envs", "extra-envs-from-secrets",
     "extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "format-check-in-root-dir", "github-environment",
     "goals", "path-relevance-enabled", "pr-auto-merge-enabled", "pr-auto-merge-from-actors", "pr-auto-merge-limits",
-    "pr-comment-group", "project-dir", "runs-on", "terraform-init-additional-dirs", "terraform-version",
-    "tflint-version", "url", "verify-lock-file",
+    "pr-comment-group", "project-dir", "runs-on", "terraform-version", "tflint-version", "url", "verify-lock-file",
 )
 
 # Required fields that must not be the empty string. '[]', '{}' and null are not empty.
@@ -176,7 +183,8 @@ def near_miss(written, known):
 def _key_problem(name, key):
     """The message for an entry key the environment may not hold, or None."""
     yml = REPLACE_FIELDS + MERGE_FIELDS
-    if key in ENTRY_KEYS or key in yml or key in PER_ENVIRONMENT_INPUTS or key == "path-relevance-enabled":
+    if (key in ENTRY_KEYS or key in yml or key in PER_ENVIRONMENT_INPUTS or key in DEPRECATED_INPUTS
+            or key == "path-relevance-enabled"):
         return None
     if isinstance(key, str) and f"{key}-yml" in yml:
         return (f"The environment '{name}' sets '{key}', which is not a setting: per environment it is '{key}-yml'. "
@@ -285,18 +293,6 @@ def _without_nulls(value):
     return {key: each for key, each in value.items() if each is not None}
 
 
-INIT_DIRS = "terraform-init-additional-dirs-yml"
-
-
-def init_dir_problems(owner, subject, value):
-    """Every problem of one additional-init-directories value (docs/Configuration-validation.md §3.4).
-    `owner` begins a message about one directory, `subject` one about the value as a whole."""
-    directories = as_list(value)
-    if not isinstance(directories, list):
-        return [f"{subject} {shown(value)}; it must be a list of directories."]
-    return [f"{owner} has the additional init directory '', which is empty." if directory == "" else
-            f"{owner} has the additional init directory {shown(directory)}, which is not text; quote it."
-            for directory in directories if directory == "" or not isinstance(directory, str)]
 
 
 # Who may auto-merge, and within which plan counts (docs/Configuration-validation.md §3.6).
@@ -460,7 +456,6 @@ def _setting_problems(document, globals_, environments):
     names = [entry["environment"] for entry in environments
              if isinstance(entry, dict) and _is_name(entry.get("environment"))]
     problems = goal_problems("goals-yml", globals_["goals-yml"])
-    problems += init_dir_problems(INIT_DIRS, f"{INIT_DIRS} is", globals_[INIT_DIRS])
     problems += actor_problems(ACTORS, f"{ACTORS} is", globals_[ACTORS])
     problems += limit_problems(f"{LIMITS} is", lambda key: f"{LIMITS} sets {shown(key)}", globals_[LIMITS])
     for setting in JOB_VARIABLE_SETTINGS:
@@ -473,9 +468,6 @@ def _setting_problems(document, globals_, environments):
         name = entry["environment"]
         if "goals-yml" in entry:
             problems += goal_problems(f"The environment '{name}'", _env_field(document, index, "goals-yml"))
-        if INIT_DIRS in entry:
-            problems += init_dir_problems(f"The environment '{name}'", f"The environment '{name}' sets '{INIT_DIRS}' to",
-                                          _env_field(document, index, INIT_DIRS))
         if ACTORS in entry:
             problems += actor_problems(f"The {ACTORS} of the environment '{name}'",
                                        f"The environment '{name}' sets '{ACTORS}' to", _env_field(document, index, ACTORS))
@@ -520,6 +512,22 @@ def _auto_merge_problems(document, environments, rows):
     return list(dict.fromkeys(problems))
 
 
+def deprecation_warnings(document, environments):
+    """A warning for each place a deprecated input is set: the input, once, then each environment that sets
+    it. Set means written: an empty list is a setting to remove too, and a value that does not parse is
+    still only a warning, as nothing reads it."""
+    warnings = []
+    for name in DEPRECATED_INPUTS:
+        result = document["yaml"]["inputs"].get(name, {"ok": True, "value": None})
+        if not result["ok"] or result["value"] is not None:
+            warnings.append(f"{name} is deprecated and has no effect: {DEPRECATION_REASON[name]}. Remove it; v2 "
+                            "removes the input.")
+        warnings += [f"The environment '{entry['environment']}' sets {name}, which is deprecated and has no effect: "
+                     f"{DEPRECATION_REASON[name]}. Remove it; v2 removes the setting."
+                     for entry in environments if name in entry]
+    return warnings
+
+
 def setting_warnings(document, rows):
     """The settings that are valid but change nothing."""
     return [f"The environment '{row['environment']}' sets {ENABLED}: true, but auto-merge is switched off for the "
@@ -534,7 +542,8 @@ def _typed_overrides(document, name, environment):
     for field, value in sorted(environment.items(), key=lambda item: shown(item[0])):
         if field in BOOLEAN_INPUTS:
             typed[field] = "true" if _boolean(name, field, value) else "false"
-        elif field in document["workflow_inputs"] and field not in YML_INPUTS and not isinstance(value, str):
+        elif (field in document["workflow_inputs"] and field not in (*YML_INPUTS, *DEPRECATED_INPUTS)
+              and not isinstance(value, str)):
             raise ConfigError([f"The environment '{name}' sets '{field}' to {shown(value)}, which is not a string; "
                                "quote it!"])
     return typed
@@ -582,7 +591,8 @@ def build_row(document, globals_, index, environment):
 
     # Generic forwarding: an input the environment does not set is copied in as a string.
     for input_name in sorted(document["workflow_inputs"]):
-        if input_name not in row and input_name not in (*YML_INPUTS, *TEST_INPUTS, *ADMISSION_INPUTS):
+        if input_name not in row and input_name not in (*YML_INPUTS, *DEPRECATED_INPUTS, *TEST_INPUTS,
+                                                        *ADMISSION_INPUTS):
             row[input_name] = values.get_val(document["workflow_inputs"][input_name])
 
     row.setdefault("github-environment", name)
@@ -617,7 +627,7 @@ def build_row(document, globals_, index, environment):
             raise ConfigError([f"the environment's '{field}' must be a mapping of goal names, not a string!"])
         row[field] = values.normalize_goal_keys(row[field])
 
-    for field in YML_INPUTS:
+    for field in (*YML_INPUTS, *DEPRECATED_INPUTS):
         row.pop(field, None)
 
     default_branch = document["caller"]["default_branch"]

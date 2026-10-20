@@ -80,8 +80,8 @@ class RequiredFieldsTest(unittest.TestCase):
 
     def test_required_fields_outside_the_not_empty_list_may_be_empty(self):
         allowed_empty = set(environments.REQUIRED_FIELDS) - set(environments.NOT_EMPTY_FIELDS)
-        self.assertEqual({"extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "pr-comment-group",
-                          "terraform-init-additional-dirs", "url"}, allowed_empty)
+        self.assertEqual({"extra-envs-from-secrets-per-goal", "extra-envs-per-goal", "pr-comment-group", "url"},
+                         allowed_empty)
         for field in sorted(allowed_empty):
             with self.subTest(field=field):
                 document, rows = valid_rows()

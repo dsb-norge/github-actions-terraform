@@ -76,10 +76,6 @@
             "pr-auto-merge-from-actors": [
               "global-actor"
             ],
-            "terraform-init-additional-dirs": [
-              "./main",
-              "./modules"
-            ],
             "extra-envs-from-secrets-per-goal": {
               "apply": {
                 "ARM_CLIENT_ID": "ARM_CLIENT_ID_secret"
@@ -168,11 +164,6 @@
             ],
             "pr-auto-merge-from-actors": [
               "env-actor"
-            ],
-            "terraform-init-additional-dirs": [
-              "./main",
-              "./module/1",
-              "./module/2"
             ],
             "extra-envs-from-secrets-per-goal": {
               "apply": {
@@ -264,11 +255,6 @@
             ],
             "pr-auto-merge-from-actors": [
               "global-actor"
-            ],
-            "terraform-init-additional-dirs": [
-              "./main",
-              "./module/1",
-              "./module/2"
             ],
             "extra-envs-from-secrets-per-goal": {
               "apply": {

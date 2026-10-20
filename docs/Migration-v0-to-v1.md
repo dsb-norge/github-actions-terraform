@@ -28,8 +28,8 @@ Answer these from the repository before changing anything; each answer points at
   `pull-requests: write` and `actions: read`? (§2.2)
 - [ ] Does a calling workflow filter with `on.<event>.paths` or `paths-ignore`, or is there a
   second, path-filtered calling workflow? (§2.3)
-- [ ] Does any environment read files outside `<project-dir>/**`, `main/**`, `modules/**`, its
-  additional init directories and the root's `.tflint.hcl`: a `-var-file` or `-backend-config`
+- [ ] Does any environment read files outside `<project-dir>/**`, `main/**`, `modules/**` and
+  the root's `.tflint.hcl`: a `-var-file` or `-backend-config`
   passed through `TF_CLI_ARGS_*`, a local module elsewhere, Markdown through `file()`? (§2.3)
 - [ ] Does a calling workflow have `on.schedule`, which environments is it meant for, and should a
   scheduled run apply them or only plan? (§2.4)
@@ -79,8 +79,7 @@ starts from read-only to write, and every job of that run executes the pull requ
 
 On `pull_request` and `push` an environment now runs only when a changed file is relevant to it
 ([Path-relevance.md](Path-relevance.md)). Without `paths`, an environment's set is `auto`:
-`<project-dir>/**`, `main/**`, `modules/**`, every directory of its
-`terraform-init-additional-dirs-yml`, and `/.tflint.hcl` (the repository root's only), with
+`<project-dir>/**`, `main/**`, `modules/**` and `/.tflint.hcl` (the repository root's only), with
 `**/*.md` ignored. A change under `.github/workflows/`, a force push, a pull request whose head moved
 and every API failure run every environment.
 
@@ -196,7 +195,7 @@ workflow's `with:`:
 | Per-environment `runs-on` | a list of labels is an error | one string: a runner group name or one label |
 | Environment names and `github-environment` | 1 to 255 of `A-Z a-z 0-9 . _ -`, starting with a letter or a digit; no two environments may share a `github-environment` (without case); no duplicate environments | rename |
 | Variable values in `extra-envs-yml` and the other variable settings | now text as written (`1.10` stays `1.10`, a leading zero stays); a null means not set instead of the text `null`; a mapping or a list is an error | nothing, unless a value relied on the old conversion; quote a value whose braces are part of it |
-| `terraform-init-additional-dirs-yml` | a single directory written as a string is now initialised; an empty entry is an error | check that a directory written alone should run |
+| `terraform-init-additional-dirs-yml` | deprecated after v1.15.1: no effect, and a warning where it is set ([Deprecations.md](Deprecations.md)) | delete it, from the inputs and from every environment |
 
 The quickest check is the draft pull request of §6: every problem of this kind is reported in its
 first run.

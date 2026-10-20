@@ -120,7 +120,7 @@ Two optional fields per environment decide what is relevant:
 | `paths` | `[auto]` | Files that make this environment relevant. A list containing `auto` is the standard set plus the other entries; a list without it replaces the standard set. `["**"]` means always relevant. |
 | `paths-ignore` | `["**/*.md"]` when `paths` uses `auto`, otherwise `[]` | Files that never make this environment relevant, applied after `paths`. `[]` means ignore nothing. |
 
-`auto` is the environment's `project-dir` (`envs/<environment>/**` by default), `main/**`, `modules/**`, every directory of its `terraform-init-additional-dirs-yml`, and the repository root's `.tflint.hcl` (`/.tflint.hcl`). Patterns follow a small glob grammar: `*` within one directory level, `**` any number of levels, `?` one character, and a pattern without `/` matches the file name anywhere unless a leading `/` anchors it at the root (`/Makefile` is the root's only, `Makefile` any). There is no negation, no `[…]` and no `{…}`. An environment that reads files from outside the standard set, such as a `-var-file` passed through `TF_CLI_ARGS_*`, a local module outside `main/` and `modules/`, or Markdown through `file()`, must list them in `paths`.
+`auto` is the environment's `project-dir` (`envs/<environment>/**` by default), `main/**`, `modules/**` and the repository root's `.tflint.hcl` (`/.tflint.hcl`). Patterns follow a small glob grammar: `*` within one directory level, `**` any number of levels, `?` one character, and a pattern without `/` matches the file name anywhere unless a leading `/` anchors it at the root (`/Makefile` is the root's only, `Makefile` any). There is no negation, no `[…]` and no `{…}`. An environment that reads files from outside the standard set, such as a `-var-file` passed through `TF_CLI_ARGS_*`, a local module outside `main/` and `modules/`, or Markdown through `file()`, must list them in `paths`.
 
 ```yaml
 environments-yml: |
@@ -797,7 +797,7 @@ On a pull request or a push, an environment runs only when a changed file is rel
 | `scripts/deploy.sh` | — | — | — | nothing |
 | `.github/workflows/terraform.yml` | runs | runs | runs | a workflow changed, so everything runs |
 
-`auto` is the environment's directory, `main/**`, `modules/**`, its additional init directories and the root's `.tflint.hcl`, with `**/*.md` ignored. The run's notice gives the count, `relevance diff (diff): 1 of 3 environments affected` for the first row, and a change under `.github/workflows/` runs everything with `relevance all (workflow-changed): 3 of 3 environments affected`.
+`auto` is the environment's directory, `main/**`, `modules/**` and the root's `.tflint.hcl`, with `**/*.md` ignored. The run's notice gives the count, `relevance diff (diff): 1 of 3 environments affected` for the first row, and a change under `.github/workflows/` runs everything with `relevance all (workflow-changed): 3 of 3 environments affected`.
 
 **A documentation-only pull request**, changing `README.md`, `docs/runbook.md` and `envs/prod/README.md`, runs no environment:
 
@@ -961,24 +961,24 @@ ERROR: resolve-goal-envs: extra-envs-per-goal: "all" is not a valid goal, valid 
 
 The rules in full are under [variables for a single goal](#variables-for-a-single-goal).
 
-##### 11. Additional init directories
+##### 11. Module directories for TFLint
+
+There is nothing to configure. After `terraform init` in the environment, the lint reads the
+modules the environment installed and lints `main/` and every local module it reaches, each against
+exactly those modules, with no init of its own ([Linting.md](Linting.md)). An environment that holds
+a var file other than `terraform.tfvars` or `*.auto.tfvars` is linted once per var file.
+
+The input that used to list those directories is deprecated. A calling workflow that still sets it
+runs as before and gets a warning; delete the lines:
 
 ```yaml
-      terraform-init-additional-dirs-yml: ./shared
-      environments-yml: |
-        - environment: dev
-        - environment: prod
-          terraform-init-additional-dirs-yml:
-            - ./shared
-            - "./modules/my module"
+      terraform-init-additional-dirs-yml: |
+        - "./main"
 ```
 
-| Environment | `terraform init` also runs in | `auto` also includes |
-|---|---|---|
-| `dev` | `./shared` | `shared/**` |
-| `prod` | `./shared`, `./modules/my module` | `shared/**`, `modules/my module/**` |
-
-A single directory may be written alone, as the global input is here. An environment's own list replaces the global one, so `prod` repeats `./shared`; without it, `prod` would neither init `./shared` nor run for a change there. A directory holding a space is one directory. The additional directories join `auto`, so a pull request that changes `shared/providers.tf` runs both environments. The events are as in example 1.
+```text
+terraform-init-additional-dirs-yml is deprecated and has no effect: the lint works out the module directories itself (docs/Linting.md). Remove it; v2 removes the input.
+```
 
 ##### 12. Grouped PR comments
 
@@ -1360,15 +1360,17 @@ The variable 'TF_VAR_tags' of the environment 'prod' in 'extra-envs-yml' is a ma
 
 Quoted, `TF_VAR_tags: '{"team": "platform"}'` is accepted, and the job gets the text between the quotes.
 
-##### An empty additional init directory
+##### A deprecated setting in an environment
 
 ```yaml
         - environment: prod
-          terraform-init-additional-dirs-yml: ["./main", ""]
+          terraform-init-additional-dirs-yml: ["./main"]
 ```
 
+A warning, not an error; the environment runs:
+
 ```text
-The environment 'prod' has the additional init directory '', which is empty.
+The environment 'prod' sets terraform-init-additional-dirs-yml, which is deprecated and has no effect: the lint works out the module directories itself (docs/Linting.md). Remove it; v2 removes the setting.
 ```
 
 ##### An unquoted version number

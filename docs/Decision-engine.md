@@ -765,10 +765,14 @@ them:
 - `allow-failing-terraform-operations`: absent is JSON `false`; present, it must be true or false,
   as a boolean or a string, and anything else (`yes`, `null`, a quoted `True`) is an error, never
   a silent false;
-- replace fields (`goals-yml`, `pr-auto-merge-from-actors-yml`,
-  `terraform-init-additional-dirs-yml`): per-environment value, as YAML text or a native value,
-  else the global; a plain string written alone is its one item, and null is `[]`; invalid is
-  `the environment's '<field>' is not valid yaml!`; stored under the name without `-yml`;
+- replace fields (`goals-yml`, `pr-auto-merge-from-actors-yml`): per-environment value, as YAML
+  text or a native value, else the global; a plain string written alone is its one item, and null
+  is `[]`; invalid is `the environment's '<field>' is not valid yaml!`; stored under the name
+  without `-yml`;
+- deprecated inputs (`terraform-init-additional-dirs-yml`): known, so neither the input nor the key
+  is refused; never parsed, forwarded or validated, and removed from the row; a warning for the
+  input when it is set and for each environment that sets the key
+  ([Deprecations.md](Deprecations.md));
 - merge fields (`extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`,
   `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml`): absent means the global
   value as is (a global `""` becomes `null`, not `{}`, but for `pr-auto-merge-limits-yml`, whose

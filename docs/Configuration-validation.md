@@ -90,16 +90,17 @@ An entry may hold exactly these keys:
 | `schedule-goal` | [Dispatch-and-triggers.md](Dispatch-and-triggers.md) §3.2, §4.4: `default`, `plan`, `apply` or `destroy-plan`, what a scheduled run may do; checked on every event, and a warning where the environment's `trigger-events` lack `schedule` |
 | `depends-on` | [Environment-ordering.md](Environment-ordering.md) §3; one name written alone is that one name |
 | `allow-failing-terraform-operations` | a per-environment setting only; there is no workflow input of that name |
-| `goals-yml`, `terraform-init-additional-dirs-yml`, `pr-auto-merge-from-actors-yml` | replace the global input for this environment |
+| `goals-yml`, `pr-auto-merge-from-actors-yml` | replace the global input for this environment |
+| `terraform-init-additional-dirs-yml` | deprecated: accepted, of no effect and not validated; a warning names the environment (§3.4) |
 | `extra-envs-yml`, `extra-envs-from-secrets-yml`, `extra-envs-per-goal-yml`, `extra-envs-from-secrets-per-goal-yml`, `pr-auto-merge-limits-yml`, `notifications-yml` | merged over the global input, key by key; `notifications-yml` without `enabled` and `runs-on` ([Notifications.md](Notifications.md) §6.3) |
 | `add-pr-comment`, `apply-extract-include-outputs`, `cache-terraform-modules`, `format-check-in-root-dir`, `pr-auto-merge-enabled`, `pr-comment-group`, `runs-on`, `terraform-version`, `tflint-version`, `verify-lock-file` | override the workflow input of the same name for this environment |
 
 The last row is an explicit list in the engine (`PER_ENVIRONMENT_INPUTS`), and a test holds every
-input the workflow declares to exactly one of three classes: per environment (that list), a
-per-environment YAML setting (the two rows above it, `REPLACE_FIELDS` and `MERGE_FIELDS`), or
-workflow only (`WORKFLOW_ONLY_INPUTS`: `environments-yml`, `trigger-events-yml`,
-`path-relevance-enabled`, the test stage's inputs, `pr-auto-merge-app-id`,
-`pr-auto-merge-app-private-key-secret`). A new input fails that test until someone decides its
+input the workflow declares to exactly one of four classes: per environment (that list), a
+per-environment YAML setting (`REPLACE_FIELDS` and `MERGE_FIELDS`), workflow only
+(`WORKFLOW_ONLY_INPUTS`: `environments-yml`, `trigger-events-yml`, `path-relevance-enabled`, the
+test stage's inputs, `pr-auto-merge-app-id`, `pr-auto-merge-app-private-key-secret`), or
+deprecated (`DEPRECATED_INPUTS`: known, of no effect, warned about; §3.4). A new input fails that test until someone decides its
 class. A spec that adds a key adds it to the first rows, as Environment-ordering.md's `depends-on`
 and Dispatch-and-triggers.md's `schedule-goal` did.
 
@@ -107,7 +108,7 @@ Refused, each with its own message:
 
 | Written | Message |
 |---|---|
-| an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `terraform-init-additional-dirs`, `notifications` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
+| an unsuffixed YAML setting: `goals`, `extra-envs`, `extra-envs-from-secrets`, `extra-envs-per-goal`, `extra-envs-from-secrets-per-goal`, `pr-auto-merge-from-actors`, `pr-auto-merge-limits`, `notifications` | `The environment 'prod' sets 'goals', which is not a setting: per environment it is 'goals-yml'. Written like this it would have been ignored, and the environment would have run with the global value.` |
 | a suffixed plain setting: `paths-yml`, `paths-ignore-yml`, `trigger-events-yml`, `depends-on-yml` | `The environment 'prod' sets 'trigger-events-yml', which is not a setting: per environment it is 'trigger-events', a list written directly in the entry.` |
 | a suffixed single-value setting: `schedule-goal-yml` | `The environment 'prod' sets 'schedule-goal-yml', which is not a setting: per environment it is 'schedule-goal', a value written directly in the entry.` |
 | a workflow-only input | `The environment 'prod' sets 'pr-auto-merge-app-id', which is a workflow input only: it applies to every environment at once. Set it in the calling workflow's 'with:'.` (the existing message for `path-relevance-enabled`, with its `paths: ['**']` advice, is kept) |
@@ -173,18 +174,19 @@ inputs instead: `path-relevance-enabled` must be true or false, with the message
 
 An empty value means `["**/*.md"]`, and `[]` ignores nothing.
 
-### 3.4 Additional init directories
+### 3.4 Additional init directories (deprecated)
 
-`terraform-init-additional-dirs-yml` is a list of directories, relative to the repository root. A
-single directory written alone is that one directory; on v0 a string inited nothing, silently.
-Each entry is non-empty text. The init step quotes each directory, so one holding a space is one
-directory.
+`terraform-init-additional-dirs-yml` is deprecated and has no effect: the lint works out every local
+module directory from the environment's own modules manifest ([Linting.md](Linting.md)). It stays a
+known input and a known key of an `environments-yml` entry, so a caller still setting it is warned,
+not refused ([Deprecations.md](Deprecations.md)). Its value is never parsed for errors: an empty
+entry, a non-text entry or a value that does not parse is still only the warning. Set means written,
+so an empty list is warned about too.
 
-- `The environment 'prod' has the additional init directory '', which is empty.`
-- `The environment 'prod' has the additional init directory 5, which is not text; quote it.`
-- `The environment 'prod' sets 'terraform-init-additional-dirs-yml' to {"main": true}; it must be a list of directories.`
-- For the global input: `terraform-init-additional-dirs-yml has the additional init directory '', which is empty.` and `terraform-init-additional-dirs-yml is {"main": true}; it must be a list of directories.`
-- A directory that does not exist is reported by the init step, as today.
+- `terraform-init-additional-dirs-yml is deprecated and has no effect: the lint works out the module directories itself (docs/Linting.md). Remove it; v2 removes the input.`
+- `The environment 'prod' sets terraform-init-additional-dirs-yml, which is deprecated and has no effect: the lint works out the module directories itself (docs/Linting.md). Remove it; v2 removes the setting.`
+
+The unsuffixed `terraform-init-additional-dirs` is an unknown key, refused like any other (§3.1).
 
 ### 3.5 Environment variables
 

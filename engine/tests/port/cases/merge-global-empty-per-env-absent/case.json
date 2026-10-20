@@ -72,7 +72,6 @@
               "all"
             ],
             "pr-auto-merge-from-actors": [],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},

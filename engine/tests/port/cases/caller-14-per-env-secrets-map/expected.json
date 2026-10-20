@@ -80,9 +80,6 @@
           "pr-comment-group": "",
           "project-dir": "./envs/env-a",
           "runs-on": "runner-a",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/a",
@@ -162,9 +159,6 @@
           "pr-comment-group": "",
           "project-dir": "./envs/env-b",
           "runs-on": "runner-a",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/b",
@@ -244,9 +238,6 @@
           "pr-comment-group": "",
           "project-dir": "./envs/env-c",
           "runs-on": "runner-b",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.14.x",
           "tflint-version": "v0.61.0",
           "url": "https://example.com/c",

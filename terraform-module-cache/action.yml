@@ -34,8 +34,11 @@ inputs:
     default: ""
   additional-dirs-json:
     description: |
-      resolve: JSON array of additional directories that 'terraform init' is run
-      in, relative to the repo root. Empty array or empty string is allowed.
+      resolve: deprecated and ignored. 'terraform init' runs in the project
+      directory only; the lint derives module directories' manifests from the
+      project's (docs/Linting.md). Still declared so that a workflow release
+      that passes it gets no "Unexpected input" warning; removed in v2
+      (docs/Deprecations.md).
     required: false
     default: "[]"
   environment:

@@ -18,8 +18,13 @@
 #
 # Required environment variables:
 #   input_project_dir          - The environment's terraform directory.
-#   input_additional_dirs_json - JSON array of extra directories to init.
 #   input_environment          - Matrix environment name, for the key.
+#
+# Deprecated environment variables:
+#   input_additional_dirs_json - Ignored, with a log line when it lists
+#                                anything: nothing else is initialised any
+#                                more, the lint derives module directories'
+#                                manifests from the project's (docs/Linting.md).
 #
 # Optional environment variables:
 #   input_test_directory - When non-empty, the run-block module declarations of
@@ -33,24 +38,16 @@ set +o nounset
 
 source "${GITHUB_ACTION_PATH}/helpers.sh"
 
-# Collect '<dir>' entries: project-dir first, then the additional dirs, each
-# normalised and de-duplicated. './main' and 'main' are the same directory and
-# must not become two cache paths or two digest entries (§4.3).
+# Collect the '<dir>' entries: the project directory, normalised. Additional
+# directories were cached here too while 'terraform init' ran in them; it no
+# longer does, so they are ignored (§4.3).
 function _collect_dirs {
   local out_file="${1}"
-  local d
-  {
-    normalize-dir "${input_project_dir}"
-    printf '%s' "${input_additional_dirs_json:-[]}" |
-      jq -r '.[]?' 2>/dev/null |
-      while IFS= read -r d; do
-        [ -z "${d}" ] && continue
-        normalize-dir "${d}"
-      done
-    # De-duplicate after normalising and keep first-seen order, so project-dir
-    # leads and './main' plus 'main' collapse to one cache path and one digest
-    # entry rather than two (§4.3).
-  } | awk '!seen[$0]++' >"${out_file}"
+  local more_dirs_json="${input_additional_dirs_json:-}"
+  if [ -n "${more_dirs_json}" ] && [ ! "${more_dirs_json}" == '[]' ] && [ ! "${more_dirs_json}" == 'null' ]; then
+    log-info "input 'additional-dirs-json' is deprecated and ignored: nothing else is initialised (docs/Linting.md)."
+  fi
+  normalize-dir "${input_project_dir}" >"${out_file}"
 }
 
 function main {

@@ -1,5 +1,5 @@
 """Configuration validation (docs/Configuration-validation.md): the keys of an environments-yml entry,
-the variables, the additional init directories and the auto-merge settings.
+the variables, the deprecated additional init directories and the auto-merge settings.
 
 Every message is compared as a literal, and every known key is listed here rather than read from
 the module, so a key added or dropped there fails here too.
@@ -19,9 +19,11 @@ DOC = "The settings an environment may hold are listed in docs/Configuration-val
 PER_ENVIRONMENT = {"add-pr-comment", "apply-extract-include-outputs", "cache-terraform-modules",
                    "format-check-in-root-dir", "pr-auto-merge-enabled", "pr-comment-group", "runs-on",
                    "terraform-version", "tflint-version", "verify-lock-file"}
-YAML_SETTINGS = {"goals-yml", "terraform-init-additional-dirs-yml", "extra-envs-yml", "extra-envs-from-secrets-yml",
-                 "extra-envs-per-goal-yml", "extra-envs-from-secrets-per-goal-yml", "pr-auto-merge-from-actors-yml",
-                 "pr-auto-merge-limits-yml", "notifications-yml"}
+YAML_SETTINGS = {"goals-yml", "extra-envs-yml", "extra-envs-from-secrets-yml", "extra-envs-per-goal-yml",
+                 "extra-envs-from-secrets-per-goal-yml", "pr-auto-merge-from-actors-yml", "pr-auto-merge-limits-yml",
+                 "notifications-yml"}
+# Known, so a caller still setting one is warned rather than refused, and with no effect (docs/Deprecations.md).
+DEPRECATED = {"terraform-init-additional-dirs-yml"}
 WORKFLOW_ONLY = {"environments-yml", "trigger-events-yml", "path-relevance-enabled", "allow-failing-terraform-tests",
                  "terraform-test-enabled", "terraform-test-exclude-paths-yml", "terraform-test-lanes-yml",
                  "terraform-test-runs-on", "terraform-test-timeout-minutes", "pr-auto-merge-app-id",
@@ -43,8 +45,9 @@ class InputClassificationTest(unittest.TestCase):
         declared = set(re.findall(r"^      ([a-z0-9-]+):\n        type:", inputs, re.M))
         self.assertGreater(len(declared), 25, "the scan found too few inputs to be trusted")
         self.assertEqual(set(), PER_ENVIRONMENT & WORKFLOW_ONLY)
-        self.assertEqual(declared, PER_ENVIRONMENT | YAML_SETTINGS | WORKFLOW_ONLY)
+        self.assertEqual(declared, PER_ENVIRONMENT | YAML_SETTINGS | WORKFLOW_ONLY | DEPRECATED)
         self.assertEqual(PER_ENVIRONMENT, set(environments.PER_ENVIRONMENT_INPUTS))
+        self.assertEqual(DEPRECATED, set(environments.DEPRECATED_INPUTS))
         self.assertEqual(WORKFLOW_ONLY, set(environments.WORKFLOW_ONLY_INPUTS))
         self.assertEqual(YAML_SETTINGS, set(environments.REPLACE_FIELDS + environments.MERGE_FIELDS))
 
@@ -64,8 +67,7 @@ class EntryKeysTest(unittest.TestCase):
 
     def test_an_unsuffixed_yaml_setting_names_its_spelling(self):
         for key in ("goals", "extra-envs", "extra-envs-from-secrets", "extra-envs-per-goal",
-                    "extra-envs-from-secrets-per-goal", "pr-auto-merge-from-actors", "pr-auto-merge-limits",
-                    "terraform-init-additional-dirs"):
+                    "extra-envs-from-secrets-per-goal", "pr-auto-merge-from-actors", "pr-auto-merge-limits"):
             with self.subTest(key=key):
                 self.assertEqual([f"The environment 'prod' sets '{key}', which is not a setting: per environment it "
                                   f"is '{key}-yml'. Written like this it would have been ignored, and the environment "
@@ -258,35 +260,65 @@ def with_yaml(*entries):
                          for entry in entries]}
 
 
-class InitDirsTest(unittest.TestCase):
-    """The additional init directories (docs/Configuration-validation.md §3.4)."""
+GLOBAL_INIT_DIRS = ("terraform-init-additional-dirs-yml is deprecated and has no effect: the lint works out the "
+                    "module directories itself (docs/Linting.md). Remove it; v2 removes the input.")
 
-    def test_a_directory_written_alone_is_that_one_directory(self):
+
+def env_init_dirs(name):
+    return (f"The environment '{name}' sets terraform-init-additional-dirs-yml, which is deprecated and has no effect: "
+            "the lint works out the module directories itself (docs/Linting.md). Remove it; v2 removes the setting.")
+
+
+def init_dirs_fields(output):
+    return [field for row in rows_of(output) for field in row if field.startswith("terraform-init-additional-dirs")]
+
+
+class DeprecatedInitDirsTest(unittest.TestCase):
+    """The additional init directories are deprecated: known, of no effect, warned about (docs/Deprecations.md)."""
+
+    def test_the_global_input_has_no_effect_and_is_warned_about(self):
+        output = output_of(terraform_init_additional_dirs_yml="./main")
+        self.assertEqual([], init_dirs_fields(output))
+        self.assertEqual([GLOBAL_INIT_DIRS], output["warnings"])
+
+    def test_an_environment_setting_has_no_effect_and_is_warned_about(self):
+        output = output_of(**with_yaml({"environment": "a"},
+                                       {"environment": "b", "terraform-init-additional-dirs-yml": "./b"}))
+        self.assertEqual([], init_dirs_fields(output))
+        self.assertEqual([env_init_dirs("b")], output["warnings"])
+
+    def test_an_empty_list_is_still_a_setting_to_remove(self):
+        output = output_of(**with_yaml({"environment": "a", "terraform-init-additional-dirs-yml": []}),
+                           terraform_init_additional_dirs_yml=[])
+        self.assertEqual([GLOBAL_INIT_DIRS, env_init_dirs("a")], output["warnings"])
+
+    def test_its_value_is_not_validated(self):
         output = output_of(**with_yaml({"environment": "a"}, {"environment": "b",
-                                                               "terraform-init-additional-dirs-yml": "./b"}),
-                           terraform_init_additional_dirs_yml="./main")
-        self.assertEqual([["./main"], ["./b"]], [row["terraform-init-additional-dirs"] for row in rows_of(output)])
+                                                               "terraform-init-additional-dirs-yml": ["./x", "", 5]}),
+                           terraform_init_additional_dirs_yml={"main": True})
+        self.assertEqual([], output["errors"])
+        self.assertEqual([GLOBAL_INIT_DIRS, env_init_dirs("b")], output["warnings"])
 
-    def test_none_is_an_empty_list(self):
-        self.assertEqual([[]], [row["terraform-init-additional-dirs"] for row in rows_of(output_of())])
+    def test_a_value_that_does_not_parse_is_still_only_a_warning(self):
+        document = support.document()
+        document["yaml"]["inputs"]["terraform-init-additional-dirs-yml"] = support.parsed(None, False)
+        output = decide.decide(document)
+        self.assertEqual([], output["errors"])
+        self.assertEqual([GLOBAL_INIT_DIRS], output["warnings"])
 
-    def test_an_empty_directory_is_refused(self):
-        self.assertEqual(["terraform-init-additional-dirs-yml has the additional init directory '', which is empty.",
-                          "The environment 'b' has the additional init directory '', which is empty."],
-                         output_of(**with_yaml({"environment": "a"}, {"environment": "c"},
-                                               {"environment": "b", "terraform-init-additional-dirs-yml": ["./x", ""]}),
-                                   terraform_init_additional_dirs_yml=[""])["errors"])
+    def test_unset_says_nothing(self):
+        self.assertEqual([], output_of()["warnings"])
+        self.assertEqual([], output_of(terraform_init_additional_dirs_yml=None)["warnings"])
 
-    def test_a_directory_is_text(self):
-        self.assertEqual(["The environment 'a' has the additional init directory 5, which is not text; quote it."],
-                         output_of(**with_yaml({"environment": "a", "terraform-init-additional-dirs-yml": [5]}))["errors"])
+    def test_the_raw_input_is_not_forwarded(self):
+        output = output_of(inputs={"terraform-init-additional-dirs-yml": "- ./main"})
+        self.assertEqual([], init_dirs_fields(output))
 
-    def test_the_value_is_a_list(self):
-        self.assertEqual(['terraform-init-additional-dirs-yml is {"main": true}; it must be a list of directories.',
-                          "The environment 'a' sets 'terraform-init-additional-dirs-yml' to 7; it must be a list of "
-                          "directories."],
-                         output_of(**with_yaml({"environment": "a", "terraform-init-additional-dirs-yml": 7}),
-                                   terraform_init_additional_dirs_yml={"main": True})["errors"])
+    def test_a_list_per_environment_is_not_refused_as_unquoted(self):
+        output = output_of(inputs={"terraform-init-additional-dirs-yml": ""},
+                           **with_yaml({"environment": "a", "terraform-init-additional-dirs-yml": ["./x"]}))
+        self.assertEqual([], output["errors"])
+        self.assertEqual([], init_dirs_fields(output))
 
 
 ON = {"pr-auto-merge-enabled": True}
@@ -472,12 +504,10 @@ class SettingsTogetherTest(unittest.TestCase):
                           "pr-auto-merge-from-actors-yml holds 7, which is not a login; quote it if it is one.",
                           "The environment 'a' has the goal 'plan' without 'init': a plan needs an initialised "
                           "directory, so it could never run. Add 'init', or use 'all'.",
-                          "The environment 'a' has the additional init directory '', which is empty.",
                           "The environment 'a' sets 'pr-auto-merge-limits-yml' to 'x'; it must be a mapping of the six "
                           "limits."],
                          output_of(goals_yml=["aply"], pr_auto_merge_from_actors_yml=[7],
                                    **with_yaml({"environment": "a", "zeta": 1, "goals-yml": ["plan"],
-                                                "terraform-init-additional-dirs-yml": [""],
                                                 "pr-auto-merge-limits-yml": "x"}))["errors"])
 
 

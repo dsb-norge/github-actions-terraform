@@ -431,7 +431,6 @@ jobs:
         uses: dsb-norge/github-actions-terraform/terraform-init@v1
         with:
           working-directory: ${{ github.workspace }}
-          additional-dirs-json: null
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           # Authenticates terraform's remote-module clones, which are otherwise charged to a per-IP
           # budget shared by every runner behind the same NAT address.
@@ -741,7 +740,6 @@ jobs:
         with:
           phase: resolve
           project-dir: ${{ matrix.test.root }}
-          additional-dirs-json: "[]"
           # one entry per root: init installs the run-block modules of every test file in it
           environment: tftest-${{ matrix.test.root }}
           test-directory: tests
@@ -773,7 +771,6 @@ jobs:
         with:
           working-directory: ${{ matrix.test.root }}
           environment-name: ${{ matrix.slug }}
-          additional-dirs-json: "[]"
           # terraform test keeps state in memory; a backend block must not make init reach for storage
           backend: false
           lockfile-mode: ${{ matrix.test.root-kind == 'environment' && 'readonly-if-present' || 'default' }}

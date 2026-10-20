@@ -77,9 +77,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-a",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/a",
@@ -152,9 +149,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-b",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/b",
@@ -227,9 +221,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-c",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/c",
@@ -302,9 +293,6 @@
           "pr-comment-group": "group-a",
           "project-dir": "./envs/env-d",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/d",
@@ -377,9 +365,6 @@
           "pr-comment-group": "group-b",
           "project-dir": "./envs/env-e",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/e",
@@ -452,9 +437,6 @@
           "pr-comment-group": "group-b",
           "project-dir": "./envs/env-f",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/f",
@@ -527,9 +509,6 @@
           "pr-comment-group": "group-b",
           "project-dir": "./envs/env-g",
           "runs-on": "ubuntu-latest",
-          "terraform-init-additional-dirs": [
-            "./main"
-          ],
           "terraform-version": "1.15.x",
           "tflint-version": "v0.62.1",
           "url": "https://example.com/g",

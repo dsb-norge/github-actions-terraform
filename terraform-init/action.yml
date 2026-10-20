@@ -1,7 +1,7 @@
 name: "Run terraform init in directory"
 description: |
   Given a working directory this will run 'terraform init' within it, and
-  optionally in additional directories supplied via JSON. The combined
+  optionally in each module example under it. The combined
   stdout/stderr of every init invocation is captured to a single console
   file ('tf-init-console-output-<env>.txt') so downstream steps can scan
   for diagnostics.
@@ -18,17 +18,26 @@ inputs:
     default: ""
   additional-dirs-json:
     description: |
-      JSON array of additional directories (relative to GITHUB_WORKSPACE)
-      in which to also run 'terraform init'. Empty array or empty string
-      runs only the project init in working-directory.
-    required: true
+      Deprecated and ignored: the lint prepares module directories itself,
+      from the project's own modules manifest (docs/Linting.md). Still
+      declared so that a workflow release that passes it gets no "Unexpected
+      input" warning; removed in v2 (docs/Deprecations.md).
+    required: false
+    default: ""
+  examples:
+    description: |
+      Optional: 'true' also runs 'terraform init -backend=false' in each
+      'examples/*/' directory under working-directory that holds '.tf'
+      files, after the project init and into the same console file, so the
+      examples can be validated and linted. For module repositories. An
+      example init never lets the plugin cache break its lock.
+    required: false
+    default: "false"
   plugin-cache-directory:
     description: |
       Optional: path to the terraform providers plugin cache directory.
-      When set, exported as TF_PLUGIN_CACHE_DIR (with
-      TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true) during the
-      additional-dirs init loop so providers are reused across envs. The
-      project init gets the same two variables only when
+      The project init gets it as TF_PLUGIN_CACHE_DIR (with
+      TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true) only when
       'plugin-cache-may-break-lock-file' asks for it.
     required: false
     default: ""
@@ -36,14 +45,14 @@ inputs:
     description: |
       Optional: 'false' adds '-backend=false' to the project init in
       working-directory, so init never reaches for the backend's storage.
-      For 'terraform test', which keeps all state in memory. The
-      additional-dirs inits are unaffected.
+      For 'terraform test', which keeps all state in memory. An example
+      init always runs with '-backend=false'.
     required: false
     default: "true"
   lockfile-mode:
     description: |
       Optional: how the project init in working-directory treats its
-      '.terraform.lock.hcl'. The additional-dirs inits are unaffected.
+      '.terraform.lock.hcl'. Example inits are unaffected.
         default             - no '-lockfile' flag: init may add, update and
                               prune lock entries.
         readonly            - always adds '-lockfile=readonly'.
@@ -158,10 +167,11 @@ runs:
         input_backend: ${{ inputs.backend }}
         input_lockfile_mode: ${{ inputs.lockfile-mode }}
         input_plugin_cache_may_break_lock_file: ${{ inputs.plugin-cache-may-break-lock-file }}
+        input_examples: ${{ inputs.examples }}
         input_extra_envs_file: ${{ inputs.extra-envs-file }}
         input_github_token: ${{ inputs.github-token }}
       run: |
-        # Run 'terraform init' in the project and any additional directories
+        # Run 'terraform init' in the project (and its module examples)
         #
         # JSON input via heredoc — keeps quotes/special chars intact and
         # out of envp (the ARG_MAX guard pattern from CLAUDE.md).

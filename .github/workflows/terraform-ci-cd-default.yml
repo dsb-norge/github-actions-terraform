@@ -114,8 +114,7 @@ on:
                 string, name of the runner group to run the job on, see the workflow input 'runs-on'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
             - terraform-init-additional-dirs-yml
-                YAML array (as string), additional directories for 'terraform init', see the workflow input 'terraform-init-additional-dirs-yml'.
-                note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
+                Deprecated and has no effect, see the workflow input 'terraform-init-additional-dirs-yml'. Remove it.
             - terraform-version
                 string, version of terraform to use, see the workflow input 'terraform-version'.
                 note: this is a per environment setting, use the workflow input for a global setting that applies to all environments.
@@ -167,17 +166,12 @@ on:
       terraform-init-additional-dirs-yml:
         type: string
         description: |
-          Additional directories to include during the 'init' stage. 'terraform init' will be executed within each of these.
-          The path should be relative to the calling repos root, ex. './modules/my-module'.
+          Deprecated and has no effect; remove it. Removed in v2 (docs/Deprecations.md).
 
-          Type: YAML array (as string), one directory per item; a single directory may be written alone, and a
-          directory holding a space is one directory. An empty item is a validation error.
-          Example:
-            terraform-init-additional-dirs-yml: |
-              - "./main"
-              - "./modules/my-module"
-
-          NOTE: This applies to all environments, for single environment specify this directly in the environment specification.
+          It listed directories to 'terraform init' so that TFLint could inspect them. The lint now works out
+          every local module directory from the environment's own modules manifest and lints each against the
+          modules the environment installed, with no init of its own (docs/Linting.md). Setting it, here or in
+          an environment, produces a warning.
         required: false
         default: ""
       extra-envs-yml:
@@ -965,7 +959,6 @@ jobs:
         with:
           phase: resolve
           project-dir: ${{ matrix.vars.project-dir }}
-          additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           environment: ${{ matrix.vars.environment }}
           # 'terraform init' installs the run-block modules of test files in a tests/ directory beside the
           # environment too, so the cache must audit them (docs/Terraform-tests.md P37).
@@ -1008,7 +1001,6 @@ jobs:
         with:
           working-directory: ${{ matrix.vars.project-dir }}
           environment-name: ${{ matrix.vars.github-environment }}
-          additional-dirs-json: ${{ toJSON(matrix.vars.terraform-init-additional-dirs) }}
           plugin-cache-directory: ${{ steps.setup-terraform-cache.outputs.plugin-cache-directory }}
           extra-envs-file: ${{ steps.goal-envs.outputs.envs-dir }}/init.json
           # On a run the Dependabot admission admitted, the lock is the complete list of what may be installed:
@@ -2375,7 +2367,6 @@ jobs:
         with:
           phase: resolve
           project-dir: ${{ matrix.test.root }}
-          additional-dirs-json: "[]"
           # one entry per root: init installs the run-block modules of every test file in it
           environment: tftest-${{ matrix.test.root }}
           test-directory: tests
@@ -2407,7 +2398,6 @@ jobs:
         with:
           working-directory: ${{ matrix.test.root }}
           environment-name: ${{ matrix.slug }}
-          additional-dirs-json: "[]"
           # terraform test keeps state in memory; a backend block must not make init reach for storage
           backend: false
           lockfile-mode: ${{ matrix.test.root-kind == 'environment' && 'readonly-if-present' || 'default' }}

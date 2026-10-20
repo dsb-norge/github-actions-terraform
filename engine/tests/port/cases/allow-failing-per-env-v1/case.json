@@ -78,7 +78,6 @@
             "goals": [
               "all"
             ],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},
@@ -148,7 +147,6 @@
             "goals": [
               "all"
             ],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},
@@ -218,7 +216,6 @@
             "goals": [
               "all"
             ],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},
@@ -288,7 +285,6 @@
             "goals": [
               "all"
             ],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},
@@ -358,7 +354,6 @@
             "goals": [
               "all"
             ],
-            "terraform-init-additional-dirs": [],
             "extra-envs-from-secrets-per-goal": {
               "init": {},
               "format": {},

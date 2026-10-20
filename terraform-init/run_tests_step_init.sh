@@ -46,7 +46,7 @@ setup_workdir() {
   unset MOCK_TF_EXIT MOCK_TF_STDOUT MOCK_TF_ARGV_FILE MOCK_ENV_FILE
   unset input_extra_envs_file
   unset input_github_token
-  unset input_backend input_lockfile_mode input_plugin_cache_may_break_lock_file
+  unset input_backend input_lockfile_mode input_plugin_cache_may_break_lock_file input_examples
   unset TF_PLUGIN_CACHE_DIR TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
 
@@ -168,44 +168,80 @@ assert "Happy path: console-output-file contains stub stdout" \
   grep -q "successfully initialized" "$(get_output tf-init-console-output-file)"
 
 # ----------------------------------------------------------------------
-# Test: Additional dirs — both init invocations land in the same console file
+# Test: additional-dirs-json is deprecated and ignored: the lint prepares
+# module directories itself (docs/Linting.md), so nothing else is initialised
+# and a listed directory that does not exist no longer fails the step.
 # ----------------------------------------------------------------------
 setup_workdir
 install_stub_terraform
-EXTRA_DIR="modules/foo"
-mkdir -p "${GITHUB_WORKSPACE}/${EXTRA_DIR}"
-export input_additional_dirs_json="[\"${EXTRA_DIR}\"]"
+mkdir -p "${GITHUB_WORKSPACE}/modules/foo"
+export input_additional_dirs_json='["modules/foo", "modules/does-not-exist"]'
 export MOCK_TF_EXIT=0
-export MOCK_TF_STDOUT="initialized OK"
 export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
 run_step
-assert "Additional dirs: step exits 0" test "${LAST_EXIT}" -eq 0
-assert "Additional dirs: terraform invoked twice" \
-  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 2 ]]"
-assert "Additional dirs: second invocation uses -chdir=" \
-  grep -q -- "-chdir=${GITHUB_WORKSPACE}/${EXTRA_DIR}" "${MOCK_TF_ARGV_FILE}"
-_cf="$(get_output tf-init-console-output-file)"
-assert "Additional dirs: console file contains both invocations' output" \
-  bash -c "[[ \$(grep -c 'initialized OK' '${_cf}') -eq 2 ]]"
+assert "Deprecated additional dirs: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Deprecated additional dirs: only the project is initialised" \
+  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 1 ]]"
+assert "Deprecated additional dirs: the log says the input is ignored" \
+  grep -q "input 'additional-dirs-json' is deprecated and ignored" "${_test_output}"
+
+setup_workdir
+install_stub_terraform
+export input_additional_dirs_json='[]'
+run_step
+assert "Deprecated additional dirs: an empty list says nothing" \
+  bash -c "! grep -q 'deprecated' '${_test_output}'"
 
 # ----------------------------------------------------------------------
-# Test: A directory holding a space is one directory, not two
+# Test: examples — each examples/*/ holding .tf files is initialised after
+# the project, without a backend, into the same console file.
 # ----------------------------------------------------------------------
-setup_workdir
-install_stub_terraform
-mkdir -p "${GITHUB_WORKSPACE}/modules/with space" "${GITHUB_WORKSPACE}/modules/foo"
-export input_additional_dirs_json='["modules/with space", "modules/foo"]'
-export MOCK_TF_EXIT=0
-export MOCK_TF_STDOUT="initialized OK"
-export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
+setup_examples() {
+  setup_workdir
+  install_stub_terraform
+  mkdir -p "${WORK_DIR}/examples/01-basic" "${WORK_DIR}/examples/02-no-tf" "${WORK_DIR}/examples/03-full"
+  touch "${WORK_DIR}/examples/01-basic/main.tf" "${WORK_DIR}/examples/03-full/main.tf" \
+    "${WORK_DIR}/examples/02-no-tf/README.md"
+  export MOCK_TF_EXIT=0
+  export MOCK_TF_STDOUT="initialized OK"
+  export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
+}
+
+setup_examples
+export input_examples='true'
 run_step
-assert "Spaced dir: step exits 0" test "${LAST_EXIT}" -eq 0
-assert "Spaced dir: terraform invoked three times" \
+assert "Examples: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Examples: the project and two examples are initialised" \
   bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 3 ]]"
-assert "Spaced dir: the spaced directory is initialised whole" \
-  grep -qF -- "-chdir=${GITHUB_WORKSPACE}/modules/with space init" "${MOCK_TF_ARGV_FILE}"
-assert "Spaced dir: the directory after it is initialised too" \
-  grep -qF -- "-chdir=${GITHUB_WORKSPACE}/modules/foo init" "${MOCK_TF_ARGV_FILE}"
+assert "Examples: an example is initialised without a backend" \
+  grep -qF -- "-chdir=${WORK_DIR}/examples/01-basic init -input=false -backend=false" "${MOCK_TF_ARGV_FILE}"
+assert "Examples: the other example too" \
+  grep -qF -- "-chdir=${WORK_DIR}/examples/03-full init -input=false -backend=false" "${MOCK_TF_ARGV_FILE}"
+assert "Examples: a directory without .tf files is not an example" \
+  bash -c "! grep -qF -- 'examples/02-no-tf' '${MOCK_TF_ARGV_FILE}'"
+_cf="$(get_output tf-init-console-output-file)"
+assert "Examples: the console file holds every init's output" \
+  bash -c "[[ \$(grep -c 'initialized OK' '${_cf}') -eq 3 ]]"
+
+setup_examples
+export input_examples='true'
+_chdir_hash="$(echo -n "${WORK_DIR}/examples/03-full" | md5sum | cut -c1-8)"
+declare -x "MOCK_TF_EXIT_${_chdir_hash}=1"
+run_step
+assert "Examples: a failing example init fails the step" test "${LAST_EXIT}" -ne 0
+assert "Examples: the failure is logged" grep -q "init exited with code '1'" "${_test_output}"
+unset "MOCK_TF_EXIT_${_chdir_hash}"
+
+setup_examples
+run_step
+assert "Examples off: only the project is initialised" \
+  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 1 ]]"
+
+setup_examples
+export input_examples='yes'
+run_step
+assert "Examples: a value other than true or false fails the step" test "${LAST_EXIT}" -ne 0
+assert "Examples: the error names the input" grep -q "input 'examples' must be 'true' or 'false'" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Failure path — terraform exit 1 → step exits non-zero
@@ -220,52 +256,6 @@ assert "Failure: error log line present" \
   grep -q "init exited with code '1'" "${_test_output}"
 assert "Failure: console-output-file still captured" \
   test -s "$(get_output tf-init-console-output-file)"
-
-# ----------------------------------------------------------------------
-# Test: Mixed success/failure across project dir + additional dir
-# Project init exits 0; additional dir's init exits 1; total non-zero.
-# ----------------------------------------------------------------------
-setup_workdir
-install_stub_terraform
-EXTRA_DIR="modules/bar"
-mkdir -p "${GITHUB_WORKSPACE}/${EXTRA_DIR}"
-export input_additional_dirs_json="[\"${EXTRA_DIR}\"]"
-export MOCK_TF_EXIT=0
-# Set exit-override for the extra dir's abs path
-_chdir_hash="$(echo -n "${GITHUB_WORKSPACE}/${EXTRA_DIR}" | md5sum | cut -c1-8)"
-declare -x "MOCK_TF_EXIT_${_chdir_hash}=1"
-run_step
-assert "Mixed: step exits non-zero overall" test "${LAST_EXIT}" -ne 0
-assert "Mixed: failure log mentions exit code 1" \
-  grep -q "init exited with code '1'" "${_test_output}"
-unset "MOCK_TF_EXIT_${_chdir_hash}"
-
-# ----------------------------------------------------------------------
-# Test: Missing additional dir → step exits non-zero with descriptive log
-# ----------------------------------------------------------------------
-setup_workdir
-install_stub_terraform
-export input_additional_dirs_json="[\"modules/does-not-exist\"]"
-export MOCK_TF_EXIT=0
-run_step
-assert "Missing dir: step exits non-zero" test "${LAST_EXIT}" -ne 0
-assert "Missing dir: log mentions does-not-exist" \
-  grep -q "does not exist" "${_test_output}"
-
-# ----------------------------------------------------------------------
-# Test: Empty additional-dirs JSON falls back to project-only init
-# ----------------------------------------------------------------------
-setup_workdir
-install_stub_terraform
-export input_additional_dirs_json=""
-export MOCK_TF_EXIT=0
-export MOCK_TF_ARGV_FILE="${RUNNER_TEMP}/argv.log"
-run_step
-assert "Empty JSON: step exits 0" test "${LAST_EXIT}" -eq 0
-assert "Empty JSON: terraform invoked exactly once" \
-  bash -c "[[ \$(wc -l <\"${MOCK_TF_ARGV_FILE}\") -eq 1 ]]"
-assert "Empty JSON: no-additional-dirs log line present" \
-  grep -q "no additional directories" "${_test_output}"
 
 # ----------------------------------------------------------------------
 # Test: Environment name appears in console-output-file path
@@ -461,8 +451,7 @@ assert "T24: the value arrives verbatim, nothing expanded or executed" \
 setup_workdir
 install_stub_terraform
 record_env
-mkdir -p "${GITHUB_WORKSPACE}/extra-dir"
-export input_additional_dirs_json='["extra-dir"]'
+export input_plugin_cache_may_break_lock_file='true'
 export input_plugin_cache_directory="${RUNNER_TEMP}/action-owned-cache"
 use_extra_envs '{"TF_PLUGIN_CACHE_DIR":"/tmp/caller-owned-cache","TF_IN_AUTOMATION":"false"}'
 run_step
@@ -765,15 +754,30 @@ assert "lock modes: explicit defaults, the project init gets no may-break variab
 setup_workdir
 install_stub_terraform
 record_argv
-mkdir -p "${GITHUB_WORKSPACE}/extra-dir"
-export input_additional_dirs_json='["extra-dir"]'
 export input_backend='false'
 run_step
 assert "backend false: step exits 0" test "${LAST_EXIT}" -eq 0
 assert "backend false: the project init gets -backend=false" \
   argv_eq 1 'init -input=false -reconfigure -backend=false'
-assert "backend false: an additional-dirs init is unaffected" \
-  argv_eq 2 "-chdir=${GITHUB_WORKSPACE}/extra-dir init -input=false -reconfigure"
+
+# An example never has a backend, and never lets the plugin cache break its
+# lock: with no lock to start from, that records one platform's checksum and
+# warns of an incomplete lock on every run.
+setup_workdir
+install_stub_terraform
+record_argv
+record_env
+mkdir -p "${WORK_DIR}/examples/01-basic"
+touch "${WORK_DIR}/examples/01-basic/main.tf"
+export input_examples='true'
+export input_plugin_cache_directory="${RUNNER_TEMP}/plugin-cache"
+export input_plugin_cache_may_break_lock_file='true'
+run_step
+assert "examples: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "examples: the example init gets -backend=false whatever the project's backend" \
+  argv_eq 2 "-chdir=${WORK_DIR}/examples/01-basic init -input=false -backend=false"
+assert "examples: the example init does not let the plugin cache break the lock" \
+  env_is_unset TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE
 
 # Every lock-file mode, with and without a lock file.
 for _case in \

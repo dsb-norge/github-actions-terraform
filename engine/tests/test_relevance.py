@@ -155,16 +155,16 @@ class AutoTest(unittest.TestCase):
                 paths, _ = self.rules({"environment": "prod", "project-dir": project_dir}, {project_dir: True})
                 self.assertEqual(first, paths[0])
 
-    def test_additional_init_dirs_join_auto(self):
+    def test_the_deprecated_additional_init_dirs_do_not_join_auto(self):
         environment = {"environment": "prod", "terraform-init-additional-dirs-yml": ["./shared", "lib/", "."]}
         paths, _ = self.rules(environment)
-        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl", "shared/**", "lib/**", "**"], paths)
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], paths)
 
-    def test_the_global_additional_dirs_count_too(self):
+    def test_nor_do_the_global_ones(self):
         doc = document(files=[])
         doc["yaml"]["inputs"]["terraform-init-additional-dirs-yml"] = support.parsed(["common"])
         paths = decide.decide(doc)["environments"][0]["paths"]
-        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl", "common/**"], paths)
+        self.assertEqual(["envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"], paths)
 
     def test_auto_with_extras_and_a_replacement_list(self):
         self.assertEqual(["scripts/**", "envs/prod/**", "main/**", "modules/**", "/.tflint.hcl"],
@@ -363,10 +363,7 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(["The environment 'prod' uses auto, but its project-dir '../x' cannot be matched: the "
                           "pattern '../x/**' is not supported: '.' or '..' segments; set its 'paths' explicitly!"],
                          self.errors({"environment": "prod", "project-dir": "../x"}, directories={"../x": True}))
-        self.assertEqual(["The environment 'prod' uses auto, but its terraform-init-additional-dirs entry '/abs' "
-                          "cannot be matched: the directory '/abs' is an absolute path; directories are relative "
-                          "to the repository root; set its 'paths' explicitly!"],
-                         self.errors({"environment": "prod", "terraform-init-additional-dirs-yml": ["/abs"]}))
+        self.assertEqual([], self.errors({"environment": "prod", "terraform-init-additional-dirs-yml": ["/abs"]}))
         self.assertEqual(["The environment 'prod' uses auto, but its project-dir '/srv/x' cannot be matched: the "
                           "directory '/srv/x' is an absolute path; directories are relative to the repository root; "
                           "set its 'paths' explicitly!"],
