@@ -22,6 +22,10 @@
                        --out-file <file>
                                           the record job: the run's observations and the relay's
                                           answers merged into the incident state (docs/Notifications.md §9)
+  newest-attempt --from-dir <dir> --to-dir <dir> [--min-attempt <n>]
+                                          the download-newest-attempt step: of the files every attempt's
+                                          artifacts left, the newest attempt of each written under its
+                                          name (docs/Re-run-attempts.md §4)
 
 Actions run it as `python3 -I -B engine/run.py <command> …`. Exit codes, for all of them: 0 success,
 2 the caller's configuration is invalid, 1 anything else.
@@ -33,7 +37,7 @@ import json
 import os
 import sys
 
-from . import adapter, automerge_evidence, decide, model, notify_evidence
+from . import adapter, attempt_files, automerge_evidence, decide, model, notify_evidence
 
 EXIT_OK, EXIT_CRASH, EXIT_INVALID = 0, 1, 2
 
@@ -80,6 +84,11 @@ def _parse(argv):
     record_parser.add_argument("--observations-file", required=True, help="path of decide's observations.json")
     record_parser.add_argument("--results-files-pattern", required=True, help="glob of the deliver jobs' answers")
     record_parser.add_argument("--out-file", required=True, help="path to write the new state to")
+    attempt_parser = commands.add_parser("newest-attempt", help="the download-newest-attempt step, on a runner")
+    attempt_parser.add_argument("--from-dir", required=True,
+                                help="directory the artifacts of every attempt were downloaded into")
+    attempt_parser.add_argument("--to-dir", required=True, help="directory to write the newest attempt of each file to")
+    attempt_parser.add_argument("--min-attempt", default="", help="the oldest attempt to read; empty for any")
     return parser.parse_args(argv)
 
 
@@ -100,6 +109,8 @@ def main(argv=None):
     if args.command == "record-notifications":
         return notify_evidence.run_record(args.state_file, args.observations_file, args.results_files_pattern,
                                           args.out_file, os.environ, sys.stdout, _utc_now)
+    if args.command == "newest-attempt":
+        return attempt_files.run(args.from_dir, args.to_dir, args.min_attempt, sys.stdout)
     if args.command == "evaluate-automerge":
         return automerge_evidence.run(args.metadata_files_pattern, args.relevance_file,
                                       args.test_metadata_files_pattern, args.stage_results_file, os.environ, sys.stdout)

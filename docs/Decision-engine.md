@@ -74,11 +74,13 @@ engine/
 │   ├── hashicorp.py          # core: HashiCorp's provider signing keys, for the admission
 │   ├── automerge.py          # core: module auto-merge's rule (Module-auto-merge.md §3)
 │   ├── automerge_project.py  # core: project auto-merge's rules (Auto-merge.md §5, §14)
+│   ├── attempts.py           # core: which run attempt of each artifact file a job reads (Re-run-attempts.md §4)
 │   ├── __main__.py           # adapter side: the command line, decide, create-matrix and evaluate-automerge
 │   ├── adapter.py            # adapter side: create-matrix, inputs, yq, facts, document, publish
 │   ├── admission_facts.py    # adapter side: the admission's facts: the change, the registry, GitHub
 │   ├── automerge_evidence.py # adapter side: evaluate-automerge: the run's evidence read, the verdict published
 │   ├── automerge_facts.py    # adapter side: a module pull request's commits and their files
+│   ├── attempt_files.py      # adapter side: newest-attempt: the downloaded files listed, the newest of each written
 │   └── workflow.py           # adapter side: GitHub Actions I/O, groups, annotations, outputs
 ├── run_all_tests.sh          # the canonical suite entry (§8), at the depth discovery expects
 └── tests/
@@ -214,6 +216,9 @@ features bring two more fact-gatherings, both in `adapter.py`, under the same ga
   identities of the people they name (with the identity App's token) and the senders' protection
   rules from GitHub. `notify_decide.py` decides what to send and `notify_state.py` merges
   the state; both are core.
+- listing the files every run attempt's artifacts left (`attempt_files.py`,
+  [Re-run-attempts.md](Re-run-attempts.md) §5) for its own command, `newest-attempt`, and writing the
+  newest attempt of each under its name; `attempts.py` chooses, and is core.
 
 An adapter that fails reports the failure in its fields and exits zero. The engine decides whether a failure is fail-open (relevance) or a validation error
 (a lock file that cannot be parsed).
@@ -227,6 +232,7 @@ An adapter that fails reports the failure in its fields and exits zero. The engi
 | `evaluate-automerge` | `--metadata-files-pattern`, `--relevance-file`, `--test-metadata-files-pattern` (globs and a path, matched in the working directory, empty for none), `--stage-results-file` holding `stage-results-json`, and `GITHUB_ACTOR` | `is-eligible` in `$GITHUB_OUTPUT`, the log, a notice per tolerated failing test | the `evaluate-automerge-eligibility` action |
 | `decide-notifications` | `--metadata-files-pattern`, `--matrix-file`, `--relevance-file`, `--stage-results-file`, `--state-file` (need not exist), `--out-dir`, the runner's event, run and clock, `GH_TOKEN`, and the identity App's token and the people domains (`NOTIFY_IDENTITY_TOKEN`, `NOTIFY_PEOPLE_DOMAINS`, both optional) | the events, their messages, `observations.json` and `summary.md` under `--out-dir`, `deliver-matrix-json` and `deliver-count` in `$GITHUB_OUTPUT`, the summary appended to the step summary ([Notifications.md](Notifications.md) §7) | the `decide-notifications` action |
 | `record-notifications` | `--state-file` (need not exist), `--observations-file`, `--results-files-pattern`, `--out-file` | the merged state in `--out-file`, `changed` in `$GITHUB_OUTPUT`, undelivered messages in the step summary ([Notifications.md](Notifications.md) §9) | the `record-notifications` action |
+| `newest-attempt` | `--from-dir` (the files every attempt's artifacts left; need not exist), `--to-dir`, `--min-attempt` (optional, empty for none) | the newest attempt of each file in `--to-dir` under its name without the attempt, the log naming each file's attempt ([Re-run-attempts.md](Re-run-attempts.md) §4) | the `download-newest-attempt` action |
 
 Two more commands were specified and are not built, because nothing needs them: a `validate` on a
 partial document before the adapters run, and a `render-summary` of an output document. The run

@@ -19,6 +19,7 @@ The actions are used by the CI/CD workflow(s) in [.github/workflows](.github/wor
 ├── create-tf-vars-matrix           --> creates the environment matrix and decides which environments a change is relevant to; in mode module, a module's test matrix (runs the engine's create-matrix adapter)
 ├── create-validation-summary       --> renders the per-env head, plan/apply/destroy-plan/destroy tag bodies and job-summary block (as files)
 ├── decide-notifications            --> decides what a run tells Teams: the events, their messages and one deliver row each (runs the engine)
+├── download-newest-attempt         --> downloads every run attempt's artifacts of a pattern and keeps each file's newest attempt (runs the engine)
 ├── evaluate-automerge-eligibility  --> decides whether a pull request may be auto-merged, from the plans' changes, the limits and the actor
 ├── export-env-vars                 --> export environment variables and secrets (by mapping or by name prefix) for subsequent steps
 ├── lint-with-tflint                --> run linting of terraform code with TFLint
