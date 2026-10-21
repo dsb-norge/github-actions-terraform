@@ -13,7 +13,7 @@ from unittest import mock
 
 import support
 from dsb_tf_engine import __main__ as cli
-from dsb_tf_engine import adapter, automerge_evidence, notify_evidence
+from dsb_tf_engine import adapter, attempt_files, automerge_evidence, notify_evidence
 
 ENGINE_DIR = os.path.dirname(support.TESTS_DIR)
 RUN_PY = os.path.join(ENGINE_DIR, "run.py")
@@ -207,6 +207,38 @@ class NotificationCommandsTest(unittest.TestCase):
             cli.main(["record-notifications", "--help"])
         for fragment in ("path of the newest incident state; need not exist", "path of decide's observations.json",
                          "glob of the deliver jobs' answers", "path to write the new state to"):
+            self.assertIn(fragment, " ".join(stdout.getvalue().split()))
+
+
+class NewestAttemptCommandTest(unittest.TestCase):
+    ARGV = ["newest-attempt", "--from-dir=/tmp/download", "--to-dir=/tmp/out"]
+
+    def test_it_runs_the_adapter(self):
+        calls = []
+        with mock.patch.object(attempt_files, "run", lambda *args: calls.append(args) or 5):
+            self.assertEqual(5, cli.main(self.ARGV + ["--min-attempt=2"]))
+            self.assertEqual(5, cli.main(self.ARGV))
+        self.assertEqual([("/tmp/download", "/tmp/out", "2", sys.stdout), ("/tmp/download", "/tmp/out", "", sys.stdout)],
+                         calls)
+
+    def test_the_directories_are_required(self):
+        for index in range(1, len(self.ARGV)):
+            with self.subTest(missing=self.ARGV[index]):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit) as raised:
+                    cli.main(self.ARGV[:index] + self.ARGV[index + 1:])
+                self.assertEqual(cli.EXIT_CRASH, raised.exception.code)
+                self.assertIn(f"the following arguments are required: {self.ARGV[index].split('=')[0]}",
+                              stderr.getvalue())
+
+    def test_the_help_describes_the_command(self):
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn("the download-newest-attempt step, on a runner", " ".join(stdout.getvalue().split()))
+        with contextlib.redirect_stdout(io.StringIO()) as stdout, self.assertRaises(SystemExit):
+            cli.main(["newest-attempt", "--help"])
+        for fragment in ("directory the artifacts of every attempt were downloaded into",
+                         "directory to write the newest attempt of each file to",
+                         "the oldest attempt to read; empty for any"):
             self.assertIn(fragment, " ".join(stdout.getvalue().split()))
 
 

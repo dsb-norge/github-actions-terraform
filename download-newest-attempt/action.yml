@@ -1,0 +1,59 @@
+name: "Download newest attempt"
+description: |
+  Downloads every run attempt's artifacts that match a pattern and writes, of each file, the newest
+  attempt's copy under its name without the attempt (docs/Re-run-attempts.md).
+
+  The attempts of a run share their artifacts, and actions/download-artifact keeps one artifact per
+  name, the one with the highest ID, which is not the newest (P1, P2). Each artifact read through
+  this action is uploaded under a name of its own per attempt, `<name>-attempt-<run attempt>`, and
+  its file is named the same, so a re-run job's file and the earlier attempts' land side by side
+  and the newest is read: `matrix-job-meta-prod-attempt-2.json` is written as
+  `matrix-job-meta-prod.json`. A file without an attempt in its name is attempt 0.
+
+  The decision engine's command `newest-attempt` (`engine/`, docs/Decision-engine.md §3.2).
+  Needs Python 3.12 or later on the runner. Fails when the download fails, as
+  actions/download-artifact does; no match writes nothing and succeeds.
+author: "Peder Schmedling"
+inputs:
+  pattern:
+    description: The artifacts to download, a glob of artifact names, such as 'matrix-job-meta-*'.
+    required: true
+  path:
+    description: Directory to write the newest attempt of each file to; the workspace when empty.
+    required: false
+    default: ""
+  min-attempt:
+    description: |
+      The oldest run attempt to read; empty for any. A job that reads the answers to an earlier
+      job's work passes that job's attempt, so an earlier attempt of that job is never read
+      (docs/Re-run-attempts.md D7).
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - id: stage
+      shell: bash
+      run: |
+        # Make an empty directory to download every attempt's artifacts into
+        echo "dir=$(mktemp -d "${RUNNER_TEMP}/download-newest-attempt.XXXXXX")" >>"${GITHUB_OUTPUT}"
+    - name: "📥 Download every attempt's artifacts"
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.pattern }}
+        path: ${{ steps.stage.outputs.dir }}
+        # Every attempt's file has its own name, so merging keeps them all (P3).
+        merge-multiple: true
+    - id: newest
+      shell: bash
+      env:
+        FROM_DIR: ${{ steps.stage.outputs.dir }}
+        TO_DIR: ${{ inputs.path || github.workspace }}
+        MIN_ATTEMPT: ${{ inputs.min-attempt }}
+      run: |
+        # Write the newest attempt of each downloaded file under its name
+        #
+        # A value is joined to its option with '=', so one starting with '-' is never read as an
+        # option. Isolated mode (-I): docs/Decision-engine.md P21.
+        python3 -I -B "${{ github.action_path }}/../engine/run.py" newest-attempt \
+          --from-dir="${FROM_DIR}" --to-dir="${TO_DIR}" --min-attempt="${MIN_ATTEMPT}"
