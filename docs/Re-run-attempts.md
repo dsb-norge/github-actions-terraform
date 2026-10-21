@@ -127,6 +127,24 @@ action, and every download by name names an attempt from the uploading job's out
   `pattern`, `merge-multiple` and `path`.
 - **Workflows** (F33 in `structural-tests/run_all_tests.sh`): the names and reads of §3 in all three
   workflows; fails on the workflows before this change.
-- **What tests cannot cover:** GitHub's listing (P1, P2) and its re-runs (P4). A test-bed run
-  checks them: a run whose apply fails in the first attempt, re-run with "Re-run failed jobs", read
-  back from every reader.
+- **What tests cannot cover:** GitHub's listing (P1, P2) and its re-runs (P4). Test-bed runs
+  checked them (§8): a pull request whose plan failed in the first attempt and a push whose apply
+  did, each re-run with "Re-run failed jobs" and read back from every reader that ran.
+
+## 8. What implementation taught the spec
+
+Observed on a test-bed repository, one environment made to fail its first attempt by a deadline in
+its configuration, so the re-run of the same commit succeeded:
+
+- **P2 again.** On the pull request, the first attempt's metadata of the re-run environment had the
+  higher artifact ID. Under one name per environment, the second attempt would have read the failed
+  plan again. Named per attempt, the aggregator and the run summary read that environment at
+  attempt 2 (`found 1, 2`) and the five others at attempt 1, and the run went green.
+- **A job's output survives its partial re-run (D4).** The second attempt read `relevance-attempt-1`
+  by the output of a `create-matrix` job that did not run again.
+- **D8 holds.** On the push, the second attempt's decide job read the re-run environment at attempt 2
+  and resolved its incident and the held-back one's. The record job read `notify-events-attempt-2`
+  and left out the first attempt's answers to `e1` and `e2`, which were about the opening messages
+  (D7).
+- **No match is no failure.** The tests summary of a run without test files downloaded nothing, wrote
+  nothing and succeeded (§5).
