@@ -2413,14 +2413,16 @@ fi
 # artifact ID, which is not the newest (P1, P2): a re-run job's report, verdict or notification was
 # built from whichever attempt won. Every upload a job reads ends in -attempt-${{ github.run_attempt }};
 # a pattern is read through download-newest-attempt alone; a name is the uploading job's, from its
-# output. F33_WORKFLOWS (space-separated) points the check at other files.
+# output. This repository's own Action tests follow the same rule with the checked-out action, and
+# name the files they upload per attempt too, since their readers merge them (P3). F33_WORKFLOWS
+# (space-separated) points the check at other files.
 # ============================================================================
 TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}TEST ${TESTS_RUN}: F33 - every artifact a job reads is named and read per run attempt${NC}"
 echo -e "${BLUE}========================================${NC}"
-_f33_out=$(cd "${_this_script_dir}/.." && F33_WORKFLOWS="${F33_WORKFLOWS:-.github/workflows/terraform-ci-cd-default.yml .github/workflows/terraform-module-ci.yaml .github/workflows/terraform-notify.yml}" python3 - <<'PYEOF2'
+_f33_out=$(cd "${_this_script_dir}/.." && F33_WORKFLOWS="${F33_WORKFLOWS:-.github/workflows/terraform-ci-cd-default.yml .github/workflows/terraform-module-ci.yaml .github/workflows/terraform-notify.yml .github/workflows/action-tests.yml}" python3 - <<'PYEOF2'
 import os, sys, yaml
 
 ATTEMPT = "-attempt-${{ github.run_attempt }}"
@@ -2430,7 +2432,11 @@ PEOPLE_ONLY = {"terraform-test-log-${{ matrix.slug }}"}
 PATTERNS = {"terraform-ci-cd-default.yml": {("matrix-job-meta-*", ""), ("terraform-test-meta-*", "")},
             "terraform-module-ci.yaml": {("terraform-test-meta-*", "")},
             "terraform-notify.yml": {("matrix-job-meta-*", ""),
-                                     ("notify-result-*", "${{ needs.decide.outputs.run-attempt }}")}}
+                                     ("notify-result-*", "${{ needs.decide.outputs.run-attempt }}")},
+            "action-tests.yml": {("test-result-*", ""), ("engine-mutation-*", "")}}
+# The reader: a caller's run reads through the published action, this repository's CI through its checkout.
+REMOTE, LOCAL = "dsb-norge/github-actions-terraform/download-newest-attempt@", "./download-newest-attempt"
+READER = {"action-tests.yml": LOCAL}
 # The names each workflow reads by name: the uploading job's output, never the reader's own attempt.
 NAMES = {"terraform-ci-cd-default.yml": {"${{ needs.create-matrix.outputs.relevance-artifact }}"},
          "terraform-module-ci.yaml": {"${{ needs.create-matrix.outputs.relevance-artifact }}"},
@@ -2459,8 +2465,11 @@ for path in os.environ["F33_WORKFLOWS"].split():
                     problems.append(f"{where} downloads without a name; a pattern is read through download-newest-attempt")
                 else:
                     names.add(str(with_["name"]))
-            elif uses.startswith("dsb-norge/github-actions-terraform/download-newest-attempt@"):
-                patterns.add((str(with_.get("pattern", "")), str(with_.get("min-attempt", ""))))
+            elif uses.startswith(REMOTE) or uses == LOCAL:
+                if uses.startswith(READER.get(base, REMOTE)):
+                    patterns.add((str(with_.get("pattern", "")), str(with_.get("min-attempt", ""))))
+                else:
+                    problems.append(f"{where} reads through {uses!r}, expected {READER.get(base, REMOTE)!r}")
     if patterns != PATTERNS.get(base, set()):
         problems.append(f"{base} reads the patterns {sorted(patterns)}, expected {sorted(PATTERNS.get(base, set()))}")
     if names != NAMES.get(base, set()):
@@ -2491,6 +2500,22 @@ for path in os.environ["F33_WORKFLOWS"].split():
         writes = [s for s in jobs["deliver"]["steps"] if "notify-result" in str(s.get("run", ""))]
         if len(writes) != 1 or '/notify-result-${EVENT_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"' not in writes[0]["run"]:
             problems.append(f"{base}: deliver does not name its answer file per attempt")
+    if base == "action-tests.yml":
+        for job_name, job in jobs.items():
+            runs = [s for s in job.get("steps", []) if s.get("run")]
+            # Each expression as the job's run blocks have it: from their env:, the attempt from the runner.
+            handed = {"${{ github.run_attempt }}": "${GITHUB_RUN_ATTEMPT}"}
+            for s in runs:
+                handed.update({str(v): f"${{{k}}}" for k, v in (s.get("env") or {}).items() if str(v).startswith("${{")})
+            for step in job.get("steps", []):
+                if not str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                    continue
+                file = str((step.get("with") or {}).get("path", ""))
+                written = file
+                for expression, variable in handed.items():
+                    written = written.replace(expression, variable)
+                if not file.endswith(ATTEMPT + ".json") or not any(written in str(s["run"]) for s in runs):
+                    problems.append(f"{base}: {job_name} uploads {file!r}, not a file its run block writes per attempt")
     checked.append(base)
 print(f"checked the artifacts of {', '.join(checked)}")
 for problem in problems:

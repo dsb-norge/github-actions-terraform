@@ -756,7 +756,8 @@ earlier attempt did:
 - **Read a matrix job's artifacts through
   [`download-newest-attempt`](../download-newest-attempt/action.yml)**, which keeps each file's newest
   attempt; read a single job's artifact by the exact name that job publishes as an output.
-- Structural test F33 holds the three caller-facing workflows to both.
+- Structural test F33 holds the three caller-facing workflows and this repository's Action tests to
+  both; the Action tests read through the checked-out `./download-newest-attempt`.
 
 ## Anti-pattern: exporting heredoc-captured JSON
 

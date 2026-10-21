@@ -53,6 +53,17 @@ comments, the run summary, the test summary and the auto-merge verdict, which ac
 attempt, `matrix-job-meta-<github-environment>.json` and so on, where the readers' patterns have
 always looked.
 
+This repository's own Action tests follow the rule too, reading through the checked-out
+`./download-newest-attempt` ([Testing-in-ci.md](Testing-in-ci.md) §2.3, §14):
+
+| Artifact | Uploaded by | Read by |
+|---|---|---|
+| `test-result-<action>-attempt-<n>` (`result-<action>-attempt-<n>.json`) | every `test` job, and `engine-mutation-gate` | `summary`, the pull request's results comment |
+| `engine-mutation-<k>-attempt-<n>` (`mutation-shard-<k>-attempt-<n>.json`) | every `engine-mutation` shard | `engine-mutation-gate` |
+
+The required `tests-conclusion` judges the jobs' results, not these artifacts, so it was never
+misled; the comment and the merge of the shards could be.
+
 ## 4. The rule
 
 `attempts.py` reads file names. A name that ends in `-attempt-<n>`, before an extension of its own if
@@ -126,7 +137,8 @@ action, and every download by name names an attempt from the uploading job's out
   `min-attempt`, and with a caller's `json.py` in the working directory; the download step's
   `pattern`, `merge-multiple` and `path`.
 - **Workflows** (F33 in `structural-tests/run_all_tests.sh`): the names and reads of §3 in all three
-  workflows; fails on the workflows before this change.
+  workflows and in the Action tests, whose uploaded files must be the ones their run blocks write;
+  fails on the workflows before this change.
 - **What tests cannot cover:** GitHub's listing (P1, P2) and its re-runs (P4). Test-bed runs
   checked them (§8): a pull request whose plan failed in the first attempt and a push whose apply
   did, each re-run with "Re-run failed jobs" and read back from every reader that ran.

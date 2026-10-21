@@ -130,7 +130,9 @@ jobs:
             [[ -n "${resolved}" ]] && job_url="${resolved}"
           fi
 
-          out="_artifact/result-${ACTION_NAME}.json"
+          # Named per attempt, as its artifact: a re-run suite's result lands beside the earlier attempt's and
+          # the summary reads the newest (docs/Re-run-attempts.md D1).
+          out="_artifact/result-${ACTION_NAME}-attempt-${GITHUB_RUN_ATTEMPT}.json"
           jq -n \
             --arg     action   "${ACTION_NAME}" \
             --arg     outcome  "${outcome}" \
@@ -158,8 +160,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-result-${{ matrix.action }}
-          path: _artifact/result-${{ matrix.action }}.json
+          name: test-result-${{ matrix.action }}-attempt-${{ github.run_attempt }}
+          path: _artifact/result-${{ matrix.action }}-attempt-${{ github.run_attempt }}.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -224,13 +226,13 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           # Run one shard of the mutation gate and keep its result for the merge
-          python3 -B engine/tests/mutation.py --shard "${SHARD}/12" --out "mutation-shard-${SHARD}.json"
+          python3 -B engine/tests/mutation.py --shard "${SHARD}/12" --out "mutation-shard-${SHARD}-attempt-${GITHUB_RUN_ATTEMPT}.json"
 
       - name: "📤 Upload the shard's result"
         uses: actions/upload-artifact@v7
         with:
-          name: engine-mutation-${{ matrix.shard }}
-          path: mutation-shard-${{ matrix.shard }}.json
+          name: engine-mutation-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: mutation-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}.json
           if-no-files-found: error
           retention-days: 7
 
@@ -254,11 +256,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Each shard's newest attempt, written as mutation-shard-K.json: after "Re-run failed jobs" the merge
+      # takes a re-run shard's result, never an earlier attempt's (docs/Re-run-attempts.md D2).
       - name: "📥 Download the shards' results"
-        uses: actions/download-artifact@v8
+        uses: ./download-newest-attempt
         with:
           pattern: engine-mutation-*
-          merge-multiple: true
           path: _mutation
 
       # The gate is one test, as the engine suite counts it locally, and reports like a suite
@@ -301,16 +304,16 @@ jobs:
             --arg     job_url  "${job_url}" \
             '{action: "engine-mutation-gate", outcome: $outcome, "tests-run": 1, "tests-passed": $passed,
               "tests-failed": (1 - $passed), "duration-seconds": $duration, "job-url": $job_url}' \
-            > _artifact/result-engine-mutation-gate.json
-          cat _artifact/result-engine-mutation-gate.json
+            > "_artifact/result-engine-mutation-gate-attempt-${GITHUB_RUN_ATTEMPT}.json"
+          cat "_artifact/result-engine-mutation-gate-attempt-${GITHUB_RUN_ATTEMPT}.json"
           exit "${gate_exit}"
 
       - name: "📤 Upload result artifact"
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-result-engine-mutation-gate
-          path: _artifact/result-engine-mutation-gate.json
+          name: test-result-engine-mutation-gate-attempt-${{ github.run_attempt }}
+          path: _artifact/result-engine-mutation-gate-attempt-${{ github.run_attempt }}.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -330,11 +333,12 @@ jobs:
       - name: "📥 Checkout"
         uses: actions/checkout@v7
 
+      # Each suite's newest attempt, written as result-<action>.json: after "Re-run failed jobs" the comment
+      # shows what the re-run found, never an earlier attempt's result (docs/Re-run-attempts.md D2).
       - name: "📥 Download all test result artifacts"
-        uses: actions/download-artifact@v8
+        uses: ./download-newest-attempt
         with:
           pattern: test-result-*
-          merge-multiple: true
           path: _results
 
       - name: "📝 Build summary and upsert PR comment"
