@@ -255,8 +255,9 @@ so they never reach the generic forwarding (P7).
 | `relevance-file` | the path of `relevance.json` on the runner: the engine's output document without its matrices ([Decision-engine.md](Decision-engine.md) §5). Every environment of `environments-yml`, affected or not, with its `verdict` (`run` / `skip`), its reasons (`relevance: <matched rule>`, `relevance: no changed file matches`, `relevance: all:<reason>`), `github-environment`, `add-pr-comment`, `pr-comment-group`, `mutates-on-pr`, the resolved `pr-auto-merge-*` values, the resolved `paths` and `paths-ignore`, its `trigger-events`, and `relevant`: whether a changed file is relevant to it, evaluated whatever its verdict (true in mode `all`), so a change to an environment that takes no part in pull requests is visible to the auto-merge evaluator ([Auto-merge.md](Auto-merge.md) D6); the counts; the relevance block; the seed manifest (§6.3); the notices and the decision record. Names and rules, no file lists. |
 
 The `create-matrix` job exposes the five small values as job outputs and uploads the file as the
-artifact `relevance`, which the seed job, the aggregator, the run summary, the auto-merge
-evaluator and the tests summary download. Every download of it carries `continue-on-error: true`,
+artifact `relevance-attempt-<n>`, `<n>` its run attempt, which its job output `relevance-artifact`
+names ([Re-run-attempts.md](Re-run-attempts.md) D4); the seed job, the aggregator, the run summary,
+the auto-merge evaluator and the tests summary download that name. Every download of it carries `continue-on-error: true`,
 because a download by name of a missing artifact throws (P8); without the file each of them behaves
 as before relevance.
 
@@ -347,7 +348,7 @@ and never left at the seed placeholder (P4).
 
 The decision engine composes the manifest (`comments` in `relevance.json`, `comments.py`), from
 every environment's entry, the relevance block, the pull request number and the run id and attempt
-the adapter reports. The seed job downloads the `relevance` artifact and hands the heads' markers
+the adapter reports. The seed job downloads the relevance artifact and hands the heads' markers
 and bodies to `pr-comments-reconcile` as `heads-yml` and the purge rules as `gc-yml`; a missing
 artifact seeds nothing and purges nothing, with a warning, and the matrix jobs still post their
 heads. The job's `if:` is unchanged; the engine returns an empty manifest where it would not run

@@ -743,6 +743,21 @@ exit ${_main_exit_code}
 
 Neither shows up as an error. Both show up as a wrong comment on a PR.
 
+## Artifacts one job leaves another
+
+The attempts of a run share their artifacts, and `actions/download-artifact` keeps one artifact per
+name, by the highest ID, which is not the newest. A job that reads an artifact another job uploaded
+therefore reads it as [Re-run-attempts.md](Re-run-attempts.md) says, or a re-run reports what an
+earlier attempt did:
+
+- **Name it per attempt, in the workflow:** `<name>-attempt-${{ github.run_attempt }}`, and its file
+  the same when a matrix job uploads it. Never in an action: an action is downloaded again each time
+  a job starts, so a re-run job can run a newer one than its readers (P4).
+- **Read a matrix job's artifacts through
+  [`download-newest-attempt`](../download-newest-attempt/action.yml)**, which keeps each file's newest
+  attempt; read a single job's artifact by the exact name that job publishes as an output.
+- Structural test F33 holds the three caller-facing workflows to both.
+
 ## Anti-pattern: exporting heredoc-captured JSON
 
 **Don't do this:**

@@ -640,6 +640,9 @@ jobs:
       # Whether the run notifies Teams, and the checked target (docs/Notifications.md §7).
       notify-active: ${{ steps.create-matrix.outputs.notify-active }}
       notify-target-json: ${{ steps.create-matrix.outputs.notify-target-json }}
+      # The relevance artifact's name, its attempt in it: a job that is not re-run keeps its outputs, so
+      # every reader downloads the attempt that made the matrix it runs on (docs/Re-run-attempts.md D4).
+      relevance-artifact: relevance-attempt-${{ github.run_attempt }}
     steps:
       - name: "🧹 Clean workspace"
         uses: dsb-norge/directory-recreate@v1
@@ -661,7 +664,7 @@ jobs:
       - name: "📦 Upload the relevance decision"
         uses: actions/upload-artifact@v7
         with:
-          name: relevance
+          name: relevance-attempt-${{ github.run_attempt }} # the job output relevance-artifact
           path: ${{ steps.create-matrix.outputs.relevance-file }}
 
   # Pre-allocate per-group and per-env "head" comments at the top of the PR
@@ -691,7 +694,7 @@ jobs:
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         continue-on-error: true # a missing manifest seeds nothing; the matrix jobs still post their heads
       - name: "📋 Read the head manifest"
@@ -1982,6 +1985,8 @@ jobs:
         uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
         with:
           environment-name: ${{ matrix.vars.github-environment }}
+          # Named per attempt, so a re-run's metadata never hides behind an earlier attempt's (docs/Re-run-attempts.md D1).
+          artifact-name: matrix-job-meta-${{ matrix.vars.github-environment }}-attempt-${{ github.run_attempt }}
           matrix-context-json: ${{ toJSON(matrix) }}
           github-context-json: ${{ toJSON(github) }}
           steps-context-json: ${{ toJSON(steps) }}
@@ -2100,18 +2105,19 @@ jobs:
       run:
         shell: bash
     steps:
+      # Each environment's newest attempt: after "Re-run failed jobs", the re-run ones' and the others'
+      # earlier ones (docs/Re-run-attempts.md D2).
       - name: "📥 Download matrix job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
           pattern: matrix-job-meta-*
-          merge-multiple: true
         # An empty artifact set is a valid input (sweep-only mode still
         # needs to run to clean up any orphan group comments).
         continue-on-error: true
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the action then behaves as
         # it did before relevance.
@@ -2156,16 +2162,15 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download matrix job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
-          pattern: matrix-job-meta-*
-          merge-multiple: true
+          pattern: matrix-job-meta-* # each environment's newest attempt (docs/Re-run-attempts.md D2)
         # No artifacts (matrix skipped) is a valid input.
         continue-on-error: true
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the action then behaves as
         # it did before relevance.
@@ -2197,6 +2202,7 @@ jobs:
       matrix-json: ${{ needs.create-matrix.outputs.matrix-json }}
       stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": "${{ needs.terraform-ci-cd-2.result }}", "3": "${{ needs.terraform-ci-cd-3.result }}"}'
       notify-target-json: ${{ needs.create-matrix.outputs.notify-target-json }}
+      relevance-artifact: ${{ needs.create-matrix.outputs.relevance-artifact }}
       runs-on: ${{ inputs.runs-on }}
 
   # One job per test file (and provider set), in parallel with the environments; nothing waits for
@@ -2472,14 +2478,14 @@ jobs:
           if-no-files-found: ignore
         continue-on-error: true # never fail the job over an upload
 
-      # Uploads the artifact terraform-test-meta-<slug> itself; the summary job reads it.
+      # Uploads the artifact terraform-test-meta-<slug>-attempt-<n> itself; the summary job reads it.
       - name: "📦 Capture and upload test job metadata"
         id: capture-metadata
         if: always()
         uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
         with:
           entity-name: ${{ matrix.slug }}
-          artifact-name: terraform-test-meta-${{ matrix.slug }}
+          artifact-name: terraform-test-meta-${{ matrix.slug }}-attempt-${{ github.run_attempt }}
           matrix-context-json: ${{ toJSON(matrix) }}
           github-context-json: ${{ toJSON(github) }}
           steps-context-json: ${{ toJSON(steps) }}
@@ -2528,15 +2534,14 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download test job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
-          pattern: terraform-test-meta-*
-          merge-multiple: true
+          pattern: terraform-test-meta-* # each test's newest attempt (docs/Re-run-attempts.md D2)
         continue-on-error: true # zero matches is a valid input
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the summary then has no
         # not-run rows.
@@ -2760,25 +2765,24 @@ jobs:
             echo "::error::Auto-merge is enabled but 'pr-auto-merge-app-private-key-secret' is not set. Please provide the name of the secret containing the GitHub App private key."
             exit 1
           fi
+      # Each environment's newest attempt: the verdict judges what the run did last (docs/Re-run-attempts.md D2).
       - name: "📥 Download matrix job metadata"
         id: download-metadata
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
           pattern: matrix-job-meta-* # uploaded by the capture-matrix-job-meta step of every stage job
-          merge-multiple: true
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the action then behaves as
         # it did before relevance.
         continue-on-error: true
       - name: "📥 Download test job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
           pattern: terraform-test-meta-* # uploaded by the terraform-test job
-          merge-multiple: true
         # Zero matches is a valid input: a tolerated test is only ever named, never blocking (D13).
         continue-on-error: true
       - name: "🔍 Evaluate PR auto merge eligibility across all environments"

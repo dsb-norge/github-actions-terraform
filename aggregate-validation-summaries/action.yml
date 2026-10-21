@@ -46,7 +46,7 @@ inputs:
   relevance-file:
     description: |
       Path of the relevance.json the matrix builder writes (create-tf-vars-matrix's
-      relevance-file output, shipped to this job as the `relevance` artifact).
+      relevance-file output, shipped to this job as the relevance artifact).
 
       With it, the desired set of groups is the union of the groups declared in
       the file for environments with add-pr-comment "true" and the groups seen in

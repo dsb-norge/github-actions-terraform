@@ -21,7 +21,7 @@ inputs:
     description: create-matrix's matrix-json, every stage's rows.
     required: true
   relevance-file:
-    description: Path of relevance.json, the `relevance` artifact.
+    description: Path of relevance.json, from the relevance artifact.
     required: true
   stage-results-json:
     description: 'The stage jobs'' results, {"1": <result>, "2": ..., "3": ...}.'

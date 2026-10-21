@@ -647,7 +647,7 @@ groups need readable titles.
 | 10 | `🔍 Check terraform module cache`, `🧹 Prune git metadata from the module cache`, `💾 Save terraform module cache` | `terraform-module-cache@v1` phases `verify` and `prune`, then `actions/cache/save`, with the environment job's gates (init succeeded, no cache hit, safe to save), each `continue-on-error: true`. Right after init, before the test writes into module directories. |
 | 11 | `🧪 Terraform test` (id `test`) | `terraform-test@v1`, `if: !cancelled()`, `working-directory: matrix.test.root`, `test-file: matrix.test.rel`, `slug: matrix.slug`, `status-credentials`, `status-lock` and `status-init` from the outcomes of steps 3, 7 and 9, so a failed earlier step is reported as `no-credentials`, `lock-platform` or `init` without running terraform, and `environments-lock-file:` the provider set's lock, or the environment root's own. `continue-on-error: true`. Records the resolved provider versions and writes its own per-job step summary block (§5.6, §5.8). |
 | 12 | `📤 Upload test output` (id `upload-test-output`) | `actions/upload-artifact@v7`, name `terraform-test-log-<slug>`, the test step's JSON log, report and JUnit files, `if-no-files-found: ignore`. `if:` always, once the test step reported. `continue-on-error: true`. Its `artifact-url` output is what the summary links as "output". |
-| 13 | `📦 Capture and upload test job metadata` (id `capture-metadata`) | `capture-matrix-job-meta@v1` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>` (§9.4); the action uploads the artifact itself, so no separate upload step, which a second artifact of the same name would fail. `if: always()`, `continue-on-error: true`. |
+| 13 | `📦 Capture and upload test job metadata` (id `capture-metadata`) | `capture-matrix-job-meta@v1` with `entity-name: matrix.slug`, `artifact-name: terraform-test-meta-<slug>-attempt-<n>` (§9.4), `<n>` the run attempt ([Re-run-attempts.md](Re-run-attempts.md) D1); the action uploads the artifact itself, so no separate upload step, which a second artifact of the same name would fail. `if: always()`, `continue-on-error: true`. |
 | 14 | `🧐 Validation outcome: 🔐 Credentials` | `exit 1` when step 3 ran and failed. `continue-on-error: ${{ fromJSON(matrix.test.allow-failing-terraform-tests) }}`. |
 | 15 | `🧐 Validation outcome: ⚙️ Init` | `exit 1` unless init succeeded. Same `continue-on-error`. |
 | 16 | `🧐 Validation outcome: 🧪 Test` | `exit 1` unless the test status is `pass`. Same `continue-on-error`. |
@@ -833,9 +833,11 @@ Two artifacts per test job:
 - `terraform-test-log-<slug>`: `test.json`, `report.txt`, `junit.xml` when written. Retention is
   the repository default; a JSON log with `-verbose` can be megabytes, which is one more reason
   `-verbose` is opt-in.
-- `terraform-test-meta-<slug>`: the metadata JSON `capture-matrix-job-meta` produces, with the
-  `steps` context (all `terraform-test` outputs, the upload step's `artifact-url`), the matrix row and
-  the filtered `github` context. Its file basename is `terraform-test-meta-<slug>.json`, distinct
+- `terraform-test-meta-<slug>-attempt-<n>`: the metadata JSON `capture-matrix-job-meta` produces, with
+  the `steps` context (all `terraform-test` outputs, the upload step's `artifact-url`), the matrix row
+  and the filtered `github` context, named per run attempt so a re-run test's metadata is read and not
+  an earlier attempt's ([Re-run-attempts.md](Re-run-attempts.md)). The summary reads it as
+  `terraform-test-meta-<slug>.json`, distinct
   from `matrix-job-meta-*.json` on purpose: the environment aggregator, the run summary and the
   auto-merge evaluator glob the latter and must never see a test row (P7).
 
@@ -878,8 +880,9 @@ clean up a head from an earlier push that had tests (§6.3).
 
 ### 6.2 Inputs: metadata, jobs, links
 
-1. Download `terraform-test-meta-*` with `merge-multiple: true`, `continue-on-error: true` (zero
-   matches is undocumented behaviour; the step must not fail the job).
+1. Download `terraform-test-meta-*` through `download-newest-attempt`, each test's newest attempt
+   written as `terraform-test-meta-<slug>.json` ([Re-run-attempts.md](Re-run-attempts.md)),
+   `continue-on-error: true` (zero matches is undocumented behaviour; the step must not fail the job).
 2. Read the not-run list from `relevance.json` for the misplaced and secrets-unavailable rows,
    which have no metadata.
 3. Resolve links from the Jobs API, once, paginated, through a temp file: match `jobs[].name` with
@@ -1152,7 +1155,8 @@ Two optional inputs: `entity-name` (what `environment-name` really is; the old n
 alias, and when both are given and differ `entity-name` wins with a warning) and `artifact-name`
 (default `matrix-job-meta-<entity>`), which sets **both** the artifact name and the JSON file's
 basename (P7) and is also an output. The JSON keeps `.metadata.environment` for the entity. Existing
-callers see no change.
+callers see no change. The workflows pass a name that ends in `-attempt-<run attempt>`, for the
+environments and the tests alike ([Re-run-attempts.md](Re-run-attempts.md) D1, D5).
 
 ### 9.5 `terraform-init`
 

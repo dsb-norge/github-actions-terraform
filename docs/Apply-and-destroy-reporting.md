@@ -464,7 +464,7 @@ run-summary:
   # No pull-requests permission — this job never touches the PR.
   permissions: {}
   steps:
-    - download matrix-job-meta-* artifacts (continue-on-error)
+    - download each environment's newest matrix-job-meta-* (download-newest-attempt, continue-on-error)
     - download the relevance artifact (continue-on-error)
     - uses: dsb-norge/github-actions-terraform/create-run-summary@v1
       continue-on-error: true
