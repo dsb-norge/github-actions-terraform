@@ -6,6 +6,18 @@ calling repository pins `@v1`, which moves to every v1 release, or an exact `@v1
 What changed from v0 to v1 as a whole, and how to move, is
 [docs/V1-changes.md](docs/V1-changes.md) and the migration guides it links.
 
+## [1.17.0](https://github.com/dsb-norge/github-actions-terraform/compare/v1.16.1...v1.17.0) (2026-10-21)
+
+
+### Features
+
+* add download-newest-attempt to read each file's newest attempt ([60c47d5](https://github.com/dsb-norge/github-actions-terraform/commit/60c47d57679d4b95a052d9d03a6db263721324d0))
+
+
+### Bug Fixes
+
+* read the newest run attempt of every artifact after a re-run ([d9fe50e](https://github.com/dsb-norge/github-actions-terraform/commit/d9fe50e4e6c801a873d18e2b1ad470eea7a8d903))
+
 ## [1.16.1](https://github.com/dsb-norge/github-actions-terraform/compare/v1.16.0...v1.16.1) (2026-10-21)
 
 
