@@ -67,7 +67,7 @@ Dynamic discovery means newly-added test suites are picked up automatically; no 
 One job per entry in `tests-matrix`. `fail-fast: false` so all suites run regardless of any single failure. Each job checks out the repository, then runs two steps:
 
 1. **🧪 Run `<action>` tests** — runs `bash <action>/run_all_tests.sh`, tee's stdout to a log file, enforces the canonical summary-line contract (§4), parses counts (§4), resolves the matrix job URL, writes the result JSON (§5), emits any failure/drift annotation (§11), and finally exits with the suite's real exit code.
-2. **📤 Upload result artifact** (`if: always()`) — uploads the result JSON as `test-result-<action>` so the summary job can aggregate it.
+2. **📤 Upload result artifact** (`if: always()`) — uploads the result JSON as `test-result-<action>-attempt-<n>`, `<n>` the run attempt, so the summary job can aggregate it.
 
 All the per-action logic lives inside step 1 because GitHub Actions does **not** propagate `steps.<id>.outputs.*` from a step that exits non-zero. If parsing/annotating happened in a follow-up step reading those outputs, the log path would be empty on failure and counts would always render as `?`. Doing everything in one shell means the same process that has the log path also writes the artifact.
 
@@ -82,7 +82,7 @@ Runs after `discover`, `test` and `engine-mutation-gate`. Conditions:
 
 Steps:
 
-1. Downloads all `test-result-*` artifacts (merge-multiple).
+1. Downloads each suite's newest `test-result-*` through the checked-out [`download-newest-attempt`](../download-newest-attempt/action.yml), written as `result-<action>.json`. After "Re-run failed jobs" the comment shows what the re-run found: `download-artifact` alone keeps one artifact per name by artifact ID, which can be the earlier attempt's ([Re-run-attempts.md](Re-run-attempts.md)).
 2. Calls [`.github/scripts/aggregate-action-tests.sh`](../.github/scripts/aggregate-action-tests.sh), which builds the markdown (§6) and:
    - upserts the PR comment via `gh api`;
    - appends the same body to `$GITHUB_STEP_SUMMARY` so the run page shows it inline (§11);
@@ -145,7 +145,7 @@ This means a new (or modified) suite that doesn't emit the canonical lines will 
 
 ## 5. Result-JSON artifact shape
 
-Each `test-result-<action>` artifact contains exactly one file `result-<action>.json` with this shape:
+Each `test-result-<action>-attempt-<n>` artifact contains exactly one file, `result-<action>-attempt-<n>.json`, which the summary reads back as `result-<action>.json` (§2.3), with this shape:
 
 ```json
 {
@@ -497,19 +497,20 @@ split across parallel jobs, instead of inside every job that runs the engine sui
 - **`engine-mutation`** is a matrix of N shards, twelve, on Python 3.12, the floor. The
   mutants' keys are printed by `ast.unparse`, so every shard runs one Python and the keys match
   `tests/mutation_equivalents.json`. Each runs `mutation.py --shard K/N --out
-  mutation-shard-K.json`: the unmutated baseline first, then every N-th mutant from the K-th,
+  mutation-shard-K-attempt-<n>.json`: the unmutated baseline first, then every N-th mutant from the K-th,
   interleaved so each shard holds a share of every module. A shard judges nothing. It exits non-zero
-  only when its baseline fails, and uploads its keys and survivors as `engine-mutation-K`.
+  only when its baseline fails, and uploads its keys and survivors as `engine-mutation-K-attempt-<n>`.
 - **`engine-mutation-gate`** runs when the shards finish, whatever their result (`!cancelled()`).
-  A shard that failed fails it. Otherwise it downloads the shards' results and runs
-  `mutation.py --merge`, which applies the gate the unsharded run applies: an unexplained
+  A shard that failed fails it. Otherwise it downloads each shard's newest attempt through
+  `download-newest-attempt`, as `mutation-shard-K.json`, so a shard re-run after a failure counts
+  once and with its new result, and runs `mutation.py --merge`, which applies the gate the unsharded run applies: an unexplained
   survivor, a stale equivalent and a listed equivalent that is killed each fail it. Before it
   judges anything it checks that the shards ran every mutant exactly once. A missing shard would
   otherwise hide its survivors, and it would also make every equivalent in it read as killed.
 - **`tests-conclusion`** requires `engine-mutation-gate` to succeed.
-- **The PR comment includes the gate.** `engine-mutation-gate` writes `result-engine-mutation-gate.json`
+- **The PR comment includes the gate.** `engine-mutation-gate` writes `result-engine-mutation-gate-attempt-<n>.json`
   in the §5 shape, one test as the engine suite counts it locally, and uploads it as
-  `test-result-engine-mutation-gate` whatever its result. `summary` needs the gate, so a red gate
+  `test-result-engine-mutation-gate-attempt-<n>` whatever its result. `summary` needs the gate, so a red gate
   is a red row and the totals cannot read green over it.
 
 The structural test F17 (`structural-tests/run_all_tests.sh`) holds this together:
@@ -519,7 +520,8 @@ The structural test F17 (`structural-tests/run_all_tests.sh`) holds this togethe
   `summary` waits for;
 - `tests-conclusion` requires the merge.
 
-To change the shard count, change all three places together. F17 fails until they agree.
+To change the shard count, change all three places together. F17 fails until they agree. F33
+holds every artifact of the workflow to its run attempt, and its readers to `download-newest-attempt`.
 
 **Why twelve.** With four shards the run took 6.4 minutes, and the slowest shard, 5.9 of them, was
 the critical path; runners were not the limit. With eight it took 4.3 minutes, the shards between
