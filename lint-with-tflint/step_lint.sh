@@ -47,7 +47,11 @@ function record-run {
 
 # Lint one root and the module directories its manifest records.
 #   $1 - the root's absolute path
-#   $2 - 'all' lints every local module directory; 'inside' only the ones
+#   $2 - 'all' lints every local module directory; 'all-but-examples' every
+#        one but those under the root's examples/, which are then linted as
+#        roots of their own (a module root's manifest records the modules its
+#        test files' run blocks call, the examples among them, so each would be
+#        linted twice); 'inside' only the ones
 #        inside the root (a module example: the module itself is linted once,
 #        by its own root)
 function lint-root {
@@ -67,19 +71,29 @@ function lint-root {
     keys=("")
   fi
 
-  if [ "${scope}" == 'inside' ]; then
-    local -a inside_dirs=() inside_keys=()
-    local i canonical_root canonical_dir
+  if [ "${scope}" == 'inside' ] || [ "${scope}" == 'all-but-examples' ]; then
+    local -a kept_dirs=() kept_keys=()
+    local i canonical_root canonical_dir keep
     canonical_root="$(realpath -m "${root}")"
     for i in "${!dirs[@]}"; do
       canonical_dir="$(realpath -m "${dirs[i]}")"
-      if [ "${canonical_dir}" == "${canonical_root}" ] || [[ "${canonical_dir}" == "${canonical_root}/"* ]]; then
-        inside_dirs+=("${dirs[i]}")
-        inside_keys+=("${keys[i]}")
+      # Plain if-statements: GitHub sources this under 'bash -e', where a bare
+      # test that comes out false would end the step.
+      keep='false'
+      if [ "${scope}" == 'inside' ]; then
+        if [ "${canonical_dir}" == "${canonical_root}" ] || [[ "${canonical_dir}" == "${canonical_root}/"* ]]; then
+          keep='true'
+        fi
+      elif [[ "${canonical_dir}" != "${canonical_root}/examples/"* ]]; then
+        keep='true'
+      fi
+      if [ "${keep}" == 'true' ]; then
+        kept_dirs+=("${dirs[i]}")
+        kept_keys+=("${keys[i]}")
       fi
     done
-    dirs=("${inside_dirs[@]}")
-    keys=("${inside_keys[@]}")
+    dirs=("${kept_dirs[@]}")
+    keys=("${kept_keys[@]}")
   fi
 
   # Linting nothing must not report success.
@@ -188,7 +202,11 @@ function main {
   # Decoration in github
   echo "::add-matcher::${GITHUB_ACTION_PATH}/tflint_matcher.json"
 
-  lint-root "$(pwd)" all || return 1
+  if [ "${input_examples:-false}" == 'true' ]; then
+    lint-root "$(pwd)" all-but-examples || return 1
+  else
+    lint-root "$(pwd)" all || return 1
+  fi
 
   if [ "${input_examples:-false}" == 'true' ]; then
     local example

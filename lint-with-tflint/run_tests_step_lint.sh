@@ -730,6 +730,45 @@ run_step
 assert "Examples off: only the module and its submodule are linted" \
   test "$(lint_invocations)" -eq 2
 
+# ----------------------------------------------------------------------
+# A module root's manifest also records the modules its test files' run
+# blocks call (keys 'test.<dir>.<file>.<run>'): the examples among them, and
+# test fixtures. With 'examples', each example is linted once, as a root of
+# its own, so the root lint leaves out everything under examples/; a fixture
+# is still linted. Without 'examples', the root lints what its manifest holds.
+# ----------------------------------------------------------------------
+setup_test_keyed() {
+  setup_examples
+  write_manifest '[{"Key":"","Dir":"."},{"Key":"sub","Dir":"modules/sub"},
+    {"Key":"test.tests.integration.basic","Dir":"examples/01-basic"},
+    {"Key":"test.tests.integration.fixture","Dir":"tests/fixtures/state"}]'
+  # write_manifest created the example directory again; it keeps its own manifest.
+  write_manifest '[{"Key":"","Dir":"."},{"Key":"this","Dir":"../.."},
+    {"Key":"this.sub","Dir":"../../modules/sub"},{"Key":"local","Dir":"local"}]' "${EX1}"
+}
+
+setup_test_keyed
+export input_examples="true"
+run_step
+assert "Test-keyed: step exits 0" test "${LAST_EXIT}" -eq 0
+assert "Test-keyed: an example reached by a run block is linted once" \
+  test "$(lint_count_for "${EX1}")" -eq 1
+assert "Test-keyed: that one lint is the example's own, as a root, not the root's through a derived manifest" \
+  test "$(lint_block "${EX1}" | grep '^DATADIR ')" = "DATADIR -"
+assert "Test-keyed: a test fixture reached by a run block is still linted" \
+  test "$(lint_count_for "${WORK_DIR}/tests/fixtures/state")" -eq 1
+assert "Test-keyed: root, submodule, fixture, two example roots and one example module" \
+  test "$(lint_invocations)" -eq 6
+
+setup_test_keyed
+run_step
+assert "Test-keyed, examples off: the root lints the example it reaches" \
+  test "$(lint_count_for "${WORK_DIR}/examples/01-basic")" -eq 1
+assert "Test-keyed, examples off: and the fixture" \
+  test "$(lint_count_for "${WORK_DIR}/tests/fixtures/state")" -eq 1
+assert "Test-keyed, examples off: root, submodule, example, fixture" \
+  test "$(lint_invocations)" -eq 4
+
 echo ""
 echo -e "${YELLOW}============================================${NC}"
 echo -e "${YELLOW}            step_lint.sh SUMMARY            ${NC}"
