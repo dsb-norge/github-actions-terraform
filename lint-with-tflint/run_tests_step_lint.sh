@@ -124,8 +124,13 @@ STUB
   export TFLINT_BIN="${stub_dir}/tflint"
 }
 
+# 'set -e -o pipefail' is not decoration: GitHub sources a composite step's
+# script in 'bash --noprofile --norc -e -o pipefail', so a bare test that
+# comes out false ends the step there. Without errexit here the suite passes
+# on code that fails on every real run.
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_lint.sh"
   ) >"${OUT_FILE}" 2>&1
