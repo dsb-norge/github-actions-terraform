@@ -73,6 +73,7 @@ Reporting:
 | [Plan-warnings.md](Plan-warnings.md) | Terraform `Warning:` diagnostics in comments and annotations. |
 | [Notifications.md](Notifications.md) | Microsoft Teams notifications when the default branch needs a person: event kinds, who is named, configuration per landing zone, incident threads and reminders. |
 | [Drift-detection.md](Drift-detection.md) | The scheduled plan read as drift or an unapplied default branch: the stopgap warning, the classification, the fingerprint and the transitions. |
+| [Re-run-attempts.md](Re-run-attempts.md) | What a job reads after a re-run: every artifact one job leaves another named per attempt, and the newest attempt of each read. |
 
 ## Contributor guides
 
