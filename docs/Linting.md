@@ -32,7 +32,10 @@ is deprecated ([Deprecations.md](Deprecations.md)).
 2. **Directories:** the root, then every local module directory its
    `.terraform/modules/modules.json` records (a `Dir` not under `.terraform/`), each linted as a
    root of its own with `--chdir`. A root without a modules file is linted alone. A directory
-   reached through several keys (a module called from two places) is linted once.
+   reached through several keys (a module called from two places) is linted once. When a module
+   repository is linted with its examples, the root's lint leaves out every directory under
+   `examples/`, which is linted as a root of its own (§4); everything else the manifest records,
+   test fixtures included, is linted from the root.
 3. **Preparation:** none for the root. A module directory is linted with `TF_DATA_DIR` pointing at
    a temporary directory that holds a manifest derived from the root's: the entries at and below the
    directory's key, that prefix stripped, every `Dir` made absolute. A directory reached through
@@ -83,6 +86,13 @@ The examples are checked as the CLI checks them. Each `examples/*/` directory ho
 - **linted** by `lint-with-tflint` with `examples: true`: as a root of its own, with the module
   root's config, covering the example directory and the module directories inside it only. The
   module itself, which every example calls through `../..`, is linted once, by the root.
+
+A module root's `terraform init` also installs the modules its test files' run blocks call, and its
+manifest records them under keys such as `test.tests.<file>.<run>`: the examples the tests deploy,
+and fixture directories such as `tests/fixtures/*`. With `examples: true` the root's lint leaves out
+everything under `examples/`, so each example is linted once, as its own root, and keeps linting the
+fixtures (P8). Without `examples`, the root lints everything its manifest records, examples
+included.
 
 Each example's result counts in the job's validate and lint outcomes, so a failing example blocks
 auto-merge like a failing root.
@@ -145,6 +155,7 @@ Afterwards `main/` still holds only its `.tf` files. Run with TFLint 0.61.0 and 
 | P5 | `$?` read in an argument list that also holds a command substitution is the substitution's exit code. | A failing var-file run was recorded as passed: the summary's `$(basename …)` ran after TFLint and reset `$?`. | Each run's exit code is taken on the line after the run (`step_lint.sh`). |
 | P6 | An example has no lock file to start from. | With the plugin cache allowed to break the lock, its init records one platform's checksum and warns of an incomplete lock on every run; without it, no warning. | The example init unsets `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE`. |
 | P7 | A manifest records the root as `"."`. | Joined naively, the root is linted as `<root>/.`. | The root's entry resolves to the root itself. |
+| P8 | A module root's manifest records the modules its test files' run blocks call (`test.<dir>.<file>.<run>`), the examples among them. | With `examples: true` each example was linted twice: by the root, through a derived manifest, and as a root of its own. | With `examples: true` the root's lint leaves out every directory under `examples/`. |
 
 ## 8. Testing
 
@@ -153,8 +164,10 @@ Afterwards `main/` still holds only its `.tf` files. Run with TFLint 0.61.0 and 
   keys and directories, the shortest key for a directory reached twice, the temporary directories
   removed, var-file runs for the root only, a failing var-file run, and module examples (an
   initialised one, one without a manifest, a directory without `.tf` files, and the module not
-  linted again through an example). `run_tests_step_get_config.sh` checks the missing-config
-  message names the CLI.
+  linted again through an example), and a root manifest with run-block entries (each example
+  linted once, as its own root, with `examples`; a test fixture still linted; without `examples`,
+  everything from the root). The suite runs the step under `set -e -o pipefail`, as GitHub does.
+  `run_tests_step_get_config.sh` checks the missing-config message names the CLI.
 - `terraform-init/run_tests_step_init.sh`: the deprecated input ignored, example inits after the
   project into one console file, always `-backend=false`, never with the lock bypass.
 - `terraform-validate/run_tests_step_validate.sh`: example validation and its failure.
