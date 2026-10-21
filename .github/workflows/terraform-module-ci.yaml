@@ -172,6 +172,9 @@ jobs:
       relevance-mode: ${{ steps.create-matrix.outputs.relevance-mode }}
       relevance-reason: ${{ steps.create-matrix.outputs.relevance-reason }}
       affected-count: ${{ steps.create-matrix.outputs.affected-count }}
+      # The relevance artifact's name, its attempt in it: a job that is not re-run keeps its outputs, so
+      # every reader downloads the attempt that made the matrix it runs on (docs/Re-run-attempts.md D4).
+      relevance-artifact: relevance-attempt-${{ github.run_attempt }}
     steps:
       - name: "⬇ Checkout"
         uses: actions/checkout@v7
@@ -188,7 +191,7 @@ jobs:
       - name: "📦 Upload the test decision"
         uses: actions/upload-artifact@v7
         with:
-          name: relevance
+          name: relevance-attempt-${{ github.run_attempt }} # the job output relevance-artifact
           path: ${{ steps.create-matrix.outputs.relevance-file }}
 
   # A refused Dependabot pull request's admission head, and its purge on a later run, posted as the project
@@ -214,7 +217,7 @@ jobs:
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         continue-on-error: true # a missing manifest seeds nothing; the matrix jobs still post their heads
       - name: "📋 Read the head manifest"
@@ -851,14 +854,14 @@ jobs:
           if-no-files-found: ignore
         continue-on-error: true # never fail the job over an upload
 
-      # Uploads the artifact terraform-test-meta-<slug> itself; the summary job reads it.
+      # Uploads the artifact terraform-test-meta-<slug>-attempt-<n> itself; the summary job reads it.
       - name: "📦 Capture and upload test job metadata"
         id: capture-metadata
         if: always()
         uses: dsb-norge/github-actions-terraform/capture-matrix-job-meta@v1
         with:
           entity-name: ${{ matrix.slug }}
-          artifact-name: terraform-test-meta-${{ matrix.slug }}
+          artifact-name: terraform-test-meta-${{ matrix.slug }}-attempt-${{ github.run_attempt }}
           matrix-context-json: ${{ toJSON(matrix) }}
           github-context-json: ${{ toJSON(github) }}
           steps-context-json: ${{ toJSON(steps) }}
@@ -909,15 +912,14 @@ jobs:
         shell: bash
     steps:
       - name: "📥 Download test job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
-          pattern: terraform-test-meta-*
-          merge-multiple: true
+          pattern: terraform-test-meta-* # each test's newest attempt (docs/Re-run-attempts.md D2)
         continue-on-error: true # zero matches is a valid input
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the summary then has no
         # not-run rows.
@@ -1151,7 +1153,7 @@ jobs:
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ needs.create-matrix.outputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
         # A download by name throws when the artifact is missing (P8); the summary then has no relevance line,
         # admission section or auto-merge verdict.

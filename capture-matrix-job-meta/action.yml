@@ -43,7 +43,9 @@ inputs:
       'matrix-job-meta-<entity>', which is what the environment aggregator,
       the run summary and the auto-merge evaluator glob for; a job whose
       metadata must stay out of their input sets a name outside that
-      pattern. May not contain '/', ':', '"', '<', '>', '|', '*', '?', '\'
+      pattern. A job that can be re-run passes a name ending in
+      '-attempt-<run attempt>', so its readers can tell the attempts apart
+      (docs/Re-run-attempts.md). May not contain '/', ':', '"', '<', '>', '|', '*', '?', '\'
       or a line break; such a name fails the step.
     required: false
     default: ""

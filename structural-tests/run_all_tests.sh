@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F32 and the documentation cites them by
+# document missing from the index. They are numbered F2-F33 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -521,7 +521,8 @@ for clause in clauses:
 downloads = 0
 for name, job in jobs.items():
     for step in job.get("steps", []):
-        if str(step.get("uses", "")).startswith("actions/download-artifact") and (step.get("with") or {}).get("name") == "relevance":
+        if str(step.get("uses", "")).startswith("actions/download-artifact") \
+                and (step.get("with") or {}).get("name") == "${{ needs.create-matrix.outputs.relevance-artifact }}":
             downloads += 1
             if step.get("continue-on-error") is not True:
                 problems.append(f"{name}: the relevance download is not continue-on-error")
@@ -664,21 +665,24 @@ names = ["matrix-json", "affected-count", "matrix-stage-1-json", "matrix-stage-2
          "stage-1-count", "stage-2-count", "stage-3-count", "unaffected-count", "relevance-mode", "relevance-reason",
          "changed-count", "tests-matrix-json", "tests-count", "tests-active", "admission-refused", "admission-reason",
          "notify-active", "notify-target-json"]
-if create.get("outputs") != {name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names}:
+# relevance-artifact is the upload's own name, its attempt in it (F33, docs/Re-run-attempts.md D4).
+if create.get("outputs") != {**{name: f"${{{{ steps.create-matrix.outputs.{name} }}}}" for name in names},
+                             "relevance-artifact": "relevance-attempt-${{ github.run_attempt }}"}:
     problems.append(f"create-matrix's outputs are {create.get('outputs')}")
 if create.get("permissions") != {"contents": "read", "pull-requests": "read"}:
     problems.append(f"create-matrix's permissions are {create.get('permissions')}")
 uploads = [s for s in create["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact")]
-if len(uploads) != 1 or uploads[0].get("with") != {"name": "relevance",
+if len(uploads) != 1 or uploads[0].get("with") != {"name": "relevance-attempt-${{ github.run_attempt }}",
                                                    "path": "${{ steps.create-matrix.outputs.relevance-file }}"}:
-    problems.append(f"create-matrix does not upload relevance-file as 'relevance': {uploads}")
+    problems.append(f"create-matrix does not upload relevance-file as its attempt's relevance: {uploads}")
 
 readers = {"pr-comment-aggregator": "aggregate-validation-summaries", "run-summary": "create-run-summary",
            "automerge": "evaluate-automerge-eligibility"}
 for name, job in jobs.items():
     for step in job.get("steps", []):
         with_ = step.get("with") or {}
-        if str(step.get("uses", "")).startswith("actions/download-artifact") and with_.get("name") == "relevance":
+        if str(step.get("uses", "")).startswith("actions/download-artifact") \
+                and with_.get("name") == "${{ needs.create-matrix.outputs.relevance-artifact }}":
             if with_.get("path") != "${{ runner.temp }}/relevance":
                 problems.append(f"{name} downloads the relevance artifact to {with_.get('path')}")
         if "relevance-file" in with_ and with_["relevance-file"] != "${{ runner.temp }}/relevance/relevance.json":
@@ -830,6 +834,8 @@ action = yaml.safe_load(open(os.path.join(os.path.dirname(sys.argv[1]), "..", ".
                              encoding="utf-8"))
 declared = set((action.get("outputs") or {}))
 for name, value in (jobs["create-matrix"].get("outputs") or {}).items():
+    if name == "relevance-artifact":
+        continue  # the relevance upload's own name, held by F33
     match = re.fullmatch(r"\$\{\{ steps\.create-matrix\.outputs\.([a-z0-9-]+) \}\}", str(value))
     if match is None or match.group(1) not in declared:
         problems.append(f"create-matrix's output '{name}' reads an output create-tf-vars-matrix does not declare")
@@ -966,9 +972,8 @@ for clause in ("github.base_ref == github.event.repository.default_branch",
 names = [step.get("id") or step.get("name") for step in automerge["steps"]]
 by_uses = {str(step.get("uses", "")).split("@")[0].rsplit("/", 1)[-1]: step for step in automerge["steps"]}
 downloads = [index for index, step in enumerate(automerge["steps"])
-             if "download-artifact" in str(step.get("uses", ""))
-             and (step.get("with") or {}).get("pattern") == "terraform-test-meta-*"
-             and (step.get("with") or {}).get("merge-multiple") is True]
+             if str(step.get("uses", "")).startswith("dsb-norge/github-actions-terraform/download-newest-attempt@")
+             and (step.get("with") or {}).get("pattern") == "terraform-test-meta-*"]
 evaluator = names.index("evaluate-automerge")
 if not downloads or downloads[0] > evaluator:
     problems.append("the automerge job does not download the test metadata before evaluating")
@@ -2268,6 +2273,7 @@ else:
         "permissions": {"actions": "read", "contents": "read", "pull-requests": "read", "id-token": "write"},
         "with": {"matrix-json": "${{ needs.create-matrix.outputs.matrix-json }}", "stage-results-json": STAGES,
                  "notify-target-json": "${{ needs.create-matrix.outputs.notify-target-json }}",
+                 "relevance-artifact": "${{ needs.create-matrix.outputs.relevance-artifact }}",
                  "runs-on": "${{ inputs.runs-on }}"},
     }
     for key, value in expected.items():
@@ -2397,6 +2403,107 @@ if [[ "${_f32_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f32_out}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F33 — every artifact a job reads is named per run attempt, and read as docs/Re-run-attempts.md §3 says.
+#
+# A re-run keeps the earlier attempts' artifacts, and actions/download-artifact keeps one per name by
+# artifact ID, which is not the newest (P1, P2): a re-run job's report, verdict or notification was
+# built from whichever attempt won. Every upload a job reads ends in -attempt-${{ github.run_attempt }};
+# a pattern is read through download-newest-attempt alone; a name is the uploading job's, from its
+# output. F33_WORKFLOWS (space-separated) points the check at other files.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F33 - every artifact a job reads is named and read per run attempt${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f33_out=$(cd "${_this_script_dir}/.." && F33_WORKFLOWS="${F33_WORKFLOWS:-.github/workflows/terraform-ci-cd-default.yml .github/workflows/terraform-module-ci.yaml .github/workflows/terraform-notify.yml}" python3 - <<'PYEOF2'
+import os, sys, yaml
+
+ATTEMPT = "-attempt-${{ github.run_attempt }}"
+# Read by people only (D8): a person picks the attempt on the run page.
+PEOPLE_ONLY = {"terraform-test-log-${{ matrix.slug }}"}
+# The patterns each workflow reads through download-newest-attempt, and the min-attempt each passes.
+PATTERNS = {"terraform-ci-cd-default.yml": {("matrix-job-meta-*", ""), ("terraform-test-meta-*", "")},
+            "terraform-module-ci.yaml": {("terraform-test-meta-*", "")},
+            "terraform-notify.yml": {("matrix-job-meta-*", ""),
+                                     ("notify-result-*", "${{ needs.decide.outputs.run-attempt }}")}}
+# The names each workflow reads by name: the uploading job's output, never the reader's own attempt.
+NAMES = {"terraform-ci-cd-default.yml": {"${{ needs.create-matrix.outputs.relevance-artifact }}"},
+         "terraform-module-ci.yaml": {"${{ needs.create-matrix.outputs.relevance-artifact }}"},
+         "terraform-notify.yml": {"${{ inputs.relevance-artifact }}",
+                                  "notify-events-attempt-${{ needs.decide.outputs.run-attempt }}"}}
+problems = []
+checked = []
+for path in os.environ["F33_WORKFLOWS"].split():
+    base = os.path.basename(path)
+    with open(path, encoding="utf-8") as fh:
+        jobs = yaml.safe_load(fh)["jobs"]
+    patterns, names = set(), set()
+    for job_name, job in jobs.items():
+        for step in job.get("steps", []):
+            uses, with_ = str(step.get("uses", "")), step.get("with") or {}
+            where = f"{base}: {job_name}: {step.get('name') or step.get('id')!r}"
+            if uses.startswith("actions/upload-artifact@"):
+                name = str(with_.get("name", ""))
+                if name not in PEOPLE_ONLY and not name.endswith(ATTEMPT):
+                    problems.append(f"{where} uploads {name!r}, not named per attempt")
+            elif uses.startswith("dsb-norge/github-actions-terraform/capture-matrix-job-meta@"):
+                if not str(with_.get("artifact-name", "")).endswith(ATTEMPT):
+                    problems.append(f"{where} names its metadata {with_.get('artifact-name')!r}, not per attempt")
+            elif uses.startswith("actions/download-artifact@"):
+                if "pattern" in with_ or "name" not in with_:
+                    problems.append(f"{where} downloads without a name; a pattern is read through download-newest-attempt")
+                else:
+                    names.add(str(with_["name"]))
+            elif uses.startswith("dsb-norge/github-actions-terraform/download-newest-attempt@"):
+                patterns.add((str(with_.get("pattern", "")), str(with_.get("min-attempt", ""))))
+    if patterns != PATTERNS.get(base, set()):
+        problems.append(f"{base} reads the patterns {sorted(patterns)}, expected {sorted(PATTERNS.get(base, set()))}")
+    if names != NAMES.get(base, set()):
+        problems.append(f"{base} reads the names {sorted(names)}, expected {sorted(NAMES.get(base, set()))}")
+    if base in ("terraform-ci-cd-default.yml", "terraform-module-ci.yaml"):
+        create = jobs["create-matrix"]
+        uploaded = [s.get("with", {}).get("name") for s in create["steps"]
+                    if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+        if uploaded != ["relevance" + ATTEMPT] or \
+                create.get("outputs", {}).get("relevance-artifact") != "relevance" + ATTEMPT:
+            problems.append(f"{base}: create-matrix does not upload relevance{ATTEMPT} and publish that name")
+    if base == "terraform-ci-cd-default.yml":
+        given = (jobs["notify"].get("with") or {}).get("relevance-artifact")
+        if given != "${{ needs.create-matrix.outputs.relevance-artifact }}":
+            problems.append(f"{base}: the notify job is given relevance-artifact {given!r}")
+    if base == "terraform-notify.yml":
+        with open(path, encoding="utf-8") as fh:
+            declared = yaml.safe_load(fh)[True]["workflow_call"]["inputs"].get("relevance-artifact")
+        if declared != {"type": "string", "required": True, "description": declared and declared.get("description")} \
+                or not (declared or {}).get("description"):
+            problems.append(f"{base}: the input relevance-artifact is {declared!r}, expected a required string")
+        decide = jobs["decide"]
+        uploaded = [s.get("with", {}).get("name") for s in decide["steps"]
+                    if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+        if uploaded != ["notify-events" + ATTEMPT] or \
+                decide.get("outputs", {}).get("run-attempt") != "${{ github.run_attempt }}":
+            problems.append(f"{base}: decide does not upload notify-events{ATTEMPT} and publish run-attempt")
+        writes = [s for s in jobs["deliver"]["steps"] if "notify-result" in str(s.get("run", ""))]
+        if len(writes) != 1 or '/notify-result-${EVENT_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"' not in writes[0]["run"]:
+            problems.append(f"{base}: deliver does not name its answer file per attempt")
+    checked.append(base)
+print(f"checked the artifacts of {', '.join(checked)}")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems else 0)
+PYEOF2
+) && _f33_rc=0 || _f33_rc=$?
+if [[ "${_f33_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f33_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f33_out}"
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

@@ -303,9 +303,9 @@ A command, `decide-notifications`, runs after the environments, as `evaluate-aut
 
 | Input | From |
 |---|---|
-| `--metadata-files-pattern` | a glob over the downloaded `matrix-job-meta-*.json` files |
+| `--metadata-files-pattern` | a glob over the downloaded `matrix-job-meta-*.json` files, each environment's newest attempt ([Re-run-attempts.md](Re-run-attempts.md)) |
 | `--matrix-file` | `create-matrix`'s `matrix-json`: every relevant environment's row, held-back ones included |
-| `--relevance-file` | the `relevance` artifact: the environments' stages, and `notify` (§7) with the target, the senders and the deliver jobs' runner |
+| `--relevance-file` | the relevance artifact: the environments' stages, and `notify` (§7) with the target, the senders and the deliver jobs' runner |
 | `--stage-results-file` | `stage-results-json`, as the auto-merge job builds it |
 | `--state-file` | the state restored from the cache (§9); a file that does not exist means none |
 | `--out-dir` | where it writes its files |
@@ -374,17 +374,21 @@ engine's coverage and mutation gates (`notify_decide.py`, `notify_state.py`); th
 ## 8. The workflow
 
 `terraform-notify.yml` is `on: workflow_call` with the inputs `matrix-json`, `stage-results-json`,
-`notify-target-json` and `runs-on`, and three jobs. Every job has job-level
+`notify-target-json`, `relevance-artifact` (the name `create-matrix`'s attempt uploaded
+`relevance.json` under) and `runs-on`, and three jobs. Every artifact one job leaves another is
+named per run attempt, so a re-run reads what its own attempt decided and what the jobs it re-ran
+did ([Re-run-attempts.md](Re-run-attempts.md)). Every job has job-level
 `continue-on-error: true` and `timeout-minutes: 10`; structural test F32 holds each of them.
 
 **`decide`**, `if: always()`, on `runs-on`,
-`permissions: { actions: read, contents: read, pull-requests: read }`: downloads the metadata and
-the relevance artifact as the auto-merge job does, restores the state (§9), mints the identity
+`permissions: { actions: read, contents: read, pull-requests: read }`: downloads each environment's
+newest metadata through [`download-newest-attempt`](../download-newest-attempt/action.yml) and the
+relevance artifact by `relevance-artifact`, restores the state (§9), mints the identity
 App's token when `TF_NOTIFY_IDENTITY_APP_ID` is set (§6.1), runs `decide-notifications` (the two
 JSON inputs read and written again with `toJSON(fromJSON(…))`, so what its run block captures is
 JSON by construction, F9; the token and `TF_NOTIFY_PEOPLE_DOMAINS` as `identity-token` and
-`people-domains`), and uploads `--out-dir` as the `notify-events` artifact. No other step sees the
-token.
+`people-domains`), and uploads `--out-dir` as the artifact `notify-events-attempt-<n>`, its
+attempt also its output `run-attempt`. No other step sees the token.
 
 **`deliver`**, `if: always() && needs.decide.outputs.deliver-count != '' && … != '0'` (the count is
 set only by a decide job that finished, and an empty matrix fails, P9), a matrix over the decide
@@ -392,7 +396,8 @@ job's rows with `fail-fast: false`, one job per message, on the row's `runs-on`,
 `environment: { name: <row's github-environment>, deployment: false }`,
 `permissions: { id-token: write }`:
 
-1. Download `notify-events`.
+1. Download `notify-events-attempt-<decide's run-attempt>`: the decide job's events, also when only
+   this job is re-run.
 2. Export the row's `extra-envs` and `extra-envs-from-secrets` with
    [`export-env-vars`](../export-env-vars/action.yml) and the secrets: the sender's
    `ARM_TENANT_ID` and `ARM_CLIENT_ID`, resolved as its own job resolves them, and nothing else.
@@ -401,12 +406,14 @@ job's rows with `fail-fast: false`, one job per message, on the row's `runs-on`,
 4. Post `events/<id>.md` with `post-teams-notification` (§11), to the row's alias, with its
    `reply-to`, `update` and idempotency key.
 5. Write the relay's answer, `{id, accepted, message_id, http_status}`, and upload it as
-   `notify-result-<id>`, whatever happened before.
+   `notify-result-<id>-attempt-<n>`, in a file of that name, whatever happened before.
 
 **`record`**, `needs: [decide, deliver]`, `if: always() && needs.decide.outputs.deliver-count != ''`,
 on `runs-on`, `permissions: {}`,
 `concurrency: { group: tf-notify-state, cancel-in-progress: false, queue: max }` (a group otherwise
-holds one waiting job and cancels the one before it): downloads the events and the answers, restores
+holds one waiting job and cancels the one before it): downloads the events as the deliver job does
+and each event's newest answer through `download-newest-attempt` with `min-attempt` the decide job's
+`run-attempt`, since event IDs restart at `e1` in every decide job, restores
 the newest state under the lock, runs `record-notifications` through the action
 [`record-notifications`](../record-notifications/action.yml), which merges the observations and the
 answers into it (§9) and lists every delivery that was not accepted in the step summary, and saves the
@@ -425,6 +432,7 @@ The default workflow calls it as one job:
       matrix-json: ${{ needs.create-matrix.outputs.matrix-json }}
       stage-results-json: '{"1": "${{ needs.terraform-ci-cd.result }}", "2": …, "3": …}'
       notify-target-json: ${{ needs.create-matrix.outputs.notify-target-json }}
+      relevance-artifact: ${{ needs.create-matrix.outputs.relevance-artifact }}
       runs-on: ${{ inputs.runs-on }}
 ```
 
@@ -438,7 +446,8 @@ and `create-matrix` hands the engine the target from the variables:
 `always()` and not `!cancelled()`: a cancelled run is exactly when `apply-cancelled` must go out.
 `notify` waits for the stages only; it needs the tests and the conclusion once the run-level kinds
 of D17 arrive. Structural test F31 holds `create-matrix`'s target and outputs, `notify`'s `needs`,
-`if`, permissions and inputs, and that no job needs `notify`.
+`if`, permissions and inputs, and that no job needs `notify`; F33 holds the artifacts' names and
+how each is read.
 
 ## 9. Incident state
 
@@ -711,6 +720,7 @@ A minor release.
 | P13 | GitHub's documentation says organisation Members read reads SAML identities; an installation token with Members read alone is refused. | `Resource not accessible by integration (organization.samlIdentityProvider)` on every lookup. | Organization administration read (D21), verified with the identity App. |
 | P14 | Relay 2.2.0 recorded a post Teams throttled (429) as delivered, and posted a send or an update Teams refused into the channel as an error message; Teams refuses an update now and then (404). | A missing message; `UpdateActivity operation returned an invalid status code '(404) NotFound'` posted in the channel. | Relay 2.2.1 or later (§14), which retries both: a throttled post about two seconds later, a refused update about 30 seconds later. |
 | P15 | An update of a first message someone deleted in Teams is refused (403) every time. | The relay's poison alert after five attempts, for the incident's close-update. | Accepted: the update is not recorded, so the state does not depend on it (§9). |
+| P16 | The attempts of a run share their artifacts, and `actions/download-artifact` keeps one per name by the highest artifact ID, which is not the newest ([Re-run-attempts.md](Re-run-attempts.md) P1, P2). | An apply that failed and then succeeded on "Re-run failed jobs" told Teams *Apply failed again*, and the incident stayed open (D8): the decide job had read the environment's metadata from the first attempt. | Every artifact named per attempt; the newest attempt of each environment read ([Re-run-attempts.md](Re-run-attempts.md)). |
 
 ## 19. Tests
 

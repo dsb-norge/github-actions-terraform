@@ -193,8 +193,10 @@ The comment model is [Workflow-pr-comments.md](Workflow-pr-comments.md).
   who dispatched what, with which goal and reason; an ordering bypass, or an environment that
   applied without its dependency in the run; a tolerated failing test on an auto-merged pull
   request.
-- New artifacts: `relevance` (every environment's verdict, no file lists), and per test file
-  `terraform-test-log-<slug>` and `terraform-test-meta-<slug>`.
+- New artifacts: `relevance-attempt-<n>` (every environment's verdict, no file lists), and per test
+  file `terraform-test-log-<slug>` and `terraform-test-meta-<slug>-attempt-<n>`; `<n>` is the run
+  attempt that uploaded it, as in `matrix-job-meta-<environment>-attempt-<n>`
+  ([Re-run-attempts.md](Re-run-attempts.md)).
 
 ### 6.4 GitHub Environments, concurrency and deployments
 

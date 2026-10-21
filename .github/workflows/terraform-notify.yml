@@ -21,6 +21,10 @@ on:
         type: string
         required: true
         description: create-matrix's notify-target-json, the checked relay target.
+      relevance-artifact:
+        type: string
+        required: true
+        description: create-matrix's relevance-artifact, the name its attempt uploaded relevance.json under.
       runs-on:
         type: string
         required: false
@@ -44,18 +48,22 @@ jobs:
     outputs:
       deliver-matrix-json: ${{ steps.decide.outputs.deliver-matrix-json }}
       deliver-count: ${{ steps.decide.outputs.deliver-count }}
+      # The attempt that decided: its events are the ones delivered and recorded, also when only the deliver
+      # or record jobs are re-run (docs/Re-run-attempts.md D4, D7).
+      run-attempt: ${{ github.run_attempt }}
     steps:
+      # Each environment's newest attempt: after "Re-run failed jobs", the re-run ones' and the others'
+      # earlier ones (docs/Re-run-attempts.md D2). A re-run apply must close its incident (D8).
       - name: "📥 Download matrix job metadata"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
           pattern: matrix-job-meta-*
-          merge-multiple: true
         # No artifacts (no environment job ran) is a valid input: the stage results decide.
         continue-on-error: true
       - name: "📥 Download the relevance decision"
         uses: actions/download-artifact@v8
         with:
-          name: relevance
+          name: ${{ inputs.relevance-artifact }}
           path: ${{ runner.temp }}/relevance
       # The path is part of a cache entry's version, so every job names it alike, relative to the workspace.
       - name: "📥 Restore the incident state"
@@ -93,7 +101,7 @@ jobs:
       - name: "📦 Upload the events"
         uses: actions/upload-artifact@v7
         with:
-          name: notify-events
+          name: notify-events-attempt-${{ github.run_attempt }} # the job output run-attempt
           path: ${{ runner.temp }}/notify
           if-no-files-found: error
 
@@ -122,7 +130,7 @@ jobs:
       - name: "📥 Download the events"
         uses: actions/download-artifact@v8
         with:
-          name: notify-events
+          name: notify-events-attempt-${{ needs.decide.outputs.run-attempt }}
           path: ${{ runner.temp }}/notify
       # The sender's ARM_TENANT_ID and ARM_CLIENT_ID and nothing else: the row holds no other
       # variable, and the secrets bag yields only the secrets those two name (D20).
@@ -163,16 +171,19 @@ jobs:
           HTTP_STATUS: ${{ steps.post.outputs.http-status }}
         run: |
           # Write the relay's answer for the record job; no answer at all reads as not accepted
+          #
+          # The file is named per attempt, as its artifact: an answer of a re-run deliver job lands beside the
+          # earlier attempt's, and the record job reads the newest (docs/Re-run-attempts.md D1).
           mkdir -p "${RUNNER_TEMP}/notify-result"
           jq -n --arg id "${EVENT_ID}" --arg accepted "${ACCEPTED:-false}" --arg message_id "${MESSAGE_ID}" \
             --arg http_status "${HTTP_STATUS:-000}" \
             '{id: $id, accepted: $accepted, message_id: $message_id, http_status: $http_status}' \
-            >"${RUNNER_TEMP}/notify-result/notify-result-${EVENT_ID}.json"
+            >"${RUNNER_TEMP}/notify-result/notify-result-${EVENT_ID}-attempt-${GITHUB_RUN_ATTEMPT}.json"
       - name: "📦 Upload the relay's answer"
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: notify-result-${{ matrix.id }}
+          name: notify-result-${{ matrix.id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/notify-result
 
   record:
@@ -195,14 +206,16 @@ jobs:
       - name: "📥 Download the events"
         uses: actions/download-artifact@v8
         with:
-          name: notify-events
+          name: notify-events-attempt-${{ needs.decide.outputs.run-attempt }}
           path: ${{ runner.temp }}/notify
+      # Each event's newest answer, from the deliver jobs of this decide job's attempt on: event IDs restart at
+      # e1 in every decide job, so an earlier one's answers are about other messages (docs/Re-run-attempts.md D7).
       - name: "📥 Download the relay's answers"
-        uses: actions/download-artifact@v8
+        uses: dsb-norge/github-actions-terraform/download-newest-attempt@v1
         with:
           pattern: notify-result-*
           path: ${{ runner.temp }}/notify-results
-          merge-multiple: true
+          min-attempt: ${{ needs.decide.outputs.run-attempt }}
         # No answers (nothing was delivered) is a valid input.
         continue-on-error: true
       # Under the lock, so the state merged into is the newest any run saved.
