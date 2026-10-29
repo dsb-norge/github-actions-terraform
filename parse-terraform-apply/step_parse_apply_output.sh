@@ -109,9 +109,12 @@ function main {
 
     # Only the console ABOVE the Outputs section can hold the summary line;
     # first match wins. See the file header for why both restrictions exist.
+    # One awk and no pipeline: a failed apply has no summary line, and a grep
+    # that selects nothing exits 1, which under the shim's 'bash -e -o
+    # pipefail' ended the step before it could report '?' (P40).
     local summary_line
-    summary_line=$(awk '/^Outputs:$/ {exit} {print}' "${input_apply_console_file}" \
-      | grep -E '^(Apply|Destroy) complete! Resources: ' | head -n1)
+    summary_line=$(awk '/^Outputs:$/ {exit} /^(Apply|Destroy) complete! Resources: / {print; exit}' \
+      "${input_apply_console_file}")
 
     # The resources group ends at its first full stop; whatever follows (the
     # 1.14+ 'Actions:' sentence) is not a resource count.

@@ -39,7 +39,10 @@ run_step() {
   export RUNNER_TEMP=$(mktemp -d)
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   export GITHUB_WORKSPACE="${_this_script_dir}"
+  # 'set -e -o pipefail' as GitHub sources the step: without it, a grep that
+  # selected nothing passed here and ended the step on every failed apply (P40).
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_parse_apply_output.sh"
   ) > "${_test_output}" 2>&1
