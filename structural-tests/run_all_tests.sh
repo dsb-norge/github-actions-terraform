@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F33 and the documentation cites them by
+# document missing from the index. They are numbered F2-F34 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -2529,6 +2529,73 @@ if [[ "${_f33_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f33_out}"
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F34 — every suite runs its step the way GitHub does, under errexit and pipefail.
+#
+# GitHub sources a composite step's script in 'bash --noprofile --norc -e -o pipefail', so a
+# command that fails outside a condition ends the step there. A suite that sources the step without
+# those flags passes on code that fails on every real run: the apply parser exited 1 with no outputs
+# on every failed apply while its suite passed each failed-apply fixture (Apply-and-destroy-reporting.md
+# P40), and the metadata capture failed on a null context behind three green cases. Each `source` of
+# a step script sits in a subshell that sets both flags before it; a step run with `bash` is given
+# them on its command line (docs/Action-implementation-guide.md, the test runner template).
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F34 - every suite runs its step under errexit and pipefail${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f34_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, os, re, sys
+
+FLAGS = re.compile(r"\bset -(?:eo|e -o) pipefail\b")
+SOURCED = re.compile(r"^\s*(?:\(\s*)?(?:set [^;]*;\s*)*source\s+\"[^\"]*/step_\w+\.sh\"")
+RUN = re.compile(r"^\s*bash\b([^\"]*)\"[^\"]*/step\w*\.sh\"")
+OPENS = re.compile(r"^\s*\(")
+# A subshell opens on a line of its own or at the end of one (output=$( ( ...).
+OPENER = re.compile(r"^\s*\(|\(\s*$")
+files = sorted(f for f in glob.glob('*/run_all_tests.sh') + glob.glob('*/run_tests_*.sh')
+               if os.path.isfile(os.path.join(os.path.dirname(f), 'action.yml')))
+problems = []
+calls = 0
+for path in files:
+    with open(path, encoding='utf-8') as fh:
+        lines = fh.read().splitlines()
+    for number, line in enumerate(lines, 1):
+        run = RUN.match(line)
+        if run:
+            calls += 1
+            if not re.search(r"(?:^|\s)-(?:eo|e -o) pipefail\b", run.group(1)):
+                problems.append(f"{path}:{number} runs the step without -e -o pipefail: {line.strip()[:100]}")
+            continue
+        if not SOURCED.match(line):
+            continue
+        calls += 1
+        if OPENS.match(line):
+            if not FLAGS.search(line.split('source', 1)[0]):
+                problems.append(f"{path}:{number} sources the step without 'set -e -o pipefail' first: {line.strip()[:100]}")
+            continue
+        # The subshell this source sits in: back to the line that opens it.
+        opener = next((n for n in range(number - 2, -1, -1) if OPENER.search(lines[n])), None)
+        if opener is None:
+            problems.append(f"{path}:{number} sources the step outside a subshell")
+        elif not any(FLAGS.search(l) and not l.lstrip().startswith('#') for l in lines[opener:number - 1]):
+            problems.append(f"{path}:{number} sources the step in a subshell that does not set -e -o pipefail first")
+print(f"checked {calls} step invocation(s) in {len(files)} suite script(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems or not calls else 0)
+PYEOF
+) && _f34_rc=0 || _f34_rc=$?
+if [[ "${_f34_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f34_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f34_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 

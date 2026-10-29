@@ -171,6 +171,7 @@ run_test() {
   # omits it (see the shim comment); the harness matches production.
   local exit_code
   (
+    set -e -o pipefail
     source "${_this_script_dir}/step_create_validation_summary.sh"
   ) > "${_test_output}" 2>&1
   exit_code=$?
@@ -2141,7 +2142,7 @@ test_c16_suffix_isolation() {
     export RUNNER_TEMP="${shared_tmp}"
     export GITHUB_ACTION_PATH="${_this_script_dir}"
     export GITHUB_WORKSPACE="${_this_script_dir}"
-    ( source "${_this_script_dir}/step_create_validation_summary.sh" ) > "${_test_output}" 2>&1 || { echo "  invocation '${sfx}' failed"; rm -rf "${shared_tmp}"; return 1; }
+    ( set -e -o pipefail; source "${_this_script_dir}/step_create_validation_summary.sh" ) > "${_test_output}" 2>&1 || { echo "  invocation '${sfx}' failed"; rm -rf "${shared_tmp}"; return 1; }
     rm -f "${GITHUB_OUTPUT}"
   done
   local fails=""
@@ -2222,7 +2223,7 @@ _capture_plan_only_head() {
   export input_plan_count_total="1"; export input_plan_time="0:04"
   export GITHUB_OUTPUT=$(mktemp); export RUNNER_TEMP=$(mktemp -d)
   export GITHUB_ACTION_PATH="${_this_script_dir}"; export GITHUB_WORKSPACE="${_this_script_dir}"
-  ( source "${_this_script_dir}/step_create_validation_summary.sh" ) >/dev/null 2>&1
+  ( set -e -o pipefail; source "${_this_script_dir}/step_create_validation_summary.sh" ) >/dev/null 2>&1
   cat "$(get_output head-summary-file)"
   rm -f "${GITHUB_OUTPUT}"; rm -rf "${RUNNER_TEMP}"
 }

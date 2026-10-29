@@ -27,6 +27,7 @@ run_step() {
   export GITHUB_OUTPUT=$(mktemp)
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   (
+    set -e -o pipefail
     export HOME="${home}" RUNNER_OS="${os}" RUNNER_ARCH="${arch}"
     set -o allexport
     source "${_this_script_dir}/step_setup_plugin_cache.sh"

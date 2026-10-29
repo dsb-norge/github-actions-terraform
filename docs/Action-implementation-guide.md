@@ -159,7 +159,7 @@ _main_exit_code=$?
 exit ${_main_exit_code}
 ```
 
-> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell. A "sourced or executed" branch that `return`s when sourced is not needed and not wanted: F23 in `structural-tests/run_all_tests.sh` fails on a step script that does not end with an `exit` line or that returns at the top level.
+> **Why only `exit` (no `return`)?** In GitHub Actions, `shell: bash` runs with `bash --noprofile --norc -eo pipefail {0}`, meaning the runner automatically fails the step on any non-zero exit code. Because the script is `source`d (not subshelled), `exit` terminates the entire bash process — lines after `source` in the YAML shim are never reached. This is why the shim does not need to capture the exit code. When run locally (via `run_local_step_*.sh` or `run_all_tests.sh`), the scripts run in a **subshell** `( source ... )`, so `exit` terminates only the subshell; a suite sets `-e -o pipefail` in that subshell first, so the step runs as it does on the runner (F34). A "sourced or executed" branch that `return`s when sourced is not needed and not wanted: F23 in `structural-tests/run_all_tests.sh` fails on a step script that does not end with an `exit` line or that returns at the top level.
 
 ### Key conventions
 
@@ -521,8 +521,9 @@ run_test() {
   export GITHUB_ACTION_PATH="${_this_script_dir}"
   # ... set other GITHUB_* variables
 
-  # Run step in a subshell
+  # Run step in a subshell, under the flags GitHub sources it with (F34)
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_<name>.sh"
   ) > "${_test_output}" 2>&1
@@ -583,6 +584,7 @@ fi
 ### Test design guidelines
 
 - **Each test runs in a subshell** — prevents state leakage between tests.
+- **The subshell sets `-e -o pipefail` before it sources the step**, because GitHub sources a composite step's script in `bash --noprofile --norc -e -o pipefail`. Without them a command that fails outside a condition, a `grep` that selects nothing in a pipeline, say, carries on in the suite and ends the step on the runner: the apply parser failed every failed apply that way while its failed-apply fixtures passed ([Apply-and-destroy-reporting.md P40](Apply-and-destroy-reporting.md)). A step run with `bash` instead of `source` gets them on its command line. F34 in `structural-tests/run_all_tests.sh` fails on a suite that runs its step without them.
 - **Redirect stdout/stderr to a file** — show output only on failure to keep the summary clean.
 - **Assert on `$GITHUB_OUTPUT` contents** or on output files, not on log messages.
 - **Provide both `run_test` (assert output) and `run_error_test` (assert failure)** functions.
@@ -840,7 +842,7 @@ Use this checklist when creating or converting an action:
 - [ ] Each step has a `run_local_step_<name>.sh` with realistic test data
 - [ ] Multi-step actions keep their tests in `run_all_tests.sh` or in `run_tests_step_<name>.sh` per step, orchestrated by `run_all_tests.sh`
 - [ ] `run_all_tests.sh` covers happy path, edge cases, and error conditions
-- [ ] Tests run in subshells and assert on `$GITHUB_OUTPUT` or exit codes
+- [ ] Tests run in subshells under `set -e -o pipefail` (F34) and assert on `$GITHUB_OUTPUT` or exit codes
 - [ ] `run_all_tests.sh` exits with code 1 on any failure
 - [ ] All scripts have the `#!/bin/env bash` shebang
 - [ ] `helpers_additional.sh` only contains production code used by `step_<name>.sh` scripts

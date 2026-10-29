@@ -99,6 +99,7 @@ STUB
 
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_fmt.sh"
   ) >"${OUT_FILE}" 2>&1

@@ -64,6 +64,7 @@ run_test() {
   # Run step in a subshell
   local exit_code
   (
+    set -e -o pipefail
     set -o allexport
     source "${action_dir}/step_parse_plan_output.sh"
   ) > "${_test_output}" 2>&1
@@ -639,6 +640,7 @@ run_class_test() {
   if [ -n "${json_file}" ]; then export input_plan_json_file="${json_file}"; else unset input_plan_json_file; fi
   local exit_code
   (
+    set -e -o pipefail
     set -o allexport
     source "${action_dir}/step_parse_plan_output.sh"
   ) >"${_test_output}" 2>&1
