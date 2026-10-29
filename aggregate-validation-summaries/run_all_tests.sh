@@ -1590,7 +1590,7 @@ JSON
     export input_status_apply=success input_apply_completed=true input_apply_count_add=1 input_apply_count_change=0 input_apply_count_destroy=0 input_apply_time="1:07" input_apply_warning_count=1
     export input_status_destroy_plan=success input_destroy_plan_count_add=0 input_destroy_plan_count_change=0 input_destroy_plan_count_destroy=1 input_destroy_plan_time="0:31" input_destroy_plan_warning_count=1
     export input_status_destroy=success input_destroy_completed=true input_destroy_count_destroy=1 input_destroy_time="0:44" input_destroy_warning_count=1
-    ( source "${cvs}/step_create_validation_summary.sh" ) >/dev/null 2>&1
+    ( set -e -o pipefail; source "${cvs}/step_create_validation_summary.sh" ) >/dev/null 2>&1
     grep -oE '^\| <span title="[^"]+">' "$(grep '^head-summary-file=' "${GITHUB_OUTPUT}" | cut -d= -f2-)" | sed -E 's/^\| <span title="([^"]+)">/\1/' | sort -u
   )
   [ -n "${per_env_labels}" ] || { echo "per-env head rendered no rows — check create-validation-summary inputs"; return 1; }

@@ -43,6 +43,7 @@ make_config() {
 
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_get_config.sh"
   ) >"${OUT_FILE}" 2>&1

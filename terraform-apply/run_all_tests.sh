@@ -102,6 +102,7 @@ argn() { sed -n "$((${1} + 1))p" "${MOCK_TF_ARGS_FILE}"; }
 
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_apply.sh"
   ) >"${OUT_FILE}" 2>&1
@@ -667,6 +668,7 @@ install_stub_old_jq
 record_env
 use_extra_envs '{"GOMEMLIMIT":"12GiB","GOGC":25}'
 (
+  set -e -o pipefail
   PATH="${OLD_JQ_PATH}:${PATH}"
   set -o allexport
   source "${_this_script_dir}/step_apply.sh"

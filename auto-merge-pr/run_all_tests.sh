@@ -150,6 +150,7 @@ run_test() {
   local actual_exit_code=0
   local output=""
   output=$( (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_auto_merge_pr.sh"
   ) 2>&1) || actual_exit_code=$?

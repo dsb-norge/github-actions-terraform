@@ -157,6 +157,7 @@ run_step() {
   local captured
   captured=$(printf '%s' "${matrix_json}" | jq -Rs '.')
   (
+    set -e -o pipefail
     input_tests_matrix_json="${captured}"
     set -o allexport
     source "${_this_script_dir}/step_summary.sh"

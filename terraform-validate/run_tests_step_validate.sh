@@ -64,6 +64,7 @@ STUB
 
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_validate.sh"
   ) >"${_test_output}" 2>&1

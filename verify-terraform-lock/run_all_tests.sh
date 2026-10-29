@@ -122,6 +122,7 @@ EOF
 # Captures combined stdout/stderr into "${_test_output}".
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_verify_lock.sh"
   ) >"${_test_output}" 2>&1

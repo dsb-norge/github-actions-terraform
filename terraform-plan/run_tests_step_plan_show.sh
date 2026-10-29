@@ -61,6 +61,7 @@ STUB
 
 run_step() {
   (
+    set -e -o pipefail
     set -o allexport
     source "${_this_script_dir}/step_plan_show.sh"
   ) >"${_test_output}" 2>&1
@@ -126,8 +127,11 @@ install_stub_terraform
 export MOCK_TF_EXIT=1
 export MOCK_TF_STDOUT="Error rendering plan"
 run_step
-assert "Step still exits 0 when terraform show fails (continue-on-error semantics)" \
-  test "${LAST_EXIT}" -eq 0
+# The pipe into tee fails under the runner's pipefail, and errexit ends the
+# step there, as it always has on the runner; the action's continue-on-error
+# carries on. The suite asserted exit 0 while it ran the step without errexit.
+assert "Step fails when terraform show fails (the action's continue-on-error carries on)" \
+  test "${LAST_EXIT}" -ne 0
 txt_file="$(get_output tf-plan-txt-output-file)"
 assert "txt output file path still published on failure" \
   test -n "${txt_file}"
