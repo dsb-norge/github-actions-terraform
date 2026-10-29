@@ -29,7 +29,9 @@ source "${GITHUB_ACTION_PATH}/helpers.sh"
 # Safely parse JSON, returns empty object if invalid/empty
 function safe_parse_json {
   local json_input="${1:-}"
-  local default="${2:-{}}"
+  # Not "${2:-{}}": bash ends that expansion at the first '}' and appends the
+  # second, so the default read '{}}' and jq failed on it.
+  local default="${2}"
 
   if [[ -z "${json_input}" || "${json_input}" == "null" ]]; then
     echo "${default}"

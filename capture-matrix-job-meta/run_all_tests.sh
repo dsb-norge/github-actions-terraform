@@ -58,8 +58,10 @@ run_test() {
   # shell-locals precisely so they never reach envp (see the shim's
   # comment on the production E2BIG incident). A harness that exported
   # them would E2BIG the step's own jq on the oversize fixtures below and
-  # test the harness, not the cap.
+  # test the harness, not the cap. 'set -e -o pipefail' as GitHub sources
+  # the step: without it a jq that failed after printing passed here.
   (
+    set -e -o pipefail
     source "${_this_script_dir}/step_capture.sh"
   ) > "${_test_output}" 2>&1
   local exit_code=$?
@@ -333,6 +335,7 @@ run_naming_test() {
   export GITHUB_ACTION_PATH="${_this_script_dir}"
 
   (
+    set -e -o pipefail
     source "${_this_script_dir}/step_capture.sh"
   ) > "${_test_output}" 2>&1
   local exit_code=$?
@@ -442,7 +445,7 @@ TESTS_RUN=$((TESTS_RUN + 1))
 echo ""
 echo -e "${BLUE}TEST ${TESTS_RUN}: names: neither name gives matching unknown-XXXXXX file and artifact names${NC}"
 export GITHUB_OUTPUT=$(mktemp) RUNNER_TEMP=$(mktemp -d) GITHUB_ACTION_PATH="${_this_script_dir}"
-( source "${_this_script_dir}/step_capture.sh" ) > "${_test_output}" 2>&1
+( set -e -o pipefail; source "${_this_script_dir}/step_capture.sh" ) > "${_test_output}" 2>&1
 _rc=$?
 _file=$(grep "^result-json-file=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
 _art=$(grep "^artifact-name=" "${GITHUB_OUTPUT}" | cut -d= -f2-)
