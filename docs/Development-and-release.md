@@ -74,6 +74,9 @@ second account, is recorded in the spec as covered by tests only.
 
 The actions the workflows use are kept on their latest major version, and a bump needs no separate
 decision. The few pinned by commit carry their version in a comment and are bumped the same way.
+An action used inside a composite action is always pinned by commit, with its version in a comment:
+its steps run in the caller's job, with the caller's credentials, and a caller that pins this
+repository by commit would otherwise still run whatever the tag points at (structural test F35).
 After a bump, a test-bed run's logs are checked for deprecation warnings
 ([Testing-in-ci.md §12.2](Testing-in-ci.md)).
 

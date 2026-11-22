@@ -4,7 +4,7 @@
 # action, so no action's suite owns them. Each reads the workflows, the actions, the engine or the
 # documentation as text or YAML and fails on drift: a step id the evaluator reads that the workflow
 # no longer defines, a heredoc capture that is not JSON, the three stage jobs growing apart, a
-# document missing from the index. They are numbered F2-F34 and the documentation cites them by
+# document missing from the index. They are numbered F2-F35 and the documentation cites them by
 # number; a new one takes the next number.
 #
 
@@ -2596,6 +2596,73 @@ if [[ "${_f34_rc}" -eq 0 ]]; then
 else
   echo -e "${RED}✗ FAILED${NC}:"
   echo "${_f34_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
+  TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# ============================================================================
+# F35 — every action a composite action uses is pinned by commit, with its version in a comment.
+#
+# A composite action's steps run inside the caller's job, with the caller's token and credentials,
+# and a caller that pins this repository by commit still runs whatever a tag inside it points at
+# when the job starts: the caller's own pin checks read only its own files. So an action used inside
+# a composite action is pinned by its full commit SHA, its release in a comment on the same line
+# (docs/Development-and-release.md, "Keeping actions current"); a local action (./...) is this
+# repository's own. The reusable workflows keep their own rule, the latest major.
+# ============================================================================
+TESTS_RUN=$((TESTS_RUN + 1))
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}TEST ${TESTS_RUN}: F35 - a composite action pins every action it uses by commit${NC}"
+echo -e "${BLUE}========================================${NC}"
+_f35_out=$(cd "${_this_script_dir}/.." && python3 - <<'PYEOF'
+import glob, re, sys
+
+USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
+PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}$")
+VERSION = re.compile(r"^\s*#\s*v\d+(?:\.\d+)*\s*$")
+
+def problems_in(path, lines):
+    found, problems = 0, []
+    for number, line in enumerate(lines, 1):
+        match = USES.match(line)
+        if not match or match.group(1).startswith("./"):
+            continue
+        found += 1
+        ref, rest = match.groups()
+        if not PINNED.match(ref):
+            problems.append(f"{path}:{number} uses {ref} by tag or branch, not by commit")
+        elif not VERSION.match(rest):
+            problems.append(f"{path}:{number} pins {ref} without its version in a comment ('# vX.Y.Z')")
+    return found, problems
+
+# The check itself: a tag, a commit without its version, a commit with one and a local action.
+_, own = problems_in("self-test", ["      uses: actions/cache@v6",
+                                   "      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+                                   "      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
+                                   "        - uses: ./.github/export-env-vars"])
+if len(own) != 2 or "by tag" not in own[0] or "without its version" not in own[1]:
+    print("PROBLEM the check no longer tells a tag and a missing version from a pinned use")
+    sys.exit(1)
+
+files = sorted(glob.glob("*/action.yml") + glob.glob(".github/*/action.yml"))
+total, problems = 0, []
+for path in files:
+    with open(path, encoding="utf-8") as fh:
+        found, found_problems = problems_in(path, fh.read().splitlines())
+    total += found
+    problems += found_problems
+print(f"checked {total} external use(s) in {len(files)} composite action(s)")
+for problem in problems:
+    print(f"PROBLEM {problem}")
+sys.exit(1 if problems or not total else 0)
+PYEOF
+) && _f35_rc=0 || _f35_rc=$?
+if [[ "${_f35_rc}" -eq 0 ]]; then
+  echo -e "${GREEN}✓ PASSED${NC}: $(echo "${_f35_out}" | head -n1)"
+  TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+  echo -e "${RED}✗ FAILED${NC}:"
+  echo "${_f35_out}" | grep '^PROBLEM ' | sed 's/^PROBLEM /    /'
   TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
