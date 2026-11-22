@@ -280,7 +280,12 @@ function run_scenario {
           # and a subshell does not forward the signal to its child, so the
           # apply ran to completion (P37). It is not that a background
           # terraform ignores SIGINT — Go re-installs its handler either way.
-          cmd_in "${work}" "${apply_console}" timeout --preserve-status --signal=INT --kill-after=60 5 \
+          # No --kill-after: the uutils timeout of Ubuntu 26.04 sends the KILL
+          # together with the INT instead of after the grace period, so
+          # terraform died before printing a line (P41). None is needed: were
+          # the INT ignored, the provisioner's thirty seconds would still end
+          # the apply, and the job's timeout-minutes bounds anything worse.
+          cmd_in "${work}" "${apply_console}" timeout --preserve-status --signal=INT 5 \
             "${TF_BIN}" apply -input=false -auto-approve -no-color "${work}/tfplan"
           apply_rc=$?
         else
