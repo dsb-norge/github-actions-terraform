@@ -95,7 +95,7 @@ echo -e "${YELLOW}============================================${NC}"
 
 begin "the download step takes every attempt of the pattern, merged into the stage step's directory"
 if [[ "$(yq -o=json -I=0 '[.runs.steps[] | select(.uses != null)]' "${_this_script_dir}/action.yml")" \
-  == '[{"name":"📥 Download every attempt'"'"'s artifacts","uses":"actions/download-artifact@v8","with":{"pattern":"${{ inputs.pattern }}","path":"${{ steps.stage.outputs.dir }}","merge-multiple":true}}]' ]]; then
+  == '[{"name":"📥 Download every attempt'"'"'s artifacts","uses":"actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333","with":{"pattern":"${{ inputs.pattern }}","path":"${{ steps.stage.outputs.dir }}","merge-multiple":true}}]' ]]; then
   pass
 else
   fail "the download step is $(yq -o=json -I=0 '[.runs.steps[] | select(.uses != null)]' "${_this_script_dir}/action.yml")"

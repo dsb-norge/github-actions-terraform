@@ -106,7 +106,7 @@ runs:
       continue-on-error: true # allow action to continue, execution status is returned by the last step
     - id: plan-upload
       if: steps.plan.outcome != 'cancelled' && steps.plan.outcome != 'skipped'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.environment-name }}-terraform-plan-console-output
         path: ${{ steps.plan.outputs.tf-plan-console-output-file }}
